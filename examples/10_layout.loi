@@ -1,0 +1,14 @@
+import std
+
+struct Buffer @pack {
+    @align(16) int data;
+    int size;
+}
+
+main =
+{
+    Buffer b;
+    b.data = 7;
+    loi_print_int(b.data);
+    return b.data;
+}

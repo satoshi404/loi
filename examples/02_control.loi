@@ -1,0 +1,17 @@
+import std
+
+main =
+{
+    int s = 0;
+    for (int i = 0; i < 10; i = i + 1) {
+        s = s + i;
+    }
+    int j = 10;
+    while (j > 0) {
+        j = j - 1;
+    }
+    if (s == 45 && j == 0) {
+        loi_print_str("control ok");
+    }
+    return s;
+}

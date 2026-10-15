@@ -1,0 +1,15 @@
+import std
+
+worker = (arg: void*): void*
+{
+    loi_print_str("thread running");
+    return arg;
+}
+
+main =
+{
+    void* t = loi_thread_spawn(worker, 0);
+    loi_thread_join(t);
+    loi_print_str("thread done");
+    return 0;
+}

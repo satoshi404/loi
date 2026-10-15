@@ -1,0 +1,17 @@
+import std
+
+factorial = (n: int): int
+{
+    if (n <= 1) { return 1; }
+    return n * factorial(n - 1);
+}
+
+main =
+{
+    int x = 5;
+    if (x < 10) {
+        return factorial(x);
+    } else {
+        return 0;
+    }
+}

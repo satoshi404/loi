@@ -1,0 +1,18 @@
+import std
+
+struct Buffer @pack {
+    @align(16) int data;
+    int size;
+}
+
+main =
+{
+    requires x > 0;
+    int x = 5;
+    ensures x >= 0;
+    region r(128) {
+        void* p = loi_region_alloc(r, 16);
+        loi_print_str("regions ok");
+    }
+    return x;
+}

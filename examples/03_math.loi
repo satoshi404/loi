@@ -1,0 +1,13 @@
+import std
+
+main =
+{
+    double a = 2.0;
+    double b = 3.0;
+    double p = loi_pow(a, b);
+    loi_print_int(loi_abs(-99));
+    if (p == 8.0) {
+        loi_print_str("math ok");
+    }
+    return 0;
+}

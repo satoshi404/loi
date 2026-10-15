@@ -1,0 +1,10 @@
+#include "helpers/lib.loi"
+
+import std
+
+main =
+{
+    int v = double_it(8);
+    loi_print_int(v);
+    return v;
+}

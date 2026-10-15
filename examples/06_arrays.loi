@@ -1,0 +1,12 @@
+import std
+
+main =
+{
+    int[3] a;
+    a[0] = 10;
+    a[1] = 20;
+    a[2] = 30;
+    int s = a[0] + a[1] + a[2];
+    loi_print_int(s);
+    return s;
+}

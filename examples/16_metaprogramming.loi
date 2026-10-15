@@ -1,0 +1,18 @@
+#define ADD(x, y) (x + y)
+#define SQUARE(x) (x * x)
+#include "helpers/lib.loi"
+
+import std
+
+main =
+{
+    int base = double_it(ADD(1, 2));
+#if 1
+    int s = SQUARE(base);
+#else
+    int s = base;
+#endif
+    loi_print_str("meta ok");
+    loi_print_int(s);
+    return s;
+}

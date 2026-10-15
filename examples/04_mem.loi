@@ -1,0 +1,9 @@
+import std
+
+main =
+{
+    void* p = loi_gc_alloc(64);
+    loi_print_str("mem ok");
+    loi_gc_collect();
+    return 0;
+}

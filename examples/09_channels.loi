@@ -1,0 +1,12 @@
+import std
+
+main =
+{
+    void* ch = loi_chan_new(4);
+    loi_chan_send(ch, 42);
+    void* v = loi_chan_recv(ch);
+    loi_print_int(v);
+    loi_chan_close(ch);
+    loi_chan_free(ch);
+    return 0;
+}
