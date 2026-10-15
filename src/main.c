@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <sys/wait.h>
 
 #include "lexer.h"
 #include "token.h"
@@ -124,19 +125,6 @@ static char *skip_ws(const char *s) {
     return (char *)s;
 }
 
-static int find_top_level_comma_or_paren(const char *s) {
-    /* returns 0 for comma at top, 1 for closing paren at top, -1 otherwise */
-    int depth = 0;
-    const char *p = s;
-    while (*p) {
-        if (*p == '(') depth++;
-        else if (*p == ')') { if (depth == 0) return 1; depth--; }
-        else if (*p == ',' && depth == 0) return 0;
-        p++;
-    }
-    return -1;
-}
-
 /* recursive macro expansion */
 static char *expand_text(const char *text, int depth) {
     if (!text) return strdup("");
@@ -196,14 +184,7 @@ static char *expand_text(const char *text, int depth) {
                     }
                     cur++;
                 }
-                p = cur - 1; /* advance later */
-                p = cur;
-                /* temps for names/vals */
-                const char *names[8]; const char *vals[8];
-                for (int i = 0; i < m->param_count; i++) {
-                    names[i] = m->params[i];
-                    vals[i] = (i < argc && args[i]) ? args[i] : "";
-                }
+                p = cur; /* continue after the macro invocation */
                 char *prepared = NULL;
                 size_t cap2 = strlen(m->body)*1024 + 1024;
                 prepared = malloc(cap2);
@@ -212,7 +193,6 @@ static char *expand_text(const char *text, int depth) {
                 while (*b) {
                     if (isalpha((unsigned char)*b) || *b == '_') {
                         char idb[64]; size_t bi = 0;
-                        const char *bk = b;
                         while (isalnum((unsigned char)*b) || *b == '_') { if (bi < 63) idb[bi++] = *b; b++; }
                         idb[bi] = 0;
                         int match = -1;
@@ -719,7 +699,8 @@ static char *pp_range(const char *s, size_t start, size_t end, int depth) {
                     memcpy(dl, s+i+7, dn); dl[dn]=0;
                     register_define(dl);
                     if (le < end && s[le]=='\n') { sb_putc(&out, '\n'); i = le+1; }
-                    else i = le; continue;
+                    else i = le;
+                    continue;
                 }
                 if (strncmp(s+i, "@undef", 6)==0 && !(isalnum((unsigned char)s[i+6])||s[i+6]=='_')) {
                     size_t le = i+6;
@@ -730,7 +711,8 @@ static char *pp_range(const char *s, size_t start, size_t end, int depth) {
                     name[ni]=0;
                     for (int mi=0; mi<g_nmacro; mi++) if (strcmp(g_macros[mi].name,name)==0) { memmove(&g_macros[mi],&g_macros[mi+1],(g_nmacro-mi-1)*sizeof(MacroDef)); g_nmacro--; break; }
                     if (le < end && s[le]=='\n') { sb_putc(&out, '\n'); i = le+1; }
-                    else i = le; continue;
+                    else i = le;
+                    continue;
                 }
                 if (strncmp(s+i, "@error", 6)==0 && !(isalnum((unsigned char)s[i+6])||s[i+6]=='_')) {
                     size_t le = i+6;
@@ -804,7 +786,7 @@ static char *preprocess_macros(const char *src) {
     const char *p = cond_src;
     while (*p) {
         const char *nl = strchr(p, '\n');
-        size_t linelen = nl ? (nl - p) : strlen(p);
+        size_t linelen = nl ? (size_t)(nl - p) : strlen(p);
         char line[4096];
         if (linelen >= sizeof(line)) linelen = sizeof(line) - 1;
         memcpy(line, p, linelen);
@@ -851,6 +833,7 @@ int main(int argc, char **argv) {
     int run_bin = 0;
     const char *path = NULL;
     const char *out_path = "/tmp/opencode/loi_bin";
+    int out_given = 0;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--tokens") == 0) tokens_only = 1;
         else if (strcmp(argv[i], "--run") == 0) run_bin = 1;
@@ -864,9 +847,9 @@ int main(int argc, char **argv) {
             else if (strcmp(argv[i]+7, "asm") == 0) emit_asm = 1;
             else if (strcmp(argv[i]+7, "exe") == 0) emit_exe = 1;
         } else if (strcmp(argv[i], "--out") == 0 && i+1 < argc) {
-            out_path = argv[i+1]; i++;
+            out_path = argv[i+1]; out_given = 1; i++;
         } else if (strncmp(argv[i], "--out=", 6) == 0) {
-            out_path = argv[i]+6;
+            out_path = argv[i]+6; out_given = 1;
         } else {
             path = argv[i];
         }
@@ -914,6 +897,7 @@ int main(int argc, char **argv) {
     if (!p.had_error && prog && !tokens_only) {
         if (!typecheck_program(prog)) {
             fprintf(stderr, "type checking failed\n");
+            exit(1);
         }
     }
 
@@ -927,14 +911,26 @@ int main(int argc, char **argv) {
             token_free(&t);
             if (is_eof) break;
         }
+    } else if (p.had_error) {
+        fprintf(stderr, "parse had errors\n");
+        if (prog) ast_free(prog);
+        free(src);
+        return 1;
     } else if (emit_ir) {
-        const char *ll_path = "/tmp/opencode/loi.ll";
+        const char *ll_path = out_given ? out_path : "/tmp/opencode/loi.ll";
         FILE *f = fopen(ll_path, "w");
-        if (f && prog) { codegen_program(prog, f); fclose(f); }
-        else if (f) fclose(f);
-        char cmd[1024];
-        snprintf(cmd, sizeof(cmd), "/usr/lib/llvm-21/bin/opt -O3 -S %s 2>/dev/null", ll_path);
-        (void)system(cmd);
+        if (!f) { fprintf(stderr, "cannot open %s\n", ll_path); return 1; }
+        if (prog) codegen_program(prog, f);
+        fclose(f);
+        /* optimize in place; unoptimized IR is kept if opt is unavailable */
+        char cmd[1400];
+        snprintf(cmd, sizeof(cmd), "opt -O3 -S %s -o %s 2>/dev/null", ll_path, ll_path);
+        int opt_rc = system(cmd);
+        (void)opt_rc;
+        if (!out_given) {
+            FILE *in = fopen(ll_path, "r");
+            if (in) { int c; while ((c = fgetc(in)) != EOF) fputc(c, stdout); fclose(in); }
+        }
     } else if (run_bin) {
         const char *ll_path = "/tmp/opencode/loi.ll";
         const char *bin_path = "/tmp/opencode/loi_bin";
@@ -943,13 +939,15 @@ int main(int argc, char **argv) {
         else if (f) fclose(f);
         char cmd[1024];
         snprintf(cmd, sizeof(cmd), "clang -O3 %s src/runtime.c -o %s -lpthread -lm 2>/dev/null", ll_path, bin_path);
-        if (system(cmd) == 0) {
-            char run[1024];
-            snprintf(run, sizeof(run), "%s", bin_path);
-            system(run);
-        } else {
+        if (system(cmd) != 0) {
             fprintf(stderr, "compile failed\n");
+            return 1;
         }
+        int st = system(bin_path);
+        int code = (st >= 0 && WIFEXITED(st)) ? WEXITSTATUS(st) : 1;
+        if (prog) ast_free(prog);
+        free(src);
+        return code;
     } else if (emit_exe) {
         const char *ll_path = "/tmp/opencode/loi.ll";
         FILE *f = fopen(ll_path, "w");
@@ -961,32 +959,36 @@ int main(int argc, char **argv) {
             printf("generated executable: %s\n", out_path);
         } else {
             fprintf(stderr, "compile failed\n");
+            return 1;
         }
     } else if (emit_asm) {
         const char *ll_path = "/tmp/opencode/loi.ll";
-        const char *s_path = "/tmp/opencode/loi.s";
+        const char *s_path = out_given ? out_path : "/tmp/opencode/loi.s";
         FILE *f = fopen(ll_path, "w");
         if (!f) { fprintf(stderr, "cannot open temp\n"); return 1; }
         if (prog) codegen_program(prog, f);
         fclose(f);
-        char cmd[1024];
+        char cmd[1400];
         snprintf(cmd, sizeof(cmd), "clang -O3 -S -x ir %s -o %s 2>/dev/null", ll_path, s_path);
         if (system(cmd) != 0) {
             fprintf(stderr, "clang failed\n");
             return 1;
         }
-        /* print assembly */
-        FILE *sf = fopen(s_path, "r");
-        if (sf) {
-            int c;
-            while ((c = fgetc(sf)) != EOF) fputc(c, stdout);
-            fclose(sf);
+        if (!out_given) {
+            /* print assembly */
+            FILE *sf = fopen(s_path, "r");
+            if (sf) {
+                int c;
+                while ((c = fgetc(sf)) != EOF) fputc(c, stdout);
+                fclose(sf);
+            }
+        } else {
+            printf("generated assembly: %s\n", s_path);
         }
     } else {
         if (prog) ast_print(prog, 0);
-        if (p.had_error) fprintf(stderr, "parse had errors\n");
     }
     if (prog) ast_free(prog);
     free(src);
-    return p.had_error ? 1 : 0;
+    return 0;
 }

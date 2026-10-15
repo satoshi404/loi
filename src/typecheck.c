@@ -68,7 +68,6 @@ static void register_func(ASTNode *f) {
     func_count++;
 }
 
-static char *xmalloc_func_types_placeholder;
 /* helper forward */
 static Type **alloc_types(size_t n) { return calloc(n ? n : 1, sizeof(Type*)); }
 
@@ -110,7 +109,13 @@ static Type *type_of_expr(ASTNode *e) {
         case AST_EXPR_CHAR: { Type *t=type_new(TY_PRIMITIVE); t->name=strdup("char"); return t; }
         case AST_EXPR_IDENT: {
             Type *t = scope_lookup(e->name);
-            if (!t) { add_error("undeclared identifier '%s'", e->name?e->name:"?"); }
+            if (!t) {
+                /* a function name used as a value (e.g. passed as a callback);
+                   function values are not modeled, so accept without a type */
+                for (size_t i = 0; i < func_count; i++)
+                    if (e->name && strcmp(funcs[i].name, e->name) == 0) return NULL;
+                add_error("undeclared identifier '%s'", e->name?e->name:"?");
+            }
             return t;
         }
         case AST_EXPR_UNARY: {
@@ -118,7 +123,7 @@ static Type *type_of_expr(ASTNode *e) {
                 Type *t = type_new(TY_PRIMITIVE); t->name = strdup("ptr"); return t;
             }
             if (e->op_token == TOK_STAR) {
-                Type *t = type_of_expr(e->left);
+                (void)type_of_expr(e->left);
                 /* conservatively return pointee as int */
                 Type *u = type_new(TY_PRIMITIVE); u->name = strdup("int"); return u;
             }
@@ -146,7 +151,7 @@ static Type *type_of_expr(ASTNode *e) {
             return lt ? lt : rt;
         }
         case AST_EXPR_TERNARY: {
-            Type *ct = type_of_expr(e->cond);
+            (void)type_of_expr(e->cond);
             Type *tt = type_of_expr(e->then_branch);
             Type *et = type_of_expr(e->else_branch);
             if (tt && et && !type_equal(tt, et)) add_error("ternary branch types differ");
@@ -180,6 +185,12 @@ static Type *type_of_expr(ASTNode *e) {
             type_of_expr(e->left);
             Type *t = type_new(TY_PRIMITIVE); t->name = strdup("int"); return t;
         }
+        /* compile-time reflection constants always fold to integers */
+        case AST_EXPR_SIZEOF:
+        case AST_EXPR_ALIGNOF:
+        case AST_EXPR_OFFSETOF: {
+            Type *t = type_new(TY_PRIMITIVE); t->name = strdup("int"); return t;
+        }
         default: return NULL;
     }
 }
@@ -196,7 +207,12 @@ static void check_stmt(ASTNode *s) {
         case AST_REGION:
             scope_push();
             {
-                Type *rt = type_new(TY_PRIMITIVE); rt->name = strdup("ptr");
+                /* a region handle is a void* to the region's first byte */
+                Type *rt = type_new(TY_POINTER);
+                Type *vb = type_new(TY_PRIMITIVE);
+                vb->name = strdup("void");
+                rt->base = vb;
+                rt->name = strdup("void");
                 if (s->name) scope_add(s->name, rt);
             }
             if (s->cond) type_of_expr(s->cond);
@@ -273,9 +289,3 @@ int typecheck_program(ASTNode *prog) {
     scope_pop();
     return errors == 0;
 }
-
-/* allocate param types (helper) */
-static void xmalloc_func_types_placeholder_init(void) {}
-/* need define alloc_types earlier; fix register_func */
-/* Redefine register_func to allocate properly (already called xmalloc_func_types invalid). Move fix: */
-/* We'll override by compiling? Instead implement in source by editing below via sed? Let's adjust. */

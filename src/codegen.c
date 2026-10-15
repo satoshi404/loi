@@ -524,7 +524,6 @@ static char *codegen_expr(CG *cg, ASTNode *e, char **out_type) {
             const char *name = e->left->name;
             CGVar *v = find_var(cg, name);
             char *vtype = v ? v->type : strdup("i32");
-            char *lt = NULL;
             /* for compound, load current */
             char *cur = NULL;
             if (op != TOK_ASSIGN) {
@@ -548,7 +547,6 @@ static char *codegen_expr(CG *cg, ASTNode *e, char **out_type) {
             if (op == TOK_CARETEQ) base = TOK_CARET;
             if (op == TOK_LSHIFTEQ) base = TOK_LSHIFT;
             if (op == TOK_RSHIFTEQ) base = TOK_RSHIFT;
-            char *lhsval = (op == TOK_ASSIGN) ? NULL : cur;
             char *res = NULL;
             if (op == TOK_ASSIGN) {
                 res = cast_value(cg, rv, rt, vtype);
@@ -588,13 +586,13 @@ static char *codegen_expr(CG *cg, ASTNode *e, char **out_type) {
         int is_cmp = (op==TOK_EQEQ||op==TOK_BANGEQ||op==TOK_LT||op==TOK_LTEQ||op==TOK_GT||op==TOK_GTEQ||op==TOK_AMPAMP||op==TOK_PIPEPIPE);
         if (is_cmp && !(op==TOK_AMPAMP||op==TOK_PIPEPIPE)) {
             /* result i1 */
-            char *lvc = cast_value(cg, lv, lt, is_float_type(lt)&&is_float_type(res_type)?lt:"i32");
+            cast_value(cg, lv, lt, is_float_type(lt)&&is_float_type(res_type)?lt:"i32");
             /* ensure both int/float consistent */
             char *ll = lv, *rr = rv;
             const char *ltt = lt, *rrt = rt;
             /* if any float, cast both to float */
             if (is_float_type(lt) || is_float_type(rt)) {
-                const char *ft = is_float_type(lt)&&strcmp(lt,"double")==0||is_float_type(rt)&&strcmp(rt,"double")==0 ? "double" : "float";
+                const char *ft = (is_float_type(lt)&&strcmp(lt,"double")==0) || (is_float_type(rt)&&strcmp(rt,"double")==0) ? "double" : "float";
                 ll = cast_value(cg, lv, lt, ft);
                 rr = cast_value(cg, rv, rt, ft);
                 ltt = rrt = ft;
@@ -621,7 +619,7 @@ static char *codegen_expr(CG *cg, ASTNode *e, char **out_type) {
             return r;
         }
         if (op == TOK_AMPAMP || op == TOK_PIPEPIPE) {
-            char *ll = cast_value(cg, lv, lt, "i1"); /* not proper; cmp to zero */
+            cast_value(cg, lv, lt, "i1"); /* not proper; cmp to zero */
             /* instead create i1 by icmp */
             char *li = new_tmp(cg);
             fprintf(cg->out, "  %s = icmp ne %s %s, 0\n", li, lt, lv);
@@ -638,7 +636,6 @@ static char *codegen_expr(CG *cg, ASTNode *e, char **out_type) {
             /* cast both to double, call pow, cast back if needed */
             char *ld = cast_value(cg, lv, lt, "double");
             char *rd = cast_value(cg, rv, rt, "double");
-            char *decl = find_func(cg, "pow") ? NULL : "@pow";
             /* ensure declare */
             CGFunc *pf = find_func(cg, "pow");
             if (!pf) {
@@ -760,7 +757,7 @@ static char *codegen_expr(CG *cg, ASTNode *e, char **out_type) {
             }
         }
         /* fallback load as ptr */
-        char *bt; char *bv = codegen_expr(cg, e->left, &bt);
+        char *bt; codegen_expr(cg, e->left, &bt);
         if (out_type) *out_type = strdup("i32");
         return strdup("0");
     }
@@ -1051,6 +1048,11 @@ static void add_runtime_funcs(CG *cg) {
         add_func(cg,"loi_sqrt","double",pt,1,0);
         add_func(cg,"loi_sin","double",pt,1,0);
         add_func(cg,"loi_cos","double",pt,1,0);
+        add_func(cg,"loi_tan","double",pt,1,0);
+        add_func(cg,"loi_exp","double",pt,1,0);
+        add_func(cg,"loi_log","double",pt,1,0);
+        add_func(cg,"loi_floor","double",pt,1,0);
+        add_func(cg,"loi_ceil","double",pt,1,0);
     }
     {
         char **pt = xmalloc(2*sizeof(char*)); pt[0]=strdup("double"); pt[1]=strdup("double");
@@ -1177,7 +1179,7 @@ void codegen_program(ASTNode *prog, FILE *out) {
     }
     collect_funcs_cg(&cg, prog);
 
-    /* declare puts? not necessary, declared on demand. But ensure declare common? We'll let on-demand */
+    /* external functions are declared on demand */
     /* global strings */
     for (size_t i = 0; i < cg.string_values.count; i++) {
         const char *val = cg.string_values.items[i];

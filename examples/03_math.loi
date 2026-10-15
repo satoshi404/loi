@@ -4,9 +4,17 @@ main =
 {
     double a = 2.0;
     double b = 3.0;
-    double p = loi_pow(a, b);
+    double p = loi_pow(a, b);        /* 8.0 */
+    double s = loi_sqrt(16.0);       /* 4.0 */
+    double f = loi_floor(3.9);       /* 3.0 */
+    double c = loi_ceil(2.1);        /* 3.0 */
+    double t = loi_tan(0.0);         /* 0.0 */
+    double e = loi_exp(0.0);         /* 1.0 */
+    double l = loi_log(1.0);         /* 0.0 */
+
     loi_print_int(loi_abs(-99));
-    if (p == 8.0) {
+    if (p == 8.0 && s == 4.0 && f == 3.0 && c == 3.0 &&
+        t == 0.0 && e == 1.0 && l == 0.0) {
         loi_print_str("math ok");
     }
     return 0;

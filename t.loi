@@ -1,0 +1,7 @@
+//import std
+
+
+main = {
+        loi_print_str("oi");
+	return 9;
+}

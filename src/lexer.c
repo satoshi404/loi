@@ -86,7 +86,7 @@ static void skip_whitespace_and_comments(Lexer *lex) {
                 advance(lex);
             }
             if (!closed) {
-                /* leave error to caller? We'll just stop. */
+                /* unterminated block comment: stop scanning, the parser reports it */
             }
         } else {
             break;
@@ -197,8 +197,7 @@ static Token lex_string(Lexer *lex) {
         if (c == '"') {
             advance(lex);
             buf[len] = '\0';
-            /* store lexeme as processed content between quotes? We'll store including quotes by rebuilding */
-            /* Instead, recompute original slice? Simpler: store processed string without quotes */
+            /* the lexeme holds the decoded string contents (no surrounding quotes) */
             Token t;
             t.type = TOK_STRING;
             t.lexeme = buf;

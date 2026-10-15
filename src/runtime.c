@@ -52,6 +52,11 @@ double loi_sqrt(double v) { return sqrt(v); }
 double loi_pow(double a, double b) { return pow(a, b); }
 double loi_sin(double v) { return sin(v); }
 double loi_cos(double v) { return cos(v); }
+double loi_tan(double v) { return tan(v); }
+double loi_exp(double v) { return exp(v); }
+double loi_log(double v) { return log(v); }
+double loi_floor(double v) { return floor(v); }
+double loi_ceil(double v) { return ceil(v); }
 size_t loi_strlen(const char *s) { return s ? strlen(s) : 0; }
 void *loi_memcpy(void *d, const void *s, size_t n) { return memcpy(d, s, n); }
 void *loi_memset(void *d, int v, size_t n) { return memset(d, v, n); }
