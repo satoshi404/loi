@@ -59,7 +59,7 @@ static int is_type_start(Parser *p) {
         t == TOK_KW_CONST || t == TOK_KW_STATIC || t == TOK_KW_VOLATILE ||
         t == TOK_KW_INLINE || t == TOK_IDENTIFIER || t == TOK_KW_FN ||
         t == TOK_KW_REGION || t == TOK_KW_EFFECT || t == TOK_KW_PURE ||
-        t == TOK_LPAREN)
+        t == TOK_AT || t == TOK_LPAREN)
         return 1;
     return 0;
 }
@@ -67,11 +67,56 @@ static int is_type_start(Parser *p) {
 static Type *parse_type(Parser *p);
 static ASTNode *parse_expr(Parser *p);
 
+/* --- parser symbol table for @typeof inference --- */
+typedef struct { char name[64]; Type *ty; } SymEnt;
+static SymEnt g_symtab[1024];
+static int g_nsym = 0;
+static void sym_set(const char *name, Type *ty) {
+    if (!name) return;
+    for (int i = 0; i < g_nsym; i++) {
+        if (strcmp(g_symtab[i].name, name) == 0) { g_symtab[i].ty = ty; return; }
+    }
+    if (g_nsym < 1024) { snprintf(g_symtab[g_nsym].name, sizeof(g_symtab[0].name), "%s", name); g_symtab[g_nsym].ty = ty; g_nsym++; }
+}
+static Type *sym_get(const char *name) {
+    for (int i = 0; i < g_nsym; i++) if (strcmp(g_symtab[i].name, name) == 0) return g_symtab[i].ty;
+    return NULL;
+}
+static Type *infer_type_expr(ASTNode *e) {
+    Type *t = type_new(TY_PRIMITIVE);
+    if (!e) { t->name = strdup("int"); return t; }
+    if (e->type == AST_EXPR_IDENT) {
+        Type *st = sym_get(e->name);
+        if (st) return type_clone(st);
+        t->name = strdup("int"); return t;
+    }
+    if (e->type == AST_EXPR_STRING) { t->name = strdup("ptr"); return t; }
+    if (e->type == AST_EXPR_CHAR) { t->name = strdup("char"); return t; }
+    if (e->type == AST_EXPR_NUMBER) {
+        const char *v = e->str_value ? e->str_value : "";
+        t->name = strdup((strchr(v, '.') || strchr(v, 'e') || strchr(v, 'E')) ? "double" : "int");
+        return t;
+    }
+    t->name = strdup("int"); return t;
+}
+
 static Type *parse_type(Parser *p) {
     Type *t = NULL;
     while (check(p, TOK_KW_CONST) || check(p, TOK_KW_STATIC) ||
            check(p, TOK_KW_VOLATILE) || check(p, TOK_KW_INLINE)) {
         advance_parser(p);
+    }
+    if (check(p, TOK_AT)) {
+        advance_parser(p);
+        if (check(p, TOK_IDENTIFIER) && strcmp(p->current.lexeme, "typeof") == 0) {
+            advance_parser(p);
+            expect(p, TOK_LPAREN, "expected '('");
+            ASTNode *ex = parse_expr(p);
+            expect(p, TOK_RPAREN, "expected ')'");
+            t = infer_type_expr(ex);
+            ast_free(ex);
+            goto type_suffix;
+        }
     }
     if (check(p, TOK_LPAREN)) {
         advance_parser(p);
@@ -122,6 +167,7 @@ static Type *parse_type(Parser *p) {
         else if (strcmp(buf, "?") == 0) parser_error(p, "expected type");
 type_primitive_done: ;
     }
+type_suffix:
     /* suffixes */
     while (1) {
         if (check(p, TOK_STAR)) {
@@ -172,6 +218,12 @@ static ASTNode *parse_var_decl(Parser *p, int require_semi);
 
 static int is_vardecl_start(Parser *p) {
     if (is_type_keyword(p)) return 1;
+    if (check(p, TOK_AT)) {
+        Token t = lexer_peek(p->lex);
+        int r = (t.type == TOK_IDENTIFIER && t.lexeme && strcmp(t.lexeme, "typeof") == 0);
+        token_free(&t);
+        return r;
+    }
     if (check(p, TOK_IDENTIFIER)) {
         Token t = lexer_peek(p->lex);
         int r = (t.type == TOK_COLON || t.type == TOK_IDENTIFIER);
@@ -222,6 +274,7 @@ static ASTNode *parse_var_decl(Parser *p, int require_semi) {
     if (match_tok(p, TOK_ASSIGN)) {
         decl->init = parse_assign(p);
     }
+    if (decl->name) sym_set(decl->name, decl->ty);
     if (require_semi) { expect(p, TOK_SEMICOLON, "expected ';'"); }
     return decl;
 }
@@ -714,9 +767,10 @@ static ASTNode *parse_primary(Parser *p) {
         advance_parser(p);
         expect(p, TOK_LPAREN, "expected '('");
         Type *t = parse_type(p);
+        ASTNode *n = ast_new(AST_EXPR_SIZEOF, line, col);
+        n->ty = type_clone(t);
         type_free(t);
         expect(p, TOK_RPAREN, "expected ')'");
-        ASTNode *n = ast_new(AST_EXPR_SIZEOF, line, col);
         return n;
     }
     if (check(p, TOK_KW_ALIGNOF)) {
@@ -724,9 +778,9 @@ static ASTNode *parse_primary(Parser *p) {
         advance_parser(p);
         expect(p, TOK_LPAREN, "expected '('");
         Type *t = parse_type(p);
-        type_free(t);
-        expect(p, TOK_RPAREN, "expected ')'");
         ASTNode *n = ast_new(AST_EXPR_ALIGNOF, line, col);
+        n->ty = type_clone(t);
+        type_free(t);
         return n;
     }
     if (check(p, TOK_LPAREN)) {
@@ -734,6 +788,65 @@ static ASTNode *parse_primary(Parser *p) {
         ASTNode *e = parse_expr(p);
         expect(p, TOK_RPAREN, "expected ')'");
         return e;
+    }
+    if (check(p, TOK_AT)) {
+        int line = p->current.line, col = p->current.column;
+        advance_parser(p);
+        if (check(p, TOK_KW_SIZEOF)) {
+            advance_parser(p);
+            expect(p, TOK_LPAREN, "expected '('");
+            Type *t = parse_type(p);
+            ASTNode *n = ast_new(AST_EXPR_SIZEOF, line, col);
+            n->ty = type_clone(t);
+            type_free(t);
+            expect(p, TOK_RPAREN, "expected ')'");
+            return n;
+        }
+        if (check(p, TOK_KW_ALIGNOF)) {
+            advance_parser(p);
+            expect(p, TOK_LPAREN, "expected '('");
+            Type *t = parse_type(p);
+            ASTNode *n = ast_new(AST_EXPR_ALIGNOF, line, col);
+            n->ty = type_clone(t);
+            type_free(t);
+            expect(p, TOK_RPAREN, "expected ')'");
+            return n;
+        }
+        if (check(p, TOK_IDENTIFIER)) {
+            const char *id = p->current.lexeme;
+            if (strcmp(id, "sizeof") == 0) {
+                advance_parser(p); expect(p, TOK_LPAREN, "expected '('");
+                Type *t = parse_type(p); ASTNode *n = ast_new(AST_EXPR_SIZEOF, line, col); n->ty = type_clone(t); type_free(t); expect(p, TOK_RPAREN, "expected ')'");
+                return n;
+            }
+            if (strcmp(id, "alignof") == 0) {
+                advance_parser(p); expect(p, TOK_LPAREN, "expected '('");
+                Type *t = parse_type(p); ASTNode *n = ast_new(AST_EXPR_ALIGNOF, line, col); n->ty = type_clone(t); type_free(t); expect(p, TOK_RPAREN, "expected ')'");
+                return n;
+            }
+            if (strcmp(id, "offsetof") == 0) {
+                advance_parser(p); expect(p, TOK_LPAREN, "expected '('");
+                Type *t = parse_type(p);
+                match_tok(p, TOK_COMMA);
+                ASTNode *n = ast_new(AST_EXPR_OFFSETOF, line, col);
+                n->ty = type_clone(t);
+                type_free(t);
+                if (check(p, TOK_IDENTIFIER)) { n->name = strdup_lex(p->current.lexeme); advance_parser(p); }
+                expect(p, TOK_RPAREN, "expected ')'");
+                return n;
+            }
+            if (strcmp(id, "typeof") == 0) {
+                advance_parser(p); expect(p, TOK_LPAREN, "expected '('");
+                ASTNode *e = parse_expr(p);
+                expect(p, TOK_RPAREN, "expected ')'");
+                /* identity: reuse the expression (type inferred) */
+                return e;
+            }
+            /* skip unknown */
+            advance_parser(p);
+            if (check(p, TOK_LPAREN)) { advance_parser(p); while (!check(p,TOK_RPAREN)&&!check(p,TOK_EOF)) advance_parser(p); match_tok(p,TOK_RPAREN); }
+            return ast_new(AST_EXPR_NUMBER, line, col);
+        }
     }
     parser_error(p, "expected expression");
     if (!check(p, TOK_EOF)) advance_parser(p);
@@ -1003,7 +1116,7 @@ static ASTNode *parse_func(Parser *p) {
     return n;
 }
 
-static ASTNode *parse_top_level(Parser *p) {
+static ASTNode *parse_decl_core(Parser *p) {
     if (check(p, TOK_KW_IMPORT)) return parse_import(p);
     if (check(p, TOK_KW_STRUCT) || check(p, TOK_KW_UNION) || check(p, TOK_KW_ENUM)) return parse_struct(p);
     if (check(p, TOK_KW_TYPE)) return parse_type_decl(p);
@@ -1023,6 +1136,37 @@ static ASTNode *parse_top_level(Parser *p) {
     parser_error(p, "expected top-level declaration");
     if (!check(p, TOK_EOF)) advance_parser(p);
     return NULL;
+}
+
+/* leading @section("name") attribute applied to the next declaration */
+static ASTNode *parse_top_level(Parser *p) {
+    char *sec = NULL;
+    while (check(p, TOK_AT)) {
+        Token t = lexer_peek(p->lex);
+        int is_section = (t.type == TOK_IDENTIFIER && t.lexeme && strcmp(t.lexeme, "section") == 0);
+        token_free(&t);
+        if (!is_section) break;
+        advance_parser(p); /* '@' */
+        advance_parser(p); /* 'section' */
+        expect(p, TOK_LPAREN, "expected '('");
+        char buf[256]; buf[0] = 0;
+        if (check(p, TOK_STRING)) {
+            const char *lex = p->current.lexeme;
+            size_t n = strlen(lex);
+            /* string lexeme is stored without surrounding quotes, but strip if present */
+            if (n >= 2 && lex[0] == '"' && lex[n - 1] == '"') { lex++; n -= 2; }
+            if (n >= sizeof(buf)) n = sizeof(buf) - 1;
+            memcpy(buf, lex, n); buf[n] = 0;
+            advance_parser(p);
+        }
+        expect(p, TOK_RPAREN, "expected ')'");
+        free(sec);
+        sec = strdup(buf);
+    }
+    ASTNode *d = parse_decl_core(p);
+    if (d && sec) { d->section = sec; sec = NULL; }
+    free(sec);
+    return d;
 }
 
 ASTNode *parse_program(Parser *p) {

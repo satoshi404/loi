@@ -1,0 +1,21 @@
+/* @section places a function's machine code into a named
+   assembly section. This is a metaprogramming attribute that
+   survives to codegen and appears as `section "name"` in the
+   emitted LLVM IR (and as `.section <name>` in the final asm).
+
+   Useful for grouping code by cache-line, hot/cold paths, or
+   placing a function into a ROM/.text region. */
+import std
+
+@section("my_text")
+fast_path = (n: int): int
+{
+    return n * 2;
+}
+
+main =
+{
+    int v = fast_path(21);
+    loi_print_int(v);       /* 42 */
+    return v;
+}

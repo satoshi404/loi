@@ -1,0 +1,35 @@
+/* Metaprogramming: defines are scoped to the branch that declares them.
+   A define inside a skipped @if branch is never registered. */
+@(define OUTER 1)
+
+@if(0) {
+    @(define LEAK 1)
+}
+
+@if(OUTER) {
+    @(define FEATURE 7)
+} @else {
+    @(define LEAK 1)
+}
+
+import std
+
+main =
+{
+    int r = 0;
+
+@if(defined(LEAK)) {
+    r = r + 1000;      /* never taken */
+}
+
+@if(FEATURE == 7) {
+    r = r + 7;
+}
+
+@if(!defined(LEAK)) {
+    r = r + 1;
+}
+
+    loi_print_int(r);
+    return r;
+}

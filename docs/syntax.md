@@ -34,6 +34,7 @@ BaseType    := Primitive
              | Ident                       // user type
              | 'fn' '(' TypeList? ')' '->' Type
              | '(' Type ')'
+             | '@' 'typeof' '(' Expr ')'   // type of an expression
 
 Primitive   := 'int' | 'float' | 'double' | 'char' | 'bool'
              | 'byte' | 'short' | 'long' | 'void'
@@ -67,7 +68,8 @@ ExternDecl  := 'extern' Type Ident '(' ParamList? ')' ';'
 Functions are declared by assignment, matching the example:
 
 ```
-FuncDecl    := Ident FuncSignature? '=' Block
+FuncDecl    := Attribute? Ident FuncSignature? '=' Block
+Attribute   := '@' 'section' '(' String ')'   // place fn in an assembly section
 FuncSignature := '(' ParamList? ')' (':' Type | '->' Type)?
 
 ParamList   := Param (',' Param)*
@@ -155,6 +157,10 @@ Primary     := Number | String | Char | Ident
              | '(' Expr ')'
              | 'sizeof' '(' Type ')'
              | 'alignof' '(' Type ')'
+             | '@' 'sizeof'   '(' Type ')'
+             | '@' 'alignof'  '(' Type ')'
+             | '@' 'offsetof' '(' Type ',' Ident ')'
+             | '@' 'typeof'   '(' Expr ')'     // yields the expression itself
 ```
 
 LValues: identifiers, `*expr`, `expr[expr]`, `expr.ident`.
@@ -279,19 +285,30 @@ true byte/struct pointee types are a later extension.
 
 ## Preprocessor (basic)
 
-Before lexing, `loi` performs a lightweight preprocessing pass:
+Before lexing, `loi` performs a lightweight preprocessing pass. All directives
+use the `@` sigil so the metaprogramming layer is visually unified (with
+`@if`/`@align`/`@pack`):
 
-- `#define NAME replacement` (object-like macro only)
-- `#include "relative/or/absolute.h"` (inlines the file, recursive up to a
-  depth limit)
-- `#include <system/path>` (searched in `.` then `/usr/include` and
-  `/usr/include/x86_64-linux-gnu`)
+- `@(define NAME replacement)` — object-like and function-like macros
+- `@(include "relative/or/absolute.h")` — inlines the file, recursive up to a
+  depth limit
+- `@(include <system/path>)` — searched in `.` then `/usr/include` and
+  `/usr/include/x86_64-linux-gnu`
+- `@(undef NAME)`, `@(error message)` — remove a macro, abort compilation
+
+Each of these also has a *line form* that reads to end-of-line (useful when a
+macro body contains unbalanced parentheses):
+
+- `@define NAME replacement`
+- `@include "file"`
+- `@undef NAME`
+- `@error message`
 
 Example:
 
 ```loi
-#define LIMIT 8
-#include "helpers/helper.loi"
+@(define LIMIT 8)
+@(include "helpers/helper.loi")
 
 main =
 {
@@ -299,8 +316,7 @@ main =
 }
 ```
 
-Limitations: no function-like macros, no `#if`/`#ifdef`/`#ifndef`, no include
-guards, no C standard-header ABI modeling.
+Limitations: no include guards, no C standard-header ABI modeling.
 
 ## Metaprogramming / Preprocessor
 
@@ -309,50 +325,96 @@ loi provides a lightweight, pre-lexer preprocessing stage for metaprogramming.
 ### Object-like macros
 
 ```loi
-#define LIMIT 8
+@(define LIMIT 8)
+```
+
+Line form (rest of line becomes the body):
+
+```loi
+@define LIMIT 8
 ```
 
 ### Function-like macros
 
 ```loi
-#define ADD(x, y) ((x) + (y))
-#define SQUARE(x) ((x) * (x))
+@(define ADD(x, y) ((x) + (y)))
+@(define SQUARE(x) ((x) * (x)))
 ```
 
 Arguments are fully expanded before substitution; argument repetition is allowed.
 The compiler does not add parentheses for you, use them explicitly.
 
-### Conditional compilation
+The `@(define ...)` form reads to the *matching* parenthesis, so a body may
+contain balanced parentheses (as in the examples above). If a body would contain
+unbalanced parentheses, use the line form `@define`, which reads to end-of-line.
+
+### Conditional compilation (`@if` blocks)
+
+Conditionals use a macro-like block syntax with `@`:
 
 ```loi
-#ifdef DEBUG
+@(define DEBUG 1)
+@(define TRACE 0)
+
+@if(DEBUG) {
     int x = 1;
-#else
+} @elif(TRACE) {
+    int x = 2;
+} @else {
     int x = 0;
-#endif
-
-#ifndef NOSTATS
-    #define COUNT
-#endif
-
-#if 1
-    int enabled = 1;
-#endif
+}
 ```
 
-`#define`, `#undef`, `#error` are also supported:
+Supported inside the condition expression:
+
+- integer literals and arithmetic: `+ - * / %`;
+- comparisons: `== != < <= > >=`;
+- logic: `! && ||` and parentheses;
+- `defined(NAME)` — true if the macro exists;
+- identifiers expand to their macro body and are evaluated (truthy when non-zero);
+- `0` is false, anything else is true.
+
+`@elif(...)` and `@else` are optional; `@endif` is optional when braces close the
+chain. Blocks can be nested:
 
 ```loi
-#define FLAG
-#undef FLAG
-#error something went wrong
+@if(defined(DEBUG) && !defined(RELEASE)) {
+    @if(DEBUG >= 1) {
+        int verbose = 1;
+    }
+}
+```
+
+`@(define)`, `@(undef)`, `@(error)` are also supported (as are the `@define`,
+`@undef`, `@error` line forms):
+
+```loi
+@(define FLAG)
+@(undef FLAG)
+@(error something went wrong)
+```
+
+Notes:
+
+- `@if` blocks remove their own surrounding braces, so they do not introduce a
+  lexical scope — declarations inside a taken branch stay in the enclosing scope.
+- Macros are scoped to the branch that declares them: a `@(define)` / `@(undef)`
+  inside a skipped branch are ignored, which makes feature flags and conditional
+  configuration safe:
+
+```loi
+@if(ENABLE_GPU) {
+    @(define BACKEND gpu)
+} @else {
+    @(define BACKEND cpu)
+}
 ```
 
 ### Include
 
 ```loi
-#include "helpers/lib.loi"
-#include <stdio.h>
+@(include "helpers/lib.loi")
+@(include <stdio.h>)
 ```
 
 - `"..."` includes are resolved relative to the including file first, then the current
@@ -363,9 +425,103 @@ The compiler does not add parentheses for you, use them explicitly.
 ### Limitations
 
 - Object/function-like macros only.
-- No `#elif`, stringizing (`#x`), token pasting (`##`), or variadic macro args yet.
-- No `#if` beyond identifiers / `defined(ID)` / literal `0`, `1`.
-- No C preprocessor ABI guarantees for `#include <...>` headers.
+- No stringizing (`#x`), token pasting (`##`), or variadic macro args yet.
+- Conditions evaluate integers and macro bodies; function-like macro names alone
+  evaluate to `0`.
+- `@(define)` / `@(undef)` are processed left-to-right while conditionals are
+  evaluated, so macros declared inside a skipped branch are never registered
+  (and an `@(undef)` in a skipped branch does not apply).
+- No C preprocessor ABI guarantees for `@(include <...>)` headers.
+
+## Compile-time code generation
+
+Metaprogramming directives can emit code during the preprocessor pass, so a
+block is *unrolled* into real statements before parsing. There is no runtime
+loop overhead.
+
+### `@repeat(count) { ... }`
+
+Copies its block `count` times. `count` is any integer expression the
+conditional evaluator understands (literals, arithmetic, macros):
+
+```loi
+int total = 0;
+@repeat(3) {
+    total = total * 2;
+}
+```
+
+### `@for(var, start, stop [, step]) { ... }`
+
+Unrolls the block once per iteration. The loop variable is substituted with its
+integer value as a whole word:
+
+```loi
+@for(i, 0, 5) {
+    total = total + i;          /* 0+1+2+3+4 */
+}
+@for(k, 0, 10, 2) {
+    total = total + k;          /* even steps: 0+2+4+6+8 */
+}
+```
+
+- `stop` is exclusive.
+- `step` defaults to `1`; negative steps iterate downward.
+- The variable is textually substituted only where it appears as a complete
+  identifier (so it will not clobber names like `sum` or `total`).
+
+Loops nest and may contain `@if` (the variable is substituted first, so
+`@if(i == 2)` picks the right branch per iteration).
+
+See `examples/19_compiletime_codegen.loi`.
+
+## Reflection builtins
+
+Compile-time introspection over types; all fold to integer constants before
+codegen. Struct layout respects field alignment and `@pack`, so the values match
+what the backend actually lays out.
+
+- `@sizeof(T)` — byte size of `T`
+- `@alignof(T)` — required alignment of `T`
+- `@offsetof(T, field)` — byte offset of `field` within struct `T`
+- `@typeof(expr)` — the type of `expr`, usable anywhere a type is expected
+
+```loi
+struct Packed @pack() { char c; int i; }
+struct Point  { int x; int y; double z; }
+
+main =
+{
+    int sz   = @sizeof(Point);       /* 16 */
+    int offz = @offsetof(Point, z);  /*  8 */
+    int algn = @alignof(Point);      /*  8 */
+    int psz  = @sizeof(Packed);      /*  5 (packed) */
+
+    @typeof(sz) copy = sz;           /* copy is an int */
+    return sz + offz + algn + psz + copy;
+}
+```
+
+The plain keywords `sizeof(T)` / `alignof(T)` also remain valid (without `@`).
+
+See `examples/20_reflection.loi`.
+
+## `@section` placement
+
+`@section("name")` places the next function into a named assembly section. It
+survives to codegen, appears as `section "name"` in the emitted LLVM IR, and as
+`.section <name>` in the final assembly.
+
+```loi
+@section("my_text")
+fast_path = (n: int): int
+{
+    return n * 2;
+}
+```
+
+Useful for hot/cold code splitting, cache-line grouping, or placing a function
+into a ROM/text region. See `examples/21_sections.loi`.
 
 ## Example
 

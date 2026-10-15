@@ -296,6 +296,12 @@ static char *cast_value(CG *cg, const char *val, const char *from, const char *t
 
 /* ---------- forward declarations ---------- */
 static char *codegen_expr(CG *cg, ASTNode *e, char **out_type);
+static long type_size_llvm(const char *t);
+static long type_align_llvm(const char *t);
+static long struct_size_align(const char *name, long *align_out);
+static long get_size(Type *t);
+static long get_align(Type *t);
+static long struct_offset(Type *t, const char *field);
 static void codegen_stmt(CG *cg, ASTNode *s);
 
 /* ---------- expr codegen ---------- */
@@ -324,8 +330,28 @@ static char *char_to_int(const char *lex) {
     return strdup("0");
 }
 
+static long get_size(Type *t);
+static long get_align(Type *t);
 static char *codegen_expr(CG *cg, ASTNode *e, char **out_type) {
     if (!e) { if (out_type) *out_type = strdup("i32"); return strdup("0"); }
+    if (e->type == AST_EXPR_SIZEOF) {
+        long sz = get_size(e->ty);
+        if (out_type) *out_type = strdup("i32");
+        char buf[32]; snprintf(buf, sizeof(buf), "%ld", sz);
+        return strdup(buf);
+    }
+    if (e->type == AST_EXPR_ALIGNOF) {
+        long sz = get_align(e->ty);
+        if (out_type) *out_type = strdup("i32");
+        char buf[32]; snprintf(buf, sizeof(buf), "%ld", sz);
+        return strdup(buf);
+    }
+    if (e->type == AST_EXPR_OFFSETOF) {
+        long off = struct_offset(e->ty, e->name);
+        if (out_type) *out_type = strdup("i32");
+        char buf[32]; snprintf(buf, sizeof(buf), "%ld", off);
+        return strdup(buf);
+    }
     if (e->type == AST_EXPR_NUMBER) {
         const char *lex = e->str_value ? e->str_value : "0";
         /* detect float */
@@ -971,7 +997,9 @@ static void codegen_function(CG *cg, ASTNode *f) {
         if (i) fprintf(cg->out, ", ");
         fprintf(cg->out, "%s %%arg%zu", pt, i);
     }
-    fprintf(cg->out, ") {\nentry:\n");
+    fprintf(cg->out, ")");
+    if (f->section && f->section[0]) fprintf(cg->out, " section \"%s\"", f->section);
+    fprintf(cg->out, " {\nentry:\n");
     cg->terminated = 0;
     scope_push(cg);
     /* alloc params */
@@ -1191,4 +1219,95 @@ void codegen_program(ASTNode *prog, FILE *out) {
         }
         fprintf(out, ")\n");
     }
+}
+
+static long type_size_llvm(const char *t) {
+    if (!t) return 4;
+    if (strcmp(t, "i1") == 0 || strcmp(t, "i8") == 0) return 1;
+    if (strcmp(t, "i16") == 0) return 2;
+    if (strcmp(t, "i32") == 0 || strcmp(t, "float") == 0) return 4;
+    if (strcmp(t, "i64") == 0 || strcmp(t, "double") == 0) return 8;
+    if (strcmp(t, "ptr") == 0) return 8;
+    if (t[0] == '[') {
+        const char *x = strchr(t, 'x');
+        if (x) return atoi(t + 1) * type_size_llvm(x + 1);
+        return 0;
+    }
+    if (t[0] == '%' && strstr(t, "struct.")) {
+        const char *nm = t + 7; /* after "struct." */
+        long al;
+        return struct_size_align(nm, &al);
+    }
+    return 4;
+}
+
+static long type_align_llvm(const char *t) {
+    if (!t) return 4;
+    if (strcmp(t, "i1") == 0 || strcmp(t, "i8") == 0) return 1;
+    if (strcmp(t, "i16") == 0) return 2;
+    if (strcmp(t, "i32") == 0 || strcmp(t, "float") == 0) return 4;
+    if (strcmp(t, "i64") == 0 || strcmp(t, "double") == 0) return 8;
+    if (strcmp(t, "ptr") == 0) return 8;
+    if (t[0] == '[') {
+        const char *x = strchr(t, 'x');
+        if (x) return type_align_llvm(x + 1);
+        return 4;
+    }
+    return 4;
+}
+
+static long struct_size_align(const char *name, long *align_out) {
+    StructInfo *si = find_struct(name);
+    if (!si) { if (align_out) *align_out = 8; return 8; }
+    long off = 0, maxal = 1;
+    for (int i = 0; i < si->field_count; i++) {
+        const char *ft = si->field_types[i];
+        long al = si->packed ? 1 : type_align_llvm(ft);
+        long fs = type_size_llvm(ft);
+        off = (off + al - 1) / al * al;
+        off += fs;
+        if (al > maxal) maxal = al;
+    }
+    if (!si->packed) off = (off + maxal - 1) / maxal * maxal;
+    if (align_out) *align_out = maxal;
+    return off;
+}
+
+static long struct_offset(Type *t, const char *field) {
+    StructInfo *si = (t && t->name) ? find_struct(t->name) : NULL;
+    if (!si) return 0;
+    long off = 0;
+    for (int i = 0; i < si->field_count; i++) {
+        const char *ft = si->field_types[i];
+        long al = si->packed ? 1 : type_align_llvm(ft);
+        long fs = type_size_llvm(ft);
+        off = (off + al - 1) / al * al;
+        if (field && si->field_names[i] && strcmp(si->field_names[i], field) == 0) return off;
+        off += fs;
+    }
+    return 0;
+}
+
+static long get_size(Type *t) {
+    if (!t) return 4;
+    if (t->name && (t->kind == TY_NAMED || t->kind == TY_PRIMITIVE) && find_struct(t->name)) {
+        return struct_size_align(t->name, NULL);
+    }
+    char *lt = llvm_type(t);
+    long s = type_size_llvm(lt);
+    free(lt);
+    return s;
+}
+
+static long get_align(Type *t) {
+    if (!t) return 4;
+    if (t->name && (t->kind == TY_NAMED || t->kind == TY_PRIMITIVE) && find_struct(t->name)) {
+        long al;
+        struct_size_align(t->name, &al);
+        return al;
+    }
+    char *lt = llvm_type(t);
+    long s = type_align_llvm(lt);
+    free(lt);
+    return s > 0 ? s : 4;
 }

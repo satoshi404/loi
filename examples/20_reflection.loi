@@ -1,0 +1,28 @@
+/* Compile-time reflection builtins.
+
+   @sizeof(T)     -- byte size of a type
+   @alignof(T)    -- required alignment of a type
+   @offsetof(T,f) -- byte offset of field f in struct T
+   @typeof(expr)  -- the type of an expression (used as a type)
+
+   All of these fold to integer constants before codegen. Struct
+   layout respects field alignment and packing, so @sizeof/@offsetof
+   match what the backend actually lays out. */
+import std
+
+struct Packed @pack() { char c; int i; }
+struct Point  { int x; int y; double z; }
+
+main =
+{
+    int sz   = @sizeof(Point);      /* 16: x@0 y@4 z@8 (padded) */
+    int offz = @offsetof(Point, z); /*  8 */
+    int algn = @alignof(Point);     /*  8 */
+    int psz  = @sizeof(Packed);     /*  5: packed removes the gap */
+
+    @typeof(sz) copy = sz;          /* copy is an int */
+
+    int sum = sz + offz + algn + psz + copy;
+    loi_print_int(sum);             /* 16 + 8 + 8 + 5 + 16 = 53 */
+    return sum;
+}

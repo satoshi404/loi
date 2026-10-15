@@ -1,0 +1,32 @@
+/* Metaprogramming: macro-like conditional blocks.
+   Variants are chosen at compile time with @if/@elif/@else. */
+@(define LEVEL 2)
+@(define FEATURE_X)
+
+import std
+
+main =
+{
+@if(LEVEL == 3) {
+    loi_print_str("level 3");
+} @elif(LEVEL == 2) {
+    loi_print_str("level 2");
+} @else {
+    loi_print_str("level ?");
+}
+
+@if(defined(FEATURE_X)) {
+    int bonus = 10;
+} @else {
+    int bonus = 0;
+}
+
+@if(!defined(FEATURE_X)) {
+    int extra = 100;
+} @else {
+    int extra = 0;
+}
+
+    loi_print_int(LEVEL + bonus + extra);
+    return LEVEL + bonus + extra;
+}

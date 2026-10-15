@@ -34,7 +34,8 @@ typedef enum {
     AST_EXPR_STRING,
     AST_EXPR_CHAR,
     AST_EXPR_SIZEOF,
-    AST_EXPR_ALIGNOF
+    AST_EXPR_ALIGNOF,
+    AST_EXPR_OFFSETOF
 } ASTNodeType;
 
 typedef struct Type Type;
@@ -61,6 +62,7 @@ struct ASTNode {
     int align;     /* requested alignment (for fields/structs) */
     int packed;   /* packed layout hint */
     char *effects; /* function effects, e.g. "IO,Alloc" */
+    char *section; /* target assembly section (metaprogramming @section) */
     /* common */
     char *name;         /* identifier name */
     Type *ty;           /* declared type */
@@ -94,6 +96,7 @@ struct ASTNode {
 ASTNode *ast_new(ASTNodeType type, int line, int col);
 void ast_add_item(ASTNode *parent, ASTNode *item);
 Type *type_new(int kind);
+Type *type_clone(Type *t);
 void type_free(Type *t);
 void ast_free(ASTNode *node);
 void ast_print(ASTNode *node, int indent);

@@ -26,6 +26,25 @@ Type *type_new(int kind) {
     return t;
 }
 
+Type *type_clone(Type *t) {
+    if (!t) return NULL;
+    Type *c = type_new(t->kind);
+    c->name = t->name ? strdup(t->name) : NULL;
+    c->base = type_clone(t->base);
+    c->return_type = type_clone(t->return_type);
+    if (t->array_size && t->array_size->str_value) {
+        ASTNode *sz = ast_new(AST_EXPR_NUMBER, t->array_size->line, t->array_size->column);
+        sz->str_value = strdup(t->array_size->str_value);
+        c->array_size = sz;
+    }
+    if (t->param_count) {
+        c->param_types = malloc(t->param_count * sizeof(Type *));
+        for (size_t i = 0; i < t->param_count; i++) c->param_types[i] = type_clone(t->param_types[i]);
+        c->param_count = t->param_count;
+    }
+    return c;
+}
+
 void type_free(Type *t) {
     if (!t) return;
     free(t->name);
@@ -46,6 +65,7 @@ void ast_free(ASTNode *node) {
     if (!node) return;
     free(node->name);
     free(node->effects);
+    free(node->section);
     type_free(node->ty);
     type_free(node->alias_type);
     ast_free(node->init);
@@ -98,6 +118,7 @@ const char *ast_node_type_str(ASTNodeType type) {
         case AST_EXPR_CHAR: return "CHAR";
         case AST_EXPR_SIZEOF: return "SIZEOF";
         case AST_EXPR_ALIGNOF: return "ALIGNOF";
+        case AST_EXPR_OFFSETOF: return "OFFSETOF";
         default: return "UNKNOWN";
     }
 }

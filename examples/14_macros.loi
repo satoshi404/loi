@@ -1,4 +1,4 @@
-#define LIMIT 8
+@(define LIMIT 8)
 
 scale = (n: int): int
 {

@@ -1,0 +1,33 @@
+/* Compile-time code generation.
+
+   @for(count, start, stop [, step]) unrolls its block once per
+   iteration, substituting the loop variable with each integer value.
+   @repeat(count) copies its block N times.
+
+   Both run in the preprocessor, so the loop is fully expanded into
+   real code before parsing -- there is no runtime loop overhead. */
+import std
+
+main =
+{
+    int total = 0;
+
+@for(i, 0, 5) {
+    total = total + i;
+}
+    /* total = 0 + 1 + 2 + 3 + 4 = 10 */
+
+@repeat(3) {
+    total = total * 2;
+}
+    /* total = 10 * 2 * 2 * 2 = 80 */
+
+    /* step loop: only even indices */
+@for(k, 0, 10, 2) {
+    total = total + k;
+}
+    /* total = 80 + 0 + 2 + 4 + 6 + 8 = 100 */
+
+    loi_print_int(total);
+    return total;
+}

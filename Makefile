@@ -11,7 +11,7 @@ all: $(BIN)
 $(BIN): $(OBJ)
 	$(CC) $(CFLAGS) -o $(BIN) $(OBJ) $(LDFLAGS)
 
-%.o: %.c
+%.o: %.c $(wildcard src/*.h)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
