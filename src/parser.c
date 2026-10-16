@@ -66,6 +66,50 @@ static int is_type_start(Parser *p) {
 static Type *parse_type(Parser *p);
 static ASTNode *parse_expr(Parser *p);
 
+/* lookahead: at '(' — is the matching ')' followed by '->'?
+   Distinguishes a parenthesized function type `(a: int) -> int` from a
+   grouped type `(int)`. Uses a lexer copy; the parser is untouched. */
+static int at_fn_type(Parser *p) {
+    if (!check(p, TOK_LPAREN)) return 0;
+    Lexer l = *p->lex; /* struct copy; lexing it does not disturb the parser */
+    int depth = 1;
+    for (;;) {
+        Token t = lexer_next(&l);
+        if (t.type == TOK_EOF) { token_free(&t); return 0; }
+        if (t.type == TOK_LPAREN) depth++;
+        else if (t.type == TOK_RPAREN) {
+            depth--;
+            if (depth == 0) {
+                token_free(&t);
+                Token n = lexer_next(&l);
+                int arrow = (n.type == TOK_ARROW);
+                token_free(&n);
+                return arrow;
+            }
+        }
+        token_free(&t);
+    }
+}
+
+/* `!IO,Alloc` effect list (shared by function declarations and function types) */
+static char *parse_effects(Parser *p) {
+    if (!match_tok(p, TOK_BANG)) return NULL;
+    size_t cap = 64, len = 0;
+    char *buf = malloc(cap); buf[0] = 0;
+    while (check(p, TOK_IDENTIFIER)) {
+        const char *s = p->current.lexeme;
+        size_t sl = strlen(s);
+        if (len + sl + 2 >= cap) { while (len + sl + 2 >= cap) cap *= 2; buf = realloc(buf, cap); }
+        if (len) buf[len++] = ',';
+        memcpy(buf + len, s, sl + 1);
+        len += sl;
+        advance_parser(p);
+        if (check(p, TOK_COMMA)) advance_parser(p);
+        else break;
+    }
+    return buf;
+}
+
 /* --- parser symbol table for @typeof inference --- */
 typedef struct { char name[64]; Type *ty; } SymEnt;
 static SymEnt g_symtab[1024];
@@ -101,21 +145,10 @@ static Type *infer_type_expr(ASTNode *e) {
 
 static Type *parse_type(Parser *p) {
     Type *t = NULL;
-    /* collect prefix array/slice forms like []T or [n]T if someone writes */
-    /* but we want postfix to remain primary; also allow [] prefix for some styles */
-    /* collect prefix arrays in order */
-    struct PrefArr { int has_sz; ASTNode *sz; } pref[16];
-    int npref = 0;
-    while (check(p, TOK_LBRACKET) && npref < 16) {
-        advance_parser(p);
-        ASTNode *sz = NULL;
-        if (!check(p, TOK_RBRACKET)) {
-            sz = parse_expr(p);
-        }
-        expect(p, TOK_RBRACKET, "expected ']'");
-        pref[npref++] = (struct PrefArr){sz != NULL, sz};
-        /* if we see '*' or start of base? but easier: after prefix arrays, continue normally */
-    }
+    /* Arrays use the canonical postfix form `T[n]` / `T[]` (handled in the
+       suffix loop below). The old prefix form `[n]T` is intentionally not
+       parsed: it was unreachable as a declaration start and only caused
+       ambiguity. */
     while (check(p, TOK_KW_CONST) || check(p, TOK_KW_STATIC) ||
            check(p, TOK_KW_VOLATILE) || check(p, TOK_KW_INLINE)) {
         advance_parser(p);
@@ -133,9 +166,38 @@ static Type *parse_type(Parser *p) {
         }
     }
     if (check(p, TOK_LPAREN)) {
-        advance_parser(p);
-        t = parse_type(p);
-        expect(p, TOK_RPAREN, "expected ')'");
+        if (at_fn_type(p)) {
+            /* `(a: int, b: int) -> int !Effects` — function type */
+            t = type_new(TY_FUNCTION);
+            advance_parser(p);
+            if (!check(p, TOK_RPAREN)) {
+                size_t cap = 4, cnt = 0;
+                Type **arr = malloc(cap * sizeof(Type *));
+                do {
+                    if (cnt == cap) { cap *= 2; arr = realloc(arr, cap * sizeof(Type *)); }
+                    if (check(p, TOK_IDENTIFIER)) {
+                        Token nx = lexer_peek(p->lex);
+                        int named = (nx.type == TOK_COLON);
+                        token_free(&nx);
+                        if (named) {
+                            advance_parser(p);
+                            expect(p, TOK_COLON, "expected ':'");
+                        }
+                    }
+                    arr[cnt++] = parse_type(p);
+                } while (match_tok(p, TOK_COMMA));
+                t->param_types = arr;
+                t->param_count = cnt;
+            }
+            expect(p, TOK_RPAREN, "expected ')'");
+            expect(p, TOK_ARROW, "expected '->'");
+            t->return_type = parse_type(p);
+            t->effects = parse_effects(p);
+        } else {
+            advance_parser(p);
+            t = parse_type(p);
+            expect(p, TOK_RPAREN, "expected ')'");
+        }
     } else if (check(p, TOK_KW_STRUCT) || check(p, TOK_KW_UNION) || check(p, TOK_KW_ENUM)) {
         TokenType kw = p->current.type;
         advance_parser(p);
@@ -163,6 +225,7 @@ static Type *parse_type(Parser *p) {
         expect(p, TOK_RPAREN, "expected ')'");
         expect(p, TOK_ARROW, "expected '->'");
         t->return_type = parse_type(p);
+        t->effects = parse_effects(p);
     } else {
         t = type_new(TY_PRIMITIVE);
         char buf[128];
@@ -215,14 +278,6 @@ type_suffix:
         } else {
             break;
         }
-    }
-    /* apply prefix arrays (outermost first) */
-    for (int i = 0; i < npref; i++) {
-        Type *arr = type_new(TY_ARRAY);
-        arr->base = t;
-        arr->array_size = pref[i].has_sz ? pref[i].sz : NULL;
-        arr->name = t && t->name ? strdup(t->name) : strdup("?");
-        t = arr;
     }
     return t;
 }
@@ -490,6 +545,11 @@ static ASTNode *parse_asm(Parser *p) {
 
 static ASTNode *parse_stmt(Parser *p) {
     if (check(p, TOK_LBRACE)) return parse_block(p);
+    if (check(p, TOK_SEMICOLON)) {
+        /* empty statement: also lets brace-expanding macros be called with `;` */
+        advance_parser(p);
+        return NULL;
+    }
     if (check(p, TOK_KW_IF)) return parse_if(p);
     if (check(p, TOK_KW_REGION)) {
         int line = p->current.line, col = p->current.column;
@@ -835,6 +895,11 @@ static ASTNode *parse_primary(Parser *p) {
         advance_parser(p);
         return n;
     }
+    if (check(p, TOK_KW_NULL)) {
+        ASTNode *n = ast_new(AST_EXPR_NULL, p->current.line, p->current.column);
+        advance_parser(p);
+        return n;
+    }
     if (check(p, TOK_IDENTIFIER) || check(p, TOK_KW_MAIN)) {
         ASTNode *n = ast_new(AST_EXPR_IDENT, p->current.line, p->current.column);
         n->name = strdup_lex(p->current.lexeme);
@@ -930,6 +995,18 @@ static ASTNode *parse_primary(Parser *p) {
     parser_error(p, "expected expression");
     if (!check(p, TOK_EOF)) advance_parser(p);
     return NULL;
+}
+
+static ASTNode *parse_package(Parser *p) {
+    int line = p->current.line, col = p->current.column;
+    ASTNode *n = ast_new(AST_PACKAGE, line, col);
+    expect(p, TOK_KW_PACKAGE, "expected 'package'");
+    if (check(p, TOK_IDENTIFIER)) {
+        n->name = strdup_lex(p->current.lexeme);
+        advance_parser(p);
+    }
+    match_tok(p, TOK_SEMICOLON);
+    return n;
 }
 
 static ASTNode *parse_import(Parser *p) {
@@ -1134,22 +1211,7 @@ static ASTNode *parse_func(Parser *p) {
             } else if (match_tok(p, TOK_ARROW)) {
                 n->ty = parse_type(p);
             }
-            if (match_tok(p, TOK_BANG)) {
-                size_t cap = 64, len = 0;
-                char *buf = malloc(cap); buf[0] = 0;
-                while (check(p, TOK_IDENTIFIER)) {
-                    const char *s = p->current.lexeme;
-                    size_t sl = strlen(s);
-                    if (len + sl + 2 >= cap) { while (len + sl + 2 >= cap) cap *= 2; buf = realloc(buf, cap); }
-                    if (len) buf[len++] = ',';
-                    memcpy(buf + len, s, sl + 1);
-                    len += sl;
-                    advance_parser(p);
-                    if (check(p, TOK_COMMA)) advance_parser(p);
-                    else break;
-                }
-                n->effects = buf;
-            }
+            n->effects = parse_effects(p);
         }
     } else if (check(p, TOK_LPAREN)) {
         advance_parser(p);
@@ -1170,22 +1232,7 @@ static ASTNode *parse_func(Parser *p) {
         } else if (match_tok(p, TOK_ARROW)) {
             n->ty = parse_type(p);
         }
-        if (match_tok(p, TOK_BANG)) {
-            size_t cap = 64, len = 0;
-            char *buf = malloc(cap); buf[0] = 0;
-            while (check(p, TOK_IDENTIFIER)) {
-                const char *s = p->current.lexeme;
-                size_t sl = strlen(s);
-                if (len + sl + 2 >= cap) { while (len + sl + 2 >= cap) cap *= 2; buf = realloc(buf, cap); }
-                if (len) buf[len++] = ',';
-                memcpy(buf + len, s, sl + 1);
-                len += sl;
-                advance_parser(p);
-                if (check(p, TOK_COMMA)) advance_parser(p);
-                else break;
-            }
-            n->effects = buf;
-        }
+        n->effects = parse_effects(p);
         expect(p, TOK_ASSIGN, "expected '='");
     } else {
         parser_error(p, "expected '=' or '('");
@@ -1207,6 +1254,7 @@ static ASTNode *parse_func(Parser *p) {
 }
 
 static ASTNode *parse_decl_core(Parser *p) {
+if (check(p, TOK_KW_PACKAGE)) return parse_package(p);
     if (check(p, TOK_KW_IMPORT)) return parse_import(p);
     if (check(p, TOK_KW_STRUCT) || check(p, TOK_KW_UNION) || check(p, TOK_KW_ENUM)) return parse_struct(p);
     if (check(p, TOK_KW_TYPE)) return parse_type_decl(p);

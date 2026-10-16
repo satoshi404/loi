@@ -1,7 +1,7 @@
 @(define ADD(x, y) (x + y))
 @(define SQUARE(x) (x * x))
 @(define ENABLE_SQUARE 1)
-@(include "helpers/lib.loi")
+@inc "helpers/lib.loi"
 
 import std
 

@@ -1,0 +1,9 @@
+/* effects: storing an !IO function where a pure fn type is expected
+   must be rejected (via a variable initializer). */
+type PureFn = () -> void;
+io = (): void !IO { loi_print_str("x\n"); }
+main = () -> int
+{
+    f: PureFn = io;   /* must fail: drops !IO */
+    return 0;
+}

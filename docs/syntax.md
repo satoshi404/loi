@@ -16,13 +16,15 @@ loi is a hybrid, statically typed language that combines low-level control
 
 ```
 Program     := TopLevel*
-TopLevel    := ImportDecl
-             | TypeDecl
-             | StructDecl
-             | ExternDecl
-             | VarDecl
-             | FuncDecl
+TopLevel    := PackageDecl
+              | ImportDecl
+              | TypeDecl
+              | StructDecl
+              | ExternDecl
+              | VarDecl
+              | FuncDecl
 
+PackageDecl := 'package' Ident (';')?
 ImportDecl  := 'import' Ident ('.' Ident)* ('as' Ident)? (';')?
 ```
 
@@ -32,17 +34,23 @@ ImportDecl  := 'import' Ident ('.' Ident)* ('as' Ident)? (';')?
 Type        := BaseType TypeSuffix*
 BaseType    := Primitive
              | Ident                       // user type
-             | 'fn' '(' TypeList? ')' '->' Type
+             | 'fn' '(' TypeList? ')' '->' Type ('!' EffectList)?
              | '(' Type ')'
-             | '@' 'typeof' '(' Expr ')'   // type of an expression
+             | '(' ParamName ':' Type (',' ParamName ':' Type)* ')' '->' Type ('!' EffectList)?
+             | '@' 'typeof' '(' Expr ')'
+             | 'type' Ident '=' Type         // alias (top-level)
 
 Primitive   := 'int' | 'float' | 'double' | 'char' | 'bool'
              | 'byte' | 'short' | 'long' | 'void'
              | 'unsigned'? ( 'int' | 'char' | 'short' | 'long' | 'byte' )
 
 TypeSuffix  := '*'                         // pointer
-             | '[' Expr? ']'                // array / size
+             | '[' Expr? ']'                // array / size (postfix, canonical)
 ```
+
+Array types are written **postfix**: the length follows the element type, e.g.
+`int[10] a;` or `int[] a;` (inferred length). The old prefix form `[10]int` is
+not parsed.
 
 ## Declarations
 
@@ -99,6 +107,28 @@ factorial = (n: int) -> int
     return n * factorial(n - 1);
 }
 ```
+
+The canonical function form is the **assignment form** above. The equivalent
+signature-first form `name (params): Ret = { ... }` is also accepted, and `:`
+may be written `->` before the return type in a declaration. Prefer the
+assignment form for consistency.
+
+### Typed function pointers
+
+Function types are first-class and carry effects:
+
+```loi
+type CmpFn = (a: int, b: int) -> int;
+type Handler = (n: int) -> void !IO;
+
+apply = (f: (a: int, b: int) -> int, x: int, y: int): int { return f(x, y); }
+
+cmp: CmpFn = null;         // typed function-pointer variable, null-initialised
+```
+
+They may be assigned function names (or other pointers), passed as callbacks and
+called indirectly. Effects on the pointer type are enforced on assignment and at
+the indirect call site (see *Effects* below).
 
 ## Statements
 
@@ -239,9 +269,8 @@ main =
 }
 ```
 
-Notes:
-- Region handles are normal pointers; the language does not yet enforce no-escape.
-- `loi_region_alloc` is available from `std`.
+## Runtime
+Built-in runtime helpers (`loi_print_*`, `loi_alloc`, `loi_region_*`, math, threads, etc.) are always linked into executables, so you don't need `import std` to call them. The `std` package is available under `lib/std` and can be loaded with `@inc std` or `import std` if desired.
 
 ## Effects annotations (experimental)
 
@@ -262,9 +291,20 @@ Grammar:
 FuncSignature ::= '(' ParamList? ')' (':' Type | '->' Type)? ('!' Ident (',' Ident)*)?
 ```
 
-The compiler records `effects` in the AST and prints them with `--print-tree` or
-default output, but does not yet perform call-site effect checking. This is
-intentional for incremental experimentation.
+The compiler records `effects` on every function and function-pointer *type* and
+**enforces** them:
+
+- a **direct call** to a function with effects requires the caller to declare a
+  superset of those effects;
+- the same rule applies to an **indirect call** through a function-pointer
+  variable/parameter whose type carries effects;
+- **assignment** to a function-pointer target is rejected when the value's
+  effects are not covered by the target type (you cannot silently hide `!IO`
+  behind a pure function pointer).
+
+Effect annotations are excluded from structural type equality, so two function
+types that differ only in effects still unify for overload/assignment purposes;
+the separate effect check is what makes them safe.
 
 ## Pointers and dereference assignment
 
@@ -301,17 +341,23 @@ use the `@` sigil so the metaprogramming layer is visually unified (with
 `@if`/`@align`/`@pack`):
 
 - `@(define NAME replacement)` — object-like and function-like macros
-- `@(include "relative/or/absolute.h")` — inlines the file, recursive up to a
-  depth limit
-- `@(include <system/path>)` — searched in `.` then `/usr/include` and
-  `/usr/include/x86_64-linux-gnu`
+- `@(inc "relative/or/absolute.loi")` — inlines a loi file (or package), recursive up to a
+  depth limit. Relative to the file's directory, `./lib`, `./packages`, the standard
+  `/usr/share/loi` paths, and any entry in `LOI_PATH`.
+- `@(inc name)` — package form, resolved through the search paths above (e.g.
+  `@(inc std)` looks for `std.loi`).
+- `@(cinc <system/header.h>)` — verifies a C header exists (searching `.` then
+  `/usr/include`, `/usr/local/include`,
+  `/usr/include/x86_64-linux-gnu`); a trace marker is emitted instead of the
+  header, since C ABI declarations belong to `extern`.
 - `@(undef NAME)`, `@(error message)` — remove a macro, abort compilation
 
 Each of these also has a *line form* that reads to end-of-line (useful when a
 macro body contains unbalanced parentheses):
 
 - `@define NAME replacement`
-- `@include "file"`
+- `@inc "file"`
+- `@cinc <header.h>`
 - `@undef NAME`
 - `@error message`
 
@@ -319,7 +365,7 @@ Example:
 
 ```loi
 @(define LIMIT 8)
-@(include "helpers/helper.loi")
+@inc "helpers/helper.loi"
 
 main =
 {
@@ -327,7 +373,11 @@ main =
 }
 ```
 
-Limitations: no include guards, no C standard-header ABI modeling.
+Includes are guarded automatically: a given file (by real path) is inlined at
+most once per compilation, so libraries need no manual `#ifndef` guards and
+include cycles terminate. `@include` has been removed; use `@inc` (loi file or
+package) or `@cinc` (C header check). C standard-header ABIs are still modelled
+via `extern` declarations rather than textual inclusion.
 
 ## Metaprogramming / Preprocessor
 
@@ -352,8 +402,7 @@ Line form (rest of line becomes the body):
 @(define SQUARE(x) ((x) * (x)))
 ```
 
-Arguments are fully expanded before substitution; argument repetition is allowed.
-The compiler does not add parentheses for you, use them explicitly.
+Arguments are expanded at the point of substitution (after the macro body's other identifiers and meta-operators have been prepared), so macro arguments are typically expanded before their use.  Parentheses are not added automatically; add them in the definition.
 
 The `@(define ...)` form reads to the *matching* parenthesis, so a body may
 contain balanced parentheses (as in the examples above). If a body would contain
@@ -421,28 +470,76 @@ Notes:
 }
 ```
 
-### Include
+### Stringizing, pasting, and variadic macros (`@stringify` / `@paste` / `...`)
+
+`@(`define`) supports three meta-operators that turn a macro *into* a code
+generator:
+
+- `@stringify(x)` – expand to the string literal containing the raw token
+  text of the argument.  Inside `@stringify` the argument is not macro-expanded,
+  matching C's `#` (e.g. `@(define STR(x) @stringify(x))`).
+- `@paste(a, b)` – concatenate the token text of `a` and `b` into a single
+  identifier or token (like C's `##`).  Nested `@stringify`/`@paste` are
+  reduced first, and the pasted result is rescanned for further macro expansion.
+- `...name` (or just `...`) as the last parameter of a function-like macro
+  binds all remaining arguments to `name` joined by commas, giving a variadic
+  macro.  `@if` is honoured in macro bodies (it is resolved in a second
+  conditional pass after expansion, so the branch chosen depends on the
+  substituted value).
 
 ```loi
-@(include "helpers/lib.loi")
-@(include <stdio.h>)
-```
+@(define STR(x) @stringify(x))
+@(define CONCAT(a, b) @paste(a, b))
+@(define LOG(level, ...msg) { @if(level >= 1) { loi_print_str(msg); } })
 
-- `"..."` includes are resolved relative to the including file first, then the current
-  working directory.
-- `<...>` is searched in `.`, `/usr/include`, and
-  `/usr/include/x86_64-linux-gnu`.
+int foobar = 77;
+
+main = () -> int !IO
+{
+    loi_print_str(STR(hello));        // "hello"
+    loi_print_str(STR(LIMIT));         // "LIMIT"
+    int foo = 1, bar = 2;
+    loi_print_int(CONCAT(foo, bar));  // foobar -> 77
+    LOG(1, "hi\n");                  // prints "hi\n"
+    return 0;
+}
+```
 
 ### Limitations
 
 - Object/function-like macros only.
-- No stringizing (`#x`), token pasting (`##`), or variadic macro args yet.
+- `@(define)` reads to the matching parenthesis, so bodies with unbalanced
+  parentheses need the line form `@define`.
 - Conditions evaluate integers and macro bodies; function-like macro names alone
   evaluate to `0`.
+- Though `@stringify`/`@paste`/`...` are now supported, they are still C-style-
+  adventurous features; nesting them deeply or combining with late-expansion
+  effects is not always well-defined.
 - `@(define)` / `@(undef)` are processed left-to-right while conditionals are
   evaluated, so macros declared inside a skipped branch are never registered
   (and an `@(undef)` in a skipped branch does not apply).
-- No C preprocessor ABI guarantees for `@(include <...>)` headers.
+
+### `@inc` / `@cinc` (inlines and C-header checks)
+
+```loi
+@(inc "helpers/lib.loi")
+@(inc std)
+@(cinc <stdio.h>)
+```
+
+- `@inc "..."` includes are resolved relative to the including file first, then
+  `./lib`, `./packages`, the standard `/usr/share/loi` paths, and any entry in
+  `LOI_PATH`.
+- `@inc name` (no path) looks for `name.loi` in those search paths, enabling
+  lightweight package use.
+- `@cinc <...>` searches `.`, `/usr/include`, `/usr/local/include`, and
+  `/usr/include/x86_64-linux-gnu`; since C preprocessor ABI is not modeled, a
+  trace marker (`/* @cinc: … */`) is emitted instead of inlining, and the
+  corresponding ABI functions are declared with `extern`.
+- `@include` is no longer supported: use `@inc` / `@cinc`.
+- Includes are guarded automatically: a given file (by real path) is inlined at
+  most once per compilation, so repeating `@inc` on the same file is safe and
+  include cycles terminate.
 
 ## Compile-time code generation
 

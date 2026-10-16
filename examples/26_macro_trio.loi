@@ -1,0 +1,25 @@
+// macro trio: @stringify, @paste and variadic macros
+@(define STR(x) @stringify(x))
+@(define CONCAT(a, b) @paste(a, b))
+@(define LIMIT 8)
+@(define LOG(level, ...msg) { @if(level >= 1) { loi_print_str(msg); } })
+
+int foobar = 77;
+
+main = () -> int !IO
+{
+    // stringify captures the raw token text (not expanded)
+    loi_print_str(STR(hello));        // hello
+    loi_print_str(STR(LIMIT));        // LIMIT
+    loi_print_str(STR(1 + 2));        // 1 + 2
+
+    // paste joins two token fragments into one identifier
+    int foo = 1;
+    int bar = 2;
+    loi_print_int(CONCAT(foo, bar));  // foobar -> 77
+
+    // variadic macro: ...msg joined into a single value
+    LOG(1, "log: variadic works\n");
+
+    return 0;
+}

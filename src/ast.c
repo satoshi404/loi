@@ -42,12 +42,14 @@ Type *type_clone(Type *t) {
         for (size_t i = 0; i < t->param_count; i++) c->param_types[i] = type_clone(t->param_types[i]);
         c->param_count = t->param_count;
     }
+    c->effects = t->effects ? strdup(t->effects) : NULL;
     return c;
 }
 
 void type_free(Type *t) {
     if (!t) return;
     free(t->name);
+    free(t->effects);
     type_free(t->base);
     type_free(t->return_type);
     for (size_t i = 0; i < t->param_count; i++) type_free(t->param_types[i]);
@@ -90,6 +92,7 @@ const char *ast_node_type_str(ASTNodeType type) {
     switch (type) {
         case AST_PROGRAM: return "PROGRAM";
         case AST_IMPORT: return "IMPORT";
+    case AST_PACKAGE: return "PACKAGE";
         case AST_VAR_DECL: return "VAR_DECL";
         case AST_FUNC_DECL: return "FUNC_DECL";
         case AST_STRUCT_DECL: return "STRUCT_DECL";
@@ -120,6 +123,7 @@ const char *ast_node_type_str(ASTNodeType type) {
         case AST_EXPR_NUMBER: return "NUMBER";
         case AST_EXPR_STRING: return "STRING";
         case AST_EXPR_CHAR: return "CHAR";
+        case AST_EXPR_NULL: return "NULL";
         case AST_EXPR_SIZEOF: return "SIZEOF";
         case AST_EXPR_ALIGNOF: return "ALIGNOF";
         case AST_EXPR_OFFSETOF: return "OFFSETOF";
@@ -129,6 +133,46 @@ const char *ast_node_type_str(ASTNodeType type) {
 
 static void indent(int n) { for (int i=0;i<n;i++) putchar(' '); }
 
+/* render a type as source-like text for AST dumps */
+static void type_to_str_r(Type *t, char *buf, size_t cap) {
+    if (!t) { snprintf(buf, cap, "?"); return; }
+    if (t->kind == TY_POINTER) {
+        char inner[256]; type_to_str_r(t->base, inner, sizeof(inner));
+        snprintf(buf, cap, "%s*", inner);
+        return;
+    }
+    if (t->kind == TY_ARRAY) {
+        char inner[256]; type_to_str_r(t->base, inner, sizeof(inner));
+        if (t->array_size && t->array_size->str_value)
+            snprintf(buf, cap, "%s[%s]", inner, t->array_size->str_value);
+        else
+            snprintf(buf, cap, "%s[]", inner);
+        return;
+    }
+    if (t->kind == TY_FUNCTION) {
+        char *p = buf; size_t rem = cap;
+        int n = snprintf(p, rem, "(");
+        p += n; rem -= (size_t)n;
+        for (size_t i = 0; i < t->param_count && rem > 1; i++) {
+            char inner[256]; type_to_str_r(t->param_types[i], inner, sizeof(inner));
+            n = snprintf(p, rem, "%s%s", i ? ", " : "", inner);
+            p += n; rem -= (size_t)n;
+        }
+        char ret[256]; type_to_str_r(t->return_type, ret, sizeof(ret));
+        n = snprintf(p, rem, ") -> %s", ret);
+        p += n; rem -= (size_t)n;
+        if (t->effects && rem > 2) snprintf(p, rem, " !%s", t->effects);
+        return;
+    }
+    snprintf(buf, cap, "%s", t->name ? t->name : "?");
+}
+
+static char *type_to_str(Type *t) {
+    char buf[512];
+    type_to_str_r(t, buf, sizeof(buf));
+    return strdup(buf);
+}
+
 void ast_print(ASTNode *node, int in) {
     if (!node) { indent(in); printf("<null>\n"); return; }
     indent(in);
@@ -137,8 +181,10 @@ void ast_print(ASTNode *node, int in) {
     if (node->str_value) printf(" %s", node->str_value);
     printf("  (L%d)\n", node->line);
     if (node->ty) {
+        char *ts = type_to_str(node->ty);
         indent(in+2);
-        printf("type=%s\n", node->ty->name ? node->ty->name : "?");
+        printf("type=%s\n", ts);
+        free(ts);
     }
     if (node->init) { indent(in+2); printf("init:\n"); ast_print(node->init, in+4); }
     if (node->type == AST_RETURN && node->left) { indent(in+2); printf("value:\n"); ast_print(node->left, in+4); }

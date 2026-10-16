@@ -1,0 +1,4 @@
+/* must fail to parse: expression statement without semicolon/invalid */
+main = () -> int {
+    return 1 +
+}

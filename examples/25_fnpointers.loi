@@ -1,0 +1,37 @@
+// typed function pointers
+type CmpFn = (a: int, b: int) -> int;
+
+my_less    = (a: int, b: int): int { return a < b; }
+my_greater = (a: int, b: int): int { return a > b; }
+
+cmp: CmpFn = null;        // global function-pointer variable (alias type)
+
+// effects tracked on function-pointer types
+noop       = (n: int) -> void !IO { loi_print_int(n); }
+io_handler: (n: int) -> void !IO = null;
+
+// functions taking callbacks
+apply = (f: (a: int, b: int) -> int, x: int, y: int): int { return f(x, y); }
+
+compare_with = (f: (a: int, b: int) -> int, x: int, y: int): int
+{
+    if (f(x, y)) { return 1; }
+    return 0;
+}
+
+main = () -> int !IO
+{
+    cmp = my_greater;
+    loi_print_int(cmp(2, 3));              // 2 > 3 -> 0
+    loi_print_int(cmp(5, 3));              // 5 > 3 -> 1
+
+    // pass a function name directly as a callback argument
+    loi_print_int(apply(my_less, 2, 3));     // 2 < 3 -> 1
+    loi_print_int(compare_with(my_less, 5, 3)); // 5 > 3 -> 1
+
+    // effects flow through a function-pointer variable
+    io_handler = noop;
+    io_handler(42);
+
+    return 0;
+}

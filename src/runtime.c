@@ -6,7 +6,7 @@
 #include <math.h>
 #include <pthread.h>
 #include <unistd.h>
-#include <stdatomic.h>>
+#include <stdatomic.h>
 
 void *loi_alloc(size_t sz) {
     return malloc(sz ? sz : 1);

@@ -1,4 +1,4 @@
-@(include "helpers/lib.loi")
+@inc "helpers/lib.loi"
 
 import std
 

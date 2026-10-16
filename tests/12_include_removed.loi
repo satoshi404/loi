@@ -1,0 +1,3 @@
+/* @include is removed: must report the replacement */
+@include "lib/guarded.loi"
+main = () -> int { return 0; }

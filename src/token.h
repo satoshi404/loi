@@ -15,6 +15,7 @@ typedef enum {
 
     /* Keywords */
     TOK_KW_IMPORT,
+    TOK_KW_PACKAGE,
     TOK_KW_MAIN,
     TOK_KW_RETURN,
     TOK_KW_IF,

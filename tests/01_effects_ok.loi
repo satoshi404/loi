@@ -1,0 +1,13 @@
+/* effects: callers declaring !IO may call !IO functions */
+io = (): void !IO {
+    loi_print_str("in io\n");
+}
+
+does_io = (): int !IO {
+    io();
+    return 7;
+}
+
+main = () -> int !IO {
+    return does_io();
+}

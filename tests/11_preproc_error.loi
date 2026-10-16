@@ -1,0 +1,3 @@
+/* must abort at preprocessing: @error directive */
+@error this configuration is invalid
+main = () -> int { return 0; }

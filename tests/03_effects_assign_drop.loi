@@ -1,0 +1,9 @@
+/* effects: cannot store an !IO fn where a pure fn is expected */
+type PureFn = ()->void;
+io = (): void !IO { loi_print_str("x\n"); }
+
+main = () -> int {
+    f: PureFn;
+    f = io;        /* must be rejected */
+    return 0;
+}

@@ -1,0 +1,17 @@
+/* macro trio: @stringify, @paste and variadic macros */
+@(define STR(x) @stringify(x))
+@(define CONCAT(a, b) @paste(a, b))
+@(define LIMIT 8)
+@(define LOG(level, ...msg) { @if(level >= 1) { loi_print_str(msg); } })
+
+int foobar = 77;
+
+main = () -> int !IO
+{
+    loi_print_str(STR(hello));        /* hello   */
+    loi_print_str(STR(LIMIT));        /* LIMIT   */
+    int foo = 1;
+    int bar = 2;
+    LOG(1, "variadic ok\n");
+    return CONCAT(foo, bar);          /* 77 */
+}

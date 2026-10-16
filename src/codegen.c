@@ -24,6 +24,23 @@ static StructInfo *find_struct(const char *name) {
     return NULL;
 }
 
+/* type aliases (`type X = ...`) — borrowed from the AST, which outlives codegen */
+typedef struct { char *name; Type *ty; } AliasInfo;
+static AliasInfo cg_aliases[64];
+static int cg_alias_count = 0;
+
+static Type *cg_resolve_type(Type *t) {
+    for (int i = 0; i < 16 && t && t->name &&
+         (t->kind == TY_NAMED || t->kind == TY_PRIMITIVE); i++) {
+        int found = 0;
+        for (int j = 0; j < cg_alias_count; j++) {
+            if (strcmp(cg_aliases[j].name, t->name) == 0) { t = cg_aliases[j].ty; found = 1; break; }
+        }
+        if (!found) break;
+    }
+    return t;
+}
+
 typedef struct {
     char *name;
     char *ir;
@@ -200,6 +217,7 @@ static char *new_label(CG *cg, const char *prefix) {
 
 static char *llvm_type(Type *t) {
     if (!t) return strdup("i32");
+    t = cg_resolve_type(t);
     if (t->kind == TY_POINTER || t->kind == TY_FUNCTION) return strdup("ptr");
     if (t->kind == TY_ARRAY) {
         char *base = llvm_type(t->base);
@@ -286,7 +304,9 @@ static char *cast_value(CG *cg, const char *val, const char *from, const char *t
         int tw = atoi(to+1);
         if (fw > 0 && tw > 0 && fw < tw) {
             char *r = new_tmp(cg);
-            fprintf(cg->out, "  %s = sext %s %s to %s\n", r, from, val, to);
+            /* i1 is a boolean: zero-extend so true == 1, not -1 */
+            const char *op = (fw == 1) ? "zext" : "sext";
+            fprintf(cg->out, "  %s = %s %s %s to %s\n", r, op, from, val, to);
             return r;
         }
         if (fw > 0 && tw > 0 && fw > tw) {
@@ -376,6 +396,10 @@ static char *codegen_expr(CG *cg, ASTNode *e, char **out_type) {
     if (e->type == AST_EXPR_CHAR) {
         if (out_type) *out_type = strdup("i8");
         return char_to_int(e->str_value);
+    }
+    if (e->type == AST_EXPR_NULL) {
+        if (out_type) *out_type = strdup("ptr");
+        return strdup("null");
     }
     if (e->type == AST_EXPR_STRING) {
         char *g = get_string_global(cg, e->str_value ? e->str_value : "");
@@ -700,6 +724,43 @@ static char *codegen_expr(CG *cg, ASTNode *e, char **out_type) {
         return r;
     }
     if (e->type == AST_EXPR_CALL) {
+        /* indirect call: callee is a variable holding a function pointer */
+        if (e->left && e->left->type == AST_EXPR_IDENT) {
+            CGVar *fv = find_var(cg, e->left->name);
+            Type *fty = fv ? cg_resolve_type(fv->asty) : NULL;
+            if (fv && fty && fty->kind == TY_FUNCTION) {
+                size_t argc = e->arg_count;
+                char **rawvals = xmalloc((argc?argc:1)*sizeof(char*));
+                char **rawtypes = xmalloc((argc?argc:1)*sizeof(char*));
+                for (size_t i = 0; i < argc; i++) {
+                    char *t = NULL;
+                    rawvals[i] = codegen_expr(cg, e->args[i], &t);
+                    rawtypes[i] = t ? t : strdup("i32");
+                }
+                char *ret = fty->return_type ? llvm_type(fty->return_type) : strdup("i32");
+                char **argvals = xmalloc((argc?argc:1)*sizeof(char*));
+                char **argtypes = xmalloc((argc?argc:1)*sizeof(char*));
+                for (size_t i = 0; i < argc; i++) {
+                    const char *pt = (i < fty->param_count && fty->param_types[i]) ? llvm_type(fty->param_types[i]) : strdup("i32");
+                    argvals[i] = cast_value(cg, rawvals[i], rawtypes[i], pt);
+                    argtypes[i] = strdup(pt);
+                }
+                char *fp = new_tmp(cg);
+                fprintf(cg->out, "  %s = load ptr, ptr %s\n", fp, fv->ir);
+                int is_void = (strcmp(ret, "void") == 0);
+                char *r = is_void ? strdup("0") : new_tmp(cg);
+                fprintf(cg->out, "  ");
+                if (!is_void) fprintf(cg->out, "%s = ", r);
+                fprintf(cg->out, "call %s %s(", ret, fp);
+                for (size_t i = 0; i < argc; i++) {
+                    if (i) fprintf(cg->out, ", ");
+                    fprintf(cg->out, "%s %s", argtypes[i], argvals[i]);
+                }
+                fprintf(cg->out, ")\n");
+                if (out_type) *out_type = strdup(ret);
+                return is_void ? strdup("0") : r;
+            }
+        }
         /* callee name */
         char *callee = NULL;
         if (e->left && e->left->type == AST_EXPR_IDENT) callee = e->left->name;
@@ -1362,6 +1423,51 @@ static void add_runtime_funcs(CG *cg) {
     (void)p_i64;
 }
 
+/* emit a top-level global variable; it is registered in the base scope so
+   function bodies can load/store it through `ptr @name` */
+static void emit_global_var(CG *cg, ASTNode *d) {
+    if (!d || !d->name) return;
+    char *t = d->ty ? llvm_type(d->ty) : strdup("i32");
+    ASTNode *ini = d->init;
+    int emitted = 0;
+    if (ini && ini->type == AST_EXPR_NULL) {
+        fprintf(cg->out, "@%s = global %s null\n", d->name, t);
+        emitted = 1;
+    } else if (ini && ini->type == AST_EXPR_NUMBER && ini->str_value) {
+        const char *lex = ini->str_value;
+        if (strcmp(t, "ptr") == 0) {
+            fprintf(cg->out, "@%s = global ptr inttoptr (i32 %s to ptr)\n", d->name, lex);
+            emitted = 1;
+        } else if (t[0] == 'i' || strcmp(t, "float") == 0 || strcmp(t, "double") == 0) {
+            fprintf(cg->out, "@%s = global %s %s\n", d->name, t, lex);
+            emitted = 1;
+        }
+    } else if (ini && ini->type == AST_EXPR_STRING && strcmp(t, "ptr") == 0) {
+        char *g = get_string_global(cg, ini->str_value ? ini->str_value : "");
+        fprintf(cg->out, "@%s = global ptr %s\n", d->name, g);
+        emitted = 1;
+    } else if (ini && ini->type == AST_EXPR_IDENT && ini->name) {
+        if (find_func(cg, ini->name)) {
+            fprintf(cg->out, "@%s = global ptr @%s\n", d->name, ini->name);
+            emitted = 1;
+        } else {
+            CGVar *gv = find_var(cg, ini->name);
+            if (gv && strcmp(gv->type, "ptr") == 0) {
+                fprintf(cg->out, "@%s = global ptr %s\n", d->name, gv->ir);
+                emitted = 1;
+            }
+        }
+    }
+    if (!emitted) {
+        if (strcmp(t, "void") != 0) fprintf(cg->out, "@%s = global %s zeroinitializer\n", d->name, t);
+        else { free(t); return; }
+    }
+    char *irname = malloc(strlen(d->name) + 2);
+    sprintf(irname, "@%s", d->name);
+    add_var(cg, d->name, irname, t, d->ty);
+    free(irname);
+}
+
 /* ---------- top-level ---------- */
 void codegen_program(ASTNode *prog, FILE *out) {
     CG cg;
@@ -1370,6 +1476,17 @@ void codegen_program(ASTNode *prog, FILE *out) {
     add_runtime_funcs(&cg);
     fprintf(out, "target triple = \"aarch64-unknown-linux-gnu\"\n\n");
     fflush(out);
+    /* type aliases */
+    if (prog && prog->items) {
+        for (size_t i = 0; i < prog->item_count; i++) {
+            ASTNode *d = prog->items[i];
+            if (d && d->type == AST_TYPE_DECL && d->name && d->alias_type && cg_alias_count < 64) {
+                cg_aliases[cg_alias_count].name = strdup(d->name);
+                cg_aliases[cg_alias_count].ty = d->alias_type;
+                cg_alias_count++;
+            }
+        }
+    }
     /* struct types */
     if (prog && prog->items) {
         for (size_t i = 0; i < prog->item_count; i++) {
@@ -1428,14 +1545,20 @@ void codegen_program(ASTNode *prog, FILE *out) {
 
     /* top-level declarations */
     if (prog) {
+        /* base scope: globals live here for the whole codegen */
+        scope_push(&cg);
+        for (size_t i = 0; i < prog->item_count; i++) {
+            ASTNode *d = prog->items[i];
+            if (d && d->type == AST_VAR_DECL) emit_global_var(&cg, d);
+        }
         for (size_t i = 0; i < prog->item_count; i++) {
             ASTNode *d = prog->items[i];
             if (!d) continue;
             if (d->type == AST_FUNC_DECL) {
                 codegen_function(&cg, d);
             } else if (d->type == AST_VAR_DECL) {
-                /* global var not fully supported; skip */
-            } else if (d->type == AST_STRUCT_DECL || d->type == AST_TYPE_DECL || d->type == AST_EXTERN_DECL) {
+                /* globals emitted above */
+            } else if (d->type == AST_STRUCT_DECL || d->type == AST_TYPE_DECL || d->type == AST_EXTERN_DECL || d->type == AST_PACKAGE) {
                 /* skip */
             } else if (d->type == AST_IMPORT) {
                 /* skip */
@@ -1501,6 +1624,9 @@ static long struct_size_align(const char *name, long *align_out) {
         off += fs;
         if (al > maxal) maxal = al;
     }
+    /* `@align(n)` raises the struct's alignment (never lowers it), so the
+       size is padded up to the effective alignment. */
+    if (!si->packed && si->align > 0 && si->align > maxal) maxal = si->align;
     if (!si->packed) off = (off + maxal - 1) / maxal * maxal;
     if (align_out) *align_out = maxal;
     return off;

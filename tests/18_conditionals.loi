@@ -1,0 +1,15 @@
+/* @if / @elif / @else / @endif at compile time */
+@(define LEVEL 2)
+
+main = () -> int
+{
+    int r = 0;
+    @if(LEVEL == 1) {
+        r = 10;
+    } @elif(LEVEL == 2) {
+        r = 20;
+    } @else {
+        r = 30;
+    }
+    return r;   /* 20 */
+}

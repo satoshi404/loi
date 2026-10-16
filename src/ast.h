@@ -6,6 +6,7 @@
 typedef enum {
     AST_PROGRAM,
     AST_IMPORT,
+    AST_PACKAGE,
     AST_VAR_DECL,
     AST_FUNC_DECL,
     AST_STRUCT_DECL,
@@ -37,6 +38,7 @@ typedef enum {
     AST_EXPR_NUMBER,
     AST_EXPR_STRING,
     AST_EXPR_CHAR,
+    AST_EXPR_NULL,
     AST_EXPR_SIZEOF,
     AST_EXPR_ALIGNOF,
     AST_EXPR_OFFSETOF
@@ -57,6 +59,7 @@ struct Type {
     Type **param_types;
     size_t param_count;
     Type *return_type;
+    char *effects;      /* function type effects, e.g. "IO,Alloc" (TY_FUNCTION) */
 };
 
 struct ASTNode {

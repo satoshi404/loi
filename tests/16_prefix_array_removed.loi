@@ -1,0 +1,7 @@
+/* the old prefix array form [n]T is removed: must fail to parse.
+   use the canonical postfix form `int[n] a;` instead. */
+main = () -> int
+{
+    [3]int a;
+    return 0;
+}

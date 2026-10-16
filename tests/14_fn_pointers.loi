@@ -1,0 +1,16 @@
+/* typed function pointers: alias, callbacks, null init */
+type CmpFn = (a: int, b: int) -> int;
+
+my_less = (a: int, b: int): int { return a < b; }
+
+cmp: CmpFn = null;
+
+apply = (f: (a: int, b: int) -> int, x: int, y: int): int { return f(x, y); }
+
+main = () -> int
+{
+    cmp = my_less;
+    int r1 = cmp(2, 3);           /* 1 */
+    int r2 = apply(my_less, 5, 3);/* 0 */
+    return r1 + r2;               /* 1 */
+}

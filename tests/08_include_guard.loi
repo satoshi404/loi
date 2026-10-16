@@ -1,0 +1,6 @@
+/* include guards: @inc of the same file twice is safe */
+@inc "lib/guarded.loi"
+@inc "lib/guarded.loi"
+main = () -> int {
+    return guarded_value(41);   /* 42 */
+}

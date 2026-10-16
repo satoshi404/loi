@@ -1,0 +1,25 @@
+/* metaprogramming: define, if, repeat, for, reflection */
+@(define LIMIT 4)
+@(define SQUARE(x) ((x) * (x)))
+
+main = () -> int {
+    int total = 0;
+    total = total + SQUARE(3);        /* +9 */
+
+    @if(LIMIT > 2) {
+        total = total + 1;            /* +1 (branch taken) */
+    } @else {
+        total = total + 100;
+    }
+
+    @repeat(2) {
+        total = total * 2;            /* *4 */
+    }
+
+    @for(i, 0, 3) {
+        total = total + i;            /* +0+1+2 */
+    }
+
+    /* total = (9+1)*4 = 40 ; 40+0+1+2 = 43 */
+    return total;
+}
