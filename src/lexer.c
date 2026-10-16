@@ -109,6 +109,9 @@ static TokenType keyword_type(const char *s, size_t len) {
     if (len == 2 && strncmp(s, "if", 2) == 0) return TOK_KW_IF;
     if (len == 4 && strncmp(s, "else", 4) == 0) return TOK_KW_ELSE;
     if (len == 5 && strncmp(s, "while", 5) == 0) return TOK_KW_WHILE;
+    if (len == 6 && strncmp(s, "switch", 6) == 0) return TOK_KW_SWITCH;
+    if (len == 4 && strncmp(s, "case", 4) == 0) return TOK_KW_CASE;
+    if (len == 7 && strncmp(s, "default", 7) == 0) return TOK_KW_DEFAULT;
     if (len == 3 && strncmp(s, "for", 3) == 0) return TOK_KW_FOR;
     if (len == 2 && strncmp(s, "fn", 2) == 0) return TOK_KW_FN;
     if (len == 3 && strncmp(s, "let", 3) == 0) return TOK_KW_LET;
@@ -122,7 +125,6 @@ static TokenType keyword_type(const char *s, size_t len) {
     if (len == 7 && strncmp(s, "ensures", 7) == 0) return TOK_KW_ENSURES;
     if (len == 6 && strncmp(s, "region", 6) == 0) return TOK_KW_REGION;
     if (len == 6 && strncmp(s, "effect", 6) == 0) return TOK_KW_EFFECT;
-    if (len == 4 && strncmp(s, "pure", 4) == 0) return TOK_KW_PURE;
     if (len == 6 && strncmp(s, "struct", 6) == 0) return TOK_KW_STRUCT;
     if (len == 5 && strncmp(s, "union", 5) == 0) return TOK_KW_UNION;
     if (len == 4 && strncmp(s, "enum", 4) == 0) return TOK_KW_ENUM;
@@ -132,6 +134,7 @@ static TokenType keyword_type(const char *s, size_t len) {
     if (len == 3 && strncmp(s, "int", 3) == 0) return TOK_KW_INT;
     if (len == 5 && strncmp(s, "float", 5) == 0) return TOK_KW_FLOAT;
     if (len == 6 && strncmp(s, "double", 6) == 0) return TOK_KW_DOUBLE;
+    if (len == 2 && strncmp(s, "do", 2) == 0) return TOK_KW_DO;
     if (len == 4 && strncmp(s, "char", 4) == 0) return TOK_KW_CHAR;
     if (len == 4 && strncmp(s, "bool", 4) == 0) return TOK_KW_BOOL;
     if (len == 4 && strncmp(s, "void", 4) == 0) return TOK_KW_VOID;
@@ -344,6 +347,7 @@ Token lexer_next(Lexer *lex) {
     if (c == '|' && n1 == '|') { advance(lex); advance(lex); return make_token(lex, TOK_PIPEPIPE, "||", 2, line, col); }
     if (c == '+' && n1 == '+') { advance(lex); advance(lex); return make_token(lex, TOK_PLUSPLUS, "++", 2, line, col); }
     if (c == '-' && n1 == '-') { advance(lex); advance(lex); return make_token(lex, TOK_MINUSMINUS, "--", 2, line, col); }
+    if (c == '=' && n1 == '>') { advance(lex); advance(lex); return make_token(lex, TOK_FAT_ARROW, "=>", 2, line, col); }
     if (c == '+' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_PLUSEQ, "+=", 2, line, col); }
     if (c == '-' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_MINUSEQ, "-=", 2, line, col); }
     if (c == '*' && n1 == '*') { advance(lex); advance(lex); return make_token(lex, TOK_STARSTAR, "**", 2, line, col); }
@@ -351,6 +355,7 @@ Token lexer_next(Lexer *lex) {
     if (c == '/' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_SLASHEQ, "/=", 2, line, col); }
     if (c == '%' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_PERCENTEQ, "%=", 2, line, col); }
     if (c == '-' && n1 == '>') { advance(lex); advance(lex); return make_token(lex, TOK_ARROW, "->", 2, line, col); }
+    if (c == '=' && n1 == '>') { advance(lex); advance(lex); return make_token(lex, TOK_FAT_ARROW, "=>", 2, line, col); }
     if (c == '<' && n1 == '<') { advance(lex); advance(lex); return make_token(lex, TOK_LSHIFT, "<<", 2, line, col); }
     if (c == '>' && n1 == '>') { advance(lex); advance(lex); return make_token(lex, TOK_RSHIFT, ">>", 2, line, col); }
     if (c == '&' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_AMPEQ, "&=", 2, line, col); }

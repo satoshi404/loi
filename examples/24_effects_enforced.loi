@@ -1,0 +1,55 @@
+/* Effects enforcement demo */
+
+io = (): void !IO {
+    loi_print_str("hello from io");
+}
+
+alloc = (): void* !Alloc {
+    return loi_region_alloc(0, 8);
+}
+
+io_and_alloc = (): void !IO,Alloc {
+    loi_print_str("hello");
+    loi_region_alloc(0, 8);
+}
+
+/* This function has no effects - it should be able to call pure functions only */
+pure = (): int {
+    return 42;
+}
+
+/* This function has IO effect - it can call io() but not alloc() */
+does_io = (): int !IO {
+    io();
+    return 1;
+}
+
+/* This function has both IO and Alloc effects */
+does_io_and_alloc = (): int !IO,Alloc {
+    io();
+    loi_region_alloc(0, 8);
+    return 2;
+}
+
+/* This should fail: pure function calling io() which has IO effect */
+/* 
+calls_io = () -> int {
+    io();
+    return 0;
+}
+*/
+
+/* This should fail: does_io (IO only) calling alloc() which needs Alloc */
+/*
+calls_alloc_from_io = () -> int !IO {
+    alloc();
+    return 0;
+}
+*/
+
+main = () -> int !IO,Alloc {
+    /* These should work */
+    int a = does_io();
+    int b = does_io_and_alloc();
+    return a + b;
+}

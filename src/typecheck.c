@@ -47,7 +47,7 @@ static Type *scope_lookup(const char *name) {
 }
 
 /* function table */
-typedef struct { char *name; Type *return_type; size_t param_count; Type **param_types; ASTNode *node; } FuncInfo;
+typedef struct { char *name; Type *return_type; size_t param_count; Type **param_types; ASTNode *node; char *effects; } FuncInfo;
 static FuncInfo *funcs = NULL;
 static size_t func_count = 0, func_cap = 0;
 
@@ -65,6 +65,7 @@ static void register_func(ASTNode *f) {
         funcs[func_count].param_types[j] = f->args[j] ? f->args[j]->ty : NULL;
     }
     funcs[func_count].node = f;
+    funcs[func_count].effects = f->effects ? strdup(f->effects) : NULL;
     func_count++;
 }
 
@@ -87,6 +88,69 @@ static int type_equal(Type *a, Type *b) {
     if (a->name && b->name && strcmp(a->name, b->name) != 0) return 0;
     return 1;
 }
+
+/* Type registry for struct/union field lookup */
+typedef struct {
+    char *name;
+    ASTNode *struct_decl;
+} TypeRegEntry;
+
+static TypeRegEntry *type_registry = NULL;
+static size_t type_registry_count = 0;
+static size_t type_registry_cap = 0;
+
+static void type_registry_add(const char *name, ASTNode *struct_decl) {
+    if (type_registry_count == type_registry_cap) {
+        size_t nc = type_registry_cap ? type_registry_cap * 2 : 16;
+        type_registry = realloc(type_registry, nc * sizeof(*type_registry));
+        type_registry_cap = nc;
+    }
+    type_registry[type_registry_count].name = strdup(name);
+    type_registry[type_registry_count].struct_decl = struct_decl;
+    type_registry_count++;
+}
+
+static ASTNode *type_registry_find(const char *name) {
+    for (size_t i = 0; i < type_registry_count; i++) {
+        if (type_registry[i].name && strcmp(type_registry[i].name, name) == 0) {
+            return type_registry[i].struct_decl;
+        }
+    }
+    return NULL;
+}
+
+static void type_registry_clear(void) {
+    for (size_t i = 0; i < type_registry_count; i++) {
+        free(type_registry[i].name);
+    }
+    free(type_registry);
+    type_registry = NULL;
+    type_registry_count = 0;
+    type_registry_cap = 0;
+}
+
+/* helper: check if caller effects cover callee effects */
+static int effects_cover(const char *caller, const char *callee) {
+    if (!callee || !*callee) return 1; /* callee has no effects */
+    if (!caller || !*caller) return 0; /* caller has no effects but callee does */
+    /* simple comma-separated list containment check */
+    char *caller_cpy = strdup(caller);
+    char *callee_cpy = strdup(callee);
+    char *tok = strtok(callee_cpy, ",");
+    int ok = 1;
+    while (tok && ok) {
+        char *c = strstr(caller_cpy, tok);
+        if (!c || (c > caller_cpy && c[-1] != ',' && c[-1] != ' ') || (c[strlen(tok)] && c[strlen(tok)] != ',' && c[strlen(tok)] != ' ')) {
+            ok = 0; break;
+        }
+        tok = strtok(NULL, ",");
+    }
+    free(caller_cpy);
+    free(callee_cpy);
+    return ok;
+}
+
+static char *current_function_effects = NULL;
 
 static Type *type_of_expr(ASTNode *e);
 
@@ -157,6 +221,8 @@ static Type *type_of_expr(ASTNode *e) {
             if (tt && et && !type_equal(tt, et)) add_error("ternary branch types differ");
             return tt ? tt : et;
         }
+        /* helper: check if caller effects cover callee effects */
+
         case AST_EXPR_CALL: {
             const char *name = (e->left && e->left->type == AST_EXPR_IDENT) ? e->left->name : NULL;
             FuncInfo *finfo = NULL;
@@ -169,6 +235,10 @@ static Type *type_of_expr(ASTNode *e) {
                     Type *at = type_of_expr(e->args[i]);
                     if (at && finfo->param_types[i] && !type_equal(at, finfo->param_types[i])) add_error("arg %zu type mismatch in call '%s'", i+1, name);
                 }
+                /* effects checking */
+                if (finfo->effects && !effects_cover(current_function_effects, finfo->effects)) {
+                    add_error("call '%s' requires effects '%s' not present in caller", name, finfo->effects);
+                }
                 return finfo->return_type ? finfo->return_type : NULL;
             }
             /* extern: check args recursively */
@@ -176,13 +246,28 @@ static Type *type_of_expr(ASTNode *e) {
             return NULL;
         }
         case AST_EXPR_INDEX: {
-            type_of_expr(e->left);
+            Type *lt = type_of_expr(e->left);
             type_of_expr(e->right);
-            /* element type unknown; return int placeholder */
+            if (lt && lt->kind == TY_ARRAY && lt->base) {
+                return lt->base;
+            }
+            /* fallback */
             Type *t = type_new(TY_PRIMITIVE); t->name = strdup("int"); return t;
         }
         case AST_EXPR_FIELD: {
-            type_of_expr(e->left);
+            Type *lt = type_of_expr(e->left);
+            if (lt && lt->kind == TY_NAMED && lt->name) {
+                ASTNode *sd = type_registry_find(lt->name);
+                if (sd && sd->items) {
+                    for (size_t i = 0; i < sd->item_count; i++) {
+                        ASTNode *f = sd->items[i];
+                        if (f && f->name && e->name && strcmp(f->name, e->name) == 0) {
+                            return f->ty;
+                        }
+                    }
+                }
+            }
+            /* fallback */
             Type *t = type_new(TY_PRIMITIVE); t->name = strdup("int"); return t;
         }
         /* compile-time reflection constants always fold to integers */
@@ -237,6 +322,10 @@ static void check_stmt(ASTNode *s) {
             type_of_expr(s->cond);
             check_stmt(s->body);
             break;
+        case AST_DO_WHILE:
+            type_of_expr(s->cond);
+            check_stmt(s->body);
+            break;
         case AST_FOR:
             scope_push();
             if (s->init_stmt) check_stmt(s->init_stmt);
@@ -280,12 +369,17 @@ int typecheck_program(ASTNode *prog) {
                 ASTNode *p = d->args[j];
                 if (p && p->name) scope_add(p->name, p->ty);
             }
+            char *saved_effects = current_function_effects;
+            current_function_effects = d->effects ? d->effects : NULL;
             check_stmt(d->body);
+            current_function_effects = saved_effects;
             scope_pop();
         } else if (d->type == AST_STRUCT_DECL) {
-            /* register fields as type? no */
+            if (d->name) type_registry_add(d->name, d);
         }
     }
     scope_pop();
-    return errors == 0;
+    int result = errors == 0;
+    type_registry_clear();
+    return result;
 }

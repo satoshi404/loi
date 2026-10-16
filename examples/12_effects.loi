@@ -9,7 +9,7 @@ worker = (arg: void*): void* !IO,Alloc
     return p;
 }
 
-main =
+main = () -> int !IO,Alloc
 {
     region r(64) {
         void* v = worker(r);

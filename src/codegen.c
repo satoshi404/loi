@@ -67,6 +67,12 @@ typedef struct {
     StrList strings;      /* global strings */
     StrList string_names;
     StrList string_values;
+    /* loop label stack for break/continue */
+    char **loop_exit_labels;
+    char **loop_cont_labels;
+    char **loop_update_labels;
+    size_t loop_depth;
+    size_t loop_cap;
 } CG;
 
 static void *xmalloc(size_t n) { void *p = malloc(n); if (!p) abort(); return p; }
@@ -877,9 +883,22 @@ static void codegen_stmt(CG *cg, ASTNode *s) {
             break;
         }
         case AST_WHILE: {
-            char *hdr = new_label(cg, "while.hdr");
-            char *body = new_label(cg, "while.body");
-            char *exit = new_label(cg, "while.exit");
+            char *hdr = new_label(cg, "while_hdr");
+            char *body = new_label(cg, "while_body");
+            char *exit = new_label(cg, "while_exit");
+            /* push loop labels */
+            if (cg->loop_depth == cg->loop_cap) {
+                size_t nc = cg->loop_cap ? cg->loop_cap * 2 : 8;
+                cg->loop_exit_labels = realloc(cg->loop_exit_labels, nc * sizeof(char*));
+                cg->loop_cont_labels = realloc(cg->loop_cont_labels, nc * sizeof(char*));
+                cg->loop_update_labels = realloc(cg->loop_update_labels, nc * sizeof(char*));
+                cg->loop_cap = nc;
+            }
+            cg->loop_exit_labels[cg->loop_depth] = exit;
+            cg->loop_cont_labels[cg->loop_depth] = hdr;
+            cg->loop_update_labels[cg->loop_depth] = NULL;
+            cg->loop_depth++;
+
             fprintf(cg->out, "  br label %%%s\n", hdr);
             fprintf(cg->out, "%s:\n", hdr);
             cg->terminated = 0;
@@ -897,14 +916,195 @@ static void codegen_stmt(CG *cg, ASTNode *s) {
             cg->terminated = 1;
             fprintf(cg->out, "%s:\n", exit);
             cg->terminated = 0;
+
+            cg->loop_depth--;
             break;
         }
-        case AST_FOR: {
+        case AST_DO_WHILE: {
+
+            char *body = new_label(cg, "dowhile_body");
+
+            char *hdr = new_label(cg, "dowhile_hdr");
+
+            char *exit = new_label(cg, "dowhile_exit");
+
+            /* push loop labels */
+
+            if (cg->loop_depth == cg->loop_cap) {
+
+                size_t nc = cg->loop_cap ? cg->loop_cap * 2 : 8;
+
+                cg->loop_exit_labels = realloc(cg->loop_exit_labels, nc * sizeof(char*));
+
+                cg->loop_cont_labels = realloc(cg->loop_cont_labels, nc * sizeof(char*));
+
+                cg->loop_update_labels = realloc(cg->loop_update_labels, nc * sizeof(char*));
+
+                cg->loop_cap = nc;
+
+            }
+
+            cg->loop_exit_labels[cg->loop_depth] = exit;
+
+            cg->loop_cont_labels[cg->loop_depth] = hdr;
+
+            cg->loop_update_labels[cg->loop_depth] = NULL;
+
+            cg->loop_depth++;
+
+
+
+            /* do-while executes body first, then checks condition */
+
+            fprintf(cg->out, "  br label %%%s\n", body);
+
+            fprintf(cg->out, "%s:\n", body);
+
+            cg->terminated = 0;
+
+            scope_push(cg);
+
+            codegen_block(cg, s->body);
+
+            scope_pop(cg);
+
+            /* if body didn't end with a terminator, branch to header */
+            if (!cg->terminated) fprintf(cg->out, "  br label %%%s\n", hdr);
+
+            cg->terminated = 0;
+            fprintf(cg->out, "%s:\n", hdr);
+
+            char *ct; char *cv = codegen_expr(cg, s->cond, &ct);
+
+            char *ci = new_tmp(cg);
+
+            if (is_float_type(ct)) fprintf(cg->out, "  %s = fcmp one %s %s, 0.0\n", ci, ct, cv);
+
+            else fprintf(cg->out, "  %s = icmp ne %s %s, 0\n", ci, ct, cv);
+
+            fprintf(cg->out, "  br i1 %s, label %%%s, label %%%s\n", ci, body, exit);
+
+            fprintf(cg->out, "%s:\n", exit);
+
+            cg->terminated = 0;
+
+
+
+            cg->loop_depth--;
+
+            break;
+        }
+        case AST_SWITCH: {
+            char *cond_type = NULL;
+            char *cond_val = codegen_expr(cg, s->cond, &cond_type);
+            /* collect cases and default */
+            int case_count = 0;
+            ASTNode *default_case = NULL;
+            ASTNode *cases[32];
+            for (size_t i = 0; i < s->item_count; i++) {
+                ASTNode *item = s->items[i];
+                if (item->type == AST_CASE) {
+                    if (case_count < 32) cases[case_count++] = item;
+                } else if (item->type == AST_DEFAULT) {
+                    default_case = item;
+                }
+            }
+            if (case_count == 0 && !default_case) {
+                /* empty switch - just return 0 */
+                if (cg->current_retty && strcmp(cg->current_retty, "void") != 0) {
+                    fprintf(cg->out, "  ret %s 0\n", cg->current_retty);
+                } else {
+                    fprintf(cg->out, "  ret void\n");
+                }
+                cg->terminated = 1;
+                break;
+            }
+
+            /* create unique labels for each case comparison and body */
+            char *exit_label = new_label(cg, "switch_exit");
+            char *case_cmp_labels[32];
+            char *case_body_labels[32];
+            for (int i = 0; i < case_count; i++) {
+                case_cmp_labels[i] = new_label(cg, "switch_cmp");
+                case_body_labels[i] = new_label(cg, "switch_body");
+            }
+            char *default_cmp_label = default_case ? new_label(cg, "switch_default_cmp") : NULL;
+            char *default_body_label = default_case ? new_label(cg, "switch_default_body") : NULL;
+
+            /* evaluate condition once */
+            char *cond_var = new_tmp(cg);
+            fprintf(cg->out, "  %s = alloca %s\n", cond_var, cond_type);
+            fprintf(cg->out, "  store %s %s, ptr %s\n", cond_type, cond_val, cond_var);
+            char *cond_val_load = new_tmp(cg);
+            fprintf(cg->out, "  %s = load %s, ptr %s\n", cond_val_load, cond_type, cond_var);
+
+            /* generate comparison chain */
+            fprintf(cg->out, "  br label %%%s\n", case_cmp_labels[0]);
+
+            for (int i = 0; i < case_count; i++) {
+                ASTNode *c = cases[i];
+                fprintf(cg->out, "%s:\n", case_cmp_labels[i]);
+                char *case_val = codegen_expr(cg, c->cond, NULL);
+                char *cmp = new_tmp(cg);
+                if (is_float_type(cond_type)) {
+                    fprintf(cg->out, "  %s = fcmp oeq %s %s, %s\n", cmp, cond_type, cond_val, case_val);
+                } else {
+                    fprintf(cg->out, "  %s = icmp eq %s %s, %s\n", cmp, cond_type, cond_val, case_val);
+                }
+                char *next_label = (i + 1 < case_count) ? case_cmp_labels[i + 1] : (default_case ? default_cmp_label : exit_label);
+                fprintf(cg->out, "  br i1 %s, label %%%s, label %%%s\n", cmp, case_body_labels[i], next_label);
+            }
+
+            if (default_case) {
+                fprintf(cg->out, "%s:\n", default_cmp_label);
+                fprintf(cg->out, "  br label %%%s\n", default_body_label);
+            } else {
+                fprintf(cg->out, "  br label %%%s\n", exit_label);
+            }
+
+            /* case bodies */
+            for (int i = 0; i < case_count; i++) {
+                fprintf(cg->out, "%s:\n", case_body_labels[i]);
+                cg->terminated = 0;
+                scope_push(cg);
+                codegen_block(cg, cases[i]->body);
+                scope_pop(cg);
+                if (!cg->terminated) fprintf(cg->out, "  br label %%%s\n", exit_label);
+                cg->terminated = 1;
+            }
+            if (default_case) {
+                fprintf(cg->out, "%s:\n", default_body_label);
+                cg->terminated = 0;
+                scope_push(cg);
+                codegen_block(cg, default_case->body);
+                scope_pop(cg);
+                if (!cg->terminated) fprintf(cg->out, "  br label %%%s\n", exit_label);
+                cg->terminated = 1;
+            }
+
+            fprintf(cg->out, "%s:\n", exit_label);
+            cg->terminated = 0;
+            break;
+        }        case AST_FOR: {
             /* init */
             if (s->init_stmt) codegen_stmt(cg, s->init_stmt);
             char *hdr = new_label(cg, "for.hdr");
             char *body = new_label(cg, "for.body");
+            char *update = new_label(cg, "for_update_label");
             char *exit = new_label(cg, "for.exit");
+            /* push loop labels */
+            if (cg->loop_depth == cg->loop_cap) {
+                size_t nc = cg->loop_cap ? cg->loop_cap * 2 : 8;
+                cg->loop_exit_labels = realloc(cg->loop_exit_labels, nc * sizeof(char*));
+                cg->loop_cont_labels = realloc(cg->loop_cont_labels, nc * sizeof(char*));
+                cg->loop_update_labels = realloc(cg->loop_update_labels, nc * sizeof(char*));
+                cg->loop_cap = nc;
+            }
+            cg->loop_exit_labels[cg->loop_depth] = exit;
+            cg->loop_cont_labels[cg->loop_depth] = hdr;
+            cg->loop_update_labels[cg->loop_depth] = update;
+            cg->loop_depth++;
+
             fprintf(cg->out, "  br label %%%s\n", hdr);
             fprintf(cg->out, "%s:\n", hdr);
             cg->terminated = 0;
@@ -921,13 +1121,23 @@ static void codegen_stmt(CG *cg, ASTNode *s) {
             cg->terminated = 0;
             scope_push(cg);
             codegen_block(cg, s->body);
+            codegen_block(cg, s->body);
             scope_pop(cg);
+            /* if body doesn't end with a terminator, branch to update */
+            if (!cg->terminated) {
+                fprintf(cg->out, "  br label %%%s\n", update);
+                cg->terminated = 1;
+            }
             /* update */
+            fprintf(cg->out, "%s:\n", update);
+            cg->terminated = 0;
             if (s->update && !cg->terminated) codegen_stmt(cg, s->update);
             if (!cg->terminated) fprintf(cg->out, "  br label %%%s\n", hdr);
             cg->terminated = 1;
             fprintf(cg->out, "%s:\n", exit);
             cg->terminated = 0;
+
+            cg->loop_depth--;
             break;
         }
         case AST_RETURN: {
@@ -958,6 +1168,27 @@ static void codegen_stmt(CG *cg, ASTNode *s) {
         }
         case AST_ASM: {
             /* ignore */
+            break;
+        }
+        case AST_BREAK: {
+            if (cg->loop_depth == 0) {
+                fprintf(stderr, "error: break outside loop\n");
+                exit(1);
+            }
+            fprintf(cg->out, "  br label %%%s\n", cg->loop_exit_labels[cg->loop_depth - 1]);
+            cg->terminated = 1;
+            break;
+        }
+        case AST_CONTINUE: {
+            if (cg->loop_depth == 0) {
+                fprintf(stderr, "error: continue outside loop\n");
+                exit(1);
+            }
+            /* for for-loops, continue goes to update section; for while/do-while, to header */
+            char *target = cg->loop_update_labels[cg->loop_depth - 1];
+            if (!target) target = cg->loop_cont_labels[cg->loop_depth - 1];
+            fprintf(cg->out, "  br label %%%s\n", target);
+            cg->terminated = 1;
             break;
         }
         default:

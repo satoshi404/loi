@@ -31,7 +31,6 @@ const char *token_type_str(TokenType type) {
         case TOK_KW_ENSURES: return "KW_ENSURES";
         case TOK_KW_REGION: return "KW_REGION";
         case TOK_KW_EFFECT: return "KW_EFFECT";
-        case TOK_KW_PURE: return "KW_PURE";
         case TOK_KW_STRUCT: return "KW_STRUCT";
         case TOK_KW_UNION: return "KW_UNION";
         case TOK_KW_ENUM: return "KW_ENUM";
@@ -88,6 +87,9 @@ const char *token_type_str(TokenType type) {
         case TOK_CARETEQ: return "CARETEQ";
         case TOK_LSHIFTEQ: return "LSHIFTEQ";
         case TOK_RSHIFTEQ: return "RSHIFTEQ";
+    case TOK_KW_SWITCH: return "KW_SWITCH";
+    case TOK_KW_CASE: return "KW_CASE";
+    case TOK_KW_DEFAULT: return "KW_DEFAULT";
         case TOK_LPAREN: return "LPAREN";
         case TOK_RPAREN: return "RPAREN";
         case TOK_LBRACE: return "LBRACE";
@@ -99,6 +101,7 @@ const char *token_type_str(TokenType type) {
         case TOK_COLON: return "COLON";
         case TOK_DOT: return "DOT";
         case TOK_ARROW: return "ARROW";
+        case TOK_FAT_ARROW: return "FAT_ARROW";
         case TOK_QUESTION: return "QUESTION";
         case TOK_AT: return "AT";
         default: return "UNKNOWN";

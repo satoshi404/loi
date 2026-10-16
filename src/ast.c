@@ -101,6 +101,10 @@ const char *ast_node_type_str(ASTNodeType type) {
         case AST_CONTRACT: return "CONTRACT";
         case AST_WHILE: return "WHILE";
         case AST_FOR: return "FOR";
+        case AST_DO_WHILE: return "DO_WHILE";
+        case AST_SWITCH: return "SWITCH";
+        case AST_CASE: return "CASE";
+        case AST_DEFAULT: return "DEFAULT";
         case AST_RETURN: return "RETURN";
         case AST_BREAK: return "BREAK";
         case AST_CONTINUE: return "CONTINUE";

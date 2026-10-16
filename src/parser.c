@@ -45,8 +45,7 @@ static int is_type_keyword(Parser *p) {
            t == TOK_KW_UNSIGNED || t == TOK_KW_SIGNED ||
            t == TOK_KW_STRUCT || t == TOK_KW_UNION || t == TOK_KW_ENUM ||
            t == TOK_KW_CONST || t == TOK_KW_STATIC || t == TOK_KW_VOLATILE ||
-           t == TOK_KW_INLINE || t == TOK_KW_REGION || t == TOK_KW_EFFECT ||
-           t == TOK_KW_PURE;
+           t == TOK_KW_INLINE || t == TOK_KW_REGION || t == TOK_KW_EFFECT;
 }
 
 static int is_type_start(Parser *p) {
@@ -58,7 +57,7 @@ static int is_type_start(Parser *p) {
         t == TOK_KW_STRUCT || t == TOK_KW_UNION || t == TOK_KW_ENUM ||
         t == TOK_KW_CONST || t == TOK_KW_STATIC || t == TOK_KW_VOLATILE ||
         t == TOK_KW_INLINE || t == TOK_IDENTIFIER || t == TOK_KW_FN ||
-        t == TOK_KW_REGION || t == TOK_KW_EFFECT || t == TOK_KW_PURE ||
+        t == TOK_KW_REGION || t == TOK_KW_EFFECT ||
         t == TOK_AT || t == TOK_LPAREN)
         return 1;
     return 0;
@@ -102,6 +101,21 @@ static Type *infer_type_expr(ASTNode *e) {
 
 static Type *parse_type(Parser *p) {
     Type *t = NULL;
+    /* collect prefix array/slice forms like []T or [n]T if someone writes */
+    /* but we want postfix to remain primary; also allow [] prefix for some styles */
+    /* collect prefix arrays in order */
+    struct PrefArr { int has_sz; ASTNode *sz; } pref[16];
+    int npref = 0;
+    while (check(p, TOK_LBRACKET) && npref < 16) {
+        advance_parser(p);
+        ASTNode *sz = NULL;
+        if (!check(p, TOK_RBRACKET)) {
+            sz = parse_expr(p);
+        }
+        expect(p, TOK_RBRACKET, "expected ']'");
+        pref[npref++] = (struct PrefArr){sz != NULL, sz};
+        /* if we see '*' or start of base? but easier: after prefix arrays, continue normally */
+    }
     while (check(p, TOK_KW_CONST) || check(p, TOK_KW_STATIC) ||
            check(p, TOK_KW_VOLATILE) || check(p, TOK_KW_INLINE)) {
         advance_parser(p);
@@ -122,6 +136,16 @@ static Type *parse_type(Parser *p) {
         advance_parser(p);
         t = parse_type(p);
         expect(p, TOK_RPAREN, "expected ')'");
+    } else if (check(p, TOK_KW_STRUCT) || check(p, TOK_KW_UNION) || check(p, TOK_KW_ENUM)) {
+        TokenType kw = p->current.type;
+        advance_parser(p);
+        char *name = NULL;
+        if (check(p, TOK_IDENTIFIER)) {
+            name = p->current.lexeme ? strdup(p->current.lexeme) : NULL;
+            advance_parser(p);
+        }
+        t = type_new(TY_NAMED);
+        t->name = name ? name : (kw == TOK_KW_STRUCT ? strdup("struct") : (kw == TOK_KW_UNION ? strdup("union") : strdup("enum")));
     } else if (check(p, TOK_KW_FN)) {
         advance_parser(p);
         t = type_new(TY_FUNCTION);
@@ -191,6 +215,14 @@ type_suffix:
         } else {
             break;
         }
+    }
+    /* apply prefix arrays (outermost first) */
+    for (int i = 0; i < npref; i++) {
+        Type *arr = type_new(TY_ARRAY);
+        arr->base = t;
+        arr->array_size = pref[i].has_sz ? pref[i].sz : NULL;
+        arr->name = t && t->name ? strdup(t->name) : strdup("?");
+        t = arr;
     }
     return t;
 }
@@ -350,6 +382,19 @@ static ASTNode *parse_while(Parser *p) {
     return n;
 }
 
+static ASTNode *parse_do_while(Parser *p) {
+    int line = p->current.line, col = p->current.column;
+    ASTNode *n = ast_new(AST_DO_WHILE, line, col);
+    expect(p, TOK_KW_DO, "expected 'do'");
+    n->body = parse_block(p);
+    expect(p, TOK_KW_WHILE, "expected 'while'");
+    expect(p, TOK_LPAREN, "expected '('");
+    n->cond = parse_expr(p);
+    expect(p, TOK_RPAREN, "expected ')'");
+    expect(p, TOK_SEMICOLON, "expected ';'");
+    return n;
+}
+
 static ASTNode *parse_for(Parser *p) {
     int line = p->current.line, col = p->current.column;
     ASTNode *n = ast_new(AST_FOR, line, col);
@@ -378,6 +423,38 @@ static ASTNode *parse_for(Parser *p) {
     }
     expect(p, TOK_RPAREN, "expected ')'");
     n->body = parse_block(p);
+    return n;
+}
+
+static ASTNode *parse_switch(Parser *p) {
+    int line = p->current.line, col = p->current.column;
+    ASTNode *n = ast_new(AST_SWITCH, line, col);
+    expect(p, TOK_KW_SWITCH, "expected 'switch'");
+    expect(p, TOK_LPAREN, "expected '('");
+    n->cond = parse_expr(p);
+    expect(p, TOK_RPAREN, "expected ')'");
+    expect(p, TOK_LBRACE, "expected '{'");
+    /* parse cases */
+    while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
+        if (check(p, TOK_KW_CASE)) {
+            advance_parser(p);
+            ASTNode *case_node = ast_new(AST_CASE, p->current.line, p->current.column);
+            case_node->cond = parse_expr(p);
+            expect(p, TOK_COLON, "expected ':'");
+            case_node->body = parse_block(p);
+            ast_add_item(n, case_node);
+        } else if (check(p, TOK_KW_DEFAULT)) {
+            advance_parser(p);
+            ASTNode *def_node = ast_new(AST_DEFAULT, p->current.line, p->current.column);
+            expect(p, TOK_COLON, "expected ':'");
+            def_node->body = parse_block(p);
+            ast_add_item(n, def_node);
+        } else {
+            parser_error(p, "expected 'case' or 'default'");
+            break;
+        }
+    }
+    expect(p, TOK_RBRACE, "expected '}'");
     return n;
 }
 
@@ -444,6 +521,8 @@ static ASTNode *parse_stmt(Parser *p) {
     }
     if (check(p, TOK_KW_WHILE)) return parse_while(p);
     if (check(p, TOK_KW_FOR)) return parse_for(p);
+    if (check(p, TOK_KW_DO)) return parse_do_while(p);
+    if (check(p, TOK_KW_SWITCH)) return parse_switch(p);
     if (check(p, TOK_KW_RETURN)) return parse_return(p);
     if (check(p, TOK_KW_BREAK)) {
         int line = p->current.line, col = p->current.column;
@@ -1110,6 +1189,17 @@ static ASTNode *parse_func(Parser *p) {
         expect(p, TOK_ASSIGN, "expected '='");
     } else {
         parser_error(p, "expected '=' or '('");
+    }
+    if (check(p, TOK_FAT_ARROW)) {
+        advance_parser(p);
+        ASTNode *expr = parse_expr(p);
+        match_tok(p, TOK_SEMICOLON);
+        ASTNode *block = ast_new(AST_BLOCK, n->line, n->column);
+        ASTNode *ret = ast_new(AST_RETURN, expr ? expr->line : n->line, expr ? expr->column : n->column);
+        ret->left = expr;
+        ast_add_item(block, ret);
+        n->body = block;
+        return n;
     }
     ASTNode *b = parse_block(p);
     n->body = b;

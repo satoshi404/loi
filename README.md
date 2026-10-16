@@ -55,8 +55,11 @@ exit codes are 8-bit (`return 300` becomes `44`).
 - **Lexical memory regions**: `region buf(64) { ... }` — bump-allocated at
   block entry, freed at block exit (unless terminated by `return`).
 - **Effect annotations**: `worker = (p: void*): void* !IO,Alloc { ... }` —
-  recorded in the AST (experimental; not yet enforced at call sites).
+  recorded in the AST and **enforced at call sites** (a function calling
+  an `!IO` function must itself declare `!IO`).
 - **Structs with layout control**: `struct S @pack() { ... }`, `@align(n)`.
+- **Control flow**: `if/else`, `while`, `do { } while (...)`, `for`, `switch/case/default`, `break`, `continue`.
+- **Arrays**: prefix form `[n]T`, `[]T` and postfix `T[n]`, `T[]`.
 
 ## Metaprogramming (`@` sigil)
 
@@ -85,6 +88,12 @@ Conditional blocks `@if/@elif/@else` select code at compile time; a
 `@(define)` inside a skipped branch is never registered. `@repeat`/`@for`
 expand to real code before parsing, so there is no runtime loop overhead.
 
+**Compile-time reflection**: `@sizeof(T)`, `@alignof(T)`, `@offsetof(T, f)`,
+`@typeof(expr)` — all fold to constants before codegen.
+
+**Section placement**: `@section("name")` places a function into a named
+assembly section (emits `section "name"` in LLVM IR, `.section name` in asm).
+
 See `docs/syntax.md` for the full grammar and specification.
 
 ## Examples
@@ -104,6 +113,9 @@ See `docs/syntax.md` for the full grammar and specification.
 | `examples/19_compiletime_codegen.loi` | `@repeat` / `@for` unrolling |
 | `examples/20_reflection.loi` | `@sizeof` / `@offsetof` / `@typeof` |
 | `examples/21_sections.loi` | `@section` placement |
+| `examples/22_switch.loi` | `switch`/`case`/`default` |
+| `examples/23_do_while.loi` | `do { } while (...)` loops |
+| `examples/24_effects_enforced.loi` | effects enforcement demo |
 | `examples/main.loi` | multi-file build with `@include` |
 
 ```sh
