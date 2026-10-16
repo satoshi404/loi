@@ -356,8 +356,6 @@ static char *char_to_int(const char *lex) {
     return strdup("0");
 }
 
-static long get_size(Type *t);
-static long get_align(Type *t);
 static char *codegen_expr(CG *cg, ASTNode *e, char **out_type) {
     if (!e) { if (out_type) *out_type = strdup("i32"); return strdup("0"); }
     if (e->type == AST_EXPR_SIZEOF) {
@@ -1559,8 +1557,6 @@ void codegen_program(ASTNode *prog, FILE *out) {
             } else if (d->type == AST_VAR_DECL) {
                 /* globals emitted above */
             } else if (d->type == AST_STRUCT_DECL || d->type == AST_TYPE_DECL || d->type == AST_EXTERN_DECL || d->type == AST_PACKAGE) {
-                /* skip */
-            } else if (d->type == AST_IMPORT) {
                 /* skip */
             }
         }

@@ -1,4 +1,4 @@
-import std
+@inc std
 
 worker = (arg: void*): void*
 {

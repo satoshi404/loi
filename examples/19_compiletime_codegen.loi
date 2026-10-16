@@ -6,7 +6,7 @@
 
    Both run in the preprocessor, so the loop is fully expanded into
    real code before parsing -- there is no runtime loop overhead. */
-import std
+@inc std
 
 main =
 {

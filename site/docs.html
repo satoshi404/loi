@@ -42,13 +42,13 @@
     <section id="intro">
       <h2>Introduction</h2>
       <p>loi combines C-like syntax (functions assigned to names, hybrid variable declarations, semicolons, structs/unions, pointers, arrays, inline <code>asm</code>) with compile-time metaprogramming via the <code>@</code> sigil, effect annotations (<code>!IO,Alloc</code>), lexical regions, and typed function pointers. The output is LLVM IR, compiled to native via <code>clang</code>.</p>
-      <p>Files usually begin with <code>import std</code>, which brings the runtime helpers (printing, math, threads, regions, ...) into scope at the compiler level. (Runtime helpers are also linked automatically even without <code>import std</code>.)</p>
+      <p>Files usually begin with <code>@inc std</code>, which brings the runtime helpers (printing, math, threads, regions, ...) into scope at the compiler level. (Runtime helpers are also linked automatically even without <code>@inc std</code>.)</p>
     </section>
 
     <section id="getting-started">
       <h2>Getting started</h2>
       <pre><code class="lang-loi">
-import std
+@inc std
 
 factorial = (n: int): int
 {
@@ -168,7 +168,7 @@ main = () -> int
     <section id="macros">
       <h2>Macros: stringify, paste, variadic</h2>
       <pre><code class="lang-loi">
-import std
+@inc std
 @(define STR(x) @stringify(x))
 @(define CONCAT(a, b) @paste(a, b))
 @(define LOG(level, ...msg) { @if(level >= 1) { loi_print_str(msg); } })
@@ -192,7 +192,7 @@ main = () -> int !IO
       <h2>Packages</h2>
       <p>Programs and libraries can declare a package name:</p>
       <pre><code class="lang-loi">package std</code></pre>
-      <p>Use <code>import pkg</code> or <code>import pkg.sub</code> to load package sources. Dots are mapped to directory separators and resolution follows the same search paths (<code>./lib</code>, <code>./packages</code>, standard system paths, <code>LOI_PATH</code>). <code>@inc pkg</code> also loads packages. See <code>lib/</code> for the starter std package layout.</p>
+      <p>Use <code>@inc pkg</code> or <code>@inc pkg.sub</code> to load package sources. Dots are mapped to directory separators and resolution follows the same search paths (<code>./lib</code>, <code>./packages</code>, standard system paths, <code>LOI_PATH</code>). There is no <code>import</code> keyword. See <code>lib/</code> for the starter std package layout.</p>
     </section>
 
     <section id="include">

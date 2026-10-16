@@ -1010,42 +1010,9 @@ static ASTNode *parse_package(Parser *p) {
 }
 
 static ASTNode *parse_import(Parser *p) {
-    int line = p->current.line, col = p->current.column;
-    ASTNode *n = ast_new(AST_IMPORT, line, col);
-    expect(p, TOK_KW_IMPORT, "expected 'import'");
-    size_t cap = 64, len = 0;
-    char *buf = malloc(cap);
-    buf[0] = '\0';
-    int first = 1;
-    while (check(p, TOK_IDENTIFIER)) {
-        if (!first) {
-            if (len + 1 >= cap) { cap *= 2; buf = realloc(buf, cap); }
-            buf[len++] = '.'; buf[len] = '\0';
-        }
-        first = 0;
-        const char *s = p->current.lexeme;
-        size_t sl = strlen(s);
-        if (len + sl + 1 >= cap) { while (len + sl + 1 >= cap) cap *= 2; buf = realloc(buf, cap); }
-        memcpy(buf + len, s, sl + 1);
-        len += sl;
-        advance_parser(p);
-        if (check(p, TOK_DOT)) { advance_parser(p); continue; }
-        break;
-    }
-    if (check(p, TOK_IDENTIFIER) && strcmp(p->current.lexeme, "as") == 0) {
-        advance_parser(p);
-        if (check(p, TOK_IDENTIFIER)) {
-            size_t al = strlen(p->current.lexeme);
-            char *nb = realloc(buf, len + 4 + al + 1);
-            buf = nb;
-            memcpy(buf + len, " as ", 4); len += 4;
-            memcpy(buf + len, p->current.lexeme, al + 1); len += al;
-            advance_parser(p);
-        }
-    }
-    match_tok(p, TOK_SEMICOLON);
-    n->name = buf;
-    return n;
+    fprintf(stderr, "error: line %d: 'import' is no longer supported; use '@inc' for loi files/packages\n",
+            p->current.line);
+    exit(1);
 }
 
 static ASTNode *parse_struct(Parser *p) {
@@ -1254,8 +1221,10 @@ static ASTNode *parse_func(Parser *p) {
 }
 
 static ASTNode *parse_decl_core(Parser *p) {
-if (check(p, TOK_KW_PACKAGE)) return parse_package(p);
-    if (check(p, TOK_KW_IMPORT)) return parse_import(p);
+    if (check(p, TOK_KW_PACKAGE)) return parse_package(p);
+    /* `import` is not a keyword any more; catch the leftover identifier and
+       point at the `@inc` replacement. */
+    if (check(p, TOK_IDENTIFIER) && strcmp(p->current.lexeme, "import") == 0) return parse_import(p);
     if (check(p, TOK_KW_STRUCT) || check(p, TOK_KW_UNION) || check(p, TOK_KW_ENUM)) return parse_struct(p);
     if (check(p, TOK_KW_TYPE)) return parse_type_decl(p);
     if (check(p, TOK_KW_EXTERN)) return parse_extern(p);

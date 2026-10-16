@@ -1,6 +1,6 @@
 @inc "helpers/lib.loi"
 
-import std
+@inc std
 
 main =
 {

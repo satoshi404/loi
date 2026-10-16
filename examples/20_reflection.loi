@@ -8,7 +8,7 @@
    All of these fold to integer constants before codegen. Struct
    layout respects field alignment and packing, so @sizeof/@offsetof
    match what the backend actually lays out. */
-import std
+@inc std
 
 struct Packed @pack() { char c; int i; }
 struct Point  { int x; int y; double z; }

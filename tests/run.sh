@@ -17,6 +17,10 @@ get_expected() {
     tests/14_fn_pointers.loi) echo 1 ;;
     tests/15_arrays_postfix.loi) echo 10 ;;
     tests/18_conditionals.loi) echo 20 ;;
+    tests/19_effects_callbacks_ok.loi) echo 33 ;;
+    tests/20_macros_variadic.loi) echo 68 ;;
+    tests/21_include_guard.loi) echo 1 ;;
+    tests/26_inc_forms.loi) echo 42 ;;
     *) echo "none" ;;
   esac
 }
@@ -29,7 +33,7 @@ run_test() {
   rc=$((rc & 0xFF))
   bname=$(basename "$f")
 
-  if [[ "$bname" == *"fail"* || "$bname" == "02_effects_violation.loi" || "$bname" == "03_effects_assign_drop.loi" || "$bname" == "09_parse_error.loi" || "$bname" == "10_type_error.loi" || "$bname" == "11_preproc_error.loi" || "$bname" == "12_include_removed.loi" || "$bname" == "16_prefix_array_removed.loi" || "$bname" == "17_effects_fnptr_drop.loi" ]]; then
+  if [[ "$bname" == *"fail"* || "$bname" == "02_effects_violation.loi" || "$bname" == "03_effects_assign_drop.loi" || "$bname" == "09_parse_error.loi" || "$bname" == "10_type_error.loi" || "$bname" == "11_preproc_error.loi" || "$bname" == "12_include_removed.loi" || "$bname" == "16_prefix_array_removed.loi" || "$bname" == "17_effects_fnptr_drop.loi" || "$bname" == "27_import_removed.loi" ]]; then
     if [ "$rc" -ne 0 ]; then
       pass=$((pass+1))
     else

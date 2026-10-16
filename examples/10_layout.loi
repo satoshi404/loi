@@ -1,4 +1,4 @@
-import std
+@inc std
 
 struct Buffer @pack {
     @align(16) int data;

@@ -5,7 +5,7 @@
 
    Useful for grouping code by cache-line, hot/cold paths, or
    placing a function into a ROM/.text region. */
-import std
+@inc std
 
 @section("my_text")
 fast_path = (n: int): int

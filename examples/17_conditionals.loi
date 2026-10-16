@@ -3,7 +3,7 @@
 @(define LEVEL 2)
 @(define FEATURE_X)
 
-import std
+@inc std
 
 main =
 {

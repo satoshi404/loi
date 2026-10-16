@@ -6,8 +6,9 @@
  * ----------------
  * The whole `@`/`#` metaprogramming layer: object/function-like and variadic
  * macros, `@stringify`/`@paste`, conditional compilation (`@if`/`@elif`/`@else`
- * /`@endif`), compile-time unrolling (`@repeat`/`@for`), and includes/imports
- * (`@inc`/`@cinc`, `import pkg.sub`) with automatic include guards.
+ * /`@endif`), compile-time unrolling (`@repeat`/`@for`), and file/package
+ * includes plus C-header checks (`@inc`/`@cinc`) with automatic include guards.
+ * There is no `import` keyword: all inclusion goes through the `@` sigil.
  *
  * The driver calls `loi_preprocess` once, before lexing; everything it does is
  * erased by the time the parser runs, so there is no runtime cost.

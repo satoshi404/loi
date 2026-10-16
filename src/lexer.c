@@ -103,7 +103,6 @@ static int is_ident_char(char c) {
 
 static TokenType keyword_type(const char *s, size_t len) {
     /* simple lookup */
-    if (len == 6 && strncmp(s, "import", 6) == 0) return TOK_KW_IMPORT;
     if (len == 7 && strncmp(s, "package", 7) == 0) return TOK_KW_PACKAGE;
     if (len == 4 && strncmp(s, "main", 4) == 0) return TOK_KW_MAIN;
     if (len == 6 && strncmp(s, "return", 6) == 0) return TOK_KW_RETURN;

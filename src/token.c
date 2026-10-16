@@ -12,7 +12,6 @@ const char *token_type_str(TokenType type) {
         case TOK_STRING: return "STRING";
         case TOK_CHAR: return "CHAR";
         case TOK_IDENTIFIER: return "IDENTIFIER";
-        case TOK_KW_IMPORT: return "KW_IMPORT";
         case TOK_KW_MAIN: return "KW_MAIN";
         case TOK_KW_RETURN: return "KW_RETURN";
         case TOK_KW_IF: return "KW_IF";

@@ -17,7 +17,6 @@ loi is a hybrid, statically typed language that combines low-level control
 ```
 Program     := TopLevel*
 TopLevel    := PackageDecl
-              | ImportDecl
               | TypeDecl
               | StructDecl
               | ExternDecl
@@ -25,7 +24,19 @@ TopLevel    := PackageDecl
               | FuncDecl
 
 PackageDecl := 'package' Ident (';')?
-ImportDecl  := 'import' Ident ('.' Ident)* ('as' Ident)? (';')?
+```
+
+There is no `import` keyword. Every inclusion — loi files, packages, and C
+header checks — is a preprocessor directive introduced by `@` and handled
+before parsing (see [`@inc` / `@cinc`](#inc--cinc-inlines-and-c-header-checks)):
+
+```loi
+@inc "path/to/file.loi"
+@inc path/to/file.loi
+@inc std
+@inc std.math
+@cinc <stdio.h>
+@cinc "stdio.h"
 ```
 
 ## Types
@@ -216,7 +227,7 @@ main =
 ## Mathematical features
 
 Standard operators `+ - * / % **`. The runtime provides math builtins,
-available via `import std`:
+available via `@inc std`:
 
 - integer: `loi_abs(v)`, `loi_min(a, b)`, `loi_max(a, b)`
 - double: `loi_sqrt`, `loi_sin`, `loi_cos`, `loi_tan`, `loi_exp`, `loi_log`,
@@ -225,7 +236,7 @@ available via `import std`:
 Vector/matrix math is expressed with arrays and library types, e.g.:
 
 ```loi
-import std
+@inc std
 
 hypot = (a: double, b: double): double
 {
@@ -244,7 +255,7 @@ RegionStmt := 'region' Ident ('(' Expr ')')? Block
 inside the block:
 
 ```loi
-import std
+@inc std
 
 main =
 {
@@ -270,7 +281,7 @@ main =
 ```
 
 ## Runtime
-Built-in runtime helpers (`loi_print_*`, `loi_alloc`, `loi_region_*`, math, threads, etc.) are always linked into executables, so you don't need `import std` to call them. The `std` package is available under `lib/std` and can be loaded with `@inc std` or `import std` if desired.
+Built-in runtime helpers (`loi_print_*`, `loi_alloc`, `loi_region_*`, math, threads, etc.) are always linked into executables, so you don't need `@inc std` to call them. The `std` package is available under `lib/std` and can be loaded with `@inc std` when you want the package-form wrappers.
 
 ## Effects annotations (experimental)
 
@@ -292,15 +303,22 @@ FuncSignature ::= '(' ParamList? ')' (':' Type | '->' Type)? ('!' Ident (',' Ide
 ```
 
 The compiler records `effects` on every function and function-pointer *type* and
-**enforces** them:
+**enforces** them wherever function values meet:
 
 - a **direct call** to a function with effects requires the caller to declare a
   superset of those effects;
-- the same rule applies to an **indirect call** through a function-pointer
-  variable/parameter whose type carries effects;
+- an **indirect call** through a function-pointer value whose type carries
+  effects is checked the same way;
 - **assignment** to a function-pointer target is rejected when the value's
   effects are not covered by the target type (you cannot silently hide `!IO`
-  behind a pure function pointer).
+  behind a pure function pointer);
+- **passing a callback** as an argument is checked against the parameter's
+  function type, so an `!IO` function cannot be passed where a pure callback is
+  expected;
+- **returning** a function value is checked against the declared return type.
+
+The declared type is the contract: a caller may only do what its own effects
+permit.
 
 Effect annotations are excluded from structural type equality, so two function
 types that differ only in effects still unify for overload/assignment purposes;
@@ -312,7 +330,7 @@ In addition to pointer types `T *p`, address-of `&x`, and reads `*p`, loi also
 supports assignment through a dereference:
 
 ```loi
-import std
+@inc std
 
 main =
 {
@@ -360,6 +378,22 @@ macro body contains unbalanced parentheses):
 - `@cinc <header.h>`
 - `@undef NAME`
 - `@error message`
+
+The accepted inclusion forms are exactly:
+
+```loi
+@inc "path/to/file.loi"
+@inc path/to/file.loi
+@inc std
+@inc std.math
+@cinc <stdio.h>
+@cinc "stdio.h"
+```
+
+A bare (unquoted) package path has its dots mapped to directory separators
+(`@inc std.math` → `std/math`), while a path containing `/` or ending in `.loi`
+is used verbatim. There is no `import` keyword; a leftover `import` is a
+parse-time error.
 
 Example:
 
@@ -643,7 +677,7 @@ into a ROM/text region. See `examples/21_sections.loi`.
 ## Example
 
 ```loi
-import std
+@inc std
 
 main =
 {

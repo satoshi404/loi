@@ -12,7 +12,7 @@
     @(define LEAK 1)
 }
 
-import std
+@inc std
 
 main =
 {

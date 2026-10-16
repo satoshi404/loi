@@ -1,0 +1,3 @@
+/* `import` is removed: must report the `@inc` replacement */
+import std
+main = () -> int { return 0; }

@@ -1,0 +1,15 @@
+/* variadic macros: any number of trailing args, including none */
+@(define FIRST(a, ...rest) a)
+@(define CALL(f, ...args) f(args))
+@(define TAG(name) @stringify(name))
+
+add3 = (a: int, b: int, c: int): int { return a + b + c; }
+
+main = () -> int !IO
+{
+    int x = FIRST(7, 8, 9);          /* 7   */
+    int y = FIRST(1);                /* 1   */
+    int z = CALL(add3, 10, 20, 30);  /* 60  */
+    loi_print_str(TAG(hello));       /* prints hello */
+    return x + y + z;                /* 68  */
+}

@@ -91,8 +91,7 @@ void ast_free(ASTNode *node) {
 const char *ast_node_type_str(ASTNodeType type) {
     switch (type) {
         case AST_PROGRAM: return "PROGRAM";
-        case AST_IMPORT: return "IMPORT";
-    case AST_PACKAGE: return "PACKAGE";
+        case AST_PACKAGE: return "PACKAGE";
         case AST_VAR_DECL: return "VAR_DECL";
         case AST_FUNC_DECL: return "FUNC_DECL";
         case AST_STRUCT_DECL: return "STRUCT_DECL";

@@ -1,0 +1,5 @@
+/* include guards break cycles: outer @inc's itself */
+@inc "guard_outer.loi"
+@inc "guard_inner.loi"
+
+outer_value = (n: int): int { return inner_value(n) + n; }

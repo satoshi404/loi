@@ -3,7 +3,7 @@
 @(define ENABLE_SQUARE 1)
 @inc "helpers/lib.loi"
 
-import std
+@inc std
 
 main =
 {

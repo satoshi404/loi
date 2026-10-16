@@ -2,19 +2,167 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdarg.h>
 #include <limits.h>
 #include "preprocessor.h"
+
+/* ---------------------------------------------------------------------------
+ * Limits and constants
+ *
+ * These were previously scattered as magic numbers throughout the file. They
+ * are gathered here so the buffering/recursion policy is easy to audit.
+ * ------------------------------------------------------------------------ */
+#define MAX_MACROS        128    /* macro table capacity                     */
+#define MAX_MACRO_PARAMS  8      /* parameters per function-like macro       */
+#define MAX_MACRO_BODY    1024   /* stored macro body length                 */
+#define MAX_IDENT         64     /* identifier buffer length                 */
+#define MAX_EXPAND_DEPTH  16     /* recursive macro expansion depth          */
+#define MAX_INCLUDE_DEPTH 16     /* recursive @inc depth                     */
+#define MAX_COND_DEPTH    8      /* nested @if evaluation depth              */
+#define MAX_PP_DEPTH      64     /* recursive pp_range depth                 */
+#define MAX_COND_LEN      1024   /* @if(...) condition text                  */
+#define MAX_INLINE_LEN    4096   /* a single directive line / meta argument  */
+#define MAX_BLOCK_LEN     8192   /* @repeat/@for body text                   */
+#define MAX_LIST_PARTS    4      /* @for(a,b,c,d) parts                      */
+#define MAX_INCLUDE_CAND  12     /* candidate paths tried by @inc/@cinc      */
+#define MAX_PART_LEN      256    /* one @for/@repeat(...) argument           */
+#define MAX_NUM_LEN       32     /* a formatted integer                      */
+#ifndef PATH_MAX
+#define PATH_MAX          4096
+#endif
+#define MAX_PATH          PATH_MAX  /* include path buffer                    */
+
+/* ---------------------------------------------------------------------------
+ * Allocation helpers
+ *
+ * The compiler is a short-lived batch process: an allocation failure is not
+ * recoverable, so these abort with a clear message instead of forcing every
+ * caller to thread error returns through the whole preprocessor.
+ * ------------------------------------------------------------------------ */
+static void *xmalloc(size_t n) {
+    void *p = malloc(n ? n : 1);
+    if (!p) { fprintf(stderr, "loi: out of memory\n"); exit(1); }
+    return p;
+}
+static void *xrealloc(void *p, size_t n) {
+    void *q = realloc(p, n ? n : 1);
+    if (!q) { fprintf(stderr, "loi: out of memory\n"); exit(1); }
+    return q;
+}
+static char *xstrdup(const char *s) {
+    if (!s) return NULL;
+    size_t n = strlen(s);
+    char *r = xmalloc(n + 1);
+    memcpy(r, s, n + 1);
+    return r;
+}
+
+/* ---------------------------------------------------------------------------
+ * StrBuf: a small growable string buffer.
+ *
+ * All string building in the preprocessor goes through this type; there is no
+ * manual `realloc` bookkeeping left in the rest of the file.
+ * ------------------------------------------------------------------------ */
+typedef struct { char *buf; size_t len, cap; } StrBuf;
+
+static void sb_init(StrBuf *b) {
+    b->buf = xmalloc(64);
+    b->buf[0] = '\0';
+    b->len = 0;
+    b->cap = 64;
+}
+static void sb_reserve(StrBuf *b, size_t extra) {
+    if (b->len + extra + 1 <= b->cap) return;
+    while (b->len + extra + 1 > b->cap) b->cap = b->cap * 2 + 1;
+    b->buf = xrealloc(b->buf, b->cap);
+}
+static void sb_put(StrBuf *b, const char *s, size_t n) {
+    sb_reserve(b, n);
+    memcpy(b->buf + b->len, s, n);
+    b->len += n;
+    b->buf[b->len] = 0;
+}
+static void sb_putc(StrBuf *b, char c) { sb_put(b, &c, 1); }
+static void sb_puts(StrBuf *b, const char *s) { sb_put(b, s, strlen(s)); }
+static void sb_printf(StrBuf *b, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    va_list ap2;
+    va_copy(ap2, ap);
+    int need = vsnprintf(NULL, 0, fmt, ap);
+    va_end(ap);
+    if (need < 0) { va_end(ap2); return; }
+    sb_reserve(b, (size_t)need);
+    vsnprintf(b->buf + b->len, (size_t)need + 1, fmt, ap2);
+    va_end(ap2);
+    b->len += (size_t)need;
+}
+/* Detach the buffer (caller owns it); the StrBuf is left empty. */
+static char *sb_take(StrBuf *b) {
+    char *r = b->buf ? b->buf : xmalloc(1);
+    if (!b->buf) r[0] = 0;
+    b->buf = NULL;
+    b->len = b->cap = 0;
+    return r;
+}
+
+/* ---------------------------------------------------------------------------
+ * Small text helpers
+ * ------------------------------------------------------------------------ */
+static char *skip_ws(const char *s) {
+    while (*s && isspace((unsigned char)*s)) s++;
+    return (char *)s;
+}
+
+/* Copy `src` into `dst[cap]`, always NUL-terminating. Silent truncation is
+   fine here: these are fixed-size identifiers/paths, never user data we must
+   preserve byte-for-byte. */
+static void copy_str(char *dst, size_t cap, const char *src) {
+    if (!cap) return;
+    size_t n = strlen(src);
+    if (n >= cap) n = cap - 1;
+    memcpy(dst, src, n);
+    dst[n] = '\0';
+}
+
+/* True when only whitespace precedes `i` on its line: a directive must start
+   a line, so `@inc`/`@error` inside a comment or string is plain text. */
+static int line_blank_before(const char *s, size_t i) {
+    while (i > 0 && s[i - 1] != '\n') {
+        if (!isspace((unsigned char)s[i - 1])) return 0;
+        i--;
+    }
+    return 1;
+}
+
+/* Same as above but over the output buffer already produced. */
+static int at_line_start(const char *out, size_t oi) {
+    while (oi > 0 && out[oi - 1] != '\n') {
+        if (!isspace((unsigned char)out[oi - 1])) return 0;
+        oi--;
+    }
+    return 1;
+}
+
+/* `name` is a whole identifier match for `kw` at `p` (not a longer word). */
+static int kw_match(const char *p, const char *kw) {
+    size_t n = strlen(kw);
+    if (strncmp(p, kw, n) != 0) return 0;
+    char c = p[n];
+    return !(isalnum((unsigned char)c) || c == '_');
+}
+
 typedef struct {
-    char name[64];
+    char name[MAX_IDENT];
     int param_count;
-    char params[8][64];
-    char body[1024];
+    char params[MAX_MACRO_PARAMS][MAX_IDENT];
+    char body[MAX_MACRO_BODY];
     int function_like;
     int variadic;
-    char va_name[64];
+    char va_name[MAX_IDENT];
 } LoiMacroDef;
 
-static LoiMacroDef g_macros[128];
+static LoiMacroDef g_macros[MAX_MACROS];
 static int g_nmacro = 0;
 
 static LoiMacroDef *find_macro(const char *name) {
@@ -23,72 +171,65 @@ static LoiMacroDef *find_macro(const char *name) {
     }
     return NULL;
 }
+
 static int macro_defined(const char *name) {
     return find_macro(name) != NULL;
 }
+
+static void macro_undef(const char *name) {
+    for (int i = 0; i < g_nmacro; i++) {
+        if (strcmp(g_macros[i].name, name) == 0) {
+            memmove(&g_macros[i], &g_macros[i + 1], (size_t)(g_nmacro - i - 1) * sizeof(LoiMacroDef));
+            g_nmacro--;
+            return;
+        }
+    }
+}
+
+static void read_name(const char **pp, char *out, size_t cap) {
+    size_t n = 0;
+    const char *p = *pp;
+    while (isalnum((unsigned char)*p) || *p == '_') {
+        if (n + 1 < cap) out[n] = *p;
+        n++;
+        p++;
+    }
+    out[n < cap ? n : cap - 1] = 0;
+    *pp = p;
+}
+
 static char *read_text_file(const char *path) {
+    if (!path) return NULL;
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
-    fseek(f, 0, SEEK_END);
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return NULL; }
     long sz = ftell(f);
+    if (sz < 0) { fclose(f); return NULL; }
     fseek(f, 0, SEEK_SET);
-    char *buf = malloc(sz + 1);
-    if (!buf) { fclose(f); return NULL; }
-    size_t n = fread(buf, 1, sz, f);
+    char *buf = xmalloc((size_t)sz + 1);
+    size_t n = fread(buf, 1, (size_t)sz, f);
     buf[n] = '\0';
     fclose(f);
     return buf;
 }
-static char *transform_imports(const char *src) {
-    if (!src) return NULL;
-    /* transform `import pkg.sub;` lines into `@inc pkg/sub` lines. */
-    size_t outcap = strlen(src) * 4 + 1024;
-    char *out = malloc(outcap);
-    size_t oi = 0;
-    const char *p = src;
-    while (*p) {
-        if ((oi == 0 || (oi > 0 && out[oi-1] == '\n')) &&
-            strncmp(p, "import", 6) == 0 &&
-            (p[6] == ' ' || p[6] == '\t')) {
-            const char *q = p + 6;
-            while (*q == ' ' || *q == '\t') q++;
-            char pkg[256]; size_t pi = 0; int inq = 0;
-            if (*q == '"') { inq = 1; q++; }
-            while (*q) {
-                char c = *q;
-                if (inq) { if (c == '"') break; if (pi < sizeof(pkg)-1) pkg[pi++] = c; }
-                else {
-                    if (c == ';' || c == '\n') break;
-                    if (!isalnum((unsigned char)c) && c != '_' && c != '.') break;
-                    if (pi < sizeof(pkg)-1) pkg[pi++] = c;
-                }
-                q++;
-            }
-            pkg[pi] = 0;
-            for (size_t k = 0; k < pi; k++) if (pkg[k] == '.') pkg[k] = '/';
-            char tline[512]; snprintf(tline, sizeof(tline), "@inc %s", pkg);
-            size_t tl = strlen(tline);
-            while (oi + tl + 2 >= outcap) { outcap = (outcap+tl)*2+1; out = realloc(out,outcap); }
-            memcpy(out+oi, tline, tl); oi += tl; out[oi++] = '\n';
-            const char *le = strchr(p, '\n'); if (le) p = le+1; else p += strlen(p);
-            continue;
-        }
-        if (oi + 2 >= outcap) { outcap = outcap * 2 + 1; out = realloc(out, outcap); }
-        out[oi++] = *p++;
-    }
-    out[oi] = 0;
-    return out;
-}
 
-/* -------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------
+ * `import` is gone
+ *
+ * The old `import pkg.sub` form used to be rewritten into `@inc pkg/sub` here.
+ * The keyword has been removed from the grammar, so every inclusion/package
+ * reference must be written with the `@` sigil (`@inc` / `@cinc`). The parser
+ * reports a clear error for the leftover keyword; see parser.c.
+ * ------------------------------------------------------------------------ */
+
+/* ---------------------------------------------------------------------------
  * Include guards
  *
  * `@inc` behaves like `#pragma once`: the first time a given real path is
  * included it is spliced in; any later `@inc` of the same path expands to
- * nothing. This gives lois libraries protection against double inclusion
- * (and against include cycles) without requiring authors to write manual
- * `#ifndef` guards. `@cinc` is unaffected (it only verifies C headers).
- * ---------------------------------------------------------------------- */
+ * nothing. This protects loi libraries against double inclusion (and against
+ * include cycles) without manual `#ifndef` guards. `@cinc` is unaffected.
+ * ------------------------------------------------------------------------ */
 static char **g_included = NULL;
 static size_t g_included_count = 0;
 static size_t g_included_cap = 0;
@@ -101,9 +242,9 @@ static void include_guard_reset(void) {
     g_included_cap = 0;
 }
 
-/* Returns 1 if `path` was already included; otherwise records it and
-   returns 0. Uses the real path when available so `./lib/x.loi` and
-   `lib/x.loi` collapse to one entry. */
+/* Returns 1 if `path` was already included; otherwise records it and returns
+   0. The real path is used when available so `./lib/x.loi` and `lib/x.loi`
+   collapse to a single entry. */
 static int include_guard_seen(const char *path) {
     char real[PATH_MAX];
     const char *key = path;
@@ -113,385 +254,384 @@ static int include_guard_seen(const char *path) {
     }
     if (g_included_count == g_included_cap) {
         g_included_cap = g_included_cap ? g_included_cap * 2 : 16;
-        g_included = realloc(g_included, g_included_cap * sizeof(*g_included));
+        g_included = xrealloc(g_included, g_included_cap * sizeof(*g_included));
     }
-    g_included[g_included_count++] = strdup(key);
+    g_included[g_included_count++] = xstrdup(key);
     return 0;
 }
 
-/* True when everything already emitted on the current line is whitespace,
-   i.e. `out[oi]` sits at the start of a line. Directives such as `@inc` are
-   only recognized there, so `@inc` inside a comment or a string is text. */
-static int at_line_start(const char *out, size_t oi) {
-    while (oi > 0 && out[oi - 1] != '\n') {
-        if (!isspace((unsigned char)out[oi - 1])) return 0;
-        oi--;
-    }
-    return 1;
+/* 1-based line number of `p` within the buffer starting at `s`. */
+static size_t line_of(const char *s, const char *p) {
+    size_t line = 1;
+    for (const char *q = s; q < p; q++) if (*q == '\n') line++;
+    return line;
 }
 
+/* Resolve and read an included file. On success returns the contents (caller
+   frees) and copies the winning candidate path into `found`.
+   `c_header` selects the C-header search path (@cinc); otherwise the loi
+   library search path (@inc) is used. */
+static char *locate_include(const char *base_dir, const char *path, int c_header,
+                            char *found, size_t found_cap) {
+    char cands[MAX_INCLUDE_CAND][MAX_PATH];
+    int n = 0;
+    snprintf(cands[n++], MAX_PATH, "%s/%s", (base_dir && *base_dir) ? base_dir : ".", path);
+    snprintf(cands[n++], MAX_PATH, "%s", path);
+    if (c_header) {
+        snprintf(cands[n++], MAX_PATH, "/usr/include/%s", path);
+        snprintf(cands[n++], MAX_PATH, "/usr/local/include/%s", path);
+        snprintf(cands[n++], MAX_PATH, "/usr/include/x86_64-linux-gnu/%s", path);
+    } else {
+        snprintf(cands[n++], MAX_PATH, "./lib/%s", path);
+        snprintf(cands[n++], MAX_PATH, "./lib/%s.loi", path);
+        snprintf(cands[n++], MAX_PATH, "./packages/%s", path);
+        snprintf(cands[n++], MAX_PATH, "./packages/%s.loi", path);
+        snprintf(cands[n++], MAX_PATH, "/usr/share/loi/%s.loi", path);
+        snprintf(cands[n++], MAX_PATH, "/usr/local/share/loi/%s.loi", path);
+        const char *env = getenv("LOI_PATH");
+        if (env && *env) snprintf(cands[n++], MAX_PATH, "%s/%s.loi", env, path);
+    }
+    for (int i = 0; i < n; i++) {
+        char *content = read_text_file(cands[i]);
+        if (content) {
+            if (found && found_cap) copy_str(found, found_cap, cands[i]);
+            return content;
+        }
+    }
+    return NULL;
+}
+
+/* Splice `@inc` / `@cinc` directives, recursing into included loi files. */
 static char *expand_includes(const char *src, const char *base_dir, int depth) {
+    if (!src) return NULL;
     if (!base_dir) base_dir = ".";
-    if (!src || depth > 16) return src ? strdup(src) : NULL;
-    size_t outcap = strlen(src) * 2 + 1024;
-    char *out = malloc(outcap);
-    size_t oi = 0;
+    if (depth > MAX_INCLUDE_DEPTH) return xstrdup(src);
+
+    StrBuf out;
+    sb_init(&out);
     const char *p = src;
     while (*p) {
-        if (at_line_start(out, oi) && (*p == '#' || *p == '@')) {
-            const char *q = p;
-            /* find line end */
-            const char *line_end = strchr(q, '\n');
-            if (!line_end) line_end = q + strlen(q);
-            /* trim left */
-            while (q < line_end && isspace((unsigned char)*q)) q++;
-            const char *kw = q;
-int inc_kind = 0, klen = 0;
-            if (*kw == '#') kw++;
-            else if (*kw == '@') {
+        if (at_line_start(out.buf, out.len) && (*p == '#' || *p == '@')) {
+            const char *line_end = strchr(p, '\n');
+            if (!line_end) line_end = p + strlen(p);
+            /* keyword after `@`/`#`, allowing the parenthesized `@(inc ...)` */
+            const char *kw = p;
+            while (kw < line_end && isspace((unsigned char)*kw)) kw++;
+            char sigil = '#';   /* the directive's leading sigil, for messages */
+            int kind = 0, klen = 0;   /* 1 = @inc, 2 = @cinc */
+            if (kw < line_end && *kw == '#') {
+                sigil = '#';
                 kw++;
-                if (kw < line_end && *kw == '(') { kw++; while (kw < line_end && isspace((unsigned char)*kw)) kw++; }
+            } else if (kw < line_end && *kw == '@') {
+                sigil = '@';
+                kw++;
+                if (kw < line_end && *kw == '(') {
+                    kw++;
+                    while (kw < line_end && isspace((unsigned char)*kw)) kw++;
+                }
             }
-            if (strncmp(kw, "include", 7) == 0 && !(isalnum((unsigned char)kw[7]) || kw[7] == '_')) {
-                fprintf(stderr, "error: @include is no longer supported; use @inc or @cinc\n");
+            if (kw_match(kw, "include")) {
+                fprintf(stderr,
+                        "error: line %zu: '%cinclude' is no longer supported; "
+                        "use '@inc' for loi files or '@cinc' for C headers\n",
+                        line_of(src, p), sigil);
                 exit(1);
-            }
-            else if (strncmp(kw, "cinc", 4) == 0 && !(isalnum((unsigned char)kw[4]) || kw[4] == '_')) { inc_kind = 2; klen = 4; }
-            else if (strncmp(kw, "inc", 3) == 0 && !(isalnum((unsigned char)kw[3]) || kw[3] == '_')) { inc_kind = 1; klen = 3; }
-            if (inc_kind) {
-                q = kw + klen;
+            } else if (kw_match(kw, "cinc")) { kind = 2; klen = 4; }
+            else if (kw_match(kw, "inc"))     { kind = 1; klen = 3; }
+
+            if (kind) {
+                const char *q = kw + klen;
                 while (q < line_end && isspace((unsigned char)*q)) q++;
-                if (*q == '"' || *q == '<') q++;
-                char path[512]; size_t pi = 0;
-                while (*q && *q != '"' && *q != '>' && *q != ')' && *q != '\n' && pi < 511) path[pi++] = *q++;
-                path[pi] = 0;
-                char c0[1024], c1[1024], c2[1024], c3[1024], c4[1024], c5[1024], c6[1024], c7[1024], c8[1024];
-                const char *candidates[11];
-                snprintf(c0, sizeof(c0), "%s/%s", base_dir ? base_dir : ".", path);
-                snprintf(c1, sizeof(c1), "%s", path);
-                snprintf(c2, sizeof(c2), "/usr/include/%s", path);
-                snprintf(c3, sizeof(c3), "/usr/include/x86_64-linux-gnu/%s", path);
-snprintf(c4, sizeof(c4), "./lib/%s", path);
-snprintf(c5, sizeof(c5), "./lib/%s.loi", path);
-snprintf(c6, sizeof(c6), "./packages/%s", path);
-snprintf(c7, sizeof(c7), "./packages/%s.loi", path);
-                const char *lp = getenv("LOI_PATH");
-if (lp) snprintf(c8, sizeof(c8), "%s/%s.loi", lp, path);
-else snprintf(c8, sizeof(c8), "%s/%s", "./does-not-exist", path);
-candidates[0]=c0; candidates[1]=c1; candidates[2]=c2; candidates[3]=c3; candidates[4]=c4; candidates[5]=c5; candidates[6]=c6; candidates[7]=c7; candidates[8]=c8; candidates[9]=NULL;
-                char found_path[1024]; found_path[0]=0;
-                char *content = NULL;
-                for (int i = 0; i < 11 && !content; i++) {
-    content = read_text_file(candidates[i]);
-    if (content) strncpy(found_path, candidates[i], sizeof(found_path)-1);
-}
-if (content) {
-                    if (inc_kind == 2) { char marker[1024]; snprintf(marker, sizeof(marker), "/* @cinc: %s */\n", found_path); size_t mlen = strlen(marker); while (oi + mlen + 2 >= outcap) { outcap = (outcap+mlen)*2+1; out = realloc(out, outcap); } memcpy(out+oi, marker, mlen); oi += mlen; free(content); }
-                    else if (include_guard_seen(found_path)) {
-                        /* already included: include-guard skip (see above) */
-                        free(content);
-                    } else { char inc_base[1024];
-                    strncpy(inc_base, found_path, sizeof(inc_base)-1);
-                    inc_base[sizeof(inc_base)-1]=0;
-                    char *slash = strrchr(inc_base, '/');
-                    if (slash) *slash=0; else strcpy(inc_base, ".");
-                    char *inc_body = transform_imports(content);
-                    char *expanded = expand_includes(inc_body ? inc_body : content, inc_base, depth + 1);
-                    free(inc_body);
-                    size_t elen = strlen(expanded);
-                    while (oi + elen + 2 >= outcap) { outcap = (outcap+elen) * 2 + 1; out = realloc(out, outcap); }
-                    memcpy(out + oi, expanded, elen);
-                    oi += elen;
-                    out[oi++] = '\n';
-                    free(content); free(expanded);
+                /* A quoted or `<...>` path is taken literally; a bare package
+                   name like `std.math` has its dots mapped to path separators. */
+                int literal = (*q == '"' || *q == '<');
+                if (literal) q++;
+                char path[MAX_PATH];
+                size_t pi = 0;
+                while (q < line_end && *q && pi + 1 < sizeof(path)) {
+                    char c = *q;
+                    if (literal) {
+                        if (c == '"' || c == '>') break;
+                    } else {
+                        /* a bare path ends at whitespace, `;`, `)` or a comment */
+                        if (isspace((unsigned char)c) || c == ';' || c == ')') break;
+                        if (c == '/' && (q[1] == '*' || q[1] == '/')) break;
                     }
-                } else {
-                    fprintf(stderr, "error: cannot open include file \"%s\"\n", path);
+                    path[pi++] = c;
+                    q++;
+                }
+                path[pi] = 0;
+                while (pi > 0 && isspace((unsigned char)path[pi - 1])) path[--pi] = 0;
+                /* `@inc pkg.sub` -> `pkg/sub`, but leave real file paths alone
+                   (anything with a slash or a `.loi` suffix). */
+                if (kind == 1 && !literal && !strchr(path, '/') &&
+                    !(pi >= 4 && strcmp(path + pi - 4, ".loi") == 0)) {
+                    for (size_t k = 0; k < pi; k++) if (path[k] == '.') path[k] = '/';
+                }
+
+                char found[MAX_PATH];
+                found[0] = 0;
+                char *content = locate_include(base_dir, path, kind == 2, found, sizeof(found));
+                if (!content) {
+                    fprintf(stderr, "error: line %zu: cannot find included file \"%s\"\n",
+                            line_of(src, p), path);
                     exit(1);
+                }
+                if (kind == 2) {
+                    /* @cinc only verifies the header exists; leave a trace marker. */
+                    sb_printf(&out, "/* @cinc: %s */\n", found);
+                    free(content);
+                } else if (include_guard_seen(found)) {
+                    free(content);    /* already included (include guard) */
+                } else {
+                    char inc_base[MAX_PATH];
+                    strncpy(inc_base, found, sizeof(inc_base) - 1);
+                    inc_base[sizeof(inc_base) - 1] = 0;
+                    char *slash = strrchr(inc_base, '/');
+                    if (slash) *slash = 0; else strcpy(inc_base, ".");
+                    char *nested = expand_includes(content, inc_base, depth + 1);
+                    sb_puts(&out, nested);
+                    sb_putc(&out, '\n');
+                    free(nested);
+                    free(content);
                 }
                 p = line_end;
                 if (*p == '\n') p++;
                 continue;
             }
         }
-        /* copy char */
-        if (oi + 2 >= outcap) { outcap *= 2; out = realloc(out, outcap); }
-        out[oi++] = *p++;
+        sb_putc(&out, *p++);
     }
-    out[oi] = 0;
-    return out;
-}
-
-/* True when only whitespace precedes `i` on its line (comment/string safe). */
-static int line_blank_before(const char *s, size_t i) {
-    while (i > 0 && s[i - 1] != '\n') {
-        if (!isspace((unsigned char)s[i - 1])) return 0;
-        i--;
-    }
-    return 1;
-}
-
-static char *skip_ws(const char *s) {
-    while (*s && isspace((unsigned char)*s)) s++;
-    return (char *)s;
+    return sb_take(&out);
 }
 
 /* recursive macro expansion */
 /* ---- meta-op helpers for @stringify / @paste (defined here since they sit above expand_text) ---- */
-static char *copy_literal(const char **pp, char *out, size_t *oi, size_t *cap);
+static void copy_literal(const char **pp, StrBuf *out);
 static char *meta_paren_inner(const char *s, size_t start, size_t *after);
 static char *reduce_meta(const char *text, int depth);
+static char *expand_text(const char *text, int depth);
 
+/* Copy a string/char literal (including surrounding quotes and escapes) into
+   `out`, advancing `*pp` past it. Used to keep literals opaque to macro
+   substitution. */
+static void copy_literal(const char **pp, StrBuf *out) {
+    const char *p = *pp;
+    char quote = *p;
+    sb_putc(out, *p++);
+    while (*p && *p != quote) {
+        if (*p == '\\' && p[1]) {
+            sb_putc(out, *p++);
+            sb_putc(out, *p++);
+            continue;
+        }
+        sb_putc(out, *p++);
+    }
+    if (*p == quote) sb_putc(out, *p++);
+    *pp = p;
+}
+
+/* Extract the balanced text inside `s[start]=='('`, trimming outer whitespace.
+   `*after` receives the index just past the closing ')'. */
 static char *meta_paren_inner(const char *s, size_t start, size_t *after) {
-    size_t i = start + 1, b = i; int depth = 1;
+    size_t i = start + 1, b = i;
+    int depth = 1;
     while (s[i] && depth) {
         char c = s[i];
         if (c == '(') depth++;
         else if (c == ')') { depth--; if (!depth) break; }
-        else if (c == '"' || c == '\\') { char q = c; i++; while (s[i] && s[i] != q) { if (s[i] == '\\') i++; i++; } }
+        else if (c == '"' || c == '\\') {
+            char q = c;
+            i++;
+            while (s[i] && s[i] != q) { if (s[i] == '\\') i++; i++; }
+        }
         i++;
     }
     size_t e = i;
     while (e > b && isspace((unsigned char)s[e - 1])) e--;
     size_t b2 = b;
     while (b2 < e && isspace((unsigned char)s[b2])) b2++;
-    char *out = malloc(e - b2 + 1); memcpy(out, s + b2, e - b2); out[e - b2] = 0;
+    char *out = xmalloc(e - b2 + 1);
+    memcpy(out, s + b2, e - b2);
+    out[e - b2] = 0;
     *after = (s[i] == ')') ? i + 1 : i;
     return out;
 }
 
+/* Slice [start,end), trimming surrounding whitespace, into a fresh string. */
+static char *slice_trimmed(const char *start, const char *end) {
+    while (start < end && isspace((unsigned char)*start)) start++;
+    while (end > start && isspace((unsigned char)end[-1])) end--;
+    size_t n = (size_t)(end - start);
+    char *r = xmalloc(n + 1);
+    memcpy(r, start, n);
+    r[n] = '\0';
+    return r;
+}
+
+/* Evaluate @stringify(x) and @paste(a, b, ...) meta-operators. */
 static char *reduce_meta(const char *text, int depth) {
-    if (!text) return strdup("");
-    if (depth > 16) return strdup(text);
-    size_t cap = strlen(text) * 2 + 64, oi = 0;
-    char *out = malloc(cap);
+    if (!text) return xstrdup("");
+    if (depth > MAX_EXPAND_DEPTH) return xstrdup(text);
+    StrBuf out;
+    sb_init(&out);
     const char *p = text;
     while (*p) {
-        if (*p == '"' || *p == '\\') { out = copy_literal(&p, out, &oi, &cap); continue; }
+        if (*p == '"' || *p == '\\') { copy_literal(&p, &out); continue; }
         if (*p == '@' && (strncmp(p, "@stringify", 10) == 0 || strncmp(p, "@paste", 6) == 0)) {
             int is_str = (strncmp(p, "@stringify", 10) == 0);
             const char *q2 = p + (is_str ? 10 : 6);
             while (*q2 && isspace((unsigned char)*q2)) q2++;
             if (*q2 == '(') {
-                size_t open = (size_t)(q2 - text);
                 size_t after = 0;
-                char *inner = meta_paren_inner(text, open, &after);
-                char *result = NULL;
+                char *inner = meta_paren_inner(text, (size_t)(q2 - text), &after);
                 if (is_str) {
-                    size_t rc = strlen(inner) * 2 + 8, ri = 0;
-                    result = malloc(rc); result[ri++] = '"';
-                    for (const char *s = inner; *s; s++) {
-                        if (*s == '"' || *s == '\\') { while (ri + 3 >= rc) { rc *= 2; result = realloc(result, rc); } result[ri++] = '\\'; }
-                        while (ri + 3 >= rc) { rc *= 2; result = realloc(result, rc); } result[ri++] = *s;
+                    /* @stringify: wrap the text in quotes, escaping " and \ */
+                    sb_putc(&out, '"');
+                    for (const char *t = inner; *t; t++) {
+                        if (*t == '"' || *t == '\\') sb_putc(&out, '\\');
+                        sb_putc(&out, *t);
                     }
-                    result[ri++] = '"'; result[ri] = 0;
+                    sb_putc(&out, '"');
                 } else {
+                    /* @paste: concatenate the comma-separated pieces, trimming */
                     char *reduced = reduce_meta(inner, depth + 1);
-                    size_t rc = strlen(reduced) * 2 + 8, ri = 0;
-                    result = malloc(rc); result[0] = 0;
-                    int d = 0, hi = 0;
-                    for (char *s = reduced; ; ) {
-                        char *seg = s;
-                        while (*s) {
-                            if (*s == '(') d++; else if (*s == ')') d--; else if (*s == ',' && d == 0) { *s = 0; hi = 1; break; }
-                            s++;
+                    int d = 0, more = 0;
+                    for (char *t = reduced; ; ) {
+                        char *seg = t;
+                        while (*t) {
+                            if (*t == '(') d++;
+                            else if (*t == ')') d--;
+                            else if (*t == ',' && d == 0) { *t = 0; more = 1; break; }
+                            t++;
                         }
                         while (*seg && isspace((unsigned char)*seg)) seg++;
                         char *se = seg + strlen(seg);
                         while (se > seg && isspace((unsigned char)se[-1])) *--se = 0;
-                        while (ri + strlen(seg) + 2 >= rc) { rc *= 2; result = realloc(result, rc); }
-                        strcat(result, seg);
-                        if (!hi) break;
-                        hi = 0; s++;
+                        sb_puts(&out, seg);
+                        if (!more) break;
+                        more = 0;
+                        t++;
                     }
                     free(reduced);
                 }
                 free(inner);
-                size_t rl = strlen(result);
-                while (oi + rl + 2 >= cap) { cap = cap * 2 + 1; out = realloc(out, cap); }
-                memcpy(out + oi, result, rl + 1); oi += rl; free(result);
-                p = text + after; continue;
+                p = text + after;
+                continue;
             }
         }
-        while (*p && *p != '"' && *p != '\\' && !(p[0] == '@' && (strncmp(p, "@stringify", 10) == 0 || strncmp(p, "@paste", 6) == 0))) {
-            if (oi + 2 >= cap) { cap = cap * 2 + 1; out = realloc(out, cap); }
-            out[oi++] = *p++;
+        /* Copy plain text up to the next literal or meta-operator. */
+        while (*p && *p != '"' && *p != '\\' &&
+               !(p[0] == '@' && (strncmp(p, "@stringify", 10) == 0 || strncmp(p, "@paste", 6) == 0))) {
+            sb_putc(&out, *p++);
         }
-        if (*p == '@') {
-            if (oi + 2 >= cap) { cap = cap * 2 + 1; out = realloc(out, cap); }
-            out[oi++] = *p++;
-        }
+        if (*p == '@') sb_putc(&out, *p++);
     }
-    out[oi] = 0;
-    return out;
+    return sb_take(&out);
 }
 
-static char *copy_literal(const char **pp, char *out, size_t *oi, size_t *cap) {
-    const char *p = *pp; char quote = *p;
-    #define ENSURE(n) do { while (*oi + (n) + 1 >= *cap) { *cap = *cap*2+1; out = realloc(out,*cap);} } while(0)
-    ENSURE(1); out[(*oi)++] = *p++;
-    while (*p && *p != quote) { if (*p=='\\' && p[1]) { ENSURE(2); out[(*oi)++]=*p++; out[(*oi)++]=*p++; continue; } ENSURE(1); out[(*oi)++]=*p++; }
-    if (*p==quote) { ENSURE(1); out[(*oi)++]=*p++; }
-    #undef ENSURE
-    *pp=p; return out;
-}
-
+/* Expand object-like and function-like macros in `text`. */
 static char *expand_text(const char *text, int depth) {
-    if (!text) return strdup("");
-    if (depth > 16) return strdup(text);
-    size_t cap = strlen(text) * 4 + 256;
-    if (cap < 256) cap = 256;
-    char *out = malloc(cap);
-    size_t oi = 0;
+    if (!text) return xstrdup("");
+    if (depth > MAX_EXPAND_DEPTH) return xstrdup(text);
+    StrBuf out;
+    sb_init(&out);
     const char *p = text;
     while (*p) {
-        if (isalpha((unsigned char)*p) || *p == '_') {
-            char ident[64]; size_t ii = 0;
-            while (isalnum((unsigned char)*p) || *p == '_') {
-                if (ii < 63) ident[ii++] = *p;
-                p++;
-            }
-            ident[ii] = 0;
-            LoiMacroDef *m = find_macro(ident);
-            const char *q = skip_ws(p);
-            if (m && m->function_like && *q == '(') {
-                /* parse args */
-                const char *cur = q + 1;
-                int depthp = 1;
-                const char *start = cur;
-                char *args[8] = {0};
-                int argc = 0;
-                int done = 0;
-                while (*cur && !done) {
-                    if (*cur == '(') depthp++;
-                    else if (*cur == ')') {
-                        depthp--;
-                        if (depthp == 0) {
-                            size_t al = cur - start;
-                            char *raw = malloc(al + 1); memcpy(raw, start, al); raw[al] = 0;
-                            char *tr = skip_ws(raw);
-                            char *te = tr + strlen(tr);
-                            while (te > tr && isspace((unsigned char)te[-1])) te--;
-                            *te = 0;
-                            if (argc < 8) args[argc] = strdup(tr);
-                            argc++;
-                            free(raw);
-                            cur++;
-                            done = 1;
-                            continue;
-                        }
-                    } else if (*cur == ',' && depthp == 1) {
-                        size_t al = cur - start;
-                        char *raw = malloc(al + 1); memcpy(raw, start, al); raw[al] = 0;
-                        char *tr = skip_ws(raw);
-                        char *te = tr + strlen(tr);
-                        while (te > tr && isspace((unsigned char)te[-1])) te--;
-                        *te = 0;
-                        if (argc < 8) args[argc] = strdup(tr);
+        if (!(isalpha((unsigned char)*p) || *p == '_')) {
+            if (*p == '"' || *p == '\\') { copy_literal(&p, &out); continue; }
+            sb_putc(&out, *p++);
+            continue;
+        }
+        char ident[MAX_IDENT];
+        read_name(&p, ident, sizeof(ident));
+        LoiMacroDef *m = find_macro(ident);
+        const char *q = skip_ws(p);
+        if (m && m->function_like && *q == '(') {
+            /* Split the call's arguments at top-level commas. */
+            const char *cur = q + 1;
+            int paren = 1;
+            const char *arg_start = cur;
+            char *args[MAX_MACRO_PARAMS] = {0};
+            int argc = 0;
+            while (*cur) {
+                if (*cur == '(') paren++;
+                else if (*cur == ')') {
+                    paren--;
+                    if (paren == 0) {
+                        if (argc < MAX_MACRO_PARAMS) args[argc] = slice_trimmed(arg_start, cur);
                         argc++;
-                        free(raw);
-                        start = cur + 1;
+                        cur++;
+                        break;
                     }
-                    cur++;
+                } else if (*cur == ',' && paren == 1) {
+                    if (argc < MAX_MACRO_PARAMS) args[argc] = slice_trimmed(arg_start, cur);
+                    argc++;
+                    arg_start = cur + 1;
                 }
-                p = cur; /* continue after the macro invocation */
-                /* variadic: join the trailing args into the variadic parameter */
-                if (m->variadic) {
-                    int fixed = m->param_count - 1; if (fixed < 0) fixed = 0;
-                    if (argc > fixed) {
-                        size_t jcap = 1; for (int i=fixed; i<argc && i<8; i++) jcap += strlen(args[i]?args[i]:"") + 2;
-                        char *joined = malloc(jcap); joined[0]=0;
-                        for (int i=fixed; i<argc && i<8; i++) { if (i>fixed) strcat(joined, ", "); strcat(joined, args[i]?args[i]:""); }
-                        for (int i=fixed; i<argc && i<8; i++) { free(args[i]); args[i]=NULL; }
-                        args[fixed] = joined; argc = fixed + 1;
-                    } else {
-                        args[fixed] = strdup("");
-                        argc = fixed + 1;
-                    }
-                }
-                char *prepared = NULL;
-                size_t cap2 = strlen(m->body)*1024 + 1024;
-                prepared = malloc(cap2);
-                size_t pi = 0;
-                const char *b = m->body;
-                while (*b) {
-                    if (isalpha((unsigned char)*b) || *b == '_') {
-                        char idb[64]; size_t bi = 0;
-                        while (isalnum((unsigned char)*b) || *b == '_') { if (bi < 63) idb[bi++] = *b; b++; }
-                        idb[bi] = 0;
-                        int match = -1;
-                        for (int k = 0; k < m->param_count; k++) if (strcmp(idb, m->params[k]) == 0) { match = k; break; }
-                        if (match >= 0) {
-                            const char *av = (match < argc && args[match]) ? args[match] : "";
-                            size_t avl = strlen(av);
-                            while (pi + avl + 2 >= cap2) { cap2 *= 2; prepared = realloc(prepared, cap2); }
-                            memcpy(prepared + pi, av, avl + 1);
-                            pi += avl;
-                        } else {
-                            size_t idl = strlen(idb);
-                            while (pi + idl + 2 >= cap2) { cap2 *= 2; prepared = realloc(prepared, cap2); }
-                            memcpy(prepared + pi, idb, idl + 1);
-                            pi += idl;
-                        }
-                    } else {
-                        if (pi + 2 >= cap2) { cap2 *= 2; prepared = realloc(prepared, cap2); }
-                        prepared[pi++] = *b++;
-                    }
-                }
-                prepared[pi] = 0;
-                char *red = reduce_meta(prepared, 0);
-                char *rval = expand_text(red, depth + 1);
-                size_t rv = strlen(rval);
-                if (oi + rv + 2 >= cap) { while (oi + rv + 2 >= cap) { cap = cap*2 + 1; out = realloc(out, cap); } }
-                memcpy(out + oi, rval, rv + 1);
-                oi += rv;
-                for (int i = 0; i < argc; i++) if (args[i]) free(args[i]);
-                free(prepared); free(red); free(rval);
-            } else if (m) {
-                char *red = reduce_meta(m->body, 0);
-                char *rval = expand_text(red, depth + 1);
-                size_t rv = strlen(rval);
-                if (oi + rv + 2 >= cap) { while (oi + rv + 2 >= cap) { cap = cap*2 + 1; out = realloc(out, cap); } }
-                memcpy(out + oi, rval, rv + 1);
-                oi += rv;
-                free(red); free(rval);
-            } else {
-                size_t il = strlen(ident);
-                if (oi + il + 2 >= cap) { cap *= 2; out = realloc(out, cap); }
-                memcpy(out + oi, ident, il + 1);
-                oi += il;
+                cur++;
             }
+            p = cur;   /* continue after the invocation */
+            /* Fold the trailing arguments into the variadic parameter. */
+            if (m->variadic) {
+                int fixed = m->param_count - 1;
+                if (fixed < 0) fixed = 0;
+                StrBuf joined;
+                sb_init(&joined);
+                for (int i = fixed; i < argc && i < MAX_MACRO_PARAMS; i++) {
+                    if (i > fixed) sb_puts(&joined, ", ");
+                    sb_puts(&joined, args[i] ? args[i] : "");
+                    free(args[i]);
+                    args[i] = NULL;
+                }
+                if (fixed < MAX_MACRO_PARAMS) {
+                    free(args[fixed]);
+                    args[fixed] = sb_take(&joined);
+                    argc = fixed + 1;
+                } else {
+                    free(sb_take(&joined));
+                }
+            }
+            /* Substitute parameters in the macro body. */
+            StrBuf prepared;
+            sb_init(&prepared);
+            const char *b = m->body;
+            while (*b) {
+                if (isalpha((unsigned char)*b) || *b == '_') {
+                    char idb[MAX_IDENT];
+                    read_name(&b, idb, sizeof(idb));
+                    int match = -1;
+                    for (int k = 0; k < m->param_count; k++) {
+                        if (strcmp(idb, m->params[k]) == 0) { match = k; break; }
+                    }
+                    if (match >= 0 && match < argc && args[match]) sb_puts(&prepared, args[match]);
+                    else sb_puts(&prepared, idb);
+                } else {
+                    sb_putc(&prepared, *b++);
+                }
+            }
+            char *subst = sb_take(&prepared);
+            char *red = reduce_meta(subst, 0);
+            char *rval = expand_text(red, depth + 1);
+            sb_puts(&out, rval);
+            for (int i = 0; i < argc; i++) free(args[i]);
+            free(subst);
+            free(red);
+            free(rval);
+        } else if (m) {
+            char *red = reduce_meta(m->body, 0);
+            char *rval = expand_text(red, depth + 1);
+            sb_puts(&out, rval);
+            free(red);
+            free(rval);
         } else {
-            if (*p == '"' || *p == '\\') { out = copy_literal(&p, out, &oi, &cap); continue; }
-            if (oi + 2 >= cap) { cap *= 2; out = realloc(out, cap); }
-            out[oi++] = *p++;
+            sb_puts(&out, ident);
         }
     }
-    out[oi] = 0;
-    return out;
+    return sb_take(&out);
 }
 
 /* ---------- conditionals: @if(...) { } @elif(...) { } @else { } @endif ---------- */
-
-typedef struct { char *buf; size_t len, cap; } SBuf;
-
-static void sb_init(SBuf *b, size_t cap) {
-    if (cap < 64) cap = 64;
-    b->buf = malloc(cap);
-    b->buf[0] = 0;
-    b->len = 0;
-    b->cap = cap;
-}
-static void sb_put(SBuf *b, const char *s, size_t n) {
-    if (b->len + n + 1 > b->cap) {
-        while (b->len + n + 1 > b->cap) b->cap = b->cap * 2 + 1;
-        b->buf = realloc(b->buf, b->cap);
-    }
-    memcpy(b->buf + b->len, s, n);
-    b->len += n;
-    b->buf[b->len] = 0;
-}
-static void sb_putc(SBuf *b, char c) { sb_put(b, &c, 1); }
 
 static int lit_is(const char *s, size_t n, const char *lit) {
     size_t l = strlen(lit);
@@ -523,9 +663,8 @@ static long eval_primary(const char **e, int depth) {
         int paren = (**e == '(');
         if (paren) (*e)++;
         eval_skip(e);
-        char nm[64]; size_t ni = 0;
-        while (isalnum((unsigned char)**e) || **e == '_') { if (ni < 63) nm[ni] = **e; ni++; (*e)++; }
-        nm[ni] = 0;
+        char nm[MAX_IDENT];
+        read_name(e, nm, sizeof(nm));
         if (paren) { eval_skip(e); if (**e == ')') (*e)++; }
         return macro_defined(nm);
     }
@@ -536,14 +675,12 @@ static long eval_primary(const char **e, int depth) {
         return v;
     }
     if (isalpha((unsigned char)**e) || **e == '_') {
-        char nm[64]; size_t ni = 0;
-        while (isalnum((unsigned char)**e) || **e == '_') { if (ni < 63) nm[ni] = **e; ni++; (*e)++; }
-        nm[ni] = 0;
+        char nm[MAX_IDENT];
+        read_name(e, nm, sizeof(nm));
         LoiMacroDef *m = find_macro(nm);
         if (!m || m->function_like) return 0;
-        char buf[1024];
-        strncpy(buf, m->body, sizeof(buf) - 1);
-        buf[sizeof(buf) - 1] = 0;
+        char buf[MAX_MACRO_BODY];
+        snprintf(buf, sizeof(buf), "%s", m->body);
         const char *bp = buf;
         return eval_or(&bp, depth + 1);
     }
@@ -612,7 +749,7 @@ static long eval_or(const char **e, int depth) {
     return v;
 }
 static int eval_cond(const char *expr, int depth) {
-    if (!expr || depth > 8) return 0;
+    if (!expr || depth > MAX_COND_DEPTH) return 0;
     const char *e = expr;
     return eval_or(&e, 0) != 0;
 }
@@ -654,7 +791,7 @@ static size_t find_block_end(const char *s, size_t i, size_t end) {
 static void register_define(const char *rest);
 
 static char *pp_range(const char *s, size_t start, size_t end, int depth);
-static size_t pp_chain(const char *s, size_t i, size_t end, SBuf *out, int depth) {
+static size_t pp_chain(const char *s, size_t i, size_t end, StrBuf *out, int depth) {
     int taken = 0;
     while (i < end) {
         int is_if = lit_is(s + i, end - i, "@if(");
@@ -662,7 +799,7 @@ static size_t pp_chain(const char *s, size_t i, size_t end, SBuf *out, int depth
         if (is_if || is_elif) {
             size_t open = is_if ? i + 3 : i + 5;
             size_t cp = find_paren_end(s, open, end);
-            char cond[1024];
+            char cond[MAX_COND_LEN];
             size_t cl = (cp > open + 1) ? (cp - open - 1) : 0;
             if (cl > 1023) cl = 1023;
             memcpy(cond, s + open + 1, cl);
@@ -714,52 +851,172 @@ static size_t count_nl(const char *s, size_t from, size_t to) {
 
 /* replace whole-identifier occurrences of `word` with `repl` in `text` */
 static char *subst_word(const char *text, const char *word, const char *repl) {
-    size_t wl = strlen(word), rl = strlen(repl);
-    size_t cap = strlen(text) * 2 + 64, n = 0;
-    char *out = malloc(cap);
+    size_t wl = strlen(word);
+    StrBuf out;
+    sb_init(&out);
     const char *p = text;
     while (*p) {
         int boundary = (p == text) || !(isalnum((unsigned char)p[-1]) || p[-1] == '_');
         if (wl && boundary && (isalpha((unsigned char)*p) || *p == '_') &&
             strncmp(p, word, wl) == 0 && !(isalnum((unsigned char)p[wl]) || p[wl] == '_')) {
-            while (n + rl + 2 >= cap) { cap = cap * 2 + 1; out = realloc(out, cap); }
-            memcpy(out + n, repl, rl); n += rl; p += wl;
+            sb_puts(&out, repl);
+            p += wl;
         } else {
-            if (n + 2 >= cap) { cap = cap * 2 + 1; out = realloc(out, cap); }
-            out[n++] = *p++;
+            sb_putc(&out, *p++);
         }
     }
-    out[n] = 0;
-    return out;
+    return sb_take(&out);
 }
 
-/* split a comma-separated list at top level (respecting parentheses) */
-static int split_top(const char *s, char out[][256], int max) {
-    int depth = 0, n = 0; size_t oi = 0;
+/* Split a comma-separated list at top level (respecting parentheses), trimming
+   each piece. Returns the number of pieces (at most `max`). */
+static int split_top(const char *s, char out[][MAX_PART_LEN], int max) {
+    int depth = 0, n = 0;
+    const char *start = s;
     for (const char *p = s; ; p++) {
         char c = *p;
         if (c == '(') depth++;
         else if (c == ')') depth--;
         if ((c == ',' && depth == 0) || c == 0) {
-            out[n][oi] = 0;
-            /* trim */
-            char *a = out[n];
-            while (*a && isspace((unsigned char)*a)) memmove(a, a + 1, strlen(a));
-            size_t l = strlen(a);
-            while (l > 0 && isspace((unsigned char)a[l - 1])) a[--l] = 0;
-            n++; oi = 0;
+            const char *b = start, *e = p;
+            while (b < e && isspace((unsigned char)*b)) b++;
+            while (e > b && isspace((unsigned char)e[-1])) e--;
+            size_t len = (size_t)(e - b);
+            if (len > 255) len = 255;
+            memcpy(out[n], b, len);
+            out[n][len] = 0;
+            n++;
+            start = p + 1;
             if (c == 0 || n >= max) break;
-        } else {
-            if (oi < 255) out[n][oi++] = c;
         }
     }
     return n;
 }
 
+/* Undefine the macro named by the text following an `@undef`/`#undef`. */
+static void do_undef(const char *rest) {
+    rest = skip_ws(rest);
+    char name[MAX_IDENT];
+    read_name(&rest, name, sizeof(name));
+    macro_undef(name);
+}
+
+/* Emit a compile-time error (from `@error`/`#error`) and stop. */
+static void do_error(const char *msg) {
+    fprintf(stderr, "error: %s\n", skip_ws(msg));
+    exit(1);
+}
+
+/* Handle the `@`-directives that consume a whole line or a brace block:
+   `@repeat`/`@for`, the parenthesized `@(define ...)` meta form, and the
+   line-based `@define`/`@undef`/`@error`.
+   `i` must point at the `@` and be the first non-space token on its line.
+   On success, appends to `out`, sets `*next`, and returns 1. Returns 0 when
+   the text is not one of these directives (so the caller copies it verbatim). */
+static int handle_at(const char *s, size_t i, size_t end, int depth, StrBuf *out, size_t *next) {
+    /* --- @repeat(n) { ... }  and  @for(iter, from, to, step) { ... } --- */
+    int is_for = lit_is(s + i, end - i, "@for(");
+    if (is_for || lit_is(s + i, end - i, "@repeat(")) {
+        size_t open = i + (is_for ? 4 : 7);
+        size_t cp = find_paren_end(s, open, end);
+        if (cp < end) {
+            size_t j = cp + 1;
+            while (j < end && isspace((unsigned char)s[j])) j++;
+            if (j < end && s[j] == '{') {
+                size_t be = find_block_end(s, j, end);
+                char args[MAX_COND_LEN];
+                size_t al = cp - (open + 1);
+                if (al >= sizeof(args)) al = sizeof(args) - 1;
+                memcpy(args, s + open + 1, al);
+                args[al] = 0;
+                char body[MAX_BLOCK_LEN];
+                size_t bl = be - (j + 1);
+                if (bl >= sizeof(body)) bl = sizeof(body) - 1;
+                memcpy(body, s + j + 1, bl);
+                body[bl] = 0;
+                char parts[MAX_LIST_PARTS][MAX_PART_LEN];
+                int np = split_top(args, parts, MAX_LIST_PARTS);
+                if (is_for) {
+                    const char *var = (np >= 1) ? parts[0] : "i";
+                    int a  = (np >= 2) ? eval_int(parts[1]) : 0;
+                    int b  = (np >= 3) ? eval_int(parts[2]) : 0;
+                    int st = (np >= 4) ? eval_int(parts[3]) : 1;
+                    if (st == 0) st = 1;
+                    for (int k = a; (st > 0) ? (k < b) : (k > b); k += st) {
+                        char ks[MAX_NUM_LEN];
+                        snprintf(ks, sizeof(ks), "%d", k);
+                        char *sub = subst_word(body, var, ks);
+                        char *proc = pp_range(sub, 0, strlen(sub), depth + 1);
+                        sb_puts(out, proc);
+                        free(sub);
+                        free(proc);
+                    }
+                } else {
+                    int nrep = (np >= 1) ? eval_int(parts[0]) : 0;
+                    for (int k = 0; k < nrep; k++) {
+                        char *proc = pp_range(body, 0, strlen(body), depth + 1);
+                        sb_puts(out, proc);
+                        free(proc);
+                    }
+                }
+                *next = (be < end) ? be + 1 : end;
+                return 1;
+            }
+        }
+        return 0;
+    }
+
+    /* --- parenthesized meta form: @(define ...) / @(undef ...) / @(error ...) --- */
+    if (i + 1 < end && s[i + 1] == '(') {
+        size_t cp = find_paren_end(s, i + 1, end);
+        if (cp < end) {
+            size_t clen = cp - (i + 2);
+            char inner[MAX_INLINE_LEN];
+            if (clen >= sizeof(inner)) clen = sizeof(inner) - 1;
+            memcpy(inner, s + i + 2, clen);
+            inner[clen] = 0;
+            char *t = skip_ws(inner);
+            if (kw_match(t, "define")) register_define(t + 6);
+            else if (kw_match(t, "undef")) do_undef(t + 5);
+            else if (kw_match(t, "error")) do_error(t + 5);
+            /* The directive is meta-only: drop it but keep its newline. */
+            size_t le = cp + 1;
+            while (le < end && s[le] != '\n') le++;
+            if (le < end && s[le] == '\n') { sb_putc(out, '\n'); *next = le + 1; }
+            else *next = le;
+            return 1;
+        }
+    }
+
+    /* --- line-based @define / @undef / @error --- */
+    if (kw_match(s + i, "@define") || kw_match(s + i, "@undef") || kw_match(s + i, "@error")) {
+        size_t kwlen = kw_match(s + i, "@define") ? 7 : 6;
+        size_t le = i + kwlen;
+        while (le < end && s[le] != '\n') le++;
+        char payload[MAX_INLINE_LEN];
+        size_t pl = le - (i + kwlen);
+        if (pl >= sizeof(payload)) pl = sizeof(payload) - 1;
+        memcpy(payload, s + i + kwlen, pl);
+        payload[pl] = 0;
+        if (s[i + 1] == 'd') register_define(payload);
+        else if (s[i + 1] == 'u') do_undef(payload);
+        else do_error(payload);
+        if (le < end && s[le] == '\n') { sb_putc(out, '\n'); *next = le + 1; }
+        else *next = le;
+        return 1;
+    }
+    return 0;
+}
+
+/* Core line/conditional/directive processor. Copies [start,end) from `s`,
+   evaluating `@if` chains and consuming preprocessor directives. */
 static char *pp_range(const char *s, size_t start, size_t end, int depth) {
-    SBuf out;
-    sb_init(&out, end > start ? (end - start) + 64 : 64);
-    if (depth > 64) { sb_put(&out, s + start, end - start); return out.buf; }
+    StrBuf out;
+    sb_init(&out);
+    if (depth > MAX_PP_DEPTH) {
+        sb_put(&out, s + start, end - start);
+        return sb_take(&out);
+    }
     size_t i = start;
     int instr = 0, inchar = 0;
     while (i < end) {
@@ -780,62 +1037,42 @@ static char *pp_range(const char *s, size_t start, size_t end, int depth) {
         }
         if (c == '"') { instr = 1; sb_putc(&out, c); i++; continue; }
         if (c == '\'') { inchar = 1; sb_putc(&out, c); i++; continue; }
-        if (c == '#') {
-            /* only a directive if it is the first non-space token on its line */
-            size_t ls = i;
-            while (ls > 0 && s[ls - 1] != '\n') ls--;
-            int onlyws = (ls == 0) || (s[ls - 1] == '\n');
-            for (size_t k = ls; k < i && onlyws; k++) {
-                if (!isspace((unsigned char)s[k])) onlyws = 0;
-            }
-            if (onlyws) {
-                size_t le = i;
-                while (le < end && s[le] != '\n') le++;
-                char dir[4096];
-                size_t dl = le - i;
-                if (dl >= sizeof(dir)) dl = sizeof(dir) - 1;
-                memcpy(dir, s + i, dl);
-                dir[dl] = 0;
-                char *dt = skip_ws(dir);
-                if (strncmp(dt, "#define", 7) == 0 && !(isalnum((unsigned char)dt[7]) || dt[7] == '_')) {
-                    register_define(dt + 7);
-                } else if (strncmp(dt, "#undef", 6) == 0 && !(isalnum((unsigned char)dt[6]) || dt[6] == '_')) {
-                    char *rest = skip_ws(dt + 6);
-                    char name[64]; size_t ni = 0;
-                    while (isalnum((unsigned char)rest[ni]) || rest[ni] == '_') { if (ni < 63) name[ni] = rest[ni]; ni++; }
-                    name[ni] = 0;
-                    for (int mi = 0; mi < g_nmacro; mi++) {
-                        if (strcmp(g_macros[mi].name, name) == 0) {
-                            memmove(&g_macros[mi], &g_macros[mi + 1], (g_nmacro - mi - 1) * sizeof(LoiMacroDef));
-                            g_nmacro--;
-                            break;
-                        }
-                    }
-                } else if (strncmp(dt, "#error", 6) == 0 && !(isalnum((unsigned char)dt[6]) || dt[6] == '_')) {
-                    fprintf(stderr, "error: %s\n", skip_ws(dt + 6));
-                    exit(1);
-                }
-                /* strip the directive line but keep the newline for line numbers */
-                if (le < end && s[le] == '\n') { sb_putc(&out, '\n'); i = le + 1; }
-                else i = le;
-                continue;
-            }
+
+        /* `#...` directives are recognized only at the start of a line. */
+        if (c == '#' && line_blank_before(s, i)) {
+            size_t le = i;
+            while (le < end && s[le] != '\n') le++;
+            char dir[MAX_INLINE_LEN];
+            size_t dl = le - i;
+            if (dl >= sizeof(dir)) dl = sizeof(dir) - 1;
+            memcpy(dir, s + i, dl);
+            dir[dl] = 0;
+            char *dt = skip_ws(dir);
+            if (kw_match(dt, "#define")) register_define(dt + 7);
+            else if (kw_match(dt, "#undef")) do_undef(dt + 6);
+            else if (kw_match(dt, "#error")) do_error(dt + 6);
+            /* Strip the directive line, keeping its newline for line numbers. */
+            if (le < end && s[le] == '\n') { sb_putc(&out, '\n'); i = le + 1; }
+            else i = le;
+            continue;
         }
+
         if (c == '@' && !lit_is(s + i, end - i, "@align") && !lit_is(s + i, end - i, "@pack")) {
             char prev = (i > 0) ? s[i - 1] : '\n';
             int at_start = (i == 0) || isspace((unsigned char)prev) || prev == '}' || prev == '{' || prev == ';';
             /* `at_start` is deliberately permissive so `} @elif(...)` chains work.
-               Line-eating directives (@define/@error/@repeat/...) additionally
-               require a blank line prefix, so an @token inside a comment or a
-               string is never treated as a directive. */
+               Line-eating directives additionally require a blank line prefix, so
+               an `@` inside a comment or string is never treated as a directive. */
             int line_blank = line_blank_before(s, i);
             if (at_start && lit_is(s + i, end - i, "@if(")) {
-                size_t old_i = i;
                 size_t olen = out.len;
-                i = pp_chain(s, i, end, &out, depth);
-                size_t expected_nl = count_nl(s, old_i, i);
-                size_t got_nl = count_nl(out.buf + olen, 0, out.len - olen);
-                for (size_t k = got_nl; k < expected_nl; k++) sb_putc(&out, '\n');
+                size_t next_i = pp_chain(s, i, end, &out, depth);
+                /* Preserve line numbers by emitting the newlines the skipped
+                   branches contained but that were not copied. */
+                size_t expected = count_nl(s, i, next_i);
+                size_t got = count_nl(out.buf + olen, 0, out.len - olen);
+                for (size_t k = got; k < expected; k++) sb_putc(&out, '\n');
+                i = next_i;
                 continue;
             }
             if (at_start && lit_is(s + i, end - i, "@endif")) { i += 6; continue; }
@@ -843,140 +1080,28 @@ static char *pp_range(const char *s, size_t start, size_t end, int depth) {
                 i += lit_is(s + i, end - i, "@elif(") ? 6 : 5;
                 continue;
             }
-            /* @define, @undef, @error line-based or parens form */
             if (line_blank) {
-                if ((lit_is(s + i, end - i, "@repeat(") || lit_is(s + i, end - i, "@for("))) {
-                    int is_for = lit_is(s + i, end - i, "@for(");
-                    size_t open = i + (is_for ? 4 : 7);
-                    size_t cp = find_paren_end(s, open, end);
-                    if (cp < end) {
-                        char argbuf[1024];
-                        size_t al = cp - (open + 1);
-                        if (al >= sizeof(argbuf)) al = sizeof(argbuf) - 1;
-                        memcpy(argbuf, s + open + 1, al); argbuf[al] = 0;
-                        size_t j = cp + 1;
-                        while (j < end && isspace((unsigned char)s[j])) j++;
-                        if (j < end && s[j] == '{') {
-                            size_t be = find_block_end(s, j, end);
-                            char body[8192];
-                            size_t bl = be - (j + 1);
-                            if (bl >= sizeof(body)) bl = sizeof(body) - 1;
-                            memcpy(body, s + j + 1, bl); body[bl] = 0;
-                            char parts[4][256];
-                            int np = split_top(argbuf, parts, 4);
-                            if (is_for) {
-                                const char *mv = (np >= 1) ? parts[0] : "i";
-                                int a = (np >= 2) ? eval_int(parts[1]) : 0;
-                                int b = (np >= 3) ? eval_int(parts[2]) : 0;
-                                int st = (np >= 4) ? eval_int(parts[3]) : 1;
-                                if (st == 0) st = 1;
-                                for (int k = a; (st > 0) ? (k < b) : (k > b); k += st) {
-                                    char ks[32]; snprintf(ks, sizeof(ks), "%d", k);
-                                    char *sub = subst_word(body, mv, ks);
-                                    char *proc = pp_range(sub, 0, strlen(sub), depth + 1);
-                                    sb_put(&out, proc, strlen(proc));
-                                    free(sub); free(proc);
-                                }
-                            } else {
-                                int nrep = (np >= 1) ? eval_int(parts[0]) : 0;
-                                for (int k = 0; k < nrep; k++) {
-                                    char *proc = pp_range(body, 0, strlen(body), depth + 1);
-                                    sb_put(&out, proc, strlen(proc));
-                                    free(proc);
-                                }
-                            }
-                            i = (be < end) ? be + 1 : end;
-                            continue;
-                        }
-                    }
-                }
-                if (i+1 < end && s[i+1] == '(') {
-                    size_t cp = find_paren_end(s, i+1, end);
-                    if (cp < end) {
-                        size_t clen = cp - (i+2);
-                        char inner[4096];
-                        if (clen >= sizeof(inner)) clen = sizeof(inner)-1;
-                        memcpy(inner, s+i+2, clen); inner[clen] = 0;
-                        char *t = skip_ws(inner);
-                        if (strncmp(t, "define", 6)==0 && !(isalnum((unsigned char)t[6])||t[6]=='_')) {
-                            register_define(t+6);
-                        } else if (strncmp(t, "undef", 5)==0 && !(isalnum((unsigned char)t[5])||t[5]=='_')) {
-                            char *rest = skip_ws(t+5);
-                            char name[64]; size_t ni=0;
-                            while (isalnum((unsigned char)rest[ni])||rest[ni]=='_') { if (ni<63) name[ni]=rest[ni]; ni++; }
-                            name[ni]=0;
-                            for (int mi=0; mi<g_nmacro; mi++) if (strcmp(g_macros[mi].name,name)==0) { memmove(&g_macros[mi],&g_macros[mi+1],(g_nmacro-mi-1)*sizeof(LoiMacroDef)); g_nmacro--; break; }
-                        } else if (strncmp(t, "error", 5)==0 && !(isalnum((unsigned char)t[5])||t[5]=='_')) {
-                            fprintf(stderr, "error: %s\n", skip_ws(t+5));
-                            exit(1);
-                        }
-                        /* @(...) directives are meta-only: strip the line but keep
-                           its newline so line numbers stay accurate. Includes are
-                           already resolved (or reported) by expand_includes. */
-                        /* keep newline for line count? find end of this directive's line */
-                        size_t le = cp+1;
-                        while (le < end && s[le]!='\n') le++;
-                        if (le < end && s[le]=='\n') { sb_putc(&out, '\n'); i = le+1; }
-                        else i = le;
-                        continue;
-                    }
-                }
-                /* line-based @define etc */
-                if (strncmp(s+i, "@define", 7)==0 && !(isalnum((unsigned char)s[i+7])||s[i+7]=='_')) {
-                    size_t le = i+7;
-                    while (le < end && s[le]!='\n') le++;
-                    char dl[4096]; size_t dn = le-(i+7);
-                    if (dn >= sizeof(dl)) dn = sizeof(dl)-1;
-                    memcpy(dl, s+i+7, dn); dl[dn]=0;
-                    register_define(dl);
-                    if (le < end && s[le]=='\n') { sb_putc(&out, '\n'); i = le+1; }
-                    else i = le;
-                    continue;
-                }
-                if (strncmp(s+i, "@undef", 6)==0 && !(isalnum((unsigned char)s[i+6])||s[i+6]=='_')) {
-                    size_t le = i+6;
-                    while (le < end && s[le]!='\n') le++;
-                    char *rest = skip_ws(s+6);
-                    char name[64]; size_t ni=0;
-                    while (isalnum((unsigned char)rest[ni])||rest[ni]=='_') { if (ni<63) name[ni]=rest[ni]; ni++; }
-                    name[ni]=0;
-                    for (int mi=0; mi<g_nmacro; mi++) if (strcmp(g_macros[mi].name,name)==0) { memmove(&g_macros[mi],&g_macros[mi+1],(g_nmacro-mi-1)*sizeof(LoiMacroDef)); g_nmacro--; break; }
-                    if (le < end && s[le]=='\n') { sb_putc(&out, '\n'); i = le+1; }
-                    else i = le;
-                    continue;
-                }
-                if (strncmp(s+i, "@error", 6)==0 && !(isalnum((unsigned char)s[i+6])||s[i+6]=='_')) {
-                    size_t le = i+6;
-                    while (le < end && s[le]!='\n') le++;
-                    char msg[1024];
-                    size_t ml = le - (i + 6);
-                    if (ml >= sizeof(msg)) ml = sizeof(msg) - 1;
-                    memcpy(msg, s + i + 6, ml);
-                    msg[ml] = 0;
-                    fprintf(stderr, "error: %s\n", skip_ws(msg));
-                    exit(1);
-                }
+                size_t next_i;
+                if (handle_at(s, i, end, depth, &out, &next_i)) { i = next_i; continue; }
             }
         }
         sb_putc(&out, c);
         i++;
     }
-    return out.buf;
+    return sb_take(&out);
 }
 
 /* register a #define from the text following the keyword */
 static void register_define(const char *rest) {
     rest = skip_ws(rest);
-    char name[64]; size_t ni = 0;
-    while (isalnum((unsigned char)*rest) || *rest == '_') {
-        if (ni < 63) name[ni] = *rest;
-        ni++; rest++;
-    }
-    name[ni] = 0;
+    char name[MAX_IDENT];
+    read_name(&rest, name, sizeof(name));
     int func = 0;
-    char params[8][64]; int pc = 0;
+    char params[MAX_MACRO_PARAMS][MAX_IDENT];
+    int pc = 0;
     int variadic = 0;
-    char va_name[64]; va_name[0] = 0;
+    char va_name[MAX_IDENT];
+    va_name[0] = 0;
     rest = skip_ws(rest);
     if (*rest == '(') {
         func = 1;
@@ -987,39 +1112,39 @@ static void register_define(const char *rest) {
             if (rest[0] == '.' && rest[1] == '.' && rest[2] == '.') {
                 rest += 3;
                 while (*rest == ' ') rest++;
-                size_t vin = 0;
-                while (isalnum((unsigned char)*rest) || *rest == '_') { if (vin < 63) va_name[vin] = *rest; vin++; rest++; }
-                va_name[vin] = 0;
-                if (vin == 0) snprintf(va_name, sizeof(va_name), "args");
+                read_name(&rest, va_name, sizeof(va_name));
+                if (va_name[0] == 0) copy_str(va_name, sizeof(va_name), "args");
                 variadic = 1;
                 while (*rest && *rest != ')') rest++;
                 break;
             }
-            char pn[64]; size_t pin = 0;
-            while (isalnum((unsigned char)*rest) || *rest == '_') { if (pin < 63) pn[pin] = *rest; pin++; rest++; }
-            pn[pin] = 0;
-            if (pin && pc < 8) strcpy(params[pc++], pn);
+            char pn[MAX_IDENT];
+            read_name(&rest, pn, sizeof(pn));
+            if (pn[0] && pc < MAX_MACRO_PARAMS) copy_str(params[pc++], MAX_IDENT, pn);
             while (*rest && *rest != ',' && *rest != ')') rest++;
             if (*rest == ',') rest++;
         }
         if (*rest == ')') rest++;
     }
     char *body = skip_ws(rest);
-    char bodybuf[1024];
+    char bodybuf[MAX_MACRO_BODY];
     strncpy(bodybuf, body, sizeof(bodybuf) - 1);
     bodybuf[sizeof(bodybuf) - 1] = 0;
     size_t bl = strlen(bodybuf);
     while (bl > 0 && isspace((unsigned char)bodybuf[bl - 1])) { bodybuf[bl - 1] = 0; bl--; }
-    if (name[0] && g_nmacro < 128) {
+    if (name[0] && g_nmacro < MAX_MACROS) {
         LoiMacroDef *md = &g_macros[g_nmacro++];
-        strcpy(md->name, name);
-        if (variadic && pc < 8) strcpy(params[pc++], va_name);
-        for (int i = 0; i < pc; i++) strcpy(md->params[i], params[i]);
+        copy_str(md->name, sizeof(md->name), name);
+        if (variadic && pc < MAX_MACRO_PARAMS) copy_str(params[pc++], MAX_IDENT, va_name);
+        for (int i = 0; i < pc; i++) copy_str(md->params[i], MAX_IDENT, params[i]);
         md->param_count = pc;
-        strcpy(md->body, bodybuf);
+        copy_str(md->body, sizeof(md->body), bodybuf);
         md->function_like = func;
         md->variadic = variadic;
-        snprintf(md->va_name, sizeof(md->va_name), "%s", va_name);
+        copy_str(md->va_name, sizeof(md->va_name), va_name);
+    } else if (name[0]) {
+        fprintf(stderr, "error: too many macros (limit %d); ignoring '#define %s'\n",
+                MAX_MACROS, name);
     }
 }
 
@@ -1029,46 +1154,38 @@ static char *preprocess_macros(const char *src) {
     /* pp_range evaluates @if/@elif/@else while registering #define/#undef in
        order, so defines inside skipped branches are never registered. */
     char *cond_src = pp_range(src, 0, strlen(src), 0);
-    size_t srclen = strlen(cond_src);
-    char *out = malloc(srclen * 8 + 1024);
-    size_t oi = 0, ocap = srclen * 8 + 1024;
+    StrBuf out;
+    sb_init(&out);
+    /* Expand each line separately so a call split across lines is not joined. */
     const char *p = cond_src;
     while (*p) {
         const char *nl = strchr(p, '\n');
         size_t linelen = nl ? (size_t)(nl - p) : strlen(p);
-        char line[4096];
-        if (linelen >= sizeof(line)) linelen = sizeof(line) - 1;
-        memcpy(line, p, linelen);
-        line[linelen] = 0;
-
+        char line[MAX_INLINE_LEN];
+        size_t n = linelen < sizeof(line) ? linelen : sizeof(line) - 1;
+        memcpy(line, p, n);
+        line[n] = 0;
         char *exp = expand_text(line, 0);
-        size_t el = strlen(exp);
-        while (oi + el + 2 >= ocap) { ocap = ocap * 2 + 1; out = realloc(out, ocap); }
-        memcpy(out + oi, exp, el);
-        oi += el;
+        sb_puts(&out, exp);
         free(exp);
-        if (nl) {
-            if (oi + 2 >= ocap) { ocap *= 2; out = realloc(out, ocap); }
-            out[oi++] = '\n';
-        }
-
-        if (nl) p = nl + 1;
-        else break;
+        if (!nl) break;
+        sb_putc(&out, '\n');
+        p = nl + 1;
     }
-    out[oi] = 0;
     free(cond_src);
-    /* Second conditional pass for macro-introduced @if */
-    char *final = pp_range(out, 0, strlen(out), 0);
-    free(out);
+    char *expanded = sb_take(&out);
+    /* Second conditional pass, for @if introduced by macro expansion. */
+    char *final = pp_range(expanded, 0, strlen(expanded), 0);
+    free(expanded);
     return final;
 }
 
+/* Public entry point: textually preprocess a loi source unit. */
 char *loi_preprocess(const char *src, const char *base_dir) {
+    if (!src) return NULL;
     include_guard_reset();
-    char *tf = transform_imports(src);
-    char *exp = expand_includes(tf ? tf : src, base_dir, 0);
-    free(tf);
-    char *proc = preprocess_macros(exp ? exp : "");
-    free(exp);
-    return proc;
+    char *included = expand_includes(src, base_dir, 0);
+    char *result = preprocess_macros(included ? included : "");
+    free(included);
+    return result;
 }

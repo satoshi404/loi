@@ -1,0 +1,9 @@
+/* an effectful callback must not be passed where a pure callback is expected */
+apply_once = (f: (n: int) -> void, n: int): void { f(n); }
+
+iofn = (n: int) -> void !IO { loi_print_int(n); }
+
+main = () -> int !IO {
+    apply_once(iofn, 3);
+    return 0;
+}

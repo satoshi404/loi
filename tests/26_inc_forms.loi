@@ -1,0 +1,11 @@
+/* every approved inclusion form goes through `@` */
+@inc "lib/guarded.loi"      /* quoted file path          */
+@inc lib/guarded.loi        /* bare file path            */
+@inc std                    /* package form              */
+@inc std.math               /* dotted package -> std/math */
+@cinc <stdio.h>             /* C header check (angle)    */
+@cinc "stdlib.h"            /* C header check (quoted)   */
+
+main = () -> int {
+    return guarded_value(41);   /* 42 */
+}

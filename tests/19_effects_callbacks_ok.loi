@@ -1,0 +1,15 @@
+/* effects flow through function pointers: a declared callback type carries
+   its effects, and passing a matching function is accepted. */
+type IoFn = (n: int) -> void !IO;
+
+iofn = (n: int) -> void !IO { loi_print_int(n); }
+
+apply_io = (f: IoFn, n: int): void !IO { f(n); }
+
+main = () -> int !IO
+{
+    apply_io(iofn, 5);
+    h: IoFn = iofn;
+    h(6);
+    return 33;
+}

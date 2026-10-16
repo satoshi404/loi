@@ -5,7 +5,6 @@
 
 typedef enum {
     AST_PROGRAM,
-    AST_IMPORT,
     AST_PACKAGE,
     AST_VAR_DECL,
     AST_FUNC_DECL,

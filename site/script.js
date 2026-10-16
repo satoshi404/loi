@@ -1,7 +1,7 @@
 // loi site script
 (function () {
   const KEYWORDS = new Set([
-    'import','static','const','let','struct','union','enum','type','fn','region',
+    'static','const','let','struct','union','enum','type','fn','region',
     'return','if','else','while','for','do','switch','case','default','break',
     'continue','main','extern','asm','sizeof','typeof','defined','asm'
   ]);

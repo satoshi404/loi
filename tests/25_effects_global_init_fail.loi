@@ -1,0 +1,10 @@
+/* a global function-pointer initializer must not drop effects */
+type PureFn = (n: int) -> void;
+
+iofn = (n: int) -> void !IO { loi_print_int(n); }
+
+f: PureFn = iofn;
+
+main = () -> int {
+    return 0;
+}

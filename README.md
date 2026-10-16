@@ -68,22 +68,35 @@ Compilation errors always fail the build with exit status `1`:
 With `--run`, the exit code of the compiled program is propagated (masked to
 8 bits, like a shell). Success is `0` when the program returns `0`.
 
-`@inc` / `@cinc` are *not* errors — they are the include directives (see below).
-`@include` has been removed and is reported as an error pointing at its
+`@inc` / `@cinc` are *not* errors — they are the inclusion directives (see
+below). Every inclusion starts with the `@` sigil: there is **no `import`
+keyword**, and `@include` / `#include` are reported as errors pointing at their
 replacement.
 
 ### Includes
 
-- `@inc "file.loi"`, `@inc file.loi`, `@inc package` — inlines a loi library.
-  Resolution searches the including file's directory, `./lib`, `./packages`,
-  `/usr/share/loi`, `/usr/local/share/loi`, and every entry in `LOI_PATH`.
-  Recursion is capped at depth 16.
+All forms start with `@`:
+
+```loi
+@inc "path/to/file.loi"   // quoted path
+@inc path/to/file.loi     // bare path
+@inc std                  // package form
+@inc std.math             // dotted package (dots become path separators)
+@cinc <stdio.h>           // verify a C header exists
+@cinc "stdio.h"
+```
+
+- `@inc` inlines a loi library or package. Resolution searches the including
+  file's directory, `./lib`, `./packages`, `/usr/share/loi`,
+  `/usr/local/share/loi`, and every entry in `LOI_PATH`. `@inc pkg.sub` maps
+  dots to path separators (`pkg/sub`). Recursion is capped at depth 16.
 - **Include guards**: each distinct real path is included at most once per
   compilation (like `#pragma once`), so libraries need no manual guards and
   include cycles terminate safely.
-- `@cinc <header.h>` — verifies a C header exists (searching `/usr/include`,
-  `/usr/local/include`, …); C ABIs are declared in loi via `extern`, so `@cinc`
-  leaves a trace marker in the source instead of textually including the header.
+- `@cinc <header.h>` / `@cinc "header.h"` — verifies a C header exists
+  (searching `.`, `/usr/include`, `/usr/local/include`,
+  `/usr/include/x86_64-linux-gnu`); the header is *not* inlined. Since C ABIs
+  are declared in loi via `extern`, `@cinc` leaves a trace marker in the source.
 
 ## Language highlights
 
@@ -101,9 +114,10 @@ replacement.
 - **Lexical memory regions**: `region buf(64) { ... }` — bump-allocated at
   block entry, freed at block exit (unless terminated by `return`).
 - **Effect annotations**: `worker = (p: void*): void* !IO,Alloc { ... }` —
-  **enforced** at direct call sites, indirect call sites, and on assignment to
-  a function pointer. A function may only perform the effects it declares, and
-  an `!IO` function cannot be stored in a variable whose type has no `!IO`.
+  **enforced** at direct calls, indirect calls, assignment, and when a value is
+  passed as a callback argument or returned from a function. A function may only
+  perform the effects it declares, and an `!IO` function cannot be stored in a
+  variable whose type has no `!IO`.
 - **Structs with layout control**: `struct S @pack() { ... }`, `@align(n)`.
 - **Control flow**: `if/else`, `while`, `do { } while (...)`, `for`, `switch/case/default`, `break`, `continue`.
 - **Typed function pointers**: `type Cmp = (a: int, b: int) -> int;` — including
@@ -188,7 +202,7 @@ See `docs/syntax.md` for the full grammar and specification.
 - `src/typecheck.c` — semantic checks (scopes, calls, assignments, effects)
 - `src/codegen.c` — LLVM IR emitter (incl. struct layout math)
 - `src/preprocessor.*` — the whole `@`/`#` layer in its own module: macros,
-  `@if/@elif/@else`, `@repeat`/`@for`, includes/imports, include guards.
+  `@if/@elif/@else`, `@repeat`/`@for`, `@inc`/`@cinc` includes, include guards.
   Exposes a small API (`loi_preprocess`) so `main.c` only drives the pipeline.
 - `src/main.c` — CLI / driver (file loading, flags, invoking lexer→parser→
   typecheck→codegen→clang)
@@ -215,5 +229,5 @@ error cases for parser, typechecker and preprocessor.
 
 ## Runtime
 
-- Built-in runtime functions (`loi_print_*`, math, threads, regions, allocation) are linked into every executable automatically; `import std` is optional.
-- The `std` package (in `lib/std.loi` and `lib/std/*.loi`) can be loaded via `@inc std` or `import std` when you want package-form wrappers.
+- Built-in runtime functions (`loi_print_*`, math, threads, regions, allocation) are linked into every executable automatically; `@inc std` is optional.
+- The `std` package (in `lib/std.loi` and `lib/std/*.loi`) can be loaded via `@inc std` when you want package-form wrappers.

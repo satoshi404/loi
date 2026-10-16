@@ -140,6 +140,54 @@ static int type_equal(Type *a, Type *b) {
     return 1;
 }
 
+/* Append `src` to the NUL-terminated buffer `dst[cap]`, truncating silently. */
+static void buf_cat(char *dst, size_t cap, const char *src) {
+    if (!cap) return;
+    size_t l = strlen(dst);
+    if (l + 1 >= cap) return;
+    size_t room = cap - 1 - l;
+    size_t n = strlen(src);
+    if (n > room) n = room;
+    memcpy(dst + l, src, n);
+    dst[l + n] = '\0';
+}
+
+/* Render a short, human-readable name for `t` into `buf`.
+   Named aliases are printed by their alias name rather than expanded, so
+   diagnostics talk about the type the user wrote. */
+static void type_name(Type *t, char *buf, size_t cap) {
+    if (!cap) return;
+    buf[0] = '\0';
+    if (!t) { buf_cat(buf, cap, "?"); return; }
+    switch (t->kind) {
+        case TY_PRIMITIVE:
+        case TY_NAMED:
+            buf_cat(buf, cap, t->name ? t->name : "?");
+            break;
+        case TY_POINTER:
+            type_name(t->base, buf, cap);
+            buf_cat(buf, cap, "*");
+            break;
+        case TY_ARRAY:
+            type_name(t->base, buf, cap);
+            buf_cat(buf, cap, "[]");
+            break;
+        case TY_FUNCTION: {
+            char inner[80];
+            type_name(t->return_type, inner, sizeof(inner));
+            buf_cat(buf, cap, "fn(...) -> ");
+            buf_cat(buf, cap, inner);
+            if (t->effects && *t->effects) {
+                buf_cat(buf, cap, " !");
+                buf_cat(buf, cap, t->effects);
+            }
+            break;
+        }
+        default:
+            buf_cat(buf, cap, "?");
+    }
+}
+
 /* Type registry for struct/union field lookup */
 typedef struct {
     char *name;
@@ -203,6 +251,13 @@ static int effects_cover(const char *caller, const char *callee) {
 }
 
 static char *current_function_effects = NULL;
+static Type *current_function_return_type = NULL;
+static const char *current_function_name = NULL;
+
+/* The name of the function whose body is being checked, for diagnostics. */
+static const char *enclosing_name(void) {
+    return current_function_name ? current_function_name : "<top level>";
+}
 
 /* Reject storing a function value whose effects are not covered by the
    target's effects (e.g. assigning an `!IO` function to a pure function
@@ -215,11 +270,34 @@ static void check_assign_effects(Type *target, Type *value, const char *what) {
     Type *vv = resolve_type(value);
     if (tt && vv && tt->kind == TY_FUNCTION && vv->kind == TY_FUNCTION &&
         vv->effects && !effects_cover(tt->effects, vv->effects)) {
-        add_error("%s would drop effects '%s'", what, vv->effects);
+        add_error("%s would perform effect(s) '%s', but the target is declared '%s'",
+                  what, vv->effects, tt->effects ? tt->effects : "pure");
     }
 }
 
+/* Type-check a call's arguments against the callee's parameter list:
+   arity, per-argument type, and (for function-typed parameters) effects.
+   `what` names the call in diagnostics, e.g. "call 'f'". */
 static Type *type_of_expr(ASTNode *e);
+static void check_call_args(const char *what, size_t argc, ASTNode **argv,
+                            size_t pcount, Type **ptypes) {
+    Type **ats = calloc(argc ? argc : 1, sizeof(Type *));
+    for (size_t i = 0; i < argc; i++) ats[i] = type_of_expr(argv[i]);
+    if (pcount != argc) add_error("%s expects %zu argument(s), got %zu", what, pcount, argc);
+    for (size_t i = 0; i < argc && i < pcount; i++) {
+        if (ats[i] && ptypes[i] && !type_equal(ats[i], ptypes[i])) {
+            char eb[96], ab[96];
+            type_name(ptypes[i], eb, sizeof(eb));
+            type_name(ats[i], ab, sizeof(ats[i]) == 0 ? 0 : sizeof(ab));
+            add_error("argument %zu of %s should be %s, but is %s", i + 1, what, eb, ab);
+        } else if (ats[i] && ptypes[i]) {
+            char phrase[192];
+            snprintf(phrase, sizeof(phrase), "argument %zu of %s", i + 1, what);
+            check_assign_effects(ptypes[i], ats[i], phrase);
+        }
+    }
+    free(ats);
+}
 
 static Type *number_type(const char *lex) {
     if (!lex) return NULL;
@@ -279,8 +357,12 @@ static Type *type_of_expr(ASTNode *e) {
                 e->op_token == TOK_STAREQ || e->op_token == TOK_SLASHEQ || e->op_token == TOK_PERCENTEQ) {
                 Type *lt = type_of_expr(e->left);
                 Type *rt = type_of_expr(e->right);
-                if (lt && rt && !type_equal(lt, rt)) add_error("assignment type mismatch");
-                else if (lt && rt) {
+                if (lt && rt && !type_equal(lt, rt)) {
+                    char lb[96], rb[96];
+                    type_name(lt, lb, sizeof(lb));
+                    type_name(rt, rb, sizeof(rb));
+                    add_error("cannot assign %s to %s", rb, lb);
+                } else if (lt && rt) {
                     /* storing a function into a function pointer must not widen effects */
                     check_assign_effects(lt, rt, "assignment");
                 }
@@ -295,17 +377,26 @@ static Type *type_of_expr(ASTNode *e) {
                 Type *b = type_new(TY_PRIMITIVE); b->name = strdup("bool");
                 return b;
             }
-            if (lt && rt && !type_equal(lt, rt)) add_error("binary operand type mismatch");
+            if (lt && rt && !type_equal(lt, rt)) {
+                char lb[96], rb[96];
+                type_name(lt, lb, sizeof(lb));
+                type_name(rt, rb, sizeof(rb));
+                add_error("operator does not accept %s and %s", lb, rb);
+            }
             return lt ? lt : rt;
         }
         case AST_EXPR_TERNARY: {
             (void)type_of_expr(e->cond);
             Type *tt = type_of_expr(e->then_branch);
             Type *et = type_of_expr(e->else_branch);
-            if (tt && et && !type_equal(tt, et)) add_error("ternary branch types differ");
+            if (tt && et && !type_equal(tt, et)) {
+                char tb[96], eb[96];
+                type_name(tt, tb, sizeof(tb));
+                type_name(et, eb, sizeof(eb));
+                add_error("ternary branches have different types: %s and %s", tb, eb);
+            }
             return tt ? tt : et;
         }
-        /* helper: check if caller effects cover callee effects */
 
         case AST_EXPR_CALL: {
             const char *name = (e->left && e->left->type == AST_EXPR_IDENT) ? e->left->name : NULL;
@@ -314,36 +405,30 @@ static Type *type_of_expr(ASTNode *e) {
                 if (name && strcmp(funcs[i].name, name) == 0) { finfo = &funcs[i]; break; }
             }
             if (finfo) {
-                if (finfo->param_count != e->arg_count) add_error("call '%s' expects %zu args, got %zu", name, finfo->param_count, e->arg_count);
-                for (size_t i = 0; i < e->arg_count && i < finfo->param_count; i++) {
-                    Type *at = type_of_expr(e->args[i]);
-                    if (at && finfo->param_types[i] && !type_equal(at, finfo->param_types[i])) add_error("arg %zu type mismatch in call '%s'", i+1, name);
-                }
-                /* effects checking */
+                char what[160];
+                snprintf(what, sizeof(what), "call to '%s'", name);
+                check_call_args(what, e->arg_count, e->args, finfo->param_count, finfo->param_types);
                 if (finfo->effects && !effects_cover(current_function_effects, finfo->effects)) {
-                    add_error("call '%s' requires effects '%s' not present in caller", name, finfo->effects);
+                    add_error("call to '%s' requires effect(s) '%s', not declared by '%s'",
+                              name, finfo->effects, enclosing_name());
                 }
-                return finfo->return_type ? finfo->return_type : NULL;
+                return finfo->return_type;
             }
-            /* indirect call: a variable holding a function pointer */
+            /* indirect call through a function-pointer value */
             if (name) {
-                Type *vt = scope_lookup(name);
-                Type *ft = resolve_type(vt);
-                if (vt && ft && ft->kind == TY_FUNCTION) {
-                    if (ft->param_count != e->arg_count)
-                        add_error("call '%s' expects %zu args, got %zu", name, ft->param_count, e->arg_count);
-                    for (size_t i = 0; i < e->arg_count && i < ft->param_count; i++) {
-                        Type *at = type_of_expr(e->args[i]);
-                        if (at && ft->param_types[i] && !type_equal(at, ft->param_types[i]))
-                            add_error("arg %zu type mismatch in call '%s'", i+1, name);
-                    }
+                Type *ft = resolve_type(scope_lookup(name));
+                if (ft && ft->kind == TY_FUNCTION) {
+                    char what[160];
+                    snprintf(what, sizeof(what), "call through '%s'", name);
+                    check_call_args(what, e->arg_count, e->args, ft->param_count, ft->param_types);
                     if (ft->effects && !effects_cover(current_function_effects, ft->effects)) {
-                        add_error("call '%s' requires effects '%s' not present in caller", name, ft->effects);
+                        add_error("call through '%s' requires effect(s) '%s', not declared by '%s'",
+                                  name, ft->effects, enclosing_name());
                     }
                     return ft->return_type;
                 }
             }
-            /* extern: check args recursively */
+            /* extern / unknown callee: still check that every argument is valid */
             for (size_t i = 0; i < e->arg_count; i++) type_of_expr(e->args[i]);
             return NULL;
         }
@@ -410,8 +495,13 @@ static void check_stmt(ASTNode *s) {
             Type *t = s->ty;
             if (s->init) {
                 Type *it = type_of_expr(s->init);
-                if (t && it && !type_equal(t, it)) add_error("variable '%s' init type mismatch", s->name ? s->name : "?");
-                else if (t && it) {
+                if (t && it && !type_equal(t, it)) {
+                    char tb[96], ib[96];
+                    type_name(t, tb, sizeof(tb));
+                    type_name(it, ib, sizeof(ib));
+                    add_error("cannot initialize %s '%s' with a value of type %s",
+                              tb, s->name ? s->name : "?", ib);
+                } else if (t && it) {
                     char phrase[160];
                     snprintf(phrase, sizeof(phrase), "variable '%s' init", s->name ? s->name : "?");
                     check_assign_effects(t, it, phrase);
@@ -442,7 +532,12 @@ static void check_stmt(ASTNode *s) {
             scope_pop();
             break;
         case AST_RETURN:
-            if (s->left) type_of_expr(s->left);
+            if (s->left) {
+                Type *rt = type_of_expr(s->left);
+                /* Returning a function value must not widen its effects beyond
+                   the function's declared return type. */
+                if (rt) check_assign_effects(current_function_return_type, rt, "return value");
+            }
             break;
         case AST_EXPR_STMT:
             type_of_expr(s->left);
@@ -474,7 +569,20 @@ int typecheck_program(ASTNode *prog) {
         if (!d) continue;
         if (d->type == AST_VAR_DECL) {
             /* global var */
-            if (d->init) type_of_expr(d->init);
+            if (d->init) {
+                Type *it = type_of_expr(d->init);
+                if (d->ty && it && !type_equal(d->ty, it)) {
+                    char tb[96], ib[96];
+                    type_name(d->ty, tb, sizeof(tb));
+                    type_name(it, ib, sizeof(ib));
+                    add_error("cannot initialize %s '%s' with a value of type %s",
+                              tb, d->name ? d->name : "?", ib);
+                } else if (d->ty && it) {
+                    char phrase[160];
+                    snprintf(phrase, sizeof(phrase), "global variable '%s' init", d->name ? d->name : "?");
+                    check_assign_effects(d->ty, it, phrase);
+                }
+            }
             if (d->name) scope_add(d->name, d->ty);
         } else if (d->type == AST_FUNC_DECL) {
             scope_push();
@@ -483,9 +591,15 @@ int typecheck_program(ASTNode *prog) {
                 if (p && p->name) scope_add(p->name, p->ty);
             }
             char *saved_effects = current_function_effects;
+            Type *saved_ret = current_function_return_type;
+            const char *saved_name = current_function_name;
             current_function_effects = d->effects ? d->effects : NULL;
+            current_function_return_type = d->ty;
+            current_function_name = d->name;
             check_stmt(d->body);
             current_function_effects = saved_effects;
+            current_function_return_type = saved_ret;
+            current_function_name = saved_name;
             scope_pop();
         } else if (d->type == AST_STRUCT_DECL) {
             if (d->name) type_registry_add(d->name, d);

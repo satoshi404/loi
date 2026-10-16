@@ -19,14 +19,14 @@
 
 <section class="section container"><div>
   <h2>Examples</h2>
-  <p>Every file under <code>examples/</code> is runnable with <code>./loi examples/NN.loi --run</code>. The exit code is the program's return value. Runtime helpers are linked automatically (many examples still show <code>import std</code> as a convention).</p>
+  <p>Every file under <code>examples/</code> is runnable with <code>./loi examples/NN.loi --run</code>. The exit code is the program's return value. Runtime helpers are linked automatically (many examples still show <code>@inc std</code> as a convention).</p>
 </div></section>
 
 <div class="container example-grid">
   <div class="example-card">
     <h4>01_basics — recursion &amp; control</h4>
     <pre><code class="lang-loi">
-import std
+@inc std
 
 factorial = (n: int): int
 {
@@ -47,7 +47,7 @@ main =
   <div class="example-card">
     <h4>03_math — built-ins</h4>
     <pre><code class="lang-loi">
-import std
+@inc std
 
 main =
 {
@@ -80,7 +80,7 @@ main =
   <div class="example-card">
     <h4>25_fnpointers — typed function pointers</h4>
     <pre><code class="lang-loi">
-import std
+@inc std
 type CmpFn = (a: int, b: int) -> int;
 
 my_less = (a: int, b: int): int { return a &lt; b; }
@@ -98,7 +98,7 @@ main = () -&gt; int !IO
   <div class="example-card">
     <h4>26_macro_trio — stringify / paste / variadic</h4>
     <pre><code class="lang-loi">
-import std
+@inc std
 @(define STR(x) @stringify(x))
 @(define CONCAT(a, b) @paste(a, b))
 @(define LOG(level, ...msg) { @if(level &gt;= 1) { loi_print_str(msg); } })
