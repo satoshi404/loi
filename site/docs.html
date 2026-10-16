@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>loi — Documentation</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="topbar"><div class="container topbar-inner">
+  <a class="brand" href="index.html"><img src="logo.png" alt="loi logo"><code>loi</code></a>
+  <nav class="main-nav">
+    <a href="index.html">Home</a>
+    <a href="docs.html" class="active">Documentation</a>
+    <a href="examples.html">Examples</a>
+    <a href="https://github.com" target="_blank" rel="noopener">GitHub</a>
+  </nav>
+</div></div>
+
+<section class="section container"><div>
+  <h2>Documentation</h2>
+  <p>A small C-flavored language that compiles to LLVM IR, with a rich <code>@</code> metaprogramming layer, effects, regions and typed function pointers. The authoritative grammar lives in <code>docs/syntax.md</code> in the repository.</p>
+</div></section>
+
+<div class="container doc-layout">
+  <aside class="doc-toc">
+    <a href="#intro">Introduction</a>
+    <a href="#getting-started">Getting started</a>
+    <a href="#types">Types</a>
+    <a href="#declarations">Declarations</a>
+    <a href="#control">Control flow</a>
+    <a href="#memory">Memory &amp; regions</a>
+    <a href="#functions">Functions &amp; effects</a>
+    <a href="#fnptr">Function pointers</a>
+    <a href="#metaprogramming">Metaprogramming</a>
+    <a href="#macros">Macros / stringify / paste / variadic</a>
+    <a href="#include">Include &amp; packages</a>
+    <a href="#build">Build &amp; run</a>
+    <a href="#limitations">Limitations</a>
+  </aside>
+  <main>
+    <section id="intro">
+      <h2>Introduction</h2>
+      <p>loi combines C-like syntax (functions assigned to names, hybrid variable declarations, semicolons, structs/unions, pointers, arrays, inline <code>asm</code>) with compile-time metaprogramming via the <code>@</code> sigil, effect annotations (<code>!IO,Alloc</code>), lexical regions, and typed function pointers. The output is LLVM IR, compiled to native via <code>clang</code>.</p>
+      <p>Files usually begin with <code>import std</code>, which brings the runtime helpers (printing, math, threads, regions, ...) into scope at the compiler level. (Runtime helpers are also linked automatically even without <code>import std</code>.)</p>
+    </section>
+
+    <section id="getting-started">
+      <h2>Getting started</h2>
+      <pre><code class="lang-loi">
+import std
+
+factorial = (n: int): int
+{
+    if (n <= 1) { return 1; }
+    return n * factorial(n - 1);
+}
+
+main =
+{
+    int x = 5;
+    if (x < 10) { return factorial(x); }
+    else { return 0; }
+}
+    </section>
+
+    <section id="types">
+      <h2>Types</h2>
+      <pre><code class="lang-loi">
+Type        := BaseType TypeSuffix*
+BaseType    := Primitive | Ident | 'fn' '(' TypeList? ')' '->' Type ('!' EffectList)?
+             | '(' Type ')'
+             | '(' ParamName ':' Type (',' ParamName ':' Type)* ')' '->' Type ('!' EffectList)?
+             | '@' 'typeof' '(' Expr ')'
+             | 'type' Ident '=' Type
+
+TypeSuffix  := '*' | '[' Expr? ']'
+EffectList  := Ident (',' Ident)*
+</code></pre>
+      <p>Primitives include <code>int float double char bool byte short long void unsigned...</code>. Pointers with <code>*</code>, arrays with <code>[]</code>. Aliases: <code>type CmpFn = (a: int, b: int) -> int;</code>.</p>
+    </section>
+
+    <section id="declarations">
+      <h2>Declarations</h2>
+      <pre><code class="lang-loi">
+int x = 5;
+x: int = 5;                 // hybrid form
+const int N = 8;
+static int y;
+let z: int = 3;
+
+struct Point { int x; int y; }
+union U { int a; double b; }
+enum Color { RED, GREEN, BLUE }
+
+type CmpFn = (a: int, b: int) -> int;
+</code></pre>
+    </section>
+
+    <section id="control">
+      <h2>Control flow</h2>
+      <p><code>if/else</code>, <code>while</code>, <code>do-while</code>, <code>for</code> (declarations allowed in init), <code>switch/case/default</code>, <code>break</code>, <code>continue</code>. <code>region r(size) { ... }</code> opens a lexical bump scope.</p>
+    </section>
+
+    <section id="memory">
+      <h2>Memory &amp; regions</h2>
+      <pre><code class="lang-loi">
+void* p = loi_alloc(8);
+*p = 42;
+int v = *p;
+
+region r(64) {
+    void* q = loi_region_alloc(r, 8);
+    *q = 5;
+}
+</code></pre>
+    </section>
+
+    <section id="functions">
+      <h2>Functions &amp; effects</h2>
+      <pre><code class="lang-loi">
+worker = (arg: void*): void* !IO,Alloc
+{
+    loi_print_str("region block");
+    return arg;
+}
+
+main = () -> int !IO,Alloc
+{
+    region r(64) { void* v = worker(r); }
+    return 0;
+}
+</code></pre>
+      <p>Effects after <code>!</code> name capabilities (<code>IO</code>, <code>Alloc</code>, ...). A caller may only call functions whose effects are a subset of its own; assigning through a function pointer may not widen effects.</p>
+    </section>
+
+    <section id="fnptr">
+      <h2>Typed function pointers</h2>
+      <pre><code class="lang-loi">
+type CmpFn = (a: int, b: int) -> int;
+
+my_less = (a: int, b: int): int { return a < b; }
+cmp: CmpFn = null;              // variable holding a function pointer
+
+main = () -> int
+{
+    cmp = my_less;               // assign a function as a value
+    loi_print_int(cmp(2, 3));      // 1
+    apply = (f: (a:int,b:int)->int, x:int, y:int): int { return f(x, y); }
+    loi_print_int(apply(my_less, 2, 3));
+    return 0;
+}
+    </section>
+
+    <section id="metaprogramming">
+      <h2>Metaprogramming / preprocessor</h2>
+      <p>Everything <code>@</code> runs during a pre-lexing pass. Order of directives is preserved; branches skipped by <code>@if</code> never register their <code>@define</code>.</p>
+      <ul>
+        <li><code>@(define NAME replacement)</code> / <code>@define NAME replacement</code></li>
+        <li><code>@(inc ...)</code> / <code>@(cinc ...)</code> (see Include)</li>
+        <li><code>@if(COND) { ... } @elif(...) { ... } @else { ... }</code></li>
+        <li><code>@repeat(n) { body }</code> / <code>@for(i, A, B) { body }</code></li>
+        <li><code>@sizeof(T)</code>, <code>@offsetof(T, field)</code>, <code>@typeof(expr)</code></li>
+        <li><code>@section("name") { ... }</code>, <code>@align(n)</code>, <code>@pack</code></li>
+      </ul>
+    </section>
+
+    <section id="macros">
+      <h2>Macros: stringify, paste, variadic</h2>
+      <pre><code class="lang-loi">
+import std
+@(define STR(x) @stringify(x))
+@(define CONCAT(a, b) @paste(a, b))
+@(define LOG(level, ...msg) { @if(level >= 1) { loi_print_str(msg); } })
+
+int foobar = 77;
+
+main = () -> int !IO
+{
+    loi_print_str(STR(hello));        // "hello"
+    loi_print_str(STR(LIMIT));         // "LIMIT" (raw, not expanded)
+    int foo = 1, bar = 2;
+    loi_print_int(CONCAT(foo, bar));  // foobar -> 77
+    LOG(1, "log: variadic works\n");
+    return 0;
+}
+</code></pre>
+      <p><code>@stringify</code> captures raw token text; <code>@paste</code> concatenates fragments into a token; <code>...msg</code> joins the remaining args with ", ". <code>@if</code> inside macros is resolved in a second pass after expansion.</p>
+    </section>
+
+    <section id="packages">
+      <h2>Packages</h2>
+      <p>Programs and libraries can declare a package name:</p>
+      <pre><code class="lang-loi">package std</code></pre>
+      <p>Use <code>import pkg</code> or <code>import pkg.sub</code> to load package sources. Dots are mapped to directory separators and resolution follows the same search paths (<code>./lib</code>, <code>./packages</code>, standard system paths, <code>LOI_PATH</code>). <code>@inc pkg</code> also loads packages. See <code>lib/</code> for the starter std package layout.</p>
+    </section>
+
+    <section id="include">
+      <ul>
+        <li>Resolution: file's directory, <code>./lib</code>, <code>./packages</code>, <code>/usr/share/loi</code>, <code>/usr/local/share/loi</code>, <code>LOI_PATH</code>. <code>@include</code> is no longer supported.</li>
+        <li><code>@cinc</code> searches <code>.</code>, <code>/usr/include</code>, <code>/usr/local/include</code>, <code>/usr/include/x86_64-linux-gnu</code>.</li>
+        <li>No include guards; C ABIs declared with <code>extern ...;</code>.</li>
+      </ul>
+    </section>
+
+    <section id="build">
+      <h2>Build &amp; run</h2>
+      <pre><code class="shell">
+make
+./loi examples/01_basics.loi --run          # compile + run
+./loi file.loi --emit=ir --out=file.ll      # emit LLVM IR
+./loi file.loi --emit=asm --out=file.s      # emit assembly
+</code></pre>
+    </section>
+
+    <section id="limitations">
+      <h2>Limitations</h2>
+      <ul>
+        <li>No C-standard-header ABI modeling; <code>@cinc</code> is a verifier, not importer.</li>
+        <li>No include guards.</li>
+        <li>C-style variadic <em>functions</em> are deferred — use variadic macros.</li>
+        <li>Built-in runtime calls carry no effect annotations.</li>
+      </ul>
+    </section>
+
+  </main>
+</div>
+
+<footer><div class="container">
+  &copy; loi project — documentation + examples. Logo coming later.
+</div></footer>
+<script src="script.js"></script>
+</body>
+</html>

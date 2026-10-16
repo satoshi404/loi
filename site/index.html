@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>loi — C compiler to LLVM IR</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="topbar"><div class="container topbar-inner">
+  <a class="brand" href="index.html"><img src="logo.png" alt="loi logo"><code>loi</code></a>
+  <nav class="main-nav">
+    <a href="index.html" class="active">Home</a>
+    <a href="docs.html">Documentation</a>
+    <a href="examples.html">Examples</a>
+    <a href="https://github.com" target="_blank" rel="noopener">GitHub</a>
+  </nav>
+</div></div>
+
+<section class="hero"><div class="container">
+  <h1>loi</h1>
+  <p class="tag">A small C-like language that compiles source to <strong>LLVM IR</strong>. Expressive macros and region-based memory, function types, effects, and a metaprogramming preprocessor — all in one tool.</p>
+  <div class="cta">
+    <a class="btn" href="docs.html">Read the docs</a>
+    <a class="btn ghost" href="examples.html">Browse examples</a>
+  </div>
+</div></section>
+
+<section class="section container">
+  <h2>Features</h2>
+  <div class="feature-grid">
+    <div class="card"><h3>C-like syntax</h3>Functions by assignment, hybrid variable declarations, semicolons, structs/unions, pointers, arrays, inline asm.</div>
+    <div class="card"><h3>Typed function pointers</h3>First-class <code>(a: int, b: int) -&gt; int !IO</code> types: alias with `type`, null initializers, effect tracking through calls.</div>
+    <div class="card"><h3>Effects</h3>Functions declare `!IO,Alloc`. Call sites are checked against the caller's effect set.</div>
+    <div class="card"><h3>Regions</h3>Lexical regions with bump allocators and `loi_region_alloc`.</div>
+    <div class="card"><h3>Macros &amp; meta</h3><p>Object/function-like <code>@(define ...)</code>, conditionals, <code>@repeat</code>/<code>@for</code>, <code>@stringify</code>, <code>@paste</code>, and variadic macros.</p></div>
+    <div class="card"><h3>Preprocessing &amp; packages</h3><p><code>@inc</code> (loi files/packages), <code>@cinc</code> (C headers), branch-scoped defines, compile-time codegen.</p></div>
+    <div class="card"><h3>LLVM IR output</h3>Emits optimizable IR and compiles to native via clang. Target triple included.</div>
+    <div class="card"><h3>Reflection</h3>`@sizeof`, `@offsetof`, `@typeof`, struct layout control with `@align`/`@pack`.</div>
+  </div>
+</section>
+
+<section class="section container">
+  <h2>Quick start</h2>
+<pre><code class="lang-loi">
+import std
+
+main = () -> int
+{
+    loi_print_str("hello from loi\n");
+    return 0;
+}
+</code></pre>
+<pre class="shell"><code>$ ./loi examples/01_basics.loi --run
+120   # exit code reflects program result
+</code></pre>
+  <p>Build Project: <code>make</code> in the source tree. Invoke <code>./loi file.loi --run</code> to compile, run, and print the exit code.</p>
+</section>
+
+<section class="section container">
+  <h2>What makes loi different</h2>
+  <ul>
+    <li>Heavy <code>@</code> sigil for compile-time metaprogramming instead of a separate tool.</li>
+    <li>Effect annotations that actually restrict which functions may be called.</li>
+    <li>Region-scoped manual memory with lexical lifetime.</li>
+    <li>Typed callbacks and function pointers that don't lose their effect contract.</li>
+  </ul>
+</section>
+
+<footer><div class="container">
+  &copy; loi project — documentation + examples. Logo to be added.
+</div></footer>
+
+<script src="script.js"></script>
+</body>
+</html>

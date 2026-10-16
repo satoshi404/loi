@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>loi — Examples</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="topbar"><div class="container topbar-inner">
+  <a class="brand" href="index.html"><img src="logo.png" alt="loi logo"><code>loi</code></a>
+  <nav class="main-nav">
+    <a href="index.html">Home</a>
+    <a href="docs.html">Documentation</a>
+    <a href="examples.html" class="active">Examples</a>
+    <a href="https://github.com" target="_blank" rel="noopener">GitHub</a>
+  </nav>
+</div></div>
+
+<section class="section container"><div>
+  <h2>Examples</h2>
+  <p>Every file under <code>examples/</code> is runnable with <code>./loi examples/NN.loi --run</code>. The exit code is the program's return value. Runtime helpers are linked automatically (many examples still show <code>import std</code> as a convention).</p>
+</div></section>
+
+<div class="container example-grid">
+  <div class="example-card">
+    <h4>01_basics — recursion &amp; control</h4>
+    <pre><code class="lang-loi">
+import std
+
+factorial = (n: int): int
+{
+    if (n <= 1) { return 1; }
+    return n * factorial(n - 1);
+}
+
+main =
+{
+    int x = 5;
+    if (x < 10) { return factorial(x); }
+    else { return 0; }
+}
+</code></pre>
+    <div class="output">exit: 120</div>
+  </div>
+
+  <div class="example-card">
+    <h4>03_math — built-ins</h4>
+    <pre><code class="lang-loi">
+import std
+
+main =
+{
+    double a = 2.0;
+    double p = loi_pow(a, 3.0);
+    loi_print_int(loi_abs(-99));
+    if (p == 8.0) { loi_print_str("math ok"); }
+    return 0;
+}
+</code></pre>
+    <div class="output">prints 99, "math ok" ; exit 0</div>
+  </div>
+
+  <div class="example-card">
+    <h4>14_macros — object-like macro</h4>
+    <pre><code class="lang-loi">
+
+scale = (n: int): int { return n * 2; }
+
+main =
+{
+    int v = scale(LIMIT);
+    loi_print_int(v);
+    return v;
+}
+</code></pre>
+    <div class="output">prints 16 ; exit 16</div>
+  </div>
+
+  <div class="example-card">
+    <h4>25_fnpointers — typed function pointers</h4>
+    <pre><code class="lang-loi">
+import std
+type CmpFn = (a: int, b: int) -> int;
+
+my_less = (a: int, b: int): int { return a &lt; b; }
+apply = (f: (a:int,b:int)-&gt;int, x:int, y:int): int { return f(x, y); }
+
+main = () -&gt; int !IO
+{
+    loi_print_int(apply(my_less, 2, 3));
+    return 0;
+}
+</code></pre>
+    <div class="output">exit: 0</div>
+  </div>
+
+  <div class="example-card">
+    <h4>26_macro_trio — stringify / paste / variadic</h4>
+    <pre><code class="lang-loi">
+import std
+@(define STR(x) @stringify(x))
+@(define CONCAT(a, b) @paste(a, b))
+@(define LOG(level, ...msg) { @if(level &gt;= 1) { loi_print_str(msg); } })
+
+int foobar = 77;
+
+main = () -> int !IO
+{
+    loi_print_str(STR(hello));        // "hello"
+    int foo = 1, bar = 2;
+    loi_print_int(CONCAT(foo, bar));  // foobar -> 77
+    LOG(1, "log: variadic works\n");
+    return 0;
+}
+
+    </code></pre>
+    <div class="output">exit: 0</div>
+  </div>
+</div>
+
+<section class="section container">
+  <h2>More</h2>
+  <p>See the full list in the repository <code>examples/</code> directory, including 24 (effects enforcement), 11 (regions), 09 (channels), 19 (compile-time unrolling).</p>
+</section>
+
+<footer><div class="container">
+  &copy; loi project. Logo coming soon.
+</div></footer>
+<script src="script.js"></script>
+</body>
+</html>
