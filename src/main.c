@@ -26,6 +26,25 @@ static char *read_file(const char *path) {
     return buf;
 }
 
+/* Build the `clang` command that links the emitted IR with the runtime.
+   Extra linker flags come from $LOI_LDFLAGS (for example
+   LOI_LDFLAGS="$(sdl2-config --libs)") and are appended after the runtime and
+   the default libraries. Returns 0 on success, 1 if the command would not fit
+   in `cmd` (so a long value fails loudly instead of being truncated). */
+static int build_link_cmd(char *cmd, size_t cmd_size,
+                          const char *ll_path, const char *out_path) {
+    const char *extra = getenv("LOI_LDFLAGS");
+    if (!extra) extra = "";
+    int n = snprintf(cmd, cmd_size,
+                     "clang -O3 %s src/runtime.c -o %s -lpthread -lm %s 2>/dev/null",
+                     ll_path, out_path, extra);
+    if (n < 0 || (size_t)n >= cmd_size) {
+        fprintf(stderr, "link command too long (check LOI_LDFLAGS)\n");
+        return 1;
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     int tokens_only = 0;
     int emit_ir = 0;
@@ -143,8 +162,8 @@ char *processed = loi_preprocess(src, base_dir_buf);
         FILE *f = fopen(ll_path, "w");
         if (f && prog) { codegen_program(prog, f); fclose(f); }
         else if (f) fclose(f);
-        char cmd[1024];
-        snprintf(cmd, sizeof(cmd), "clang -O3 %s src/runtime.c -o %s -lpthread -lm 2>/dev/null", ll_path, bin_path);
+        char cmd[4096];
+        if (build_link_cmd(cmd, sizeof(cmd), ll_path, bin_path)) return 1;
         if (system(cmd) != 0) {
             fprintf(stderr, "compile failed\n");
             return 1;
@@ -159,8 +178,8 @@ char *processed = loi_preprocess(src, base_dir_buf);
         FILE *f = fopen(ll_path, "w");
         if (f && prog) { codegen_program(prog, f); fclose(f); }
         else if (f) fclose(f);
-        char cmd[2048];
-        snprintf(cmd, sizeof(cmd), "clang -O3 %s src/runtime.c -o %s -lpthread -lm 2>/dev/null", ll_path, out_path);
+        char cmd[4096];
+        if (build_link_cmd(cmd, sizeof(cmd), ll_path, out_path)) return 1;
         if (system(cmd) == 0) {
             printf("generated executable: %s\n", out_path);
         } else {
