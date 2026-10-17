@@ -1,5 +1,4 @@
-package tests_14_fn_pointers
-
+@package(tests_14_fn_pointers)
 /* typed function pointers: alias, callbacks, null init */
 type CmpFn = (a: int, b: int) -> int;
 

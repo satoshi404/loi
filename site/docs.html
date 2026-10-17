@@ -32,6 +32,7 @@
     <a href="#memory">Memory &amp; regions</a>
     <a href="#functions">Functions &amp; effects</a>
     <a href="#fnptr">Function pointers</a>
+    <a href="#capabilities">Lexical capabilities &amp; dual effects</a>
     <a href="#metaprogramming">Metaprogramming</a>
     <a href="#macros">Macros / stringify / paste / variadic</a>
     <a href="#include">Includes &amp; packages</a>
@@ -42,13 +43,13 @@
     <section id="intro">
       <h2>Introduction</h2>
       <p>loi combines C-like syntax (functions assigned to names, hybrid variable declarations, semicolons, structs/unions, pointers, arrays, inline <code>asm</code>) with compile-time metaprogramming via the <code>@</code> sigil, effect annotations (<code>!IO,Alloc</code>), lexical regions, and typed function pointers. The output is LLVM IR, compiled to native via <code>clang</code>.</p>
-      <p>Every file declares a <code>package</code> and reaches the runtime through the <code>std</code> package: <code>@inc std</code> followed by calls such as <code>std.print_int(42)</code>. The internal <code>loi_</code> symbol prefix is never written in source.</p>
+      <p>Every file declares <code>@package(name)</code> and reaches the runtime through the <code>std</code> package: <code>@inc std</code> followed by calls such as <code>std.print_int(42)</code>. The internal <code>loi_</code> symbol prefix is never written in source.</p>
     </section>
 
     <section id="getting-started">
       <h2>Getting started</h2>
       <pre><code class="lang-loi">
-package demo
+@package(demo)
 
 @inc std
 
@@ -136,6 +137,40 @@ main = () -> int !IO,Alloc
       <p>Effects after <code>!</code> name capabilities (<code>IO</code>, <code>Alloc</code>, ...). A caller may only call functions whose effects are a subset of its own; assigning through a function pointer may not widen effects.</p>
     </section>
 
+    <section id="capabilities">
+      <h2>Lexical capabilities &amp; dual effects</h2>
+      <pre><code class="lang-loi">
+@package(mem)
+
+@capability(Read, Write)
+
+peek = (buf: ptr, c: @cap(borrow Read)): int { return *buf; }
+poke = (buf: ptr, c: @cap(Write)): void { *buf = 42; }
+
+/* producer: return type authorises @grant */
+new_page = (buf: ptr): @cap(Write) {
+    @grant(Write) w;
+    return w;
+}
+
+/* dual effects: @needs + !IO bridge */
+@capability(Filesystem)
+load_cfg = (): int !IO @needs(Filesystem) { return 42; }
+
+main = (): int {
+    int p = 0;
+    @cap(Write) w = new_page(&p);
+    poke(&p, w);                      /* consumes w */
+    @grant(Filesystem) fs;
+    int cfg = load_cfg();
+    @drop(fs);
+    region r(64) with Write as wr { *wr = 1; }  /* ambient borrow */
+    return p;
+}
+      </code></pre>
+      <p><code>@cap(Write)</code> is a <strong>linear, zero-cost</strong> permission token. <code>@grant</code> births one at a root (<code>main</code>, <code>@root</code>, a producer/declared <code>@gives</code>). <code>@refine</code> weakens it, <code>@drop</code> discards it. <code>@cap(borrow Read)</code> doesn't consume. A live capability discharges <code>!X</code> (effects bridge). <code>@needs(X)</code> states what a function <em>requires</em> (dual of <code>!Effects</code>). Regions may carry <code>with Cap as w</code> — ambient, released at end. See <a href="../docs/capabilities.md">docs/capabilities.md</a> and <a href="../docs/needs.md">docs/needs.md</a>.</p>
+    </section>
+
     <section id="fnptr">
       <h2>Typed function pointers</h2>
       <pre><code class="lang-loi">
@@ -164,6 +199,7 @@ main = () -> int
         <li><code>@repeat(n) { body }</code> / <code>@for(i, A, B) { body }</code></li>
         <li><code>@sizeof(T)</code>, <code>@offsetof(T, field)</code>, <code>@typeof(expr)</code></li>
         <li><code>@section("name") { ... }</code>, <code>@align(n)</code>, <code>@pack</code></li>
+        <li><code>@attr(local, inline, link_name("sym"))</code> — extensible metadata on the next declaration</li>
       </ul>
     </section>
 
@@ -191,9 +227,19 @@ main = () -> int !IO
     </section>
 
     <section id="packages">
-      <h2>Packages</h2>
-      <p>Every loi file declares a package. The entry file and every <code>@inc</code>-ed file are checked; a missing declaration is an error:</p>
-      <pre><code class="lang-loi">package demo</code></pre>
+      <h2>Packages, namespaces &amp; attributes</h2>
+      <p>Every loi file declares a package with <code>@package(name)</code>. The entry file and every <code>@inc</code>-ed file are checked; a missing declaration is an error, and the old bare <code>package name</code> form is rejected. Dotted names are allowed (<code>@package(core.utils)</code>).</p>
+      <p>Files that declare the <strong>same</strong> <code>@package</code> form a single namespace: a symbol defined in one is visible to the others without qualification. Includes splice textually, so the compiler re-asserts the enclosing package after each included file and symbols never leak across packages.</p>
+      <p>Symbols are <code>global</code> by default. Mark one <code>@attr(local)</code> to keep it private to its package — referencing it from another package is a type error (<code>'helper' is local to package 'core' and is not visible here</code>).</p>
+      <pre><code class="lang-loi">@package(core)
+
+@attr(local)
+helper = (): int { return 7; }   // only visible inside `core`
+
+@attr(global, inline, link_name("core_api"))
+public_api = (): int { return helper(); }
+</code></pre>
+      <p><code>@attr(...)</code> attaches extensible metadata to the next declaration: visibility (<code>local</code>/<code>global</code>), <code>link_name("sym")</code>, <code>section("name")</code>, <code>inline</code>, <code>no_return</code>, <code>pure</code>, <code>must_use</code>, <code>extern</code>. Unknown attributes are recorded in the AST and otherwise ignored. <code>@attr(must_use)</code> emits an advisory warning (not an error) when a call's result is discarded; <code>void</code> functions never warn.</p>
       <p>Use <code>@inc pkg</code> or <code>@inc pkg.sub</code> to load package sources. Dots are mapped to directory separators and resolution follows the same search paths (<code>./lib</code>, <code>./packages</code>, standard system paths, <code>LOI_PATH</code>). There is no <code>import</code> keyword.</p>
       <p>The standard package is <code>std</code>: after <code>@inc std</code>, call runtime helpers as <code>std.print_int</code>, <code>std.alloc</code>, <code>std.region_alloc</code>, and so on. The code generator rewrites <code>std.NAME</code> to the matching runtime symbol. See <code>lib/</code> for the std package layout.</p>
     </section>

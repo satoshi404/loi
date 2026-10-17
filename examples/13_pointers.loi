@@ -1,5 +1,4 @@
-package examples_13_pointers
-
+@package(examples_13_pointers)
 @inc std
 
 main =

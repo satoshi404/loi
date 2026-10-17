@@ -1,0 +1,11 @@
+@package(cap_fail_grant)
+/* @grant is only allowed at a root (main, @root, or a producer / @gives) */
+@capability(Write)
+
+helper = (): int {
+    @grant(Write) w;   /* error: helper is not authorized */
+    @drop(w);
+    return 0;
+}
+
+main = (): int { return helper(); }

@@ -1,0 +1,13 @@
+@package(cap_basic)
+/* Lexical capabilities: creation (@grant), owned transfer, and linear
+   consumption. The capability erases to nothing in codegen. */
+@capability(Read, Write)
+
+write_ok = (buf: ptr, c: @cap(Write)): void { *buf = 42; }
+
+main = (): int {
+    int x = 0;
+    @grant(Write) w;      /* main is a root: allowed to birth permissions */
+    write_ok(&x, w);      /* consumes w */
+    return x;             /* 42 */
+}

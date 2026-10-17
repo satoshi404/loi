@@ -1,5 +1,4 @@
-package examples_02_control
-
+@package(examples_02_control)
 @inc std
 
 main =

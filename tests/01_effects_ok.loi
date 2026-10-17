@@ -1,5 +1,4 @@
-package tests_01_effects_ok
-
+@package(tests_01_effects_ok)
 @inc std
 /* effects: callers declaring !IO may call !IO functions */
 io = (): void !IO {

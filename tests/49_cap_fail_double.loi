@@ -1,0 +1,13 @@
+@package(cap_fail_double)
+/* an owned capability may be consumed only once */
+@capability(Write)
+
+write_ok = (buf: ptr, c: @cap(Write)): void { *buf = 1; }
+
+main = (): int {
+    int x = 0;
+    @grant(Write) w;
+    write_ok(&x, w);
+    write_ok(&x, w);   /* error: w already consumed */
+    return 0;
+}

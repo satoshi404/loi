@@ -1,0 +1,13 @@
+@package(cap_needs)
+/* Dual effects: `@needs` is a floor the caller must supply (with a capability),
+   while `!Effects` is a ceiling the caller must permit. */
+@capability(Filesystem)
+
+load_config = (): int @needs(Filesystem) { return 42; }
+
+main = (): int {
+    @grant(Filesystem) fs;      /* satisfies the @needs floor */
+    int r = load_config();
+    @drop(fs);
+    return r;
+}

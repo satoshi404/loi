@@ -24,14 +24,18 @@ a few orthogonal, compile-time-checked ideas:
 - **Effect annotations** (`!IO`, `!Alloc`) that are *enforced* at call sites and
   on function-pointer assignments, so a pure function cannot silently perform
   I/O.
+- **Lexical capabilities** (`@cap`, `@grant`, `@needs`) — linear, zero-cost
+  permission tokens, and **dual effects** (`!Effects` for what a function *does*
+  vs `@needs` for what it *requires*). See [`docs/capabilities.md`](docs/capabilities.md).
 - **Lightweight metaprogramming** under a single `@` sigil: macros, conditional
   compilation, unrolling and compile-time reflection — all erased before
   codegen, so there is zero runtime cost.
 - **Explicit layout control** (`@pack`, `@align`, `@section`) for systems work
   where ABI and placement matter.
-- **Packages everywhere**: every file declares a `package`, and the runtime is
-  reached through the `std` package (`std.print_int`, `std.alloc`, …) instead of
-  leaking `loi_`-prefixed symbols into source.
+- **Packages everywhere**: every file declares `@package(name)`; files sharing a
+  package form one namespace; and the runtime is reached through the `std`
+  package (`std.print_int`, `std.alloc`, …) instead of leaking `loi_`-prefixed
+  symbols into source.
 
 Everything else stays close to C so the generated LLVM IR and the mental model
 remain predictable.
@@ -103,10 +107,17 @@ All forms start with `@`:
 
 ## Language highlights
 
-- **Every loi file declares a package**: the first declaration is
-  `package name`. The entry file and every `@inc`-ed file are checked, so a
-  missing declaration is an error. The package name is metadata (it names the
-  unit and appears in the AST) and does not affect name resolution.
+- **Every loi file declares a package** with `@package(name)` (dotted names are
+  allowed: `@package(core.utils)`). The entry file and every `@inc`-ed file are
+  checked, so a missing declaration is an error. **Files that share a
+  `@package` form one namespace**, so a `local` symbol defined in one is
+  reachable from the others; symbols never leak across packages.
+- **Visibility & attributes** — `@attr(...)` attaches extensible metadata to the
+  next declaration. `@attr(local)` keeps a symbol private to its package
+  (default is `global`); `link_name("sym")`, `section("name")`, `inline`,
+  `no_return`, `pure`, `must_use`, and `extern` are recognised, and unknown
+  attributes are recorded but ignored. `@attr(must_use)` warns (advisory) when a
+  call's result is discarded.
 - **Declarations**: variables are `x: int = 5;` or `int x = 5;`. Functions use
   the **canonical assignment form** `name = (params...): Ret { ... }`; the
   equivalent signature-first form `name (params...): Ret = { ... }` is also
@@ -125,6 +136,15 @@ All forms start with `@`:
   passed as a callback argument or returned from a function. A function may only
   perform the effects it declares, and an `!IO` function cannot be stored in a
   variable whose type has no `!IO`.
+- **Lexical capabilities & dual effects**: `@cap(Write)` is a *linear*,
+  zero-cost permission token. Pass it (`c: @cap(Write)`), borrow it
+  (`c: @cap(borrow Read)`), weaken it (`@refine(Write -> Read)`), birth it
+  (`@grant(Write) w;`) or discard it (`@drop(w);`). `@needs(A + B)` states what a
+  function *requires* (its dual, `!Effects`, states what it *does*), and a live
+  capability discharges both. Regions can carry capabilities:
+  `region r(64) with Write as w { ... }`. See
+  [`docs/capabilities.md`](docs/capabilities.md) and
+  [`docs/needs.md`](docs/needs.md).
 - **Structs with layout control**: `struct S @pack() { ... }`, `@align(n)`.
 - **Control flow**: `if/else`, `while`, `do { } while (...)`, `for`, `switch/case/default`, `break`, `continue`.
 - **Typed function pointers**: `type Cmp = (a: int, b: int) -> int;` — including
@@ -134,7 +154,7 @@ All forms start with `@`:
 ## Metaprogramming (`@` sigil)
 
 ```loi
-package demo                   # every loi file declares a package
+@package(demo)                 # every loi file declares a package
 
 @(define LIMIT 8)              # object-like macro (also: @define LIMIT 8)
 @(define ADD(a, b) ((a)+(b)))  # function-like macro
@@ -156,6 +176,12 @@ int al = @alignof(Point);
 
 @section("my_text")                    # place a function in an asm section
 fast_path = (n: int): int { return n * 2; }
+
+@attr(local, inline)                   # extendible attributes on the next decl
+helper = (n: int): int { return n + 1; }
+
+@attr(global, link_name("loi_die"))    # rename the emitted symbol
+die = (): void { while (1) { } }
 ```
 
 Conditional blocks `@if/@elif/@else` select code at compile time; a
@@ -243,7 +269,7 @@ The runtime is reached through the `std` package — the internal `loi_` prefix
 is never written in loi source:
 
 ```loi
-package demo
+@package(demo)
 
 @inc std
 

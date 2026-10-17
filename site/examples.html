@@ -19,14 +19,14 @@
 
 <section class="section container"><div>
   <h2>Examples</h2>
-  <p>Every file under <code>examples/</code> is runnable with <code>./loi examples/NN.loi --run</code>. The exit code is the program's return value. Every file declares a <code>package</code>; runtime helpers are reached through the <code>std</code> package (<code>@inc std</code>).</p>
+  <p>Every file under <code>examples/</code> is runnable with <code>./loi examples/NN.loi --run</code>. The exit code is the program's return value. Every file declares an <code>@package(name)</code>; runtime helpers are reached through the <code>std</code> package (<code>@inc std</code>).</p>
 </div></section>
 
 <div class="container example-grid">
   <div class="example-card">
     <h4>01_basics — recursion &amp; control</h4>
     <pre><code class="lang-loi">
-package example_01
+@package(examples_01_basics)
 
 @inc std
 
@@ -49,7 +49,7 @@ main =
   <div class="example-card">
     <h4>03_math — built-ins</h4>
     <pre><code class="lang-loi">
-package example_03
+@package(examples_03_math)
 
 @inc std
 
@@ -68,7 +68,7 @@ main =
   <div class="example-card">
     <h4>14_macros — object-like macro</h4>
     <pre><code class="lang-loi">
-package example_14
+@package(examples_14_macros)
 
 @inc std
 @(define LIMIT 8)
@@ -88,7 +88,7 @@ main =
   <div class="example-card">
     <h4>25_fnpointers — typed function pointers</h4>
     <pre><code class="lang-loi">
-package example_25
+@package(examples_25_fnpointers)
 
 @inc std
 type CmpFn = (a: int, b: int) -> int;
@@ -108,7 +108,7 @@ main = () -&gt; int !IO
   <div class="example-card">
     <h4>26_macro_trio — stringify / paste / variadic</h4>
     <pre><code class="lang-loi">
-package example_26
+@package(examples_26_macro_trio)
 
 @inc std
 @(define STR(x) @stringify(x))

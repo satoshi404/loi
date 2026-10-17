@@ -1,5 +1,4 @@
-package tests_24_effects_indirect_fail
-
+@package(tests_24_effects_indirect_fail)
 /* an indirect call through an !IO function pointer needs the effect declared */
 type IoFn = (n: int) -> void !IO;
 

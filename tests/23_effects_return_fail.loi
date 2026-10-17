@@ -1,4 +1,4 @@
-package tests_23_effects_return_fail
+@package(tests_23_effects_return_fail)
 @inc std
 
 /* returning an effectful function must not widen the declared return type */

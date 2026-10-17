@@ -1,4 +1,4 @@
-package examples_24_effects_enforced
+@package(examples_24_effects_enforced)
 @inc std
 
 /* Effects enforcement demo */

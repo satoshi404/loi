@@ -1,0 +1,10 @@
+@package(pkg_a)
+/* a `local` symbol must NOT be reachable from another package */
+@attr(local)
+hidden = (): int { return 1; }
+
+@package(pkg_b)
+
+main = (): int {
+    return hidden();   /* error: hidden is local to pkg_a */
+}

@@ -1,4 +1,4 @@
-package tests_07_regions
+@package(tests_07_regions)
 @inc std
 
 /* lexical regions: bump allocator, valid inside the block */

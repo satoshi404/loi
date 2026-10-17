@@ -1,0 +1,16 @@
+@package(cap_fail_borrow)
+/* a borrowed/ambient capability cannot be consumed (ownership transferred) */
+@capability(Read)
+
+take_owned = (c: @cap(Read)): void { }
+
+read_borrow = (c: @cap(borrow Read)): void {
+    take_owned(c);   /* error: cannot consume a borrowed capability */
+}
+
+main = (): int {
+    @grant(Read) b;
+    read_borrow(b);
+    @drop(b);
+    return 0;
+}

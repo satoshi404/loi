@@ -1,5 +1,4 @@
-package examples_20_reflection
-
+@package(examples_20_reflection)
 /* Compile-time reflection builtins.
 
    @sizeof(T)     -- byte size of a type

@@ -1,5 +1,4 @@
-package tests_12_include_removed
-
+@package(tests_12_include_removed)
 /* inclusions must use @inc/@cinc; @include is reported as error */
 @include "lib/guarded.loi"
 main = () -> int { return 0; }

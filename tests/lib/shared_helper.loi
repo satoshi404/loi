@@ -1,0 +1,5 @@
+@package(shared_ns)
+/* included by 36_package_namespace.loi: files sharing a @package
+   form one namespace, so this `local` helper is reachable there. */
+@attr(local)
+shared_helper = (): int { return 42; }

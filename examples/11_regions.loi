@@ -1,5 +1,4 @@
-package examples_11_regions
-
+@package(examples_11_regions)
 @inc std
 
 main =

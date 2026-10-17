@@ -1,0 +1,10 @@
+/* `@package` accepts dotted names. */
+@package(core.utils)
+
+@inc std
+
+main = () -> int !IO
+{
+    std.print_int(21);
+    return 42;
+}

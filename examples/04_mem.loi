@@ -1,5 +1,4 @@
-package examples_04_mem
-
+@package(examples_04_mem)
 @inc std
 
 main =

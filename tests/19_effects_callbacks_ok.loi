@@ -1,5 +1,4 @@
-package tests_19_effects_callbacks_ok
-
+@package(tests_19_effects_callbacks_ok)
 @inc std
 /* effects flow through function pointers: a declared callback type carries
    its effects, and passing a matching function is accepted. */

@@ -1,0 +1,13 @@
+@package(cap_effects_bridge)
+/* A live capability discharges an effect requirement: `main` declares no
+   effects, yet may call an `!IO` function while it holds @cap(IO). */
+@capability(IO)
+
+effectful = (): void !IO { }
+
+main = (): int {
+    @grant(IO) io;
+    effectful();          /* !IO satisfied by the capability */
+    @drop(io);
+    return 42;
+}

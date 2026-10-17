@@ -20,6 +20,44 @@ void ast_add_item(ASTNode *parent, ASTNode *item) {
     parent->items[parent->item_count++] = item;
 }
 
+/* ---- @attr storage ---- */
+void ast_add_attr(ASTNode *n, const char *name, const char *value) {
+    if (!n || !name) return;
+    if (n->attr_count == n->attr_cap) {
+        size_t nc = n->attr_cap ? n->attr_cap * 2 : 4;
+        n->attr_names = realloc(n->attr_names, nc * sizeof(char *));
+        n->attr_values = realloc(n->attr_values, nc * sizeof(char *));
+        n->attr_cap = nc;
+    }
+    n->attr_names[n->attr_count] = strdup(name);
+    n->attr_values[n->attr_count] = value ? strdup(value) : NULL;
+    n->attr_count++;
+    /* keep the well-known ones mirrored in dedicated fields */
+    if (strcmp(name, "local") == 0) {
+        free(n->visibility); n->visibility = strdup("local");
+    } else if (strcmp(name, "global") == 0) {
+        free(n->visibility); n->visibility = strdup("global");
+    } else if (strcmp(name, "link_name") == 0 && value) {
+        free(n->link_name); n->link_name = strdup(value);
+    } else if (strcmp(name, "section") == 0 && value) {
+        free(n->section); n->section = strdup(value);
+    }
+}
+
+const char *ast_attr(const ASTNode *n, const char *name) {
+    if (!n || !name) return NULL;
+    for (size_t i = 0; i < n->attr_count; i++)
+        if (strcmp(n->attr_names[i], name) == 0) return n->attr_values[i];
+    return NULL;
+}
+
+int ast_has_attr(const ASTNode *n, const char *name) {
+    if (!n || !name) return 0;
+    for (size_t i = 0; i < n->attr_count; i++)
+        if (strcmp(n->attr_names[i], name) == 0) return 1;
+    return 0;
+}
+
 Type *type_new(int kind) {
     Type *t = calloc(1, sizeof(Type));
     t->kind = kind;
@@ -43,6 +81,12 @@ Type *type_clone(Type *t) {
         c->param_count = t->param_count;
     }
     c->effects = t->effects ? strdup(t->effects) : NULL;
+    if (t->cap_count) {
+        c->cap_names = malloc(t->cap_count * sizeof(char *));
+        for (size_t i = 0; i < t->cap_count; i++) c->cap_names[i] = strdup(t->cap_names[i]);
+        c->cap_count = t->cap_count;
+    }
+    c->cap_borrow = t->cap_borrow;
     return c;
 }
 
@@ -50,6 +94,8 @@ void type_free(Type *t) {
     if (!t) return;
     free(t->name);
     free(t->effects);
+    for (size_t i = 0; i < t->cap_count; i++) free(t->cap_names[i]);
+    free(t->cap_names);
     type_free(t->base);
     type_free(t->return_type);
     for (size_t i = 0; i < t->param_count; i++) type_free(t->param_types[i]);
@@ -68,6 +114,19 @@ void ast_free(ASTNode *node) {
     free(node->name);
     free(node->effects);
     free(node->section);
+    free(node->needs);
+    free(node->gives);
+    free(node->caps);
+    free(node->cap_to);
+    free(node->package);
+    free(node->visibility);
+    free(node->link_name);
+    for (size_t i = 0; i < node->attr_count; i++) {
+        free(node->attr_names[i]);
+        free(node->attr_values[i]);
+    }
+    free(node->attr_names);
+    free(node->attr_values);
     type_free(node->ty);
     type_free(node->alias_type);
     ast_free(node->init);
@@ -111,6 +170,10 @@ const char *ast_node_type_str(ASTNodeType type) {
         case AST_BREAK: return "BREAK";
         case AST_CONTINUE: return "CONTINUE";
         case AST_ASM: return "ASM";
+        case AST_CAP_DECL: return "CAP_DECL";
+        case AST_GRANT: return "GRANT";
+        case AST_REFINE: return "REFINE";
+        case AST_DROP: return "DROP";
         case AST_EXPR_STMT: return "EXPR_STMT";
         case AST_EXPR_BINARY: return "BINARY";
         case AST_EXPR_UNARY: return "UNARY";
@@ -163,6 +226,18 @@ static void type_to_str_r(Type *t, char *buf, size_t cap) {
         if (t->effects && rem > 2) snprintf(p, rem, " !%s", t->effects);
         return;
     }
+    if (t->kind == TY_CAPABILITY) {
+        char *p = buf; size_t rem = cap;
+        int n = snprintf(p, rem, "@cap(");
+        p += n; rem -= (size_t)n;
+        if (t->cap_borrow && rem > 8) { n = snprintf(p, rem, "borrow "); p += n; rem -= (size_t)n; }
+        for (size_t i = 0; i < t->cap_count && rem > 1; i++) {
+            n = snprintf(p, rem, "%s%s", i ? " + " : "", t->cap_names[i]);
+            p += n; rem -= (size_t)n;
+        }
+        snprintf(p, rem, ")");
+        return;
+    }
     snprintf(buf, cap, "%s", t->name ? t->name : "?");
 }
 
@@ -179,12 +254,27 @@ void ast_print(ASTNode *node, int in) {
     if (node->name) printf(" %s", node->name);
     if (node->str_value) printf(" %s", node->str_value);
     printf("  (L%d)\n", node->line);
+    if (node->package) { indent(in+2); printf("package=%s\n", node->package); }
+    if (node->visibility) { indent(in+2); printf("visibility=%s\n", node->visibility); }
+    if (node->attr_count) {
+        indent(in+2); printf("attrs=");
+        for (size_t i = 0; i < node->attr_count; i++) {
+            if (i) printf(", ");
+            if (node->attr_values[i]) printf("%s(%s)", node->attr_names[i], node->attr_values[i]);
+            else printf("%s", node->attr_names[i]);
+        }
+        printf("\n");
+    }
     if (node->ty) {
         char *ts = type_to_str(node->ty);
         indent(in+2);
         printf("type=%s\n", ts);
         free(ts);
     }
+    if (node->needs)  { indent(in+2); printf("needs=%s\n", node->needs); }
+    if (node->gives)  { indent(in+2); printf("gives=%s\n", node->gives); }
+    if (node->caps)   { indent(in+2); printf("caps=%s\n", node->caps); }
+    if (node->cap_to) { indent(in+2); printf("cap_to=%s\n", node->cap_to); }
     if (node->init) { indent(in+2); printf("init:\n"); ast_print(node->init, in+4); }
     if (node->type == AST_RETURN && node->left) { indent(in+2); printf("value:\n"); ast_print(node->left, in+4); }
     if (node->type == AST_EXPR_STMT && node->left) { ast_print(node->left, in+2); }

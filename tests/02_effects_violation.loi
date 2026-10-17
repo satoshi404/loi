@@ -1,4 +1,4 @@
-package tests_02_effects_violation
+@package(tests_02_effects_violation)
 @inc std
 
 /* effects: a pure function must not call an !IO function */

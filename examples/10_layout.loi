@@ -1,5 +1,4 @@
-package examples_10_layout
-
+@package(examples_10_layout)
 @inc std
 
 struct Buffer @pack {

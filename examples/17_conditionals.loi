@@ -1,5 +1,4 @@
-package examples_17_conditionals
-
+@package(examples_17_conditionals)
 /* Metaprogramming: macro-like conditional blocks.
    Variants are chosen at compile time with @if/@elif/@else. */
 @(define LEVEL 2)

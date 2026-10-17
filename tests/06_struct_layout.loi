@@ -1,5 +1,4 @@
-package tests_06_struct_layout
-
+@package(tests_06_struct_layout)
 /* struct layout control: @pack shrinks, @align(n) raises, natural padding */
 struct Natural { char c; int i; }
 struct Packed  @pack() { char c; int i; }

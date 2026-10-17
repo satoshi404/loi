@@ -1,5 +1,4 @@
-package tests_11_preproc_error
-
+@package(tests_11_preproc_error)
 /* must abort at preprocessing: @error directive */
 @error this configuration is invalid
 main = () -> int { return 0; }

@@ -1,4 +1,4 @@
-package examples_14_macros
+@package(examples_14_macros)
 @inc std
 
 @(define LIMIT 8)

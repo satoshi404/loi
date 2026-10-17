@@ -1,5 +1,4 @@
-package examples_18_branch_defines
-
+@package(examples_18_branch_defines)
 /* Metaprogramming: defines are scoped to the branch that declares them.
    A define inside a skipped @if branch is never registered. */
 @(define OUTER 1)

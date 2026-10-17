@@ -1,5 +1,4 @@
-package examples_09_channels
-
+@package(examples_09_channels)
 @inc std
 
 main =

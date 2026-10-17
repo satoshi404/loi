@@ -1,5 +1,4 @@
-package tests_lib_guard_outer
-
+@package(tests_lib_guard_outer)
 /* include guards break cycles: outer @inc's itself */
 @inc "guard_outer.loi"
 @inc "guard_inner.loi"

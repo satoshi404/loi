@@ -1,0 +1,10 @@
+@package(var_a)
+/* a `local` global variable must not be readable from another package */
+@attr(local)
+secret_count: int = 7;
+
+@package(var_b)
+
+main = (): int {
+    return secret_count;   /* error: local to var_a */
+}

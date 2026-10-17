@@ -1,0 +1,8 @@
+@package(demo_vis)
+/* a `local` symbol is visible to code in the same package */
+@attr(local)
+secret = (): int { return 42; }
+
+main = (): int {
+    return secret();   /* 42 */
+}

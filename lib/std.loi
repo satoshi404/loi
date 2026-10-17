@@ -1,5 +1,4 @@
-package std
-
+@package(std)
 // The standard package. Its functions are the runtime primitives declared in
 // runtime.c, surfaced to loi code through the `std.` qualifier:
 //

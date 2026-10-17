@@ -1,4 +1,4 @@
-package examples_26_macro_trio
+@package(examples_26_macro_trio)
 @inc std
 
 // macro trio: @stringify, @paste and variadic macros

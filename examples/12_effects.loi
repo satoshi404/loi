@@ -1,5 +1,4 @@
-package examples_12_effects
-
+@package(examples_12_effects)
 @inc std
 
 worker = (arg: void*): void* !IO,Alloc

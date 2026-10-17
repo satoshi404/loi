@@ -1,5 +1,4 @@
-package tests_20_macros_variadic
-
+@package(tests_20_macros_variadic)
 @inc std
 /* variadic macros: any number of trailing args, including none */
 @(define FIRST(a, ...rest) a)

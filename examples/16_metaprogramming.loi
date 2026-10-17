@@ -1,5 +1,4 @@
-package examples_16_metaprogramming
-
+@package(examples_16_metaprogramming)
 @(define ADD(x, y) (x + y))
 @(define SQUARE(x) (x * x))
 @(define ENABLE_SQUARE 1)

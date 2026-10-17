@@ -1,0 +1,8 @@
+@package(shared_ns)
+/* files sharing the same @package form a single namespace: the `local`
+   helper defined in the included file is visible here. */
+@inc "lib/shared_helper.loi"
+
+main = (): int {
+    return shared_helper();   /* 42 */
+}

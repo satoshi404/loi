@@ -1,4 +1,4 @@
-package tests_17_effects_fnptr_drop_fail
+@package(tests_17_effects_fnptr_drop_fail)
 @inc std
 
 /* effects: storing an !IO function where a pure fn type is expected

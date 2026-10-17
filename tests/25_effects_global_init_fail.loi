@@ -1,4 +1,4 @@
-package tests_25_effects_global_init_fail
+@package(tests_25_effects_global_init_fail)
 @inc std
 
 /* a global function-pointer initializer must not drop effects */

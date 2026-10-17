@@ -1,0 +1,9 @@
+@package(cap_fail_needs)
+/* @needs is not satisfied when no capability (and no propagation) provides it */
+@capability(Filesystem)
+
+load = (): int @needs(Filesystem) { return 42; }
+
+main = (): int {
+    return load();   /* error: Filesystem not provided */
+}

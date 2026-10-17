@@ -1,5 +1,4 @@
-package examples_main
-
+@package(examples_main)
 @inc std
 
 main =

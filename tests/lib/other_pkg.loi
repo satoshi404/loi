@@ -1,0 +1,5 @@
+@package(other_pkg)
+/* included by 37_include_local_fail.loi; its `local` symbol must not
+   leak into the including file's package. */
+@attr(local)
+other_local = (): int { return 5; }

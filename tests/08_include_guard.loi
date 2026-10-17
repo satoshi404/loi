@@ -1,5 +1,4 @@
-package tests_08_include_guard
-
+@package(tests_08_include_guard)
 /* include guards: @inc of the same file twice is safe */
 @inc "lib/guarded.loi"
 @inc "lib/guarded.loi"

@@ -1,0 +1,12 @@
+@package(var_ok)
+/* a `local` global variable is readable within its own package, and a
+   parameter that shadows another package's local is not flagged. */
+@attr(local)
+secret_count: int = 40;
+
+read_it = (): int { return secret_count; }
+
+main = (): int {
+    int secret_count = 2;      /* shadows the global; must stay legal */
+    return read_it() + secret_count;   /* 42 */
+}

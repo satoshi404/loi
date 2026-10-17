@@ -1,0 +1,9 @@
+@package(cap_fail_undeclared)
+/* capability names must be declared with @capability(...) */
+@capability(Read)
+
+main = (): int {
+    @grant(Write) w;   /* error: Write is not declared */
+    @drop(w);
+    return 0;
+}

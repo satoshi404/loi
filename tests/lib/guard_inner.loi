@@ -1,4 +1,3 @@
-package tests_lib_guard_inner
-
+@package(tests_lib_guard_inner)
 /* included transitively by guard_outer.loi */
 inner_value = (n: int): int { return n + 1; }

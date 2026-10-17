@@ -1,5 +1,4 @@
-package examples_08_contracts
-
+@package(examples_08_contracts)
 @inc std
 
 struct Buffer @pack {

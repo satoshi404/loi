@@ -1,5 +1,4 @@
-package examples_04_threads
-
+@package(examples_04_threads)
 @inc std
 
 worker = (arg: void*): void*

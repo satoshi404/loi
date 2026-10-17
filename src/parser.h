@@ -8,6 +8,7 @@ typedef struct {
     Lexer *lex;
     Token current;
     int had_error;
+    char current_package[256];
 } Parser;
 
 void parser_init(Parser *p, Lexer *lex);

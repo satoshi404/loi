@@ -1,0 +1,8 @@
+@package(cap_fail_linear)
+/* a locally granted owned capability must be consumed, returned, or @drop'ed */
+@capability(Write)
+
+main = (): int {
+    @grant(Write) w;   /* never used -> linearity error */
+    return 42;
+}

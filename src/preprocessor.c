@@ -345,6 +345,8 @@ static char *expand_includes(const char *src, const char *base_dir, int depth) {
 
     StrBuf out;
     sb_init(&out);
+    char cur_pkg[256];
+    cur_pkg[0] = 0;
     const char *p = src;
     while (*p) {
         if (at_line_start(out.buf, out.len) && (*p == '#' || *p == '@')) {
@@ -364,6 +366,23 @@ static char *expand_includes(const char *src, const char *base_dir, int depth) {
                 if (kw < line_end && *kw == '(') {
                     kw++;
                     while (kw < line_end && isspace((unsigned char)*kw)) kw++;
+                }
+            }
+            /* `@package(name)` marks the enclosing namespace. Track it so that,
+               after inlining another file, we can re-assert the parent package
+               (the include's own `@package` would otherwise leak into the
+               declarations that follow). */
+            if (kw_match(kw, "package")) {
+                const char *q = kw + 7;
+                while (q < line_end && isspace((unsigned char)*q)) q++;
+                if (q < line_end && *q == '(') {
+                    q++;
+                    const char *st = q;
+                    while (q < line_end && *q != ')') q++;
+                    size_t n = (size_t)(q - st);
+                    if (n >= sizeof(cur_pkg)) n = sizeof(cur_pkg) - 1;
+                    memcpy(cur_pkg, st, n);
+                    cur_pkg[n] = 0;
                 }
             }
             if (kw_match(kw, "include")) {
@@ -420,7 +439,7 @@ static char *expand_includes(const char *src, const char *base_dir, int depth) {
                 } else if (!loi_source_declares_package(content)) {
                     fprintf(stderr,
                             "error: line %zu: included file \"%s\" must declare "
-                            "a package (e.g. 'package name')\n",
+                            "a package (e.g. '@package(name)')\n",
                             line_of(src, p), found);
                     exit(1);
                 } else if (include_guard_seen(found)) {
@@ -436,6 +455,9 @@ static char *expand_includes(const char *src, const char *base_dir, int depth) {
                     sb_putc(&out, '\n');
                     free(nested);
                     free(content);
+                    /* restore the enclosing package for the declarations that
+                       follow this include */
+                    if (cur_pkg[0]) sb_printf(&out, "@package(%s)\n", cur_pkg);
                 }
                 p = line_end;
                 if (*p == '\n') p++;

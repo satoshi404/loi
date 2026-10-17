@@ -1,5 +1,4 @@
-package examples_22_switch
-
+@package(examples_22_switch)
 /* switch/case/default example */
 
 main = () -> int {

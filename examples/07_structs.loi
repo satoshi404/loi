@@ -1,5 +1,4 @@
-package examples_07_structs
-
+@package(examples_07_structs)
 @inc std
 
 struct Point { int x; int y; }

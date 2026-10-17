@@ -1,4 +1,4 @@
-package examples_25_fnpointers
+@package(examples_25_fnpointers)
 @inc std
 
 // typed function pointers

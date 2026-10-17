@@ -1,0 +1,14 @@
+@package(cap_refine)
+/* @refine weakens a capability in place; the weaker proof satisfies a
+   `borrow` parameter without consuming the binding. */
+@capability(Read, Write)
+
+read_ok = (c: @cap(borrow Read)): int { return 42; }
+
+main = (): int {
+    @grant(Write) w;
+    @refine(Write -> Read) w;   /* w now proves Read */
+    int r = read_ok(w);         /* borrowed: w stays live */
+    @drop(w);
+    return r;
+}

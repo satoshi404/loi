@@ -22,6 +22,20 @@ get_expected() {
     tests/21_include_guard.loi) echo 1 ;;
     tests/26_inc_forms.loi) echo 42 ;;
     tests/29_std_package.loi) echo 42 ;;
+    tests/31_package_dotted.loi) echo 42 ;;
+    tests/32_attr_link_name.loi) echo 42 ;;
+    tests/33_attr_visibility.loi) echo 42 ;;
+    tests/35_attr_flags.loi) echo 42 ;;
+    tests/36_package_namespace.loi) echo 42 ;;
+    tests/39_local_var_visibility.loi) echo 42 ;;
+    tests/40_local_var_shadow.loi) echo 42 ;;
+    tests/41_must_use_warn.loi) echo 42 ;;
+    tests/42_must_use_used.loi) echo 42 ;;
+    tests/43_cap_basic.loi) echo 42 ;;
+    tests/44_cap_refine.loi) echo 42 ;;
+    tests/45_cap_needs.loi) echo 42 ;;
+    tests/46_cap_effects_bridge.loi) echo 42 ;;
+    tests/47_cap_region.loi) echo 42 ;;
     *) echo "none" ;;
   esac
 }
@@ -64,6 +78,25 @@ run_test() {
 for f in tests/*.loi; do
   run_test "$f"
 done
+
+# @attr(must_use) must warn on a discarded result but stay advisory.
+total=$((total+1))
+mu_stderr=$(./loi tests/41_must_use_warn.loi --run 2>&1 >/dev/null)
+if echo "$mu_stderr" | grep -q "must_use"; then
+  pass=$((pass+1))
+else
+  echo "FAIL (expected a must_use warning): tests/41_must_use_warn.loi"
+  fail=$((fail+1))
+fi
+
+total=$((total+1))
+mu_used=$(./loi tests/42_must_use_used.loi --run 2>&1 >/dev/null)
+if echo "$mu_used" | grep -q "must_use"; then
+  echo "FAIL (unexpected must_use warning): tests/42_must_use_used.loi"
+  fail=$((fail+1))
+else
+  pass=$((pass+1))
+fi
 
 echo "$total tests, $pass passed, $fail failed"
 if [ "$fail" -ne 0 ]; then

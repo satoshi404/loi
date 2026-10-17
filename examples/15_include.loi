@@ -1,5 +1,4 @@
-package examples_15_include
-
+@package(examples_15_include)
 @inc "helpers/lib.loi"
 
 @inc std

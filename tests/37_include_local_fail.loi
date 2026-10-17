@@ -1,0 +1,8 @@
+@package(mine_pkg)
+/* after including a file from another package, the enclosing package is
+   restored, so `other_local` (local to other_pkg) is NOT visible here. */
+@inc "lib/other_pkg.loi"
+
+main = (): int {
+    return other_local();   /* error: local to other_pkg */
+}

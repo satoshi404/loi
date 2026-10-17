@@ -1,0 +1,15 @@
+@package(must_use_demo)
+/* @attr(must_use) warns when the result of a call is discarded; the warning
+   is advisory and must not fail the build. */
+@attr(must_use, pure)
+double_it = (n: int): int { return n * 2; }
+
+@attr(must_use)
+announce = (n: int): void !IO { std.print_int(n); }   /* void: never warns */
+
+main = (): int !IO {
+    double_it(21);        /* warning: unused result of 'double_it' */
+    announce(1);          /* no warning (void result) */
+    int used = double_it(3); /* used: no warning */
+    return used == 6 ? 42 : 1;
+}

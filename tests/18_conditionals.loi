@@ -1,5 +1,4 @@
-package tests_18_conditionals
-
+@package(tests_18_conditionals)
 /* @if / @elif / @else / @endif at compile time */
 @(define LEVEL 2)
 

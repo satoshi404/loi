@@ -1,0 +1,7 @@
+/* a bare `package name` declaration is gone: it must be rejected with a pointer
+   to the `@package(name)` form. */
+package bare
+
+main = () -> int {
+    return 0;
+}

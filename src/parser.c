@@ -110,6 +110,43 @@ static char *parse_effects(Parser *p) {
     return buf;
 }
 
+/* Parse a `A + B + C` capability-name list into a comma-separated string. */
+static char *parse_cap_set_names(Parser *p) {
+    size_t cap = 32, len = 0;
+    char *buf = malloc(cap); buf[0] = 0;
+    while (check(p, TOK_IDENTIFIER)) {
+        const char *s = p->current.lexeme;
+        size_t sl = strlen(s);
+        if (len + sl + 2 >= cap) { while (len + sl + 2 >= cap) cap *= 2; buf = realloc(buf, cap); }
+        if (len) buf[len++] = ',';
+        memcpy(buf + len, s, sl + 1);
+        len += sl;
+        advance_parser(p);
+        if (check(p, TOK_PLUS) || check(p, TOK_COMMA)) { advance_parser(p); continue; }
+        break;
+    }
+    return buf;
+}
+
+/* Parse trailing `@needs(...)` / `@gives(...)` clauses of a signature (in any
+   order, optionally both). */
+static void parse_sig_clauses(Parser *p, ASTNode *n) {
+    while (check(p, TOK_AT)) {
+        Token nx = lexer_peek(p->lex);
+        int is_needs = (nx.type == TOK_IDENTIFIER && nx.lexeme && strcmp(nx.lexeme, "needs") == 0);
+        int is_gives = (nx.type == TOK_IDENTIFIER && nx.lexeme && strcmp(nx.lexeme, "gives") == 0);
+        token_free(&nx);
+        if (!is_needs && !is_gives) break;
+        advance_parser(p); /* '@' */
+        advance_parser(p); /* 'needs' / 'gives' */
+        expect(p, TOK_LPAREN, "expected '('");
+        char *set = parse_cap_set_names(p);
+        expect(p, TOK_RPAREN, "expected ')'");
+        if (is_needs) { free(n->needs); n->needs = set; }
+        else { free(n->gives); n->gives = set; }
+    }
+}
+
 /* --- parser symbol table for @typeof inference --- */
 typedef struct { char name[64]; Type *ty; } SymEnt;
 static SymEnt g_symtab[1024];
@@ -143,6 +180,36 @@ static Type *infer_type_expr(ASTNode *e) {
     t->name = strdup("int"); return t;
 }
 
+static Type *parse_type(Parser *p);
+
+/* `@cap(Name1 + Name2)`, optionally `@cap(borrow Name)`. Parsed at a position
+   where the current token is `@`. The result is a TY_CAPABILITY type. */
+static Type *parse_cap_type(Parser *p) {
+    expect(p, TOK_AT, "expected '@'");
+    expect(p, TOK_IDENTIFIER, "expected 'cap'");
+    expect(p, TOK_LPAREN, "expected '(' after @cap");
+    Type *t = type_new(TY_CAPABILITY);
+    t->name = strdup("cap");
+    if (check(p, TOK_IDENTIFIER) && p->current.lexeme &&
+        strcmp(p->current.lexeme, "borrow") == 0) {
+        t->cap_borrow = 1;
+        advance_parser(p);
+    }
+    size_t cap = 4, cnt = 0;
+    char **arr = malloc(cap * sizeof(char *));
+    while (check(p, TOK_IDENTIFIER)) {
+        if (cnt == cap) { cap *= 2; arr = realloc(arr, cap * sizeof(char *)); }
+        arr[cnt++] = p->current.lexeme ? strdup(p->current.lexeme) : strdup("?");
+        advance_parser(p);
+        if (check(p, TOK_PLUS)) { advance_parser(p); continue; }
+        break;
+    }
+    t->cap_names = arr;
+    t->cap_count = cnt;
+    expect(p, TOK_RPAREN, "expected ')' after @cap(...)");
+    return t;
+}
+
 static Type *parse_type(Parser *p) {
     Type *t = NULL;
     /* Arrays use the canonical postfix form `T[n]` / `T[]` (handled in the
@@ -154,8 +221,16 @@ static Type *parse_type(Parser *p) {
         advance_parser(p);
     }
     if (check(p, TOK_AT)) {
+        Token nx = lexer_peek(p->lex);
+        int is_typeof = (nx.type == TOK_IDENTIFIER && nx.lexeme && strcmp(nx.lexeme, "typeof") == 0);
+        int is_cap    = (nx.type == TOK_IDENTIFIER && nx.lexeme && strcmp(nx.lexeme, "cap") == 0);
+        token_free(&nx);
+        if (is_cap) {
+            t = parse_cap_type(p);
+            goto type_suffix;
+        }
         advance_parser(p);
-        if (check(p, TOK_IDENTIFIER) && strcmp(p->current.lexeme, "typeof") == 0) {
+        if (is_typeof) {
             advance_parser(p);
             expect(p, TOK_LPAREN, "expected '('");
             ASTNode *ex = parse_expr(p);
@@ -307,7 +382,8 @@ static int is_vardecl_start(Parser *p) {
     if (is_type_keyword(p)) return 1;
     if (check(p, TOK_AT)) {
         Token t = lexer_peek(p->lex);
-        int r = (t.type == TOK_IDENTIFIER && t.lexeme && strcmp(t.lexeme, "typeof") == 0);
+        int r = (t.type == TOK_IDENTIFIER && t.lexeme &&
+                 (strcmp(t.lexeme, "typeof") == 0 || strcmp(t.lexeme, "cap") == 0));
         token_free(&t);
         return r;
     }
@@ -566,6 +642,18 @@ static ASTNode *parse_stmt(Parser *p) {
             if (!check(p, TOK_RPAREN)) n->cond = parse_expr(p);
             expect(p, TOK_RPAREN, "expected ')'");
         }
+        /* `region r(64) with Write as w { ... }` — the region carries lexical
+           capabilities that are released together with its memory. */
+        if (check(p, TOK_IDENTIFIER) && p->current.lexeme &&
+            strcmp(p->current.lexeme, "with") == 0) {
+            advance_parser(p);
+            n->caps = parse_cap_set_names(p);
+            if (check(p, TOK_IDENTIFIER) && p->current.lexeme &&
+                strcmp(p->current.lexeme, "as") == 0) {
+                advance_parser(p);
+                if (check(p, TOK_IDENTIFIER)) { n->str_value = strdup_lex(p->current.lexeme); advance_parser(p); }
+            }
+        }
         n->body = parse_block(p);
         return n;
     }
@@ -597,6 +685,57 @@ static ASTNode *parse_stmt(Parser *p) {
         return ast_new(AST_CONTINUE, line, col);
     }
     if (check(p, TOK_KW_ASM)) return parse_asm(p);
+    /* lexical capability statements: @grant / @refine / @drop. `@cap(...)`
+       variable declarations fall through to is_vardecl_start below. */
+    if (check(p, TOK_AT)) {
+        Token nx = lexer_peek(p->lex);
+        int is_grant  = (nx.type == TOK_IDENTIFIER && nx.lexeme && strcmp(nx.lexeme, "grant") == 0);
+        int is_refine = (nx.type == TOK_IDENTIFIER && nx.lexeme && strcmp(nx.lexeme, "refine") == 0);
+        int is_drop   = (nx.type == TOK_IDENTIFIER && nx.lexeme && strcmp(nx.lexeme, "drop") == 0);
+        token_free(&nx);
+        if (is_grant) {
+            int line = p->current.line, col = p->current.column;
+            advance_parser(p); /* '@' */
+            advance_parser(p); /* 'grant' */
+            expect(p, TOK_LPAREN, "expected '(' after @grant");
+            ASTNode *n = ast_new(AST_GRANT, line, col);
+            n->caps = parse_cap_set_names(p);
+            expect(p, TOK_RPAREN, "expected ')'");
+            if (check(p, TOK_IDENTIFIER)) { n->name = strdup_lex(p->current.lexeme); advance_parser(p); }
+            else parser_error(p, "expected capability binding name after @grant");
+            match_tok(p, TOK_SEMICOLON);
+            return n;
+        }
+        if (is_refine) {
+            int line = p->current.line, col = p->current.column;
+            advance_parser(p); /* '@' */
+            advance_parser(p); /* 'refine' */
+            expect(p, TOK_LPAREN, "expected '(' after @refine");
+            ASTNode *n = ast_new(AST_REFINE, line, col);
+            if (check(p, TOK_IDENTIFIER)) { n->caps = strdup_lex(p->current.lexeme); advance_parser(p); }
+            else parser_error(p, "expected capability name in @refine");
+            expect(p, TOK_ARROW, "expected '->' in @refine");
+            if (check(p, TOK_IDENTIFIER)) { n->cap_to = strdup_lex(p->current.lexeme); advance_parser(p); }
+            else parser_error(p, "expected capability name in @refine");
+            expect(p, TOK_RPAREN, "expected ')'");
+            if (check(p, TOK_IDENTIFIER)) { n->name = strdup_lex(p->current.lexeme); advance_parser(p); }
+            else parser_error(p, "expected capability binding name after @refine");
+            match_tok(p, TOK_SEMICOLON);
+            return n;
+        }
+        if (is_drop) {
+            int line = p->current.line, col = p->current.column;
+            advance_parser(p); /* '@' */
+            advance_parser(p); /* 'drop' */
+            expect(p, TOK_LPAREN, "expected '(' after @drop");
+            ASTNode *n = ast_new(AST_DROP, line, col);
+            if (check(p, TOK_IDENTIFIER)) { n->name = strdup_lex(p->current.lexeme); advance_parser(p); }
+            else parser_error(p, "expected capability binding name in @drop");
+            expect(p, TOK_RPAREN, "expected ')'");
+            match_tok(p, TOK_SEMICOLON);
+            return n;
+        }
+    }
     if (is_vardecl_start(p)) return parse_var_decl(p, 1);
     ASTNode *e = parse_expr(p);
     int line = e ? e->line : p->current.line;
@@ -997,15 +1136,34 @@ static ASTNode *parse_primary(Parser *p) {
     return NULL;
 }
 
+/* `@package(name)` — dotted names are allowed (`@package(core.utils)`). */
 static ASTNode *parse_package(Parser *p) {
     int line = p->current.line, col = p->current.column;
     ASTNode *n = ast_new(AST_PACKAGE, line, col);
+    expect(p, TOK_AT, "expected '@'");
     expect(p, TOK_KW_PACKAGE, "expected 'package'");
+    expect(p, TOK_LPAREN, "expected '(' after '@package'");
+    char buf[256];
+    buf[0] = 0;
     if (check(p, TOK_IDENTIFIER)) {
-        n->name = strdup_lex(p->current.lexeme);
+        snprintf(buf, sizeof(buf), "%s", p->current.lexeme);
         advance_parser(p);
+        while (check(p, TOK_DOT)) {
+            advance_parser(p);
+            if (!check(p, TOK_IDENTIFIER)) {
+                parser_error(p, "expected identifier after '.' in package name");
+                break;
+            }
+            size_t used = strlen(buf);
+            snprintf(buf + used, sizeof(buf) - used, ".%s", p->current.lexeme);
+            advance_parser(p);
+        }
+    } else {
+        parser_error(p, "expected package name");
     }
+    expect(p, TOK_RPAREN, "expected ')' after package name");
     match_tok(p, TOK_SEMICOLON);
+    n->name = strdup(buf);
     return n;
 }
 
@@ -1179,6 +1337,7 @@ static ASTNode *parse_func(Parser *p) {
                 n->ty = parse_type(p);
             }
             n->effects = parse_effects(p);
+            parse_sig_clauses(p, n);
         }
     } else if (check(p, TOK_LPAREN)) {
         advance_parser(p);
@@ -1200,6 +1359,7 @@ static ASTNode *parse_func(Parser *p) {
             n->ty = parse_type(p);
         }
         n->effects = parse_effects(p);
+        parse_sig_clauses(p, n);
         expect(p, TOK_ASSIGN, "expected '='");
     } else {
         parser_error(p, "expected '=' or '('");
@@ -1220,8 +1380,35 @@ static ASTNode *parse_func(Parser *p) {
     return n;
 }
 
+/* `@capability(Read, Write, ...)` — declares the capability kinds in scope. */
+static ASTNode *parse_cap_decl(Parser *p) {
+    int line = p->current.line, col = p->current.column;
+    ASTNode *n = ast_new(AST_CAP_DECL, line, col);
+    advance_parser(p); /* '@' */
+    advance_parser(p); /* 'capability' */
+    expect(p, TOK_LPAREN, "expected '(' after @capability");
+    n->caps = parse_cap_set_names(p);
+    expect(p, TOK_RPAREN, "expected ')' after capability list");
+    match_tok(p, TOK_SEMICOLON);
+    return n;
+}
+
 static ASTNode *parse_decl_core(Parser *p) {
-    if (check(p, TOK_KW_PACKAGE)) return parse_package(p);
+    /* `@package(name)` — the `@` sigil is required; a bare `package` keyword is
+       rejected below with a pointer to the new form. */
+    if (check(p, TOK_AT)) {
+        Token t = lexer_peek(p->lex);
+        int is_pkg = (t.type == TOK_KW_PACKAGE);
+        int is_capdecl = (t.type == TOK_IDENTIFIER && t.lexeme && strcmp(t.lexeme, "capability") == 0);
+        token_free(&t);
+        if (is_pkg) return parse_package(p);
+        if (is_capdecl) return parse_cap_decl(p);
+    }
+    if (check(p, TOK_KW_PACKAGE)) {
+        parser_error(p, "'package' is no longer supported; use '@package(name)'");
+        advance_parser(p);
+        return NULL;
+    }
     /* `import` is not a keyword any more; catch the leftover identifier and
        point at the `@inc` replacement. */
     if (check(p, TOK_IDENTIFIER) && strcmp(p->current.lexeme, "import") == 0) return parse_import(p);
@@ -1245,42 +1432,132 @@ static ASTNode *parse_decl_core(Parser *p) {
     return NULL;
 }
 
-/* leading @section("name") attribute applied to the next declaration */
+/* Parse one `@attr(name, ...)` list (the `@` is already consumed and the
+   current token is the `attr` identifier) into `target`. Items are bare flags
+   (`inline`) or named with an argument (`link_name("x")`, `section("text")`). */
+static char *attr_value_lexeme(const char *lex) {
+    if (!lex) return strdup("");
+    size_t n = strlen(lex);
+    /* string lexemes may or may not carry surrounding quotes */
+    if (n >= 2 && lex[0] == '"' && lex[n - 1] == '"') { n -= 2; lex++; }
+    char *out = malloc(n + 1);
+    memcpy(out, lex, n);
+    out[n] = 0;
+    return out;
+}
+
+static int is_attr_name_tok(TokenType t) {
+    return t == TOK_IDENTIFIER ||
+           (t >= TOK_KW_PACKAGE && t <= TOK_KW_ALIGNOF);
+}
+
+static void parse_attr_list(Parser *p, ASTNode *target) {
+    advance_parser(p); /* 'attr' */
+    expect(p, TOK_LPAREN, "expected '(' after @attr");
+    while (!check(p, TOK_RPAREN) && !check(p, TOK_EOF)) {
+        char name[128];
+        name[0] = 0;
+        if (is_attr_name_tok(p->current.type) && p->current.lexeme) {
+            snprintf(name, sizeof(name), "%s", p->current.lexeme);
+            advance_parser(p);
+        } else {
+            parser_error(p, "expected attribute name");
+            break;
+        }
+        char *value = NULL;
+        if (check(p, TOK_LPAREN)) {
+            advance_parser(p);
+            if (check(p, TOK_STRING) || check(p, TOK_IDENTIFIER) ||
+                check(p, TOK_NUMBER) || is_attr_name_tok(p->current.type)) {
+                value = attr_value_lexeme(p->current.lexeme);
+                advance_parser(p);
+            } else if (check(p, TOK_MINUS)) {
+                advance_parser(p);
+                if (check(p, TOK_NUMBER)) {
+                    char buf[256];
+                    snprintf(buf, sizeof(buf), "-%s", p->current.lexeme);
+                    value = strdup(buf);
+                    advance_parser(p);
+                }
+            } else {
+                parser_error(p, "expected attribute argument");
+            }
+            expect(p, TOK_RPAREN, "expected ')' after attribute argument");
+        }
+        ast_add_attr(target, name, value);
+        free(value);
+        if (check(p, TOK_COMMA)) { advance_parser(p); continue; }
+        break;
+    }
+    expect(p, TOK_RPAREN, "expected ')' after @attr list");
+}
+
+/* leading `@section("name")` / `@attr(...)` modifiers applied to the next
+   declaration; they may be stacked in any order. */
 static ASTNode *parse_top_level(Parser *p) {
     char *sec = NULL;
+    ASTNode *pending = ast_new(AST_PROGRAM, 0, 0); /* collects @attr entries */
     while (check(p, TOK_AT)) {
         Token t = lexer_peek(p->lex);
         int is_section = (t.type == TOK_IDENTIFIER && t.lexeme && strcmp(t.lexeme, "section") == 0);
+        int is_attr    = (t.type == TOK_IDENTIFIER && t.lexeme && strcmp(t.lexeme, "attr") == 0);
+        int is_root    = (t.type == TOK_IDENTIFIER && t.lexeme && strcmp(t.lexeme, "root") == 0);
         token_free(&t);
-        if (!is_section) break;
-        advance_parser(p); /* '@' */
-        advance_parser(p); /* 'section' */
-        expect(p, TOK_LPAREN, "expected '('");
-        char buf[256]; buf[0] = 0;
-        if (check(p, TOK_STRING)) {
-            const char *lex = p->current.lexeme;
-            size_t n = strlen(lex);
-            /* string lexeme is stored without surrounding quotes, but strip if present */
-            if (n >= 2 && lex[0] == '"' && lex[n - 1] == '"') { lex++; n -= 2; }
-            if (n >= sizeof(buf)) n = sizeof(buf) - 1;
-            memcpy(buf, lex, n); buf[n] = 0;
-            advance_parser(p);
+        if (is_root) {
+            /* `@root` — sugar for `@attr(root)`: an entry point that may birth
+               capabilities with `@grant(...)`. */
+            advance_parser(p); /* '@' */
+            advance_parser(p); /* 'root' */
+            ast_add_attr(pending, "root", NULL);
+        } else if (is_section) {
+            advance_parser(p); /* '@' */
+            advance_parser(p); /* 'section' */
+            expect(p, TOK_LPAREN, "expected '('");
+            char buf[256]; buf[0] = 0;
+            if (check(p, TOK_STRING)) {
+                const char *lex = p->current.lexeme;
+                size_t n = strlen(lex);
+                /* string lexeme is stored without surrounding quotes, but strip if present */
+                if (n >= 2 && lex[0] == '"' && lex[n - 1] == '"') { lex++; n -= 2; }
+                if (n >= sizeof(buf)) n = sizeof(buf) - 1;
+                memcpy(buf, lex, n); buf[n] = 0;
+                advance_parser(p);
+            }
+            expect(p, TOK_RPAREN, "expected ')'");
+            free(sec);
+            sec = strdup(buf);
+        } else if (is_attr) {
+            advance_parser(p); /* '@' */
+            parse_attr_list(p, pending);
+        } else {
+            break;
         }
-        expect(p, TOK_RPAREN, "expected ')'");
-        free(sec);
-        sec = strdup(buf);
     }
     ASTNode *d = parse_decl_core(p);
-    if (d && sec) { d->section = sec; sec = NULL; }
+    if (d) {
+        for (size_t i = 0; i < pending->attr_count; i++)
+            ast_add_attr(d, pending->attr_names[i], pending->attr_values[i]);
+        if (sec) { free(d->section); d->section = sec; sec = NULL; }
+    }
+    ast_free(pending);
     free(sec);
     return d;
 }
 
 ASTNode *parse_program(Parser *p) {
     ASTNode *prog = ast_new(AST_PROGRAM, 1, 1);
+    p->current_package[0] = 0;
     while (!check(p, TOK_EOF)) {
         ASTNode *d = parse_top_level(p);
-        if (d) ast_add_item(prog, d);
+        if (d) {
+            if (d->type == AST_PACKAGE && d->name) {
+                snprintf(p->current_package, sizeof(p->current_package), "%s", d->name);
+            } else if (p->current_package[0]) {
+                free(d->package);
+                d->package = strdup(p->current_package);
+            }
+            ast_add_item(prog, d);
+        }
         if (p->had_error) break;
     }
     return prog;

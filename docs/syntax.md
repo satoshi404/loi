@@ -16,26 +16,59 @@ loi is a hybrid, statically typed language that combines low-level control
 
 ```
 Program     := TopLevel*
-TopLevel    := PackageDecl
+TopLevel    := Attr* Declaration
+Declaration := PackageDecl
               | TypeDecl
               | StructDecl
               | ExternDecl
               | VarDecl
               | FuncDecl
 
-PackageDecl := 'package' Ident (';')?
+PackageDecl := '@package' '(' Ident ('.' Ident)* ')' (';')?
+Attr        := '@' 'section' '(' String ')'
+              | '@' 'attr' '(' AttrItem (',' AttrItem)* ')'
+AttrItem    := Ident ('(' (String | Ident | Number) ')')?
 ```
 
 Every loi file must declare a package. The entry file and every `@inc`-ed file
-are checked: a file without a `package` declaration is rejected with
+are checked: a file without an `@package(...)` declaration is rejected with
 
 ```
-error: file "x.loi" must declare a package (e.g. 'package name')
+error: file "x.loi" must declare a package (e.g. '@package(name)')
 ```
 
-The package name is metadata: it names the unit and is shown in the AST, but it
-does not change name resolution (members are reached through the `std` package,
-see [Runtime](#runtime)).
+Dotted names are allowed (`@package(core.utils)`). The name is shown in the AST;
+runtime members still go through the `std` package (see [Runtime](#runtime)). The
+old bare `package name` form is rejected with a pointer to `@package(name)`.
+
+### Packages, namespaces, and visibility
+
+Files that declare the **same** `@package(name)` form a single namespace: a
+symbol defined in one of them is visible to the others without qualification.
+Includes (`@inc`) splice textually, so the compiler re-asserts the enclosing
+package after every included file; symbols never leak from one package into
+another.
+
+By default every top-level symbol is **`global`** — reachable from any package.
+Mark a declaration `@attr(local)` to keep it private to its package:
+references from a different package are then a type error.
+
+```loi
+@package(core)
+
+@attr(local)
+helper = (): int { return 7; }   // only visible inside `core`
+
+@attr(global)
+public_api = (): int { return helper(); }
+```
+
+```
+Type error: 'helper' is local to package 'core' and is not visible here
+```
+
+The last visibility attribute wins when several are stacked
+(`@attr(local, global)` == `global`).
 
 There is no `import` keyword. Every inclusion — loi files, packages, and C
 header checks — is a preprocessor directive introduced by `@` and handled
@@ -60,6 +93,7 @@ BaseType    := Primitive
              | '(' Type ')'
              | '(' ParamName ':' Type (',' ParamName ':' Type)* ')' '->' Type ('!' EffectList)?
              | '@' 'typeof' '(' Expr ')'
+             | '@cap' '(' 'borrow'? CapAtom ('+' CapAtom)* ')'   // lexical capability
              | 'type' Ident '=' Type         // alias (top-level)
 
 Primitive   := 'int' | 'float' | 'double' | 'char' | 'bool'
@@ -98,17 +132,74 @@ ExternDecl  := 'extern' Type Ident '(' ParamList? ')' ';'
 Functions are declared by assignment, matching the example:
 
 ```
-FuncDecl    := Attribute? Ident FuncSignature? '=' Block
+FuncDecl    := Attribute* Ident FuncSignature? '=' Block
 Attribute   := '@' 'section' '(' String ')'   // place fn in an assembly section
+             | '@' 'root'                     // entry point (may @grant)
+             | '@' 'attr' '(' AttrItem (',' AttrItem)* ')'
 FuncSignature := '(' ParamList? ')' (':' Type | '->' Type)?
+                 ('!' EffectList)? ('@' 'needs' '(' CapSet ')')? ('@' 'gives' '(' CapSet ')')?
 
 ParamList   := Param (',' Param)*
 Param       := Type Ident
              | Ident ':' Type
              | Type
 
+CapSet      := CapAtom ('+' CapAtom)*
+CapAtom     := Ident
+
 Block       := '{' Stmt* '}'
 ```
+
+### Attributes (`@attr`)
+
+`@attr(...)` attaches metadata to the **next** declaration (function, `extern`,
+global, struct, or field). Modifiers stack, and several lists may precede one
+declaration. Items are bare flags (`inline`) or named with a single argument
+(`link_name("...")`).
+
+```loi
+@attr(local, inline)
+fast = (n: int): int { return n + 1; }
+
+@attr(global, no_return, link_name("loi_die"))
+die = (): void { while (1) { } }
+
+@attr(extern, link_name("malloc"), section("text"))
+extern ptr malloc(size: int);
+```
+
+Recognised attributes:
+
+| attribute            | effect                                                        |
+|----------------------|---------------------------------------------------------------|
+| `local` / `global`   | visibility within the package (default `global`)              |
+| `link_name("sym")`   | emit the definition/call under the given symbol name          |
+| `section("name")`    | place the function in an assembly section (same as `@section`)|
+| `inline`             | emit LLVM `alwaysinline`                                      |
+| `no_return`          | emit LLVM `noreturn`                                          |
+| `pure`               | emit LLVM `readnone` (no side effects / memory reads)         |
+| `must_use`           | warn (advisory) when a call's result is discarded             |
+| `extern`             | marks the declaration as externally defined                   |
+
+The system is **extensible**: unknown attribute names are recorded in the AST
+(the default dump prints `attrs=...`) and otherwise ignored, so new attributes
+can be added without breaking existing code.
+
+`@attr(must_use)` produces an advisory diagnostic (it does **not** fail the
+build) when the result of a call is thrown away:
+
+```loi
+@attr(must_use, pure)
+double_it = (n: int): int { return n * 2; }
+
+main = (): int {
+    double_it(21);            // Warning: unused result of 'double_it'
+    int x = double_it(21);    // ok — result used
+    return x - 42;
+}
+```
+
+A `void` function never warns, even with `must_use`.
 
 Examples:
 
@@ -165,6 +256,9 @@ Stmt        := VarDecl
              | AsmStmt
              | ExprStmt
              | Block
+             | GrantStmt
+             | RefineStmt
+             | DropStmt
 
 IfStmt      := 'if' '(' Expr ')' Block ('else' Block)?
 WhileStmt   := 'while' '(' Expr ')' Block
@@ -174,6 +268,9 @@ BreakStmt   := 'break' ';'
 ContinueStmt:= 'continue' ';'
 AsmStmt     := 'asm' '(' String ')' ';'
 ExprStmt    := Expr ';'
+GrantStmt   := '@' 'grant' '(' CapSet ')' Ident ';'   // birth a capability (roots only)
+RefineStmt  := '@' 'refine' '(' CapAtom '->' CapAtom ')' Ident ';'
+DropStmt    := '@' 'drop' '(' Ident ')' ';'
 ```
 
 ## Expressions
@@ -298,7 +395,7 @@ and call its members with the `std.` qualifier — the internal `loi_` prefix is
 never written in loi code:
 
 ```loi
-package demo
+@package(demo)
 
 @inc std
 
@@ -358,6 +455,28 @@ permit.
 Effect annotations are excluded from structural type equality, so two function
 types that differ only in effects still unify for overload/assignment purposes;
 the separate effect check is what makes them safe.
+
+## Lexical capabilities (zero-cost permissions)
+
+`@cap(...)`, `@grant`, `@refine`, `@drop`, `@needs`, `@gives` and `region ... with`
+form loi's **lexical capabilities** and **dual effects**. Full guide:
+[`capabilities.md`](capabilities.md) and [`needs.md`](needs.md).
+
+```
+@capability(Read, Write)            // declare the kinds (optional)
+@cap(Write) w;                      // owned proof (linear)
+@cap(borrow Read) r;                // borrowed proof (non-consuming)
+@grant(Write) w;                    // birth at a root (main / @root / producer)
+@refine(Write -> Read) w;           // weaken in place
+@drop(w);                           // consume
+write = (buf: ptr, c: @cap(Write)): void { *buf = 1; }
+load  = (): int @needs(Filesystem) { ... }
+region r(64) with Write as w { ... }  // ambient cap released with the region
+```
+
+Capabilities are **linear** (an owned proof must be consumed, returned, or
+`@drop`'ed), **refinable**, and **zero-cost** (erased at runtime — they lower to
+an `i8` placeholder the optimizer removes).
 
 ## Pointers and dereference assignment
 
@@ -433,7 +552,7 @@ parse-time error.
 Example:
 
 ```loi
-package demo
+@package(demo)
 
 @(define LIMIT 8)
 @inc "helpers/helper.loi"

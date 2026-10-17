@@ -1,5 +1,4 @@
-package examples_06_arrays
-
+@package(examples_06_arrays)
 @inc std
 
 main =

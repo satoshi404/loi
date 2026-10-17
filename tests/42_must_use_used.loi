@@ -1,0 +1,8 @@
+@package(must_use_used)
+/* a used @attr(must_use) result produces no warning */
+@attr(must_use, pure)
+double_it = (n: int): int { return n * 2; }
+
+main = (): int {
+    return double_it(21);   /* 42 */
+}

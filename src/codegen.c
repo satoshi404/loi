@@ -60,7 +60,14 @@ typedef struct {
     char **param_types;
     size_t param_count;
     int defined;
+    char *link_name;   /* @attr(link_name("...")) — emitted symbol, or NULL */
+    unsigned attrs;    /* CGATTR_* flags from @attr(...) */
 } CGFunc;
+
+#define CGATTR_INLINE   1u
+#define CGATTR_NORETURN 2u
+#define CGATTR_PURE     4u
+#define CGATTR_MUST_USE 8u
 
 typedef struct {
     char *text;
@@ -134,6 +141,8 @@ static void add_func(CG *cg, const char *name, const char *retty, char **ptypes,
     cg->funcs[cg->func_count].param_types = ptypes;
     cg->funcs[cg->func_count].param_count = pc;
     cg->funcs[cg->func_count].defined = defined;
+    cg->funcs[cg->func_count].link_name = NULL;
+    cg->funcs[cg->func_count].attrs = 0;
     cg->func_count++;
 }
 static CGFunc *find_func(CG *cg, const char *name) {
@@ -218,6 +227,9 @@ static char *new_label(CG *cg, const char *prefix) {
 static char *llvm_type(Type *t) {
     if (!t) return strdup("i32");
     t = cg_resolve_type(t);
+    /* Lexical capabilities are erased: they carry no runtime data and lower to
+       a bare i8 (a placeholder the optimizer removes). See docs/capabilities.md. */
+    if (t->kind == TY_CAPABILITY) return strdup("i8");
     if (t->kind == TY_POINTER || t->kind == TY_FUNCTION) return strdup("ptr");
     if (t->kind == TY_ARRAY) {
         char *base = llvm_type(t->base);
@@ -813,7 +825,7 @@ static char *codegen_expr(CG *cg, ASTNode *e, char **out_type) {
         }
         fprintf(cg->out, "  ");
         if (strcmp(f->retty, "void") != 0) fprintf(cg->out, "%s = ", r);
-        fprintf(cg->out, "call %s @%s(", f->retty, callee);
+        fprintf(cg->out, "call %s @%s(", f->retty, f->link_name ? f->link_name : callee);
         for (size_t i=0;i<argc;i++) {
             if (i) fprintf(cg->out, ", ");
             fprintf(cg->out, "%s %s", argtypes[i], argvals[i]);
@@ -892,6 +904,13 @@ static void codegen_stmt(CG *cg, ASTNode *s) {
             if (s->name) add_var(cg, s->name, alloc, strdup("ptr"), NULL);
             fprintf(cg->out, "  store ptr %s, ptr %s\n", region_ptr, alloc);
             scope_push(cg);
+            /* `region ... with Write as w` binds `w` to an erased i8 capability */
+            if (s->caps && s->str_value) {
+                char *ca = new_tmp(cg);
+                fprintf(cg->out, "  %s = alloca i8\n", ca);
+                fprintf(cg->out, "  store i8 0, ptr %s\n", ca);
+                add_var(cg, s->str_value, ca, strdup("i8"), NULL);
+            }
             codegen_block(cg, s->body);
             scope_pop(cg);
             if (!cg->terminated) {
@@ -930,6 +949,19 @@ static void codegen_stmt(CG *cg, ASTNode *s) {
             }
             break;
         }
+        case AST_GRANT: {
+            /* Introduce a capability binding as a zeroed i8 (erased later). */
+            char *alloc = new_tmp(cg);
+            fprintf(cg->out, "  %s = alloca i8\n", alloc);
+            fprintf(cg->out, "  store i8 0, ptr %s\n", alloc);
+            if (s->name) add_var(cg, s->name, alloc, strdup("i8"), s->ty);
+            break;
+        }
+        case AST_REFINE:
+        case AST_DROP:
+        case AST_CAP_DECL:
+            /* purely lexical: nothing is emitted */
+            break;
         case AST_IF: {
             char *ct; char *cv = codegen_expr(cg, s->cond, &ct);
             char *ci = new_tmp(cg);
@@ -1272,6 +1304,18 @@ static void codegen_stmt(CG *cg, ASTNode *s) {
 }
 
 /* We need cg available. Implement collect funcs with cg param. */
+static void apply_attrs_to_func(CGFunc *cf, ASTNode *d) {
+    if (!cf || !d) return;
+    if (d->link_name && d->link_name[0]) {
+        free(cf->link_name);
+        cf->link_name = strdup(d->link_name);
+    }
+    if (ast_has_attr(d, "inline"))   cf->attrs |= CGATTR_INLINE;
+    if (ast_has_attr(d, "no_return")) cf->attrs |= CGATTR_NORETURN;
+    if (ast_has_attr(d, "pure"))     cf->attrs |= CGATTR_PURE;
+    if (ast_has_attr(d, "must_use")) cf->attrs |= CGATTR_MUST_USE;
+}
+
 static void collect_funcs_cg(CG *cg, ASTNode *prog) {
     if (!prog) return;
     for (size_t i = 0; i < prog->item_count; i++) {
@@ -1285,6 +1329,19 @@ static void collect_funcs_cg(CG *cg, ASTNode *prog) {
                 ptypes[j] = p && p->ty ? llvm_type(p->ty) : strdup("i32");
             }
             add_func(cg, d->name ? d->name : "f", retty, ptypes, argc, 1);
+            CGFunc *cf = find_func(cg, d->name ? d->name : "f");
+            if (cf) apply_attrs_to_func(cf, d);
+        } else if (d && d->type == AST_EXTERN_DECL && d->name) {
+            char *retty = d->ty ? llvm_type(d->ty) : strdup("i32");
+            size_t argc = d->arg_count;
+            char **ptypes = argc ? xmalloc(argc * sizeof(char*)) : NULL;
+            for (size_t j = 0; j < argc; j++) {
+                ASTNode *p = d->args[j];
+                ptypes[j] = p && p->ty ? llvm_type(p->ty) : strdup("i32");
+            }
+            add_func(cg, d->name, retty, ptypes, argc, 0);
+            CGFunc *cf = find_func(cg, d->name);
+            if (cf) apply_attrs_to_func(cf, d);
         }
     }
 }
@@ -1293,7 +1350,10 @@ static void collect_funcs_cg(CG *cg, ASTNode *prog) {
 static void codegen_function(CG *cg, ASTNode *f) {
     const char *name = f->name ? f->name : "f";
     char *retty = f->ty ? llvm_type(f->ty) : strdup("i32");
-    fprintf(cg->out, "define %s @%s(", retty, name);
+    CGFunc *cf = find_func(cg, name);
+    const char *sym = (cf && cf->link_name) ? cf->link_name : name;
+    unsigned at = cf ? cf->attrs : 0;
+    fprintf(cg->out, "define %s @%s(", retty, sym);
     for (size_t i = 0; i < f->arg_count; i++) {
         ASTNode *p = f->args[i];
         char *pt = p && p->ty ? llvm_type(p->ty) : strdup("i32");
@@ -1301,6 +1361,9 @@ static void codegen_function(CG *cg, ASTNode *f) {
         fprintf(cg->out, "%s %%arg%zu", pt, i);
     }
     fprintf(cg->out, ")");
+    if (at & CGATTR_NORETURN) fprintf(cg->out, " noreturn");
+    if (at & CGATTR_INLINE) fprintf(cg->out, " alwaysinline");
+    if (at & CGATTR_PURE) fprintf(cg->out, " readnone");
     if (f->section && f->section[0]) fprintf(cg->out, " section \"%s\"", f->section);
     fprintf(cg->out, " {\nentry:\n");
     cg->terminated = 0;
@@ -1581,7 +1644,8 @@ void codegen_program(ASTNode *prog, FILE *out) {
     /* emit declares for undefined (external) functions */
     for (size_t i = 0; i < cg.func_count; i++) {
         if (cg.funcs[i].defined) continue;
-        fprintf(out, "declare %s @%s(", cg.funcs[i].retty, cg.funcs[i].name);
+        fprintf(out, "declare %s @%s(", cg.funcs[i].retty,
+                cg.funcs[i].link_name ? cg.funcs[i].link_name : cg.funcs[i].name);
         for (size_t j = 0; j < cg.funcs[i].param_count; j++) {
             if (j) fprintf(out, ", ");
             fprintf(out, "%s", cg.funcs[i].param_types[j]);

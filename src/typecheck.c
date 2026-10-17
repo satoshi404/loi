@@ -9,11 +9,22 @@
 static int errors = 0;
 static int cur_line = 0, cur_col = 0;
 
+typedef struct CapBind {
+    char *name;
+    Type *ty;        /* TY_CAPABILITY */
+    int consumed;    /* 0 = live, 1 = consumed */
+    int owned;       /* 1 = linear/owned, 0 = borrow/ambient */
+    int soft;        /* 1 = need not be consumed at scope exit (params) */
+    int line, col;   /* declaration site, for diagnostics */
+} CapBind;
+
 typedef struct Scope {
     char **names;
     Type **types;
     size_t count, cap;
     struct Scope *parent;
+    CapBind *binds;  /* lexical capabilities introduced in this scope */
+    size_t nbind, bindcap;
 } Scope;
 
 static Scope *scope = NULL;
@@ -23,7 +34,8 @@ static void scope_push(void) {
     s->parent = scope;
     scope = s;
 }
-static void scope_pop(void) { if (scope) scope = scope->parent; }
+static void cap_check_scope_exit(void);   /* fwd: linearity at scope exit */
+static void scope_pop(void) { cap_check_scope_exit(); if (scope) scope = scope->parent; }
 
 static void scope_add(const char *name, Type *t) {
     if (!scope) scope_push();
@@ -46,8 +58,19 @@ static Type *scope_lookup(const char *name) {
     return NULL;
 }
 
+/* true when `name` is bound by a local/parameter scope (i.e. not the global
+   scope at the bottom of the chain); used to avoid flagging a local that
+   happens to shadow a package-local global. */
+static int scope_has_local(const char *name) {
+    for (Scope *s = scope; s && s->parent; s = s->parent) {
+        for (size_t i = 0; i < s->count; i++)
+            if (strcmp(s->names[i], name) == 0) return 1;
+    }
+    return 0;
+}
+
 /* function table */
-typedef struct { char *name; Type *return_type; size_t param_count; Type **param_types; ASTNode *node; char *effects; } FuncInfo;
+typedef struct { char *name; Type *return_type; size_t param_count; Type **param_types; ASTNode *node; char *effects; int must_use; } FuncInfo;
 static FuncInfo *funcs = NULL;
 static size_t func_count = 0, func_cap = 0;
 
@@ -66,6 +89,7 @@ static void register_func(ASTNode *f) {
     }
     funcs[func_count].node = f;
     funcs[func_count].effects = f->effects ? strdup(f->effects) : NULL;
+    funcs[func_count].must_use = ast_has_attr(f, "must_use") ? 1 : 0;
     func_count++;
 }
 
@@ -79,6 +103,150 @@ static void add_error(const char *fmt, ...) {
     vfprintf(stderr, fmt, ap);
     fprintf(stderr, "\n");
     va_end(ap);
+}
+
+static int warnings = 0;
+/* a diagnostic that does not fail the build (`@attr(must_use)`, etc.) */
+static void add_warning(const char *fmt, ...) {
+    warnings++;
+    va_list ap; va_start(ap, fmt);
+    fprintf(stderr, "Warning at %d:%d: ", cur_line, cur_col);
+    vfprintf(stderr, fmt, ap);
+    fprintf(stderr, "\n");
+    va_end(ap);
+}
+
+/* ---- lexical capabilities -------------------------------------------------
+   Capabilities are permissions that exist only at compile time and erase to
+   nothing in codegen. See docs/capabilities.md. */
+
+/* capability kinds declared through `@capability(...)`. While empty, any name
+   is accepted (permissive), so files that are `@inc`'d without the declaration
+   still typecheck. */
+static char *g_capkinds = NULL;
+
+static int csv_has(const char *csv, const char *name) {
+    if (!csv || !name) return 0;
+    size_t n = strlen(name);
+    const char *s = csv;
+    while (s && *s) {
+        const char *c = strchr(s, ',');
+        size_t l = c ? (size_t)(c - s) : strlen(s);
+        if (l == n && strncmp(s, name, n) == 0) return 1;
+        s = c ? c + 1 : NULL;
+    }
+    return 0;
+}
+
+static void capkind_add(const char *csv) {
+    if (!csv || !*csv) return;
+    if (!g_capkinds || !*g_capkinds) { free(g_capkinds); g_capkinds = strdup(csv); return; }
+    size_t a = strlen(g_capkinds), b = strlen(csv);
+    char *n = malloc(a + b + 2);
+    memcpy(n, g_capkinds, a); n[a] = ',';
+    memcpy(n + a + 1, csv, b + 1);
+    free(g_capkinds); g_capkinds = n;
+}
+
+static int capkind_known(const char *name) {
+    if (!g_capkinds || !*g_capkinds) return 1;   /* permissive */
+    return csv_has(g_capkinds, name);
+}
+
+/* The comma-separated capability names proven by `have`. */
+static int cap_set_contains(Type *have, const char *need) {
+    if (!have || have->kind != TY_CAPABILITY || !need) return 0;
+    for (size_t i = 0; i < have->cap_count; i++)
+        if (strcmp(have->cap_names[i], need) == 0) return 1;
+    return 0;
+}
+
+/* Does the union of live capability bindings in scope prove every name in the
+   comma-separated set `csv`? */
+static int cap_live_covers(const char *csv) {
+    if (!csv || !*csv) return 1;
+    char *cpy = strdup(csv);
+    int ok = 1;
+    for (char *tok = strtok(cpy, ","); tok; tok = strtok(NULL, ",")) {
+        int found = 0;
+        for (Scope *s = scope; s && !found; s = s->parent)
+            for (size_t i = 0; i < s->nbind; i++)
+                if (!s->binds[i].consumed && cap_set_contains(s->binds[i].ty, tok)) { found = 1; break; }
+        if (!found) { ok = 0; break; }
+    }
+    free(cpy);
+    return ok;
+}
+
+static void cap_bind_add(const char *name, Type *t, int owned, int soft, int line, int col) {
+    if (!name) return;
+    if (!scope) scope_push();
+    if (scope->nbind == scope->bindcap) {
+        scope->bindcap = scope->bindcap ? scope->bindcap * 2 : 4;
+        scope->binds = realloc(scope->binds, scope->bindcap * sizeof(CapBind));
+    }
+    scope->binds[scope->nbind].name = strdup(name);
+    scope->binds[scope->nbind].ty = t;
+    scope->binds[scope->nbind].consumed = 0;
+    scope->binds[scope->nbind].owned = owned;
+    scope->binds[scope->nbind].soft = soft;
+    scope->binds[scope->nbind].line = line;
+    scope->binds[scope->nbind].col = col;
+    scope->nbind++;
+    /* make the name visible to the ordinary expression typechecker too */
+    scope_add(name, t);
+}
+
+static CapBind *cap_bind_find(const char *name) {
+    if (!name) return NULL;
+    for (Scope *s = scope; s; s = s->parent)
+        for (size_t i = s->nbind; i-- > 0;)
+            if (strcmp(s->binds[i].name, name) == 0) return &s->binds[i];
+    return NULL;
+}
+
+/* Build a TY_CAPABILITY type from a comma-separated name set. */
+static Type *cap_type_from_csv(const char *csv, int borrow) {
+    Type *t = type_new(TY_CAPABILITY);
+    t->name = strdup("cap");
+    t->cap_borrow = borrow;
+    size_t capn = 4, cnt = 0;
+    char **arr = malloc(capn * sizeof(char *));
+    char *cpy = csv ? strdup(csv) : strdup("");
+    for (char *tok = strtok(cpy, ","); tok; tok = strtok(NULL, ",")) {
+        if (cnt == capn) { capn *= 2; arr = realloc(arr, capn * sizeof(char *)); }
+        arr[cnt++] = strdup(tok);
+    }
+    free(cpy);
+    t->cap_names = arr;
+    t->cap_count = cnt;
+    return t;
+}
+
+/* does type `have` prove every permission required by `need`? (have ⊇ need) */
+static int cap_set_satisfies(Type *have, Type *need) {
+    if (!need || need->kind != TY_CAPABILITY) return 1;
+    if (!have || have->kind != TY_CAPABILITY) return 0;
+    for (size_t i = 0; i < need->cap_count; i++)
+        if (!cap_set_contains(have, need->cap_names[i])) return 0;
+    return 1;
+}
+
+static void cap_validate_csv(const char *csv, const char *ctx) {
+    if (!csv || !*csv) return;
+    char *cpy = strdup(csv);
+    for (char *tok = strtok(cpy, ","); tok; tok = strtok(NULL, ","))
+        if (!capkind_known(tok))
+            add_error("capability '%s' (in %s) is not declared; add it to @capability(...)", tok, ctx);
+    free(cpy);
+}
+
+static void cap_validate_type(Type *t, const char *ctx) {
+    if (t && t->kind == TY_CAPABILITY)
+        for (size_t i = 0; i < t->cap_count; i++)
+            if (!capkind_known(t->cap_names[i]))
+                add_error("capability '%s' (in %s) is not declared; add it to @capability(...)",
+                          t->cap_names[i], ctx);
 }
 
 /* ---- type alias registry (`type X = ...`) ---- */
@@ -103,6 +271,58 @@ static Type *alias_find(const char *name) {
 static void alias_clear(void) {
     for (int i = 0; i < g_nalias; i++) free(g_aliases[i].name);
     g_nalias = 0;
+}
+
+/* ---- symbol visibility registry (@package + @attr local/global) ----
+   Every top-level declaration belongs to the @package that was in effect
+   where it appeared; files sharing a @package form one namespace. A symbol
+   marked `local` (via @attr(local)) may only be referenced from code in the
+   same package; `global` (the default) is visible everywhere. */
+typedef struct { char *name; char *package; char *visibility; } SymVis;
+static SymVis *g_syms = NULL;
+static size_t g_nsyms = 0, g_syms_cap = 0;
+static const char *g_cur_pkg = NULL;
+
+static void symvis_clear(void) {
+    for (size_t i = 0; i < g_nsyms; i++) {
+        free(g_syms[i].name);
+        free(g_syms[i].package);
+        free(g_syms[i].visibility);
+    }
+    g_nsyms = 0;
+}
+
+static void symvis_add(const char *name, const char *pkg, const char *vis) {
+    if (!name) return;
+    for (size_t i = 0; i < g_nsyms; i++)
+        if (strcmp(g_syms[i].name, name) == 0) return;
+    if (g_nsyms == g_syms_cap) {
+        g_syms_cap = g_syms_cap ? g_syms_cap * 2 : 16;
+        g_syms = realloc(g_syms, g_syms_cap * sizeof(SymVis));
+    }
+    g_syms[g_nsyms].name = strdup(name);
+    g_syms[g_nsyms].package = pkg ? strdup(pkg) : NULL;
+    g_syms[g_nsyms].visibility = vis ? strdup(vis) : NULL;
+    g_nsyms++;
+}
+
+static SymVis *symvis_find(const char *name) {
+    if (!name) return NULL;
+    for (size_t i = 0; i < g_nsyms; i++)
+        if (strcmp(g_syms[i].name, name) == 0) return &g_syms[i];
+    return NULL;
+}
+
+/* a symbol is visible unless it is `local` and defined in another package */
+static int symvis_visible(const char *name) {
+    SymVis *e = symvis_find(name);
+    if (!e || !e->visibility || strcmp(e->visibility, "local") != 0) return 1;
+    return g_cur_pkg && e->package && strcmp(g_cur_pkg, e->package) == 0;
+}
+
+static const char *symvis_pkg(const char *name) {
+    SymVis *e = symvis_find(name);
+    return e && e->package ? e->package : "?";
 }
 /* follow alias chains; returns the aliased type (borrowed) or t itself */
 static Type *resolve_type(Type *t) {
@@ -134,6 +354,13 @@ static int type_equal(Type *a, Type *b) {
         if (a->array_size && b->array_size &&
             a->array_size->str_value && b->array_size->str_value &&
             strcmp(a->array_size->str_value, b->array_size->str_value) != 0) return 0;
+        return 1;
+    }
+    if (a->kind == TY_CAPABILITY) {
+        if (a->cap_borrow != b->cap_borrow) return 0;
+        if (a->cap_count != b->cap_count) return 0;
+        for (size_t i = 0; i < a->cap_count; i++)
+            if (!cap_set_contains(b, a->cap_names[i])) return 0;
         return 1;
     }
     if (a->name && b->name && strcmp(a->name, b->name) != 0) return 0;
@@ -183,8 +410,34 @@ static void type_name(Type *t, char *buf, size_t cap) {
             }
             break;
         }
+        case TY_CAPABILITY: {
+            buf_cat(buf, cap, "@cap(");
+            if (t->cap_borrow) buf_cat(buf, cap, "borrow ");
+            for (size_t i = 0; i < t->cap_count; i++) {
+                if (i) buf_cat(buf, cap, " + ");
+                buf_cat(buf, cap, t->cap_names[i]);
+            }
+            buf_cat(buf, cap, ")");
+            break;
+        }
         default:
             buf_cat(buf, cap, "?");
+    }
+}
+
+/* Linearity: an owned capability that reaches the end of its scope without
+   being consumed, returned, or @drop'ed is an error. */
+static void cap_check_scope_exit(void) {
+    if (!scope) return;
+    for (size_t i = 0; i < scope->nbind; i++) {
+        CapBind *b = &scope->binds[i];
+        if (b->owned && !b->consumed && !b->soft) {
+            cur_line = b->line; cur_col = b->col;
+            char tn[96];
+            type_name(b->ty, tn, sizeof(tn));
+            add_error("live capability '%s' (%s) must be consumed, returned, or @drop'ed before the end of its scope",
+                      b->name, tn);
+        }
     }
 }
 
@@ -251,6 +504,9 @@ static int effects_cover(const char *caller, const char *callee) {
 }
 
 static char *current_function_effects = NULL;
+static char *current_function_needs = NULL;
+static char *current_function_gives = NULL;
+static ASTNode *current_function_node = NULL;
 static Type *current_function_return_type = NULL;
 static const char *current_function_name = NULL;
 
@@ -279,12 +535,90 @@ static void check_assign_effects(Type *target, Type *value, const char *what) {
    arity, per-argument type, and (for function-typed parameters) effects.
    `what` names the call in diagnostics, e.g. "call 'f'". */
 static Type *type_of_expr(ASTNode *e);
+
+/* Enforce a capability argument against a `@cap(...)` parameter: satisfaction
+   (the value must prove the required set) and linearity (an owned parameter
+   consumes an owned binding). */
+static void cap_arg_check(size_t idx, const char *what, ASTNode *arg, Type *ptype) {
+    char eb[96];
+    type_name(ptype, eb, sizeof(eb));
+    if (arg && arg->type == AST_EXPR_IDENT) {
+        CapBind *b = cap_bind_find(arg->name);
+        if (b) {
+            if (b->consumed) {
+                add_error("capability '%s' was already consumed", arg->name);
+                return;
+            }
+            if (!cap_set_satisfies(b->ty, ptype)) {
+                char ab[96];
+                type_name(b->ty, ab, sizeof(ab));
+                add_error("argument %zu of %s requires %s, but '%s' proves %s", idx + 1, what, eb, arg->name, ab);
+                return;
+            }
+            if (!ptype->cap_borrow) {
+                if (!b->owned) {
+                    add_error("cannot consume '%s': it is a borrowed/ambient capability", arg->name);
+                    return;
+                }
+                b->consumed = 1;   /* ownership transfer */
+            }
+            return;
+        }
+        Type *ct0 = type_of_expr(arg);
+        if (ct0 && ct0->kind == TY_CAPABILITY) return;
+        add_error("argument %zu of %s expects %s, but '%s' is not a capability", idx + 1, what, eb, arg->name ? arg->name : "?");
+        return;
+    }
+    Type *aty = type_of_expr(arg);
+    if (aty && aty->kind == TY_CAPABILITY) {
+        if (!cap_set_satisfies(aty, ptype)) {
+            char ab[96];
+            type_name(aty, ab, sizeof(ab));
+            add_error("argument %zu of %s requires %s, but the value proves %s", idx + 1, what, eb, ab);
+        }
+        return;
+    }
+    char ab[96];
+    type_name(aty, ab, sizeof(ab));
+    add_error("argument %zu of %s expects %s, but is %s", idx + 1, what, eb, ab);
+}
+
+/* `@needs(R)` is satisfied when the caller declares a superset of R or when
+   live capabilities in scope cover R. */
+static int needs_satisfied(const char *needs) {
+    if (!needs || !*needs) return 1;
+    if (current_function_needs && effects_cover(current_function_needs, needs)) return 1;
+    return cap_live_covers(needs);
+}
+
+/* `@grant` is only allowed at a root: `main`, a function marked `@root`, or a
+   function that declares `@gives(...)` covering the granted set. */
+static int grant_authorized(const char *set) {
+    if (current_function_name && strcmp(current_function_name, "main") == 0) return 1;
+    if (current_function_node && ast_has_attr(current_function_node, "root")) return 1;
+    if (current_function_gives && effects_cover(current_function_gives, set)) return 1;
+    /* a function whose return type *is* the capability produces it */
+    if (current_function_return_type && current_function_return_type->kind == TY_CAPABILITY) {
+        int ok = 1;
+        char *cpy = set ? strdup(set) : strdup("");
+        for (char *tok = strtok(cpy, ","); tok; tok = strtok(NULL, ","))
+            if (!cap_set_contains(current_function_return_type, tok)) { ok = 0; break; }
+        free(cpy);
+        if (ok) return 1;
+    }
+    return 0;
+}
+
 static void check_call_args(const char *what, size_t argc, ASTNode **argv,
                             size_t pcount, Type **ptypes) {
     Type **ats = calloc(argc ? argc : 1, sizeof(Type *));
     for (size_t i = 0; i < argc; i++) ats[i] = type_of_expr(argv[i]);
     if (pcount != argc) add_error("%s expects %zu argument(s), got %zu", what, pcount, argc);
     for (size_t i = 0; i < argc && i < pcount; i++) {
+        if (ptypes[i] && ptypes[i]->kind == TY_CAPABILITY) {
+            cap_arg_check(i, what, argv[i], ptypes[i]);
+            continue;
+        }
         if (ats[i] && ptypes[i] && !type_equal(ats[i], ptypes[i])) {
             char eb[96], ab[96];
             type_name(ptypes[i], eb, sizeof(eb));
@@ -331,11 +665,23 @@ static Type *type_of_expr(ASTNode *e) {
         case AST_EXPR_NULL: return NULL; /* null converts to any pointer/function type */
         case AST_EXPR_IDENT: {
             Type *t = scope_lookup(e->name);
-            if (!t) {
+            if (t) {
+                /* a top-level (global-scope) binding may be package-local */
+                if (e->name && !scope_has_local(e->name) && !symvis_visible(e->name))
+                    add_error("'%s' is local to package '%s' and is not visible here",
+                              e->name, symvis_pkg(e->name));
+                return t;
+            }
+            {
                 /* a function name used as a value (e.g. passed as a callback):
                    give it its function type so assignments/calls are checked */
                 for (size_t i = 0; i < func_count; i++)
-                    if (e->name && strcmp(funcs[i].name, e->name) == 0) return func_type_of(&funcs[i]);
+                    if (e->name && strcmp(funcs[i].name, e->name) == 0) {
+                        if (!symvis_visible(e->name))
+                            add_error("'%s' is local to package '%s' and is not visible here",
+                                      e->name, symvis_pkg(e->name));
+                        return func_type_of(&funcs[i]);
+                    }
                 add_error("undeclared identifier '%s'", e->name?e->name:"?");
             }
             return t;
@@ -408,9 +754,18 @@ static Type *type_of_expr(ASTNode *e) {
                 char what[160];
                 snprintf(what, sizeof(what), "call to '%s'", name);
                 check_call_args(what, e->arg_count, e->args, finfo->param_count, finfo->param_types);
-                if (finfo->effects && !effects_cover(current_function_effects, finfo->effects)) {
+                if (!symvis_visible(name)) {
+                    add_error("'%s' is local to package '%s' and is not visible here",
+                              name, symvis_pkg(name));
+                }
+                if (finfo->effects && !effects_cover(current_function_effects, finfo->effects)
+                    && !cap_live_covers(finfo->effects)) {
                     add_error("call to '%s' requires effect(s) '%s', not declared by '%s'",
                               name, finfo->effects, enclosing_name());
+                }
+                if (finfo->node && finfo->node->needs && !needs_satisfied(finfo->node->needs)) {
+                    add_error("call to '%s' @needs('%s'), which is not provided by '%s'",
+                              name, finfo->node->needs, enclosing_name());
                 }
                 return finfo->return_type;
             }
@@ -421,7 +776,8 @@ static Type *type_of_expr(ASTNode *e) {
                     char what[160];
                     snprintf(what, sizeof(what), "call through '%s'", name);
                     check_call_args(what, e->arg_count, e->args, ft->param_count, ft->param_types);
-                    if (ft->effects && !effects_cover(current_function_effects, ft->effects)) {
+                    if (ft->effects && !effects_cover(current_function_effects, ft->effects)
+                        && !cap_live_covers(ft->effects)) {
                         add_error("call through '%s' requires effect(s) '%s', not declared by '%s'",
                                   name, ft->effects, enclosing_name());
                     }
@@ -467,6 +823,35 @@ static Type *type_of_expr(ASTNode *e) {
     }
 }
 
+/* return type is `void`? (must_use is meaningless for void results) */
+static int type_is_void(Type *t) {
+    t = resolve_type(t);
+    return t && t->kind == TY_PRIMITIVE && t->name && strcmp(t->name, "void") == 0;
+}
+
+/* name of the function being called, mirroring call resolution; NULL when the
+   call is not a plain or package-qualified function call (e.g. a field call). */
+static const char *call_callee_name(ASTNode *call) {
+    if (!call || call->type != AST_EXPR_CALL) return NULL;
+    ASTNode *l = call->left;
+    if (!l) return NULL;
+    if (l->type == AST_EXPR_IDENT) return l->name;
+    if (l->type == AST_EXPR_FIELD) {
+        ASTNode *base = l->left;
+        /* `pkg.fn(...)`: the base is a package name, not a value */
+        if (base && base->type == AST_EXPR_IDENT && !scope_lookup(base->name))
+            return l->name;
+    }
+    return NULL;
+}
+
+static FuncInfo *find_func_info(const char *name) {
+    if (!name) return NULL;
+    for (size_t i = 0; i < func_count; i++)
+        if (strcmp(funcs[i].name, name) == 0) return &funcs[i];
+    return NULL;
+}
+
 static void check_stmt(ASTNode *s) {
     if (!s) return;
     cur_line = s->line; cur_col = s->column;
@@ -488,6 +873,17 @@ static void check_stmt(ASTNode *s) {
                 if (s->name) scope_add(s->name, rt);
             }
             if (s->cond) type_of_expr(s->cond);
+            /* `region r(64) with Write as w { ... }`: the region carries lexical
+               capabilities that are released with its memory (ambient, not owned). */
+            if (s->caps) {
+                cap_validate_csv(s->caps, "region");
+                Type *ct = cap_type_from_csv(s->caps, 1);
+                if (s->str_value) cap_bind_add(s->str_value, ct, 0, 1, s->line, s->column);
+                else {
+                    for (size_t i = 0; i < ct->cap_count; i++)
+                        cap_bind_add(ct->cap_names[i], ct, 0, 1, s->line, s->column);
+                }
+            }
             check_stmt(s->body);
             scope_pop();
             break;
@@ -507,7 +903,12 @@ static void check_stmt(ASTNode *s) {
                     check_assign_effects(t, it, phrase);
                 }
             }
-            if (s->name) scope_add(s->name, t);
+            if (t && t->kind == TY_CAPABILITY) {
+                cap_validate_type(t, "variable declaration");
+                cap_bind_add(s->name, t, t->cap_borrow ? 0 : 1, 0, s->line, s->column);
+            } else if (s->name) {
+                scope_add(s->name, t);
+            }
             break;
         }
         case AST_IF:
@@ -533,13 +934,77 @@ static void check_stmt(ASTNode *s) {
             break;
         case AST_RETURN:
             if (s->left) {
+                /* returning a capability moves it out (satisfies linearity) */
+                if (s->left->type == AST_EXPR_IDENT) {
+                    CapBind *b = cap_bind_find(s->left->name);
+                    if (b && !b->consumed && b->owned &&
+                        current_function_return_type &&
+                        current_function_return_type->kind == TY_CAPABILITY)
+                        b->consumed = 1;
+                }
                 Type *rt = type_of_expr(s->left);
                 /* Returning a function value must not widen its effects beyond
                    the function's declared return type. */
                 if (rt) check_assign_effects(current_function_return_type, rt, "return value");
             }
             break;
+        case AST_GRANT: {
+            cap_validate_csv(s->caps, "@grant");
+            if (!grant_authorized(s->caps)) {
+                add_error("'%s' cannot @grant('%s'): not @root and no matching @gives(...) declared",
+                          enclosing_name(), s->caps ? s->caps : "");
+            }
+            Type *ct = cap_type_from_csv(s->caps, 0);
+            cap_bind_add(s->name, ct, 1, 0, s->line, s->column);
+            break;
+        }
+        case AST_REFINE: {
+            cap_validate_csv(s->caps, "@refine");
+            cap_validate_csv(s->cap_to, "@refine");
+            CapBind *b = cap_bind_find(s->name);
+            if (!b) {
+                add_error("@refine target '%s' is not a capability binding", s->name ? s->name : "?");
+                break;
+            }
+            if (b->consumed) { add_error("capability '%s' was already consumed", s->name); break; }
+            if (!cap_set_contains(b->ty, s->caps)) {
+                add_error("cannot @refine('%s -> %s') '%s': it does not hold '%s'",
+                          s->caps, s->cap_to, s->name, s->caps ? s->caps : "");
+                break;
+            }
+            /* weaken: drop `from`, gain `to` */
+            char csv[256]; csv[0] = 0;
+            for (size_t i = 0; i < b->ty->cap_count; i++) {
+                if (s->caps && strcmp(b->ty->cap_names[i], s->caps) == 0) continue;
+                if (csv[0]) strncat(csv, ",", sizeof(csv) - strlen(csv) - 1);
+                strncat(csv, b->ty->cap_names[i], sizeof(csv) - strlen(csv) - 1);
+            }
+            if (csv[0]) strncat(csv, ",", sizeof(csv) - strlen(csv) - 1);
+            strncat(csv, s->cap_to ? s->cap_to : "", sizeof(csv) - strlen(csv) - 1);
+            b->ty = cap_type_from_csv(csv, b->ty->cap_borrow);
+            break;
+        }
+        case AST_DROP: {
+            CapBind *b = cap_bind_find(s->name);
+            if (!b) { add_error("@drop('%s'): not a capability binding", s->name ? s->name : "?"); break; }
+            if (b->consumed) { add_error("capability '%s' was already consumed", s->name); break; }
+            if (!b->owned) { add_error("cannot @drop('%s'): it is a borrowed/ambient capability", s->name); break; }
+            b->consumed = 1;
+            break;
+        }
+        case AST_CAP_DECL:
+            /* registered in the pre-pass; nothing to do per-statement */
+            break;
         case AST_EXPR_STMT:
+            if (s->left && s->left->type == AST_EXPR_CALL) {
+                const char *cn = call_callee_name(s->left);
+                FuncInfo *fi = find_func_info(cn);
+                if (fi && fi->must_use && !type_is_void(fi->return_type)) {
+                    cur_line = s->left->line;
+                    cur_col = s->left->column;
+                    add_warning("unused result of '%s' (marked @attr(must_use))", cn);
+                }
+            }
             type_of_expr(s->left);
             break;
         case AST_CONTRACT:
@@ -552,21 +1017,39 @@ static void check_stmt(ASTNode *s) {
 
 int typecheck_program(ASTNode *prog) {
     errors = 0;
+    warnings = 0;
     alias_clear();
+    free(g_capkinds); g_capkinds = NULL;
     if (!prog) return 0;
     /* register type aliases so they resolve in every later pass */
     for (size_t i = 0; i < prog->item_count; i++) {
         ASTNode *d = prog->items[i];
         if (d && d->type == AST_TYPE_DECL && d->name && d->alias_type) alias_add(d->name, d->alias_type);
     }
+    /* register declared capability kinds (`@capability(...)`) */
+    for (size_t i = 0; i < prog->item_count; i++) {
+        ASTNode *d = prog->items[i];
+        if (d && d->type == AST_CAP_DECL) capkind_add(d->caps);
+    }
     /* register functions */
     for (size_t i = 0; i < prog->item_count; i++) {
         if (prog->items[i] && prog->items[i]->type == AST_FUNC_DECL) register_func(prog->items[i]);
+    }
+    /* register top-level symbols with their package + visibility */
+    symvis_clear();
+    g_cur_pkg = NULL;
+    for (size_t i = 0; i < prog->item_count; i++) {
+        ASTNode *d = prog->items[i];
+        if (!d || !d->name) continue;
+        if (d->type == AST_FUNC_DECL || d->type == AST_VAR_DECL ||
+            d->type == AST_STRUCT_DECL || d->type == AST_EXTERN_DECL)
+            symvis_add(d->name, d->package, d->visibility);
     }
     scope_push(); /* global */
     for (size_t i = 0; i < prog->item_count; i++) {
         ASTNode *d = prog->items[i];
         if (!d) continue;
+        g_cur_pkg = d->package;
         if (d->type == AST_VAR_DECL) {
             /* global var */
             if (d->init) {
@@ -588,16 +1071,32 @@ int typecheck_program(ASTNode *prog) {
             scope_push();
             for (size_t j = 0; j < d->arg_count; j++) {
                 ASTNode *p = d->args[j];
-                if (p && p->name) scope_add(p->name, p->ty);
+                if (p && p->name) {
+                    if (p->ty && p->ty->kind == TY_CAPABILITY) {
+                        cap_validate_type(p->ty, "parameter");
+                        cap_bind_add(p->name, p->ty, p->ty->cap_borrow ? 0 : 1, 1, p->line, p->column);
+                    } else {
+                        scope_add(p->name, p->ty);
+                    }
+                }
             }
             char *saved_effects = current_function_effects;
+            char *saved_needs = current_function_needs;
+            char *saved_gives = current_function_gives;
+            ASTNode *saved_node = current_function_node;
             Type *saved_ret = current_function_return_type;
             const char *saved_name = current_function_name;
             current_function_effects = d->effects ? d->effects : NULL;
+            current_function_needs = d->needs ? d->needs : NULL;
+            current_function_gives = d->gives ? d->gives : NULL;
+            current_function_node = d;
             current_function_return_type = d->ty;
             current_function_name = d->name;
             check_stmt(d->body);
             current_function_effects = saved_effects;
+            current_function_needs = saved_needs;
+            current_function_gives = saved_gives;
+            current_function_node = saved_node;
             current_function_return_type = saved_ret;
             current_function_name = saved_name;
             scope_pop();
@@ -609,5 +1108,6 @@ int typecheck_program(ASTNode *prog) {
     int result = errors == 0;
     type_registry_clear();
     alias_clear();
+    g_cur_pkg = NULL;
     return result;
 }

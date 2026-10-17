@@ -1,5 +1,4 @@
-package examples_19_compiletime_codegen
-
+@package(examples_19_compiletime_codegen)
 /* Compile-time code generation.
 
    @for(count, start, stop [, step]) unrolls its block once per

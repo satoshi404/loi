@@ -1,4 +1,4 @@
-package tests_22_effects_callback_fail
+@package(tests_22_effects_callback_fail)
 @inc std
 
 /* an effectful callback must not be passed where a pure callback is expected */

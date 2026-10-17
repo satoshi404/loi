@@ -1,0 +1,14 @@
+@package(cap_region)
+/* A region can carry capabilities; they are ambient (borrowed) for the region's
+   lexical scope and are released together with its memory. */
+@capability(Write)
+
+write_needs = (buf: ptr): void @needs(Write) { *buf = 42; }
+
+main = (): int {
+    int x = 0;
+    region r(64) with Write as w {
+        write_needs(&x);      /* @needs(Write) satisfied by the region's ambient cap */
+    }
+    return x;                 /* 42 */
+}

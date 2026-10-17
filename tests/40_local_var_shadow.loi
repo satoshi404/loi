@@ -1,0 +1,12 @@
+@package(shadow_a)
+/* a `local` symbol in another package must not leak, but a local variable
+   with the same name legitimately shadows it and must stay legal. */
+@attr(local)
+value: int = 99;
+
+@package(shadow_b)
+
+main = (): int {
+    int value = 42;   /* shadows shadow_a's package-local global */
+    return value;     /* 42 */
+}

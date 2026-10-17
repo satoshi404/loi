@@ -76,7 +76,7 @@ int main(int argc, char **argv) {
 
     if (path && !loi_source_declares_package(src)) {
         fprintf(stderr, "error: file \"%s\" must declare a package "
-                        "(e.g. 'package name')\n", path);
+                        "(e.g. '@package(name)')\n", path);
         free(src);
         return 1;
     }

@@ -1,5 +1,4 @@
-package tests_13_macros_trio
-
+@package(tests_13_macros_trio)
 @inc std
 /* macro trio: @stringify, @paste and variadic macros */
 @(define STR(x) @stringify(x))

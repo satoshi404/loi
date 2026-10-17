@@ -1,5 +1,4 @@
-package tests_04_metaprogramming
-
+@package(tests_04_metaprogramming)
 /* metaprogramming: define, if, repeat, for, reflection */
 @(define LIMIT 4)
 @(define SQUARE(x) ((x) * (x)))

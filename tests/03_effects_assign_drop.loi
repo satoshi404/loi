@@ -1,4 +1,4 @@
-package tests_03_effects_assign_drop
+@package(tests_03_effects_assign_drop)
 @inc std
 
 /* effects: cannot store an !IO fn where a pure fn is expected */

@@ -1,0 +1,15 @@
+@package(demo_flags)
+/* @attr flags: inline / pure / must_use carry codegen meaning;
+   unknown flags are recorded but ignored (the system is extensible). */
+@attr(inline, pure, must_use)
+square = (n: int): int { return n * n; }
+
+@attr(no_return)
+spin = (): void { while (1) { } }
+
+@attr(local, global)
+last_visibility_wins = (): int { return 0; }
+
+main = (): int {
+    return square(6) + 6;   /* 42 */
+}
