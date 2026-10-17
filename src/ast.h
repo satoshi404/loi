@@ -30,6 +30,7 @@ typedef enum {
     AST_GRANT,      /* @grant(Set) name;  -> introduces a capability binding */
     AST_REFINE,     /* @refine(A -> B) name;  -> weakens an existing binding */
     AST_DROP,       /* @drop(name);       -> consumes a capability binding */
+    AST_WITH_CAP,   /* @with_cap(Set) { ... }  -> ambient (borrowed) caps in block */
     AST_EXPR_STMT,
     /* expressions */
     AST_EXPR_BINARY,

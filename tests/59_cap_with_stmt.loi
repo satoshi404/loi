@@ -1,0 +1,19 @@
+@package(cap_with_stmt)
+@capability(Read, Write)
+
+/* borrowed proofs: passing them does not consume the source */
+peek = (buf: ptr, c: @cap(borrow Read)): int { return *buf; }
+poke = (buf: ptr, c: @cap(borrow Write)): void { *buf = 42; }
+
+main = (): int {
+    int x = 0;
+    @grant(Read + Write) proof;
+
+    /* `expr with Cap` makes a proof already held ambient for that one
+       statement — equivalent to `@with_cap(Cap) { expr; }`. */
+    poke(&x) with Write;
+    peek(&x) with Read;
+
+    @drop(proof);
+    return x;   /* 42 */
+}

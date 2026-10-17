@@ -51,15 +51,23 @@ CapAtom ::= Ident
 ### 2.3 Statements
 
 ```loi
-Stmt       ::= ... | Grant | Refine | Drop
+Stmt       ::= ... | Grant | Refine | Drop | WithCap | ExprStmt
 Grant      ::= '@grant' '(' CapSet ')' Ident ';'
 Refine     ::= '@refine' '(' CapAtom '->' CapAtom ')' Ident ';'
 Drop       ::= '@drop' '(' Ident ')' ';'
+WithCap    ::= '@with_cap' '(' CapSet ')' Block
+WithClause ::= 'with' CapSet          // postfix on an ExprStmt: ambient borrow
 ```
 
 - `@grant(Write) w;` — birth a permission. Only allowed at a **root** (§4).
 - `@refine(Write -> Read) w;` — weaken `w` in place.
 - `@drop(w);` — explicitly discard an owned capability.
+- `@with_cap(Write + Alloc) { ... }` — make capabilities you already hold
+  **ambient** (borrowed) for a block. It *borrows* the set from a live binding;
+  it does not conjure it, and the ambient bindings never escape the block.
+- `poke(&buf) with Write;` — the same idea for a single statement: the expression
+  is evaluated with `Write` ambient (borrowed) for that statement only. It is
+  exactly `@with_cap(Write) { poke(&buf); }`.
 
 A capability can also be introduced as an ordinary binding:
 
@@ -108,6 +116,19 @@ ambient effects / needs of the enclosing function.
    caller's declared effects **or** by a live `@cap(X)`.
 9. **Needs:** a call to `f` with `@needs(R)` is allowed if the caller declares a
    superset of `R` (`@needs` propagation) **or** live capabilities cover `R`.
+10. **Ambient borrowing:** `@with_cap(S) { ... }` requires some live capability
+    binding to already cover `S`; it then introduces ambient (borrowed, non-owned)
+    bindings for `S` scoped to the block. The source is not consumed, so it stays
+    live after the block.
+11. **Elision (inference):** a trailing `@cap(...)` argument may be omitted. It
+    is inferred only when **exactly one** live capability binding in scope proves
+    the required set — `poke(&x)` stands for `poke(&x, w)`. Zero candidates or
+    several candidates is an error naming the count, and a missing argument that
+    is *not* a capability parameter still reports an ordinary arity error.
+12. **Ambient precedence:** ambient (non-owned) proofs shadow the owned binding
+    they were borrowed from when a capability argument is inferred, so
+    `poke(&x) with Write;` resolves to the ambient `Write` rather than becoming
+    ambiguous with its source.
 
 ## 4. Roots
 
@@ -176,14 +197,19 @@ main = (): int {
 - `cannot consume 'c': it is a borrowed/ambient capability`
 - `argument 2 of call to 'poke' requires @cap(Write), but 'r' proves @cap(Read)`
 - `live capability 'w' (@cap(Write)) must be consumed, returned, or @drop'ed before the end of its scope`
+- `@with_cap('Write'): no live capability provides it; @grant it first (at a root) or drop the block`
+- `with('Write'): no live capability provides it; @grant it first (at a root) or drop the clause`
+- `cannot infer capability argument 2 of call to 'poke': expected exactly one live @cap(borrow Write) in scope, found 2`
 - `call to 'load' @needs('Filesystem'), which is not provided by 'main'`
 - `cannot @refine('Write -> Exec') 'w': it does not hold 'Write'`
 
 ## 8. Status / roadmap
 
 Implemented: capability kinds, `@cap` types (owned/borrow/sets), `@grant`,
-`@refine`, `@drop`, `@needs`/`@gives`, linearity, refinement, effects bridge,
-regions-with-capabilities, zero-cost erasure.
+`@refine`, `@drop`, `@with_cap` (ambient borrowing), `expr with Cap` (ambient
+borrow for one statement), argument elision (inference), `@needs`/`@gives`,
+linearity, refinement, effects bridge, regions-with-capabilities, zero-cost
+erasure.
 
 Planned: capabilities as struct fields (so `(Buffer, @cap)` pairs become
 structs), fractional permissions (e.g. `@cap(Write[½])`) for shared access, and

@@ -376,6 +376,7 @@ static ASTNode *parse_postfix(Parser *p);
 static ASTNode *parse_primary(Parser *p);
 static ASTNode *parse_stmt(Parser *p);
 static ASTNode *parse_block(Parser *p);
+static ASTNode *parse_with_cap(Parser *p);
 static ASTNode *parse_var_decl(Parser *p, int require_semi);
 
 static int is_vardecl_start(Parser *p) {
@@ -685,13 +686,13 @@ static ASTNode *parse_stmt(Parser *p) {
         return ast_new(AST_CONTINUE, line, col);
     }
     if (check(p, TOK_KW_ASM)) return parse_asm(p);
-    /* lexical capability statements: @grant / @refine / @drop. `@cap(...)`
-       variable declarations fall through to is_vardecl_start below. */
+    /* lexical capability statements: @grant / @refine / @drop / @with_cap. */
     if (check(p, TOK_AT)) {
         Token nx = lexer_peek(p->lex);
         int is_grant  = (nx.type == TOK_IDENTIFIER && nx.lexeme && strcmp(nx.lexeme, "grant") == 0);
         int is_refine = (nx.type == TOK_IDENTIFIER && nx.lexeme && strcmp(nx.lexeme, "refine") == 0);
         int is_drop   = (nx.type == TOK_IDENTIFIER && nx.lexeme && strcmp(nx.lexeme, "drop") == 0);
+        int is_wc     = (nx.type == TOK_IDENTIFIER && nx.lexeme && strcmp(nx.lexeme, "with_cap") == 0);
         token_free(&nx);
         if (is_grant) {
             int line = p->current.line, col = p->current.column;
@@ -720,8 +721,7 @@ static ASTNode *parse_stmt(Parser *p) {
             expect(p, TOK_RPAREN, "expected ')'");
             if (check(p, TOK_IDENTIFIER)) { n->name = strdup_lex(p->current.lexeme); advance_parser(p); }
             else parser_error(p, "expected capability binding name after @refine");
-            match_tok(p, TOK_SEMICOLON);
-            return n;
+            match_tok(p, TOK_SEMICOLON); return n;
         }
         if (is_drop) {
             int line = p->current.line, col = p->current.column;
@@ -732,9 +732,9 @@ static ASTNode *parse_stmt(Parser *p) {
             if (check(p, TOK_IDENTIFIER)) { n->name = strdup_lex(p->current.lexeme); advance_parser(p); }
             else parser_error(p, "expected capability binding name in @drop");
             expect(p, TOK_RPAREN, "expected ')'");
-            match_tok(p, TOK_SEMICOLON);
-            return n;
+            match_tok(p, TOK_SEMICOLON); return n;
         }
+        if (is_wc) { return parse_with_cap(p); }
     }
     if (is_vardecl_start(p)) return parse_var_decl(p, 1);
     ASTNode *e = parse_expr(p);
@@ -742,6 +742,13 @@ static ASTNode *parse_stmt(Parser *p) {
     int col = e ? e->column : p->current.column;
     ASTNode *es = ast_new(AST_EXPR_STMT, line, col);
     es->left = e;
+    /* `expr with CapSet;` — ambient (borrowed) capabilities scoped to this
+       statement, equivalent to `@with_cap(CapSet) { expr; }`. */
+    if (check(p, TOK_IDENTIFIER) && p->current.lexeme &&
+        strcmp(p->current.lexeme, "with") == 0) {
+        advance_parser(p);
+        es->caps = parse_cap_set_names(p);
+    }
     expect(p, TOK_SEMICOLON, "expected ';'");
     return es;
 }
@@ -1393,6 +1400,19 @@ static ASTNode *parse_cap_decl(Parser *p) {
     return n;
 }
 
+/* `@with_cap(Write + Alloc) { ... }` — ambient (borrowed) capabilities in block */
+static ASTNode *parse_with_cap(Parser *p) {
+    int line = p->current.line, col = p->current.column;
+    ASTNode *n = ast_new(AST_WITH_CAP, line, col);
+    advance_parser(p); /* '@' */
+    advance_parser(p); /* 'with_cap' */
+    expect(p, TOK_LPAREN, "expected '(' after @with_cap");
+    n->caps = parse_cap_set_names(p);
+    expect(p, TOK_RPAREN, "expected ')'");
+    n->body = parse_block(p);
+    return n;
+}
+
 static ASTNode *parse_decl_core(Parser *p) {
     /* `@package(name)` — the `@` sigil is required; a bare `package` keyword is
        rejected below with a pointer to the new form. */
@@ -1530,6 +1550,12 @@ static ASTNode *parse_top_level(Parser *p) {
             advance_parser(p); /* '@' */
             parse_attr_list(p, pending);
         } else {
+            Token nx2 = lexer_peek(p->lex);
+            int is_wc = (nx2.type == TOK_IDENTIFIER && nx2.lexeme && strcmp(nx2.lexeme, "with_cap") == 0);
+            token_free(&nx2);
+            if (is_wc) {
+                return parse_with_cap(p);
+            }
             break;
         }
     }

@@ -1,0 +1,19 @@
+@package(cap_infer)
+@capability(Read, Write)
+
+/* borrowed proofs: passing them does not consume the source */
+peek = (buf: ptr, c: @cap(borrow Read)): int { return *buf; }
+poke = (buf: ptr, c: @cap(borrow Write)): void { *buf = 42; }
+
+main = (): int {
+    int x = 0;
+    @grant(Read + Write) proof;
+
+    /* trailing capability arguments are elided when exactly one live binding
+       proves the required set: here the single `proof` discharges both. */
+    poke(&x);
+    int seen = peek(&x);
+
+    @drop(proof);
+    return seen;   /* 42 */
+}

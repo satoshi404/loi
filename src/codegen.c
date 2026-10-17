@@ -962,6 +962,22 @@ static void codegen_stmt(CG *cg, ASTNode *s) {
         case AST_CAP_DECL:
             /* purely lexical: nothing is emitted */
             break;
+        case AST_WITH_CAP: {
+            scope_push(cg);
+            if (s->caps) {
+                char *cpy = strdup(s->caps);
+                for (char *tok = strtok(cpy, ","); tok; tok = strtok(NULL, ",")) {
+                    char *ca = new_tmp(cg);
+                    fprintf(cg->out, "  %s = alloca i8\n", ca);
+                    fprintf(cg->out, "  store i8 0, ptr %s\n", ca);
+                    add_var(cg, tok, ca, strdup("i8"), NULL);
+                }
+                free(cpy);
+            }
+            codegen_block(cg, s->body);
+            scope_pop(cg);
+            break;
+        }
         case AST_IF: {
             char *ct; char *cv = codegen_expr(cg, s->cond, &ct);
             char *ci = new_tmp(cg);
@@ -1266,11 +1282,24 @@ static void codegen_stmt(CG *cg, ASTNode *s) {
             break;
         }
         case AST_EXPR_STMT: {
+            /* `expr with CapSet` — ambient (erased) capabilities for this stmt. */
+            if (s->caps && *s->caps) {
+                scope_push(cg);
+                char *cpy = strdup(s->caps);
+                for (char *tok = strtok(cpy, ","); tok; tok = strtok(NULL, ",")) {
+                    char *ca = new_tmp(cg);
+                    fprintf(cg->out, "  %s = alloca i8\n", ca);
+                    fprintf(cg->out, "  store i8 0, ptr %s\n", ca);
+                    add_var(cg, tok, ca, strdup("i8"), NULL);
+                }
+                free(cpy);
+            }
             if (s->left) {
                 char *t = NULL;
                 char *v = codegen_expr(cg, s->left, &t);
                 (void)v;
             }
+            if (s->caps && *s->caps) scope_pop(cg);
             break;
         }
         case AST_ASM: {

@@ -174,6 +174,7 @@ const char *ast_node_type_str(ASTNodeType type) {
         case AST_GRANT: return "GRANT";
         case AST_REFINE: return "REFINE";
         case AST_DROP: return "DROP";
+    case AST_WITH_CAP: return "WITH_CAP";
         case AST_EXPR_STMT: return "EXPR_STMT";
         case AST_EXPR_BINARY: return "BINARY";
         case AST_EXPR_UNARY: return "UNARY";

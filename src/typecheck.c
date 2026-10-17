@@ -35,6 +35,8 @@ static void scope_push(void) {
     scope = s;
 }
 static void cap_check_scope_exit(void);   /* fwd: linearity at scope exit */
+static const char *call_callee_name(ASTNode *call);  /* fwd: call diagnostics */
+static void cap_validate_csv(const char *csv, const char *ctx);  /* fwd: @capability check */
 static void scope_pop(void) { cap_check_scope_exit(); if (scope) scope = scope->parent; }
 
 static void scope_add(const char *name, Type *t) {
@@ -229,6 +231,50 @@ static int cap_set_satisfies(Type *have, Type *need) {
     if (!have || have->kind != TY_CAPABILITY) return 0;
     for (size_t i = 0; i < need->cap_count; i++)
         if (!cap_set_contains(have, need->cap_names[i])) return 0;
+    return 1;
+}
+
+/* Count the live (unconsumed) capability bindings that prove `need`, and — when
+   asked — the name of the single candidate. Ambient (non-owned) proofs take
+   precedence over owned sources: an explicit `expr with S` or a region cap wins
+   over the binding it was borrowed from, so it does not create a spurious
+   second candidate. Used for argument elision, which requires an unambiguous
+   choice. */
+static size_t cap_live_candidates_ex(Type *need, const char **name) {
+    size_t owned_n = 0, amb_n = 0;
+    const char *owned_name = NULL, *amb_name = NULL;
+    for (Scope *s = scope; s; s = s->parent)
+        for (size_t i = 0; i < s->nbind; i++) {
+            CapBind *b = &s->binds[i];
+            if (b->consumed || !cap_set_satisfies(b->ty, need)) continue;
+            if (b->owned) { owned_n++; owned_name = b->name; }
+            else { amb_n++; amb_name = b->name; }
+        }
+    if (name) *name = amb_n ? amb_name : owned_name;
+    return amb_n ? amb_n : owned_n;
+}
+static size_t cap_live_candidates(Type *need) { return cap_live_candidates_ex(need, NULL); }
+
+/* Enter an ambient-capability scope for `@with_cap(S)` and `expr with S`:
+   borrows S from a live binding (it does not conjure authority), then binds
+   each atom of S as an ambient (non-owned) proof for the scope. Returns 1 when
+   a scope was pushed (the caller must scope_pop). */
+static int ambient_caps_begin(const char *csv, const char *ctx, int line, int col) {
+    cap_validate_csv(csv, ctx);
+    if (!csv || !*csv) {
+        add_error("%s expects at least one capability", ctx);
+        return 0;
+    }
+    if (!cap_live_covers(csv)) {
+        add_error("%s('%s'): no live capability provides it; @grant it first (at a root) or drop the clause",
+                  ctx, csv);
+    }
+    scope_push();
+    Type *ct = cap_type_from_csv(csv, 1);
+    char *cpy = strdup(csv);
+    for (char *tok = strtok(cpy, ","); tok; tok = strtok(NULL, ","))
+        cap_bind_add(tok, ct, 0, 1, line, col);
+    free(cpy);
     return 1;
 }
 
@@ -613,7 +659,17 @@ static void check_call_args(const char *what, size_t argc, ASTNode **argv,
                             size_t pcount, Type **ptypes) {
     Type **ats = calloc(argc ? argc : 1, sizeof(Type *));
     for (size_t i = 0; i < argc; i++) ats[i] = type_of_expr(argv[i]);
-    if (pcount != argc) add_error("%s expects %zu argument(s), got %zu", what, pcount, argc);
+    if (pcount != argc) {
+        /* If the missing tail is all capability parameters, `infer_cap_args`
+           has already produced a specific diagnostic (or filled the tail in);
+           a bare arity complaint would be redundant. */
+        int elidable = (argc < pcount);
+        if (elidable)
+            for (size_t i = argc; i < pcount; i++)
+                if (!ptypes[i] || ptypes[i]->kind != TY_CAPABILITY) { elidable = 0; break; }
+        if (!elidable)
+            add_error("%s expects %zu argument(s), got %zu", what, pcount, argc);
+    }
     for (size_t i = 0; i < argc && i < pcount; i++) {
         if (ptypes[i] && ptypes[i]->kind == TY_CAPABILITY) {
             cap_arg_check(i, what, argv[i], ptypes[i]);
@@ -631,6 +687,40 @@ static void check_call_args(const char *what, size_t argc, ASTNode **argv,
         }
     }
     free(ats);
+}
+
+/* Elide trailing capability arguments when exactly one live binding in scope
+   proves the required set, so `poke(&x)` can stand for `poke(&x, w)`. This is
+   deliberately conservative: zero candidates, several candidates, or a
+   non-capability parameter in the missing tail all leave the call alone (and
+   the ordinary arity/type diagnostics fire instead). The synthesized
+   identifiers are appended to the call node, so codegen sees them too. */
+static void infer_cap_args(ASTNode *call, size_t pcount, Type **ptypes) {
+    if (!call || call->arg_count >= pcount) return;
+    for (size_t i = call->arg_count; i < pcount; i++)
+        if (!ptypes[i] || ptypes[i]->kind != TY_CAPABILITY) return;
+    const char *callee = call_callee_name(call);
+    for (size_t i = call->arg_count; i < pcount; i++) {
+        Type *need = ptypes[i];
+        const char *cand = NULL;
+        size_t n = cap_live_candidates_ex(need, &cand);
+        if (n != 1) cand = NULL;
+        if (!cand) {
+            char eb[96];
+            type_name(need, eb, sizeof(eb));
+            add_error("cannot infer capability argument %zu of call to '%s': "
+                      "expected exactly one live %s in scope, found %zu",
+                      i + 1, callee ? callee : "?", eb, n);
+            return;
+        }
+        ASTNode *id = ast_new(AST_EXPR_IDENT, call->line, call->column);
+        id->name = strdup(cand);
+        if (call->arg_count == call->arg_cap) {
+            call->arg_cap = call->arg_cap ? call->arg_cap * 2 : 4;
+            call->args = realloc(call->args, call->arg_cap * sizeof(ASTNode *));
+        }
+        call->args[call->arg_count++] = id;
+    }
 }
 
 static Type *number_type(const char *lex) {
@@ -753,6 +843,7 @@ static Type *type_of_expr(ASTNode *e) {
             if (finfo) {
                 char what[160];
                 snprintf(what, sizeof(what), "call to '%s'", name);
+                infer_cap_args(e, finfo->param_count, finfo->param_types);
                 check_call_args(what, e->arg_count, e->args, finfo->param_count, finfo->param_types);
                 if (!symvis_visible(name)) {
                     add_error("'%s' is local to package '%s' and is not visible here",
@@ -775,6 +866,7 @@ static Type *type_of_expr(ASTNode *e) {
                 if (ft && ft->kind == TY_FUNCTION) {
                     char what[160];
                     snprintf(what, sizeof(what), "call through '%s'", name);
+                    infer_cap_args(e, ft->param_count, ft->param_types);
                     check_call_args(what, e->arg_count, e->args, ft->param_count, ft->param_types);
                     if (ft->effects && !effects_cover(current_function_effects, ft->effects)
                         && !cap_live_covers(ft->effects)) {
@@ -993,9 +1085,19 @@ static void check_stmt(ASTNode *s) {
             break;
         }
         case AST_CAP_DECL:
-            /* registered in the pre-pass; nothing to do per-statement */
+            /* purely lexical: nothing to do in check_stmt */
             break;
-        case AST_EXPR_STMT:
+        case AST_WITH_CAP: {
+            if (ambient_caps_begin(s->caps, "@with_cap", s->line, s->column)) {
+                check_stmt(s->body);
+                scope_pop();
+            } else {
+                check_stmt(s->body);
+            }
+            break;
+        }
+        case AST_EXPR_STMT: {
+            int ambient = s->caps && ambient_caps_begin(s->caps, "with", s->line, s->column);
             if (s->left && s->left->type == AST_EXPR_CALL) {
                 const char *cn = call_callee_name(s->left);
                 FuncInfo *fi = find_func_info(cn);
@@ -1006,7 +1108,9 @@ static void check_stmt(ASTNode *s) {
                 }
             }
             type_of_expr(s->left);
+            if (ambient) scope_pop();
             break;
+        }
         case AST_CONTRACT:
             /* compile-time contract: best-effort, skip for now */
             break;

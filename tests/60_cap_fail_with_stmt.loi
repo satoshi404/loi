@@ -1,0 +1,12 @@
+@package(cap_fail_with_stmt)
+@capability(Write)
+
+poke = (buf: ptr, c: @cap(borrow Write)): void { *buf = 42; }
+
+main = (): int {
+    int x = 0;
+    /* `with` borrows from something live: with no live Write proof in scope this
+       must be rejected rather than conjuring a capability. */
+    poke(&x) with Write;
+    return x;
+}

@@ -1,0 +1,15 @@
+@package(cap_fail_infer)
+@capability(Write)
+
+poke = (buf: ptr, c: @cap(borrow Write)): void { *buf = 42; }
+
+main = (): int {
+    int x = 0;
+    @grant(Write) a;
+    @grant(Write) b;
+    /* two live Write proofs: inference is ambiguous and must be rejected */
+    poke(&x);
+    @drop(a);
+    @drop(b);
+    return x;
+}

@@ -1,0 +1,11 @@
+@package(cap_fail_infer_none)
+@capability(Write)
+
+poke = (buf: ptr, c: @cap(borrow Write)): void { *buf = 42; }
+
+main = (): int {
+    int x = 0;
+    /* nothing live proves Write, so the elided argument cannot be inferred */
+    poke(&x);
+    return x;
+}

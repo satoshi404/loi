@@ -157,18 +157,21 @@ new_page = (buf: ptr): @cap(Write) {
 @capability(Filesystem)
 load_cfg = (): int !IO @needs(Filesystem) { return 42; }
 
-main = (): int {
+main = (): int !IO {
     int p = 0;
     @cap(Write) w = new_page(&p);
     poke(&p, w);                      /* consumes w */
     @grant(Filesystem) fs;
     int cfg = load_cfg();
     @drop(fs);
-    region r(64) with Write as wr { *wr = 1; }  /* ambient borrow */
+    region r(64) with Write { }                 /* ambient cap released with the region */
+    @grant(Read) rd;
+    @with_cap(Read) { peek(&p, Read); }         /* ambient borrow, block-scoped */
+    @drop(rd);
     return p;
 }
       </code></pre>
-      <p><code>@cap(Write)</code> is a <strong>linear, zero-cost</strong> permission token. <code>@grant</code> births one at a root (<code>main</code>, <code>@root</code>, a producer/declared <code>@gives</code>). <code>@refine</code> weakens it, <code>@drop</code> discards it. <code>@cap(borrow Read)</code> doesn't consume. A live capability discharges <code>!X</code> (effects bridge). <code>@needs(X)</code> states what a function <em>requires</em> (dual of <code>!Effects</code>). Regions may carry <code>with Cap as w</code> — ambient, released at end. See <a href="../docs/capabilities.md">docs/capabilities.md</a> and <a href="../docs/needs.md">docs/needs.md</a>.</p>
+      <p><code>@cap(Write)</code> is a <strong>linear, zero-cost</strong> permission token. <code>@grant</code> births one at a root (<code>main</code>, <code>@root</code>, a producer/declared <code>@gives</code>). <code>@refine</code> weakens it, <code>@drop</code> discards it. <code>@cap(borrow Read)</code> doesn't consume. A live capability discharges <code>!X</code> (effects bridge). <code>@needs(X)</code> states what a function <em>requires</em> (dual of <code>!Effects</code>). Regions may carry <code>with Cap as w</code> and blocks may open <code>@with_cap(Cap) { ... }</code> — both make a live proof ambient, released at end. A trailing <code>@cap</code> argument may be omitted when exactly one live proof discharges it (<code>poke(&amp;x)</code> for <code>poke(&amp;x, w)</code>). See <a href="../docs/capabilities.md">docs/capabilities.md</a> and <a href="../docs/needs.md">docs/needs.md</a>.</p>
     </section>
 
     <section id="fnptr">

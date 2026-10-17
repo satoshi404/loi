@@ -259,6 +259,7 @@ Stmt        := VarDecl
              | GrantStmt
              | RefineStmt
              | DropStmt
+             | WithCapStmt
 
 IfStmt      := 'if' '(' Expr ')' Block ('else' Block)?
 WhileStmt   := 'while' '(' Expr ')' Block
@@ -271,6 +272,7 @@ ExprStmt    := Expr ';'
 GrantStmt   := '@' 'grant' '(' CapSet ')' Ident ';'   // birth a capability (roots only)
 RefineStmt  := '@' 'refine' '(' CapAtom '->' CapAtom ')' Ident ';'
 DropStmt    := '@' 'drop' '(' Ident ')' ';'
+WithCapStmt := '@' 'with_cap' '(' CapSet ')' Block   // ambient borrow of live caps
 ```
 
 ## Expressions
@@ -458,9 +460,9 @@ the separate effect check is what makes them safe.
 
 ## Lexical capabilities (zero-cost permissions)
 
-`@cap(...)`, `@grant`, `@refine`, `@drop`, `@needs`, `@gives` and `region ... with`
-form loi's **lexical capabilities** and **dual effects**. Full guide:
-[`capabilities.md`](capabilities.md) and [`needs.md`](needs.md).
+`@cap(...)`, `@grant`, `@refine`, `@drop`, `@with_cap`, `@needs`, `@gives` and
+`region ... with` form loi's **lexical capabilities** and **dual effects**. Full
+guide: [`capabilities.md`](capabilities.md) and [`needs.md`](needs.md).
 
 ```
 @capability(Read, Write)            // declare the kinds (optional)
@@ -469,7 +471,9 @@ form loi's **lexical capabilities** and **dual effects**. Full guide:
 @grant(Write) w;                    // birth at a root (main / @root / producer)
 @refine(Write -> Read) w;           // weaken in place
 @drop(w);                           // consume
+@with_cap(Write) { ... }            // ambient borrow of a live proof, block-scoped
 write = (buf: ptr, c: @cap(Write)): void { *buf = 1; }
+write(&buf);                        // elided: inferred from the one live Write
 load  = (): int @needs(Filesystem) { ... }
 region r(64) with Write as w { ... }  // ambient cap released with the region
 ```
@@ -712,9 +716,10 @@ main = () -> int !IO
 ### `@inc` / `@cinc` (inlines and C-header checks)
 
 ```loi
-@(inc "helpers/lib.loi")
-@(inc std)
-@(cinc <stdio.h>)
+@inc "helpers/lib.loi"
+@inc std
+@cinc <stdio.h>
+@cinc "stdint.h"
 ```
 
 - `@inc "..."` includes are resolved relative to the including file first, then

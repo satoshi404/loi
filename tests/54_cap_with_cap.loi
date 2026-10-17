@@ -1,0 +1,27 @@
+@package(cap_with_cap)
+@capability(Read, Write)
+
+/* borrowed read: does not consume the proof */
+peek = (buf: ptr, c: @cap(borrow Read)): int { return *buf; }
+
+/* borrowed write: does not consume the proof */
+poke = (buf: ptr, c: @cap(borrow Write)): void { *buf = 42; }
+
+main = (): int {
+    int x = 7;
+    @grant(Read + Write) proof;
+
+    /* `@with_cap` makes a proof we already hold ambient for the block. The
+       capabilities are borrowed, so `proof` stays live afterwards. */
+    @with_cap(Read + Write) {
+        poke(&x, Write);
+    }
+
+    int r = 0;
+    @with_cap(Read) {
+        r = peek(&x, Read);
+    }
+
+    @drop(proof);
+    return r;   /* 42 */
+}

@@ -13,8 +13,8 @@ whatever host clang targets).
 
 loi is best described as:
 
-> **C with lexical memory regions + tracked effects + lightweight
-> metaprogramming + explicit layout control.**
+**C with lexical memory regions + tracked effects + lexical capabilities +
+lightweight metaprogramming + explicit layout control.**
 
 Rather than piling on new runtime machinery, loi keeps a C-sized core and adds
 a few orthogonal, compile-time-checked ideas:
@@ -76,9 +76,9 @@ With `--run`, the exit code of the compiled program is propagated (masked to
 8 bits, like a shell). Success is `0` when the program returns `0`.
 
 `@inc` / `@cinc` are *not* errors — they are the inclusion directives (see
-below). Every inclusion starts with the `@` sigil: there is **no `import`
-keyword**, and `@include` / `#include` are reported as errors pointing at the
-canonical `@inc`/`@cinc` directives.
+below). There is **no `import` keyword** — all inclusions use `@inc` and `@cinc` (see
+below). Preprocessor directives like `@include`/`#include` are not part of loi
+syntax.
 
 ### Includes
 

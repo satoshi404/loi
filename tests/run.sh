@@ -36,6 +36,9 @@ get_expected() {
     tests/45_cap_needs.loi) echo 42 ;;
     tests/46_cap_effects_bridge.loi) echo 42 ;;
     tests/47_cap_region.loi) echo 42 ;;
+    tests/54_cap_with_cap.loi) echo 42 ;;
+    tests/56_cap_infer.loi) echo 42 ;;
+    tests/59_cap_with_stmt.loi) echo 42 ;;
     *) echo "none" ;;
   esac
 }
