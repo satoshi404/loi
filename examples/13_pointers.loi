@@ -1,10 +1,12 @@
+package examples_13_pointers
+
 @inc std
 
 main =
 {
-    void* p = loi_alloc(8);
+    void* p = std.alloc(8);
     *p = 42;
     int v = *p;
-    loi_print_int(v);
+    std.print_int(v);
     return v;
 }

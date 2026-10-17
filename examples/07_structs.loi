@@ -1,3 +1,5 @@
+package examples_07_structs
+
 @inc std
 
 struct Point { int x; int y; }
@@ -8,6 +10,6 @@ main =
     p.x = 3;
     p.y = 4;
     int s = p.x + p.y;
-    loi_print_int(s);
+    std.print_int(s);
     return s;
 }

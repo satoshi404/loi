@@ -19,13 +19,15 @@
 
 <section class="section container"><div>
   <h2>Examples</h2>
-  <p>Every file under <code>examples/</code> is runnable with <code>./loi examples/NN.loi --run</code>. The exit code is the program's return value. Runtime helpers are linked automatically (many examples still show <code>@inc std</code> as a convention).</p>
+  <p>Every file under <code>examples/</code> is runnable with <code>./loi examples/NN.loi --run</code>. The exit code is the program's return value. Every file declares a <code>package</code>; runtime helpers are reached through the <code>std</code> package (<code>@inc std</code>).</p>
 </div></section>
 
 <div class="container example-grid">
   <div class="example-card">
     <h4>01_basics — recursion &amp; control</h4>
     <pre><code class="lang-loi">
+package example_01
+
 @inc std
 
 factorial = (n: int): int
@@ -47,14 +49,16 @@ main =
   <div class="example-card">
     <h4>03_math — built-ins</h4>
     <pre><code class="lang-loi">
+package example_03
+
 @inc std
 
 main =
 {
     double a = 2.0;
-    double p = loi_pow(a, 3.0);
-    loi_print_int(loi_abs(-99));
-    if (p == 8.0) { loi_print_str("math ok"); }
+    double p = std.pow(a, 3.0);
+    std.print_int(std.abs(-99));
+    if (p == 8.0) { std.print_str("math ok"); }
     return 0;
 }
 </code></pre>
@@ -64,13 +68,17 @@ main =
   <div class="example-card">
     <h4>14_macros — object-like macro</h4>
     <pre><code class="lang-loi">
+package example_14
+
+@inc std
+@(define LIMIT 8)
 
 scale = (n: int): int { return n * 2; }
 
 main =
 {
     int v = scale(LIMIT);
-    loi_print_int(v);
+    std.print_int(v);
     return v;
 }
 </code></pre>
@@ -80,6 +88,8 @@ main =
   <div class="example-card">
     <h4>25_fnpointers — typed function pointers</h4>
     <pre><code class="lang-loi">
+package example_25
+
 @inc std
 type CmpFn = (a: int, b: int) -> int;
 
@@ -88,7 +98,7 @@ apply = (f: (a:int,b:int)-&gt;int, x:int, y:int): int { return f(x, y); }
 
 main = () -&gt; int !IO
 {
-    loi_print_int(apply(my_less, 2, 3));
+    std.print_int(apply(my_less, 2, 3));
     return 0;
 }
 </code></pre>
@@ -98,18 +108,20 @@ main = () -&gt; int !IO
   <div class="example-card">
     <h4>26_macro_trio — stringify / paste / variadic</h4>
     <pre><code class="lang-loi">
+package example_26
+
 @inc std
 @(define STR(x) @stringify(x))
 @(define CONCAT(a, b) @paste(a, b))
-@(define LOG(level, ...msg) { @if(level &gt;= 1) { loi_print_str(msg); } })
+@(define LOG(level, ...msg) { @if(level &gt;= 1) { std.print_str(msg); } })
 
 int foobar = 77;
 
 main = () -> int !IO
 {
-    loi_print_str(STR(hello));        // "hello"
+    std.print_str(STR(hello));        // "hello"
     int foo = 1, bar = 2;
-    loi_print_int(CONCAT(foo, bar));  // foobar -> 77
+    std.print_int(CONCAT(foo, bar));  // foobar -> 77
     LOG(1, "log: variadic works\n");
     return 0;
 }

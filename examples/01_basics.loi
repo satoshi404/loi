@@ -1,3 +1,5 @@
+package examples_01_basics
+
 @inc std
 
 factorial = (n: int): int

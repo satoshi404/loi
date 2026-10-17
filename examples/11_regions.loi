@@ -1,11 +1,13 @@
+package examples_11_regions
+
 @inc std
 
 main =
 {
     region r(64) {
-        void* p = loi_region_alloc(r, 8);
+        void* p = std.region_alloc(r, 8);
         *p = 7;
-        loi_print_int(*p);
+        std.print_int(*p);
     }
     return 0;
 }

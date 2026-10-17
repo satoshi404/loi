@@ -1,11 +1,13 @@
+package examples_12_effects
+
 @inc std
 
 worker = (arg: void*): void* !IO,Alloc
 {
-    loi_print_str("region block");
-    void* p = loi_region_alloc(arg, 8);
+    std.print_str("region block");
+    void* p = std.region_alloc(arg, 8);
     *p = 5;
-    loi_print_int(*p);
+    std.print_int(*p);
     return p;
 }
 
@@ -13,7 +15,7 @@ main = () -> int !IO,Alloc
 {
     region r(64) {
         void* v = worker(r);
-        loi_print_int(* (v));
+        std.print_int(* (v));
     }
     return 0;
 }

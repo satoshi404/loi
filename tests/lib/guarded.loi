@@ -1,2 +1,4 @@
+package tests_lib_guarded
+
 /* included twice: must appear only once thanks to include guards */
 guarded_value = (n: int): int { return n + 1; }

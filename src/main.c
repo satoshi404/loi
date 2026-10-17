@@ -74,6 +74,13 @@ int main(int argc, char **argv) {
         src[len] = '\0';
     }
 
+    if (path && !loi_source_declares_package(src)) {
+        fprintf(stderr, "error: file \"%s\" must declare a package "
+                        "(e.g. 'package name')\n", path);
+        free(src);
+        return 1;
+    }
+
     char base_dir_buf[1024];
     strcpy(base_dir_buf, ".");
     if (path) {

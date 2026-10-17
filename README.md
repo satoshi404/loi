@@ -29,6 +29,9 @@ a few orthogonal, compile-time-checked ideas:
   codegen, so there is zero runtime cost.
 - **Explicit layout control** (`@pack`, `@align`, `@section`) for systems work
   where ABI and placement matter.
+- **Packages everywhere**: every file declares a `package`, and the runtime is
+  reached through the `std` package (`std.print_int`, `std.alloc`, …) instead of
+  leaking `loi_`-prefixed symbols into source.
 
 Everything else stays close to C so the generated LLVM IR and the mental model
 remain predictable.
@@ -70,8 +73,8 @@ With `--run`, the exit code of the compiled program is propagated (masked to
 
 `@inc` / `@cinc` are *not* errors — they are the inclusion directives (see
 below). Every inclusion starts with the `@` sigil: there is **no `import`
-keyword**, and `@include` / `#include` are reported as errors pointing at their
-replacement.
+keyword**, and `@include` / `#include` are reported as errors pointing at the
+canonical `@inc`/`@cinc` directives.
 
 ### Includes
 
@@ -100,6 +103,10 @@ All forms start with `@`:
 
 ## Language highlights
 
+- **Every loi file declares a package**: the first declaration is
+  `package name`. The entry file and every `@inc`-ed file are checked, so a
+  missing declaration is an error. The package name is metadata (it names the
+  unit and appears in the AST) and does not affect name resolution.
 - **Declarations**: variables are `x: int = 5;` or `int x = 5;`. Functions use
   the **canonical assignment form** `name = (params...): Ret { ... }`; the
   equivalent signature-first form `name (params...): Ret = { ... }` is also
@@ -127,6 +134,8 @@ All forms start with `@`:
 ## Metaprogramming (`@` sigil)
 
 ```loi
+package demo                   # every loi file declares a package
+
 @(define LIMIT 8)              # object-like macro (also: @define LIMIT 8)
 @(define ADD(a, b) ((a)+(b)))  # function-like macro
 @(define SUM(...xs) ...)       # variadic macro; body may use @stringify/@paste
@@ -202,8 +211,9 @@ See `docs/syntax.md` for the full grammar and specification.
 - `src/typecheck.c` — semantic checks (scopes, calls, assignments, effects)
 - `src/codegen.c` — LLVM IR emitter (incl. struct layout math)
 - `src/preprocessor.*` — the whole `@`/`#` layer in its own module: macros,
-  `@if/@elif/@else`, `@repeat`/`@for`, `@inc`/`@cinc` includes, include guards.
-  Exposes a small API (`loi_preprocess`) so `main.c` only drives the pipeline.
+  `@if/@elif/@else`, `@repeat`/`@for`, `@inc`/`@cinc` includes, include guards,
+  and the package-declaration check. Exposes a small API (`loi_preprocess`,
+  `loi_source_declares_package`) so `main.c` only drives the pipeline.
 - `src/main.c` — CLI / driver (file loading, flags, invoking lexer→parser→
   typecheck→codegen→clang)
 - `src/runtime.c` / `src/runtime.h` — runtime support (IO, threads,
@@ -229,5 +239,26 @@ error cases for parser, typechecker and preprocessor.
 
 ## Runtime
 
-- Built-in runtime functions (`loi_print_*`, math, threads, regions, allocation) are linked into every executable automatically; `@inc std` is optional.
-- The `std` package (in `lib/std.loi` and `lib/std/*.loi`) can be loaded via `@inc std` when you want package-form wrappers.
+The runtime is reached through the `std` package — the internal `loi_` prefix
+is never written in loi source:
+
+```loi
+package demo
+
+@inc std
+
+main = () -> int !IO
+{
+    std.print_int(42);
+    std.print_str("hello");
+    void* p = std.alloc(16);
+    std.free(p);
+    return 0;
+}
+```
+
+`std` is a virtual package: `std.NAME` is rewritten by the code generator to the
+matching runtime symbol (`std.print_int` → `loi_print_int`,
+`std.region_alloc` → `loi_region_alloc`, …). Those helpers are linked into every
+executable automatically, so `@inc std` documents intent and keeps the source
+honest about where the symbols come from.

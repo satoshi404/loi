@@ -1,9 +1,12 @@
+package tests_07_regions
+@inc std
+
 /* lexical regions: bump allocator, valid inside the block */
 main = () -> int {
     int got = 0;
     region r(64) {
-        void* a = loi_region_alloc(r, 8);
-        void* b = loi_region_alloc(r, 8);
+        void* a = std.region_alloc(r, 8);
+        void* b = std.region_alloc(r, 8);
         *a = 21;
         *b = 21;
         got = *a + *b;      /* 42 */

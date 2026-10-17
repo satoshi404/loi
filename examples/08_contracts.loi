@@ -1,3 +1,5 @@
+package examples_08_contracts
+
 @inc std
 
 struct Buffer @pack {
@@ -11,8 +13,8 @@ main =
     int x = 5;
     ensures x >= 0;
     region r(128) {
-        void* p = loi_region_alloc(r, 16);
-        loi_print_str("regions ok");
+        void* p = std.region_alloc(r, 16);
+        std.print_str("regions ok");
     }
     return x;
 }

@@ -52,6 +52,7 @@ const char *token_type_str(TokenType type) {
         case TOK_KW_INLINE: return "KW_INLINE";
         case TOK_KW_SIZEOF: return "KW_SIZEOF";
         case TOK_KW_ALIGNOF: return "KW_ALIGNOF";
+        case TOK_KW_PACKAGE: return "KW_PACKAGE";
         case TOK_PLUS: return "PLUS";
         case TOK_MINUS: return "MINUS";
         case TOK_STAR: return "STAR";

@@ -1,0 +1,5 @@
+/* every loi file must declare a package: this one does not, so the compiler
+   must reject it before parsing. */
+main = () -> int {
+    return 0;
+}

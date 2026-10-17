@@ -1,3 +1,5 @@
+package tests_09_parse_error
+
 /* must fail to parse: expression statement without semicolon/invalid */
 main = () -> int {
     return 1 +

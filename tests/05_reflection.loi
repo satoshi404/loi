@@ -1,3 +1,5 @@
+package tests_05_reflection
+
 /* compile-time reflection: sizeof, alignof, offsetof, typeof */
 struct Point { int x; int y; double z; }
 struct Packed @pack() { char c; int i; }

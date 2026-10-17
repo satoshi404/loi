@@ -1,3 +1,5 @@
+package tests_21_include_guard
+
 /* include guards also break @inc cycles: guard_outer.loi includes itself,
    and guard_inner.loi is only spliced once. */
 @inc "lib/guard_outer.loi"

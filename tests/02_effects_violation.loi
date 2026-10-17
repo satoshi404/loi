@@ -1,6 +1,9 @@
+package tests_02_effects_violation
+@inc std
+
 /* effects: a pure function must not call an !IO function */
 io = (): void !IO {
-    loi_print_str("io\n");
+    std.print_str("io\n");
 }
 
 pure = (): int {

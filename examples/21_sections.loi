@@ -1,3 +1,5 @@
+package examples_21_sections
+
 /* @section places a function's machine code into a named
    assembly section. This is a metaprogramming attribute that
    survives to codegen and appears as `section "name"` in the
@@ -16,6 +18,6 @@ fast_path = (n: int): int
 main =
 {
     int v = fast_path(21);
-    loi_print_int(v);       /* 42 */
+    std.print_int(v);       /* 42 */
     return v;
 }

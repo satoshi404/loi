@@ -1,3 +1,5 @@
+package tests_26_inc_forms
+
 /* every approved inclusion form goes through `@` */
 @inc "lib/guarded.loi"      /* quoted file path          */
 @inc lib/guarded.loi        /* bare file path            */

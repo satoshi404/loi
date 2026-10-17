@@ -21,6 +21,7 @@ get_expected() {
     tests/20_macros_variadic.loi) echo 68 ;;
     tests/21_include_guard.loi) echo 1 ;;
     tests/26_inc_forms.loi) echo 42 ;;
+    tests/29_std_package.loi) echo 42 ;;
     *) echo "none" ;;
   esac
 }

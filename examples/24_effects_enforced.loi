@@ -1,16 +1,19 @@
+package examples_24_effects_enforced
+@inc std
+
 /* Effects enforcement demo */
 
 io = (): void !IO {
-    loi_print_str("hello from io");
+    std.print_str("hello from io");
 }
 
 alloc = (): void* !Alloc {
-    return loi_region_alloc(0, 8);
+    return std.region_alloc(0, 8);
 }
 
 io_and_alloc = (): void !IO,Alloc {
-    loi_print_str("hello");
-    loi_region_alloc(0, 8);
+    std.print_str("hello");
+    std.region_alloc(0, 8);
 }
 
 /* This function has no effects - it should be able to call pure functions only */
@@ -27,7 +30,7 @@ does_io = (): int !IO {
 /* This function has both IO and Alloc effects */
 does_io_and_alloc = (): int !IO,Alloc {
     io();
-    loi_region_alloc(0, 8);
+    std.region_alloc(0, 8);
     return 2;
 }
 

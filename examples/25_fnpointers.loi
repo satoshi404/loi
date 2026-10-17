@@ -1,3 +1,6 @@
+package examples_25_fnpointers
+@inc std
+
 // typed function pointers
 type CmpFn = (a: int, b: int) -> int;
 
@@ -7,7 +10,7 @@ my_greater = (a: int, b: int): int { return a > b; }
 cmp: CmpFn = null;        // global function-pointer variable (alias type)
 
 // effects tracked on function-pointer types
-noop       = (n: int) -> void !IO { loi_print_int(n); }
+noop       = (n: int) -> void !IO { std.print_int(n); }
 io_handler: (n: int) -> void !IO = null;
 
 // functions taking callbacks
@@ -22,12 +25,12 @@ compare_with = (f: (a: int, b: int) -> int, x: int, y: int): int
 main = () -> int !IO
 {
     cmp = my_greater;
-    loi_print_int(cmp(2, 3));              // 2 > 3 -> 0
-    loi_print_int(cmp(5, 3));              // 5 > 3 -> 1
+    std.print_int(cmp(2, 3));              // 2 > 3 -> 0
+    std.print_int(cmp(5, 3));              // 5 > 3 -> 1
 
     // pass a function name directly as a callback argument
-    loi_print_int(apply(my_less, 2, 3));     // 2 < 3 -> 1
-    loi_print_int(compare_with(my_less, 5, 3)); // 5 > 3 -> 1
+    std.print_int(apply(my_less, 2, 3));     // 2 < 3 -> 1
+    std.print_int(compare_with(my_less, 5, 3)); // 5 > 3 -> 1
 
     // effects flow through a function-pointer variable
     io_handler = noop;

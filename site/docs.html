@@ -34,7 +34,7 @@
     <a href="#fnptr">Function pointers</a>
     <a href="#metaprogramming">Metaprogramming</a>
     <a href="#macros">Macros / stringify / paste / variadic</a>
-    <a href="#include">Include &amp; packages</a>
+    <a href="#include">Includes &amp; packages</a>
     <a href="#build">Build &amp; run</a>
     <a href="#limitations">Limitations</a>
   </aside>
@@ -42,12 +42,14 @@
     <section id="intro">
       <h2>Introduction</h2>
       <p>loi combines C-like syntax (functions assigned to names, hybrid variable declarations, semicolons, structs/unions, pointers, arrays, inline <code>asm</code>) with compile-time metaprogramming via the <code>@</code> sigil, effect annotations (<code>!IO,Alloc</code>), lexical regions, and typed function pointers. The output is LLVM IR, compiled to native via <code>clang</code>.</p>
-      <p>Files usually begin with <code>@inc std</code>, which brings the runtime helpers (printing, math, threads, regions, ...) into scope at the compiler level. (Runtime helpers are also linked automatically even without <code>@inc std</code>.)</p>
+      <p>Every file declares a <code>package</code> and reaches the runtime through the <code>std</code> package: <code>@inc std</code> followed by calls such as <code>std.print_int(42)</code>. The internal <code>loi_</code> symbol prefix is never written in source.</p>
     </section>
 
     <section id="getting-started">
       <h2>Getting started</h2>
       <pre><code class="lang-loi">
+package demo
+
 @inc std
 
 factorial = (n: int): int
@@ -105,12 +107,12 @@ type CmpFn = (a: int, b: int) -> int;
     <section id="memory">
       <h2>Memory &amp; regions</h2>
       <pre><code class="lang-loi">
-void* p = loi_alloc(8);
+void* p = std.alloc(8);
 *p = 42;
 int v = *p;
 
 region r(64) {
-    void* q = loi_region_alloc(r, 8);
+    void* q = std.region_alloc(r, 8);
     *q = 5;
 }
 </code></pre>
@@ -121,7 +123,7 @@ region r(64) {
       <pre><code class="lang-loi">
 worker = (arg: void*): void* !IO,Alloc
 {
-    loi_print_str("region block");
+    std.print_str("region block");
     return arg;
 }
 
@@ -145,9 +147,9 @@ cmp: CmpFn = null;              // variable holding a function pointer
 main = () -> int
 {
     cmp = my_less;               // assign a function as a value
-    loi_print_int(cmp(2, 3));      // 1
+    std.print_int(cmp(2, 3));      // 1
     apply = (f: (a:int,b:int)->int, x:int, y:int): int { return f(x, y); }
-    loi_print_int(apply(my_less, 2, 3));
+    std.print_int(apply(my_less, 2, 3));
     return 0;
 }
     </section>
@@ -171,16 +173,16 @@ main = () -> int
 @inc std
 @(define STR(x) @stringify(x))
 @(define CONCAT(a, b) @paste(a, b))
-@(define LOG(level, ...msg) { @if(level >= 1) { loi_print_str(msg); } })
+@(define LOG(level, ...msg) { @if(level >= 1) { std.print_str(msg); } })
 
 int foobar = 77;
 
 main = () -> int !IO
 {
-    loi_print_str(STR(hello));        // "hello"
-    loi_print_str(STR(LIMIT));         // "LIMIT" (raw, not expanded)
+    std.print_str(STR(hello));        // "hello"
+    std.print_str(STR(LIMIT));         // "LIMIT" (raw, not expanded)
     int foo = 1, bar = 2;
-    loi_print_int(CONCAT(foo, bar));  // foobar -> 77
+    std.print_int(CONCAT(foo, bar));  // foobar -> 77
     LOG(1, "log: variadic works\n");
     return 0;
 }
@@ -190,14 +192,15 @@ main = () -> int !IO
 
     <section id="packages">
       <h2>Packages</h2>
-      <p>Programs and libraries can declare a package name:</p>
-      <pre><code class="lang-loi">package std</code></pre>
-      <p>Use <code>@inc pkg</code> or <code>@inc pkg.sub</code> to load package sources. Dots are mapped to directory separators and resolution follows the same search paths (<code>./lib</code>, <code>./packages</code>, standard system paths, <code>LOI_PATH</code>). There is no <code>import</code> keyword. See <code>lib/</code> for the starter std package layout.</p>
+      <p>Every loi file declares a package. The entry file and every <code>@inc</code>-ed file are checked; a missing declaration is an error:</p>
+      <pre><code class="lang-loi">package demo</code></pre>
+      <p>Use <code>@inc pkg</code> or <code>@inc pkg.sub</code> to load package sources. Dots are mapped to directory separators and resolution follows the same search paths (<code>./lib</code>, <code>./packages</code>, standard system paths, <code>LOI_PATH</code>). There is no <code>import</code> keyword.</p>
+      <p>The standard package is <code>std</code>: after <code>@inc std</code>, call runtime helpers as <code>std.print_int</code>, <code>std.alloc</code>, <code>std.region_alloc</code>, and so on. The code generator rewrites <code>std.NAME</code> to the matching runtime symbol. See <code>lib/</code> for the std package layout.</p>
     </section>
 
     <section id="include">
       <ul>
-        <li>Resolution: file's directory, <code>./lib</code>, <code>./packages</code>, <code>/usr/share/loi</code>, <code>/usr/local/share/loi</code>, <code>LOI_PATH</code>. <code>@include</code> is no longer supported.</li>
+        <li>Resolution: file's directory, <code>./lib</code>, <code>./packages</code>, <code>/usr/share/loi</code>, <code>/usr/local/share/loi</code>, <code>LOI_PATH</code>. All inclusions use <code>@inc</code> / <code>@cinc</code>.</li>
         <li><code>@cinc</code> searches <code>.</code>, <code>/usr/include</code>, <code>/usr/local/include</code>, <code>/usr/include/x86_64-linux-gnu</code>.</li>
         <li>Includes are guarded automatically (a file is inlined at most once per build), so libraries need no manual guards and cycles are safe. C ABIs are declared with <code>extern ...;</code>.</li>
       </ul>

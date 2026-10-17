@@ -761,8 +761,24 @@ static char *codegen_expr(CG *cg, ASTNode *e, char **out_type) {
         }
         /* callee name */
         char *callee = NULL;
-        if (e->left && e->left->type == AST_EXPR_IDENT) callee = e->left->name;
-        else callee = "fn";
+        if (e->left && e->left->type == AST_EXPR_IDENT) {
+            callee = e->left->name;
+        } else if (e->left && e->left->type == AST_EXPR_FIELD) {
+            /* Package-qualified call, e.g. `std.print_int(...)`. The standard
+             * package is a thin surface over the C runtime, whose symbols keep
+             * their `loi_` prefix internally. A member is only rewritten when
+             * the package is `std` and a matching runtime symbol exists. */
+            ASTNode *base = e->left->left;
+            if (base && base->type == AST_EXPR_IDENT && base->name &&
+                strcmp(base->name, "std") == 0 && e->left->name) {
+                char rt[128];
+                snprintf(rt, sizeof(rt), "loi_%s", e->left->name);
+                if (find_func(cg, rt)) callee = strdup(rt);
+                else callee = e->left->name;
+            } else {
+                callee = e->left->name;
+            }
+        } else callee = "fn";
         /* evaluate args first */
         size_t argc = e->arg_count;
         char **rawvals = xmalloc((argc?argc:1)*sizeof(char*));
@@ -1316,6 +1332,7 @@ static void add_runtime_funcs(CG *cg) {
     /* i64 helpers */
     char *p_i64 = strdup("i64");
     /* print_int(void(i64)) */
+    /* runtime symbols are always linked; std.* maps to these. */
     {
         char **pt = xmalloc(1*sizeof(char*)); pt[0]=strdup("i64");
         add_func(cg,"loi_print_int","void",pt,1,0);

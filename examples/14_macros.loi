@@ -1,3 +1,6 @@
+package examples_14_macros
+@inc std
+
 @(define LIMIT 8)
 
 scale = (n: int): int
@@ -8,6 +11,6 @@ scale = (n: int): int
 main =
 {
     int v = scale(LIMIT);
-    loi_print_int(v);
+    std.print_int(v);
     return v;
 }

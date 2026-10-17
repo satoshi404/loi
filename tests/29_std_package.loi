@@ -1,0 +1,14 @@
+package tests_29_std_package
+
+/* the runtime is reached through the `std` package; `std.NAME` is rewritten to
+   the matching runtime symbol. */
+@inc std
+
+main = () -> int !IO
+{
+    std.print_int(4);
+    std.print_str("2");
+    int a = std.abs(-40);
+    int b = 2;
+    return a + b;   /* 42 */
+}

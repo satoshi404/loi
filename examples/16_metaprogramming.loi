@@ -1,3 +1,5 @@
+package examples_16_metaprogramming
+
 @(define ADD(x, y) (x + y))
 @(define SQUARE(x) (x * x))
 @(define ENABLE_SQUARE 1)
@@ -13,7 +15,7 @@ main =
 } @else {
     int s = base;
 }
-    loi_print_str("meta ok");
-    loi_print_int(s);
+    std.print_str("meta ok");
+    std.print_int(s);
     return s;
 }

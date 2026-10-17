@@ -4,6 +4,7 @@
 #include <ctype.h>
 #include <stdarg.h>
 #include <limits.h>
+#include <sys/stat.h>
 #include "preprocessor.h"
 
 /* ---------------------------------------------------------------------------
@@ -144,6 +145,39 @@ static int at_line_start(const char *out, size_t oi) {
     return 1;
 }
 
+/* Returns 1 when `src` declares a package. Comments and string/char literals
+ * are skipped, so a commented-out `package` does not count. `package` is a
+ * keyword, so any occurrence outside a comment/literal is a declaration. */
+int loi_source_declares_package(const char *src) {
+    if (!src) return 0;
+    const char *p = src;
+    while (*p) {
+        if (p[0] == '/' && p[1] == '/') {
+            p += 2;
+            while (*p && *p != '\n') p++;
+        } else if (p[0] == '/' && p[1] == '*') {
+            p += 2;
+            while (*p && !(p[0] == '*' && p[1] == '/')) p++;
+            if (*p) p += 2;
+        } else if (*p == '"' || *p == '\'') {
+            char q = *p++;
+            while (*p && *p != q) {
+                if (*p == '\\' && p[1]) p++;
+                p++;
+            }
+            if (*p) p++;
+        } else if (isalpha((unsigned char)*p) || *p == '_') {
+            const char *start = p;
+            while (isalnum((unsigned char)*p) || *p == '_') p++;
+            if ((size_t)(p - start) == 7 && strncmp(start, "package", 7) == 0)
+                return 1;
+        } else {
+            p++;
+        }
+    }
+    return 0;
+}
+
 /* `name` is a whole identifier match for `kw` at `p` (not a longer word). */
 static int kw_match(const char *p, const char *kw) {
     size_t n = strlen(kw);
@@ -200,6 +234,8 @@ static void read_name(const char **pp, char *out, size_t cap) {
 
 static char *read_text_file(const char *path) {
     if (!path) return NULL;
+    struct stat st;
+    if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) return NULL;
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
     if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return NULL; }
@@ -381,6 +417,12 @@ static char *expand_includes(const char *src, const char *base_dir, int depth) {
                     /* @cinc only verifies the header exists; leave a trace marker. */
                     sb_printf(&out, "/* @cinc: %s */\n", found);
                     free(content);
+                } else if (!loi_source_declares_package(content)) {
+                    fprintf(stderr,
+                            "error: line %zu: included file \"%s\" must declare "
+                            "a package (e.g. 'package name')\n",
+                            line_of(src, p), found);
+                    exit(1);
                 } else if (include_guard_seen(found)) {
                     free(content);    /* already included (include guard) */
                 } else {

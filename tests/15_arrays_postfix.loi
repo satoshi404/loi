@@ -1,3 +1,5 @@
+package tests_15_arrays_postfix
+
 /* canonical array syntax: length follows the element type */
 main = () -> int
 {

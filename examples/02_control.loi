@@ -1,3 +1,5 @@
+package examples_02_control
+
 @inc std
 
 main =
@@ -11,7 +13,7 @@ main =
         j = j - 1;
     }
     if (s == 45 && j == 0) {
-        loi_print_str("control ok");
+        std.print_str("control ok");
     }
     return s;
 }

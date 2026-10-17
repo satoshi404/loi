@@ -1,3 +1,5 @@
+package examples_10_layout
+
 @inc std
 
 struct Buffer @pack {
@@ -9,6 +11,6 @@ main =
 {
     Buffer b;
     b.data = 7;
-    loi_print_int(b.data);
+    std.print_int(b.data);
     return b.data;
 }

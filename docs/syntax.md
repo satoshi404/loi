@@ -26,6 +26,17 @@ TopLevel    := PackageDecl
 PackageDecl := 'package' Ident (';')?
 ```
 
+Every loi file must declare a package. The entry file and every `@inc`-ed file
+are checked: a file without a `package` declaration is rejected with
+
+```
+error: file "x.loi" must declare a package (e.g. 'package name')
+```
+
+The package name is metadata: it names the unit and is shown in the AST, but it
+does not change name resolution (members are reached through the `std` package,
+see [Runtime](#runtime)).
+
 There is no `import` keyword. Every inclusion — loi files, packages, and C
 header checks — is a preprocessor directive introduced by `@` and handled
 before parsing (see [`@inc` / `@cinc`](#inc--cinc-inlines-and-c-header-checks)):
@@ -221,17 +232,17 @@ main =
 }
 ```
 
-- Memory helpers from `std`: `loi_alloc`, `loi_free`, `loi_memcpy`,
-  `loi_memset`, plus `loi_gc_alloc` / `loi_gc_collect`.
+- Memory helpers from `std`: `std.alloc`, `std.free`, `std.memcpy`,
+  `std.memset`, plus `std.gc_alloc` / `std.gc_collect`.
 
 ## Mathematical features
 
 Standard operators `+ - * / % **`. The runtime provides math builtins,
 available via `@inc std`:
 
-- integer: `loi_abs(v)`, `loi_min(a, b)`, `loi_max(a, b)`
-- double: `loi_sqrt`, `loi_sin`, `loi_cos`, `loi_tan`, `loi_exp`, `loi_log`,
-  `loi_floor`, `loi_ceil`, and `loi_pow(a, b)`
+- integer: `std.abs(v)`, `std.min(a, b)`, `std.max(a, b)`
+- double: `std.sqrt`, `std.sin`, `std.cos`, `std.tan`, `std.exp`, `std.log`,
+  `std.floor`, `std.ceil`, and `std.pow(a, b)`
 
 Vector/matrix math is expressed with arrays and library types, e.g.:
 
@@ -241,7 +252,7 @@ Vector/matrix math is expressed with arrays and library types, e.g.:
 hypot = (a: double, b: double): double
 {
     double s = a * a + b * b;
-    return loi_sqrt(s);
+    return std.sqrt(s);
 }
 ```
 
@@ -260,10 +271,10 @@ inside the block:
 main =
 {
     region r(64) {
-        void* p = loi_region_alloc(r, 8);
+        void* p = std.region_alloc(r, 8);
         *p = 7;
-        loi_print_int(*p);
-    }  // loi_region_free(r) is emitted here
+        std.print_int(*p);
+    }  // std.region_free(r) is emitted here
     return 0;
 }
 ```
@@ -274,14 +285,38 @@ If no capacity is given, a default (currently 4096 bytes) is used:
 main =
 {
     region r {
-        void* p = loi_region_alloc(r, 4);
+        void* p = std.region_alloc(r, 4);
     }
     return 0;
 }
 ```
 
 ## Runtime
-Built-in runtime helpers (`loi_print_*`, `loi_alloc`, `loi_region_*`, math, threads, etc.) are always linked into executables, so you don't need `@inc std` to call them. The `std` package is available under `lib/std` and can be loaded with `@inc std` when you want the package-form wrappers.
+
+The runtime is exposed through the standard package. Load it with `@inc std`
+and call its members with the `std.` qualifier — the internal `loi_` prefix is
+never written in loi code:
+
+```loi
+package demo
+
+@inc std
+
+main = () -> int !IO
+{
+    std.print_int(42);
+    std.print_str("hello");
+    void* p = std.alloc(16);
+    std.free(p);
+    return 0;
+}
+```
+
+`std` is a virtual package: `std.NAME` is rewritten by the code generator to the
+matching runtime symbol (for example `std.print_int` → `loi_print_int`,
+`std.region_alloc` → `loi_region_alloc`). The helpers are always linked into
+executables, so `@inc std` mainly documents intent and keeps the source honest
+about where the symbols come from.
 
 ## Effects annotations (experimental)
 
@@ -290,8 +325,8 @@ Function signatures may carry declared effects after the return type using `!`:
 ```loi
 worker = (arg: void*): void* !IO,Alloc
 {
-    loi_print_str("side effect");
-    void* p = loi_region_alloc(arg, 8);
+    std.print_str("side effect");
+    void* p = std.region_alloc(arg, 8);
     return p;
 }
 ```
@@ -334,10 +369,10 @@ supports assignment through a dereference:
 
 main =
 {
-    void* p = loi_alloc(8);
+    void* p = std.alloc(8);
     *p = 42;
     int v = *p;
-    loi_print_int(v);
+    std.print_int(v);
     return v;
 }
 ```
@@ -398,6 +433,8 @@ parse-time error.
 Example:
 
 ```loi
+package demo
+
 @(define LIMIT 8)
 @inc "helpers/helper.loi"
 
@@ -409,8 +446,8 @@ main =
 
 Includes are guarded automatically: a given file (by real path) is inlined at
 most once per compilation, so libraries need no manual `#ifndef` guards and
-include cycles terminate. `@include` has been removed; use `@inc` (loi file or
-package) or `@cinc` (C header check). C standard-header ABIs are still modelled
+include cycles terminate. All inclusions use `@inc` (loi files/packages) or
+`@cinc` (C header checks). C standard-header ABIs are still modelled
 via `extern` declarations rather than textual inclusion.
 
 ## Metaprogramming / Preprocessor
@@ -524,16 +561,16 @@ generator:
 ```loi
 @(define STR(x) @stringify(x))
 @(define CONCAT(a, b) @paste(a, b))
-@(define LOG(level, ...msg) { @if(level >= 1) { loi_print_str(msg); } })
+@(define LOG(level, ...msg) { @if(level >= 1) { std.print_str(msg); } })
 
 int foobar = 77;
 
 main = () -> int !IO
 {
-    loi_print_str(STR(hello));        // "hello"
-    loi_print_str(STR(LIMIT));         // "LIMIT"
+    std.print_str(STR(hello));        // "hello"
+    std.print_str(STR(LIMIT));         // "LIMIT"
     int foo = 1, bar = 2;
-    loi_print_int(CONCAT(foo, bar));  // foobar -> 77
+    std.print_int(CONCAT(foo, bar));  // foobar -> 77
     LOG(1, "hi\n");                  // prints "hi\n"
     return 0;
 }
@@ -570,7 +607,7 @@ main = () -> int !IO
   `/usr/include/x86_64-linux-gnu`; since C preprocessor ABI is not modeled, a
   trace marker (`/* @cinc: … */`) is emitted instead of inlining, and the
   corresponding ABI functions are declared with `extern`.
-- `@include` is no longer supported: use `@inc` / `@cinc`.
+- All inclusions go through `@inc` (loi files/packages) or `@cinc` (C headers).
 - Includes are guarded automatically: a given file (by real path) is inlined at
   most once per compilation, so repeating `@inc` on the same file is safe and
   include cycles terminate.

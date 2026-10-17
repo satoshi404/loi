@@ -1,15 +1,17 @@
+package examples_05_threads
+
 @inc std
 
 worker = (arg: void*): void*
 {
-    loi_print_str("thread running");
+    std.print_str("thread running");
     return arg;
 }
 
 main =
 {
-    void* t = loi_thread_spawn(worker, 0);
-    loi_thread_join(t);
-    loi_print_str("thread done");
+    void* t = std.thread_spawn(worker, 0);
+    std.thread_join(t);
+    std.print_str("thread done");
     return 0;
 }

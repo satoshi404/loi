@@ -1,3 +1,5 @@
+package examples_helpers_lib
+
 double_it = (n: int): int
 {
     return n * 2;

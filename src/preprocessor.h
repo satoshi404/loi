@@ -20,4 +20,9 @@
  * the caller owns. */
 char *loi_preprocess(const char *src, const char *base_dir);
 
+/* Returns 1 when `src` declares a package (`package <name>`), ignoring
+ * comments and string/char literals. Every loi file — the entry file and every
+ * `@inc`-ed file — must declare one. */
+int loi_source_declares_package(const char *src);
+
 #endif /* LOI_PREPROCESSOR_H */

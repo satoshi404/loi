@@ -1,3 +1,5 @@
+package examples_main
+
 @inc std
 
 main =

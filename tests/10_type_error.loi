@@ -1,3 +1,5 @@
+package tests_10_type_error
+
 /* must fail type checking: argument type mismatch */
 add = (a: int, b: int): int { return a + b; }
 main = () -> int {

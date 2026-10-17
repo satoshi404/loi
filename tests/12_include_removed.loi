@@ -1,3 +1,5 @@
-/* @include is removed: must report the replacement */
+package tests_12_include_removed
+
+/* inclusions must use @inc/@cinc; @include is reported as error */
 @include "lib/guarded.loi"
 main = () -> int { return 0; }

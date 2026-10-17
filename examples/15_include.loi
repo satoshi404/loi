@@ -1,3 +1,5 @@
+package examples_15_include
+
 @inc "helpers/lib.loi"
 
 @inc std
@@ -5,6 +7,6 @@
 main =
 {
     int v = double_it(8);
-    loi_print_int(v);
+    std.print_int(v);
     return v;
 }

@@ -1,6 +1,9 @@
+package tests_01_effects_ok
+
+@inc std
 /* effects: callers declaring !IO may call !IO functions */
 io = (): void !IO {
-    loi_print_str("in io\n");
+    std.print_str("in io\n");
 }
 
 does_io = (): int !IO {

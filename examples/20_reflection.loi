@@ -1,3 +1,5 @@
+package examples_20_reflection
+
 /* Compile-time reflection builtins.
 
    @sizeof(T)     -- byte size of a type
@@ -23,6 +25,6 @@ main =
     @typeof(sz) copy = sz;          /* copy is an int */
 
     int sum = sz + offz + algn + psz + copy;
-    loi_print_int(sum);             /* 16 + 8 + 8 + 5 + 16 = 53 */
+    std.print_int(sum);             /* 16 + 8 + 8 + 5 + 16 = 53 */
     return sum;
 }

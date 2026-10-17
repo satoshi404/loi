@@ -1,3 +1,5 @@
+package examples_23_do_while
+
 /* do-while example */
 
 main = () -> int {

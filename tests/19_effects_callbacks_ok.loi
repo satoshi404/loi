@@ -1,8 +1,11 @@
+package tests_19_effects_callbacks_ok
+
+@inc std
 /* effects flow through function pointers: a declared callback type carries
    its effects, and passing a matching function is accepted. */
 type IoFn = (n: int) -> void !IO;
 
-iofn = (n: int) -> void !IO { loi_print_int(n); }
+iofn = (n: int) -> void !IO { std.print_int(n); }
 
 apply_io = (f: IoFn, n: int): void !IO { f(n); }
 

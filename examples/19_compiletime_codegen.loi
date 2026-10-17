@@ -1,3 +1,5 @@
+package examples_19_compiletime_codegen
+
 /* Compile-time code generation.
 
    @for(count, start, stop [, step]) unrolls its block once per
@@ -28,6 +30,6 @@ main =
 }
     /* total = 80 + 0 + 2 + 4 + 6 + 8 = 100 */
 
-    loi_print_int(total);
+    std.print_int(total);
     return total;
 }

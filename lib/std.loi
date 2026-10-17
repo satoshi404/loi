@@ -1,3 +1,14 @@
 package std
 
-// core runtime re-exports happen via @inc of this package.
+// The standard package. Its functions are the runtime primitives declared in
+// runtime.c, surfaced to loi code through the `std.` qualifier:
+//
+//     @inc std
+//     main = () -> int !IO {
+//         std.print_int(42);
+//         void* p = std.alloc(16);
+//         return 0;
+//     }
+//
+// `std` is a virtual package: no declarations live here because the code
+// generator rewrites `std.NAME` to the corresponding runtime symbol.

@@ -1,9 +1,11 @@
+package examples_04_mem
+
 @inc std
 
 main =
 {
-    void* p = loi_gc_alloc(64);
-    loi_print_str("mem ok");
-    loi_gc_collect();
+    void* p = std.gc_alloc(64);
+    std.print_str("mem ok");
+    std.gc_collect();
     return 0;
 }
