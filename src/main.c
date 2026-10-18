@@ -6,6 +6,8 @@
 #include <sys/stat.h>
 #include <errno.h>
 
+#include <limits.h>
+
 #include "lexer.h"
 #include "token.h"
 #include "parser.h"
@@ -148,7 +150,9 @@ int main(int argc, char **argv) {
     int run_bin = 0;
     int generator = 0;
     const char *path = NULL;
-    const char *out_path = "/tmp/opencode/loi_bin";
+    
+    // Se o usuario nao passar o  parametro --out padrao sera pathoc nome do executavel seraout
+    const char *out_path = "out";//"/tmp/opencode/loi_bin";
     int out_given = 0;
     const char *lib_list = NULL;
     const char *gen_package = NULL;
@@ -303,11 +307,17 @@ char *processed = loi_preprocess(src, base_dir_buf);
         }
     } else if (run_bin) {
         const char *ll_path = "/tmp/opencode/loi.ll";
-        const char *bin_path = "/tmp/opencode/loi_bin";
+	//        const char *bin_path = "out";//"/tmp/opencode/loi_bin";
+	const char *bin_path = out_given ? out_path : "/tmp/opencode/loi_bin";
+
         FILE *f = fopen(ll_path, "w");
         if (f && prog) { codegen_program(prog, f); fclose(f); }
-        else if (f) fclose(f);
-        char cmd[4096];
+	else if (f) fclose(f);
+
+
+	char cmd[PATH_MAX + 8];
+        snprintf(cmd, sizeof(cmd), "%s%s", strchr(bin_path, '/') ? "" : "./", bin_path); 
+        // char cmd[4096];
         if (build_link_cmd(cmd, sizeof(cmd), ll_path, bin_path, lib_flags)) return 1;
         if (system(cmd) != 0) {
             fprintf(stderr, "compile failed\n");
@@ -315,7 +325,8 @@ char *processed = loi_preprocess(src, base_dir_buf);
                 fprintf(stderr, "hint: if the program calls a C library, link it with --lib=NAME (e.g. --lib=SDL2)\n");
             return 1;
         }
-        int st = system(bin_path);
+	int st = system(cmd);
+        //int st = system(bin_path);
         int code = (st >= 0 && WIFEXITED(st)) ? WEXITSTATUS(st) : 1;
         if (prog) ast_free(prog);
         free(src);
