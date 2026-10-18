@@ -1,0 +1,19 @@
+@package(thirdparty_inc)
+@inc std
+@inc sdl2
+/* `@inc sdl2` resolves to thirdparty/sdl2/sdl2.loi (bindings generated from
+   SDL.h). Only declarations are used here, so no SDL library is needed. */
+main = (): int
+{
+    if (sdl2.INIT_VIDEO != 32) { return 1; }
+    if (sdl2.WINDOWPOS_CENTERED != 805240832) { return 2; }
+    if (@sizeof(sdl2.Event) != 56) { return 3; }       /* SDL_Event is a 56 byte union */
+    ev: sdl2.Event;
+    ev.key.keysym.sym = sdl2.SDLK_ESCAPE;
+    if (ev.key.keysym.sym != 27) { return 4; }
+    r: sdl2.Rect;
+    r.w = 40;
+    r.w += 2;
+    if (r.w != 42) { return 5; }
+    return 42;
+}

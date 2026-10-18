@@ -1,0 +1,3 @@
+@package(lib_flag)
+/* tests/run.sh also runs this one with --lib=c,m to exercise the flag */
+main = (): int { return 42; }

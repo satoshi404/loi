@@ -324,20 +324,37 @@ static Type *parse_type(Parser *p) {
         } else {
             snprintf(buf, sizeof(buf), "?");
         }
+        int was_ident = check(p, TOK_IDENTIFIER);
         t->name = strdup(buf);
         if (is_type_start(p)) advance_parser(p);
         else if (strcmp(buf, "?") == 0) parser_error(p, "expected type");
+        /* package-qualified type: `sdl2.Window` names the type `Window` of package sdl2 */
+        if (was_ident && check(p, TOK_DOT)) {
+            Token nx = lexer_peek(p->lex);
+            int ok = (nx.type == TOK_IDENTIFIER && nx.lexeme);
+            token_free(&nx);
+            if (ok) {
+                advance_parser(p); /* '.' */
+                free(t->name);
+                t->name = strdup(p->current.lexeme);
+                advance_parser(p);
+            }
+        }
 type_primitive_done: ;
     }
 type_suffix:
     /* suffixes */
     while (1) {
-        if (check(p, TOK_STAR)) {
+        if (check(p, TOK_STAR) || check(p, TOK_STARSTAR)) {
+            /* `**` lexes as the power operator, but after a type it is two pointers */
+            int levels = check(p, TOK_STARSTAR) ? 2 : 1;
             advance_parser(p);
-            Type *ptr = type_new(TY_POINTER);
-            ptr->base = t;
-            ptr->name = t && t->name ? strdup(t->name) : strdup("?");
-            t = ptr;
+            while (levels--) {
+                Type *ptr = type_new(TY_POINTER);
+                ptr->base = t;
+                ptr->name = t && t->name ? strdup(t->name) : strdup("?");
+                t = ptr;
+            }
         } else if (check(p, TOK_LBRACKET)) {
             advance_parser(p);
             ASTNode *sz = NULL;
@@ -1185,6 +1202,7 @@ static ASTNode *parse_struct(Parser *p) {
     ASTNode *n = ast_new(AST_STRUCT_DECL, line, col);
     TokenType kw = p->current.type;
     advance_parser(p);
+    if (kw == TOK_KW_UNION) ast_add_attr(n, "union", NULL);
     if (check(p, TOK_IDENTIFIER)) {
         n->name = strdup_lex(p->current.lexeme);
         advance_parser(p);
@@ -1413,6 +1431,29 @@ static ASTNode *parse_with_cap(Parser *p) {
     return n;
 }
 
+/* `NAME :: literal;` — an untyped compile-time constant. The value is a
+   number, character or string literal (optionally negated); every use of
+   NAME (or `pkg.NAME`) is replaced by the literal during type checking, so
+   it adapts to whatever numeric type the context needs and costs nothing. */
+static ASTNode *parse_const_decl(Parser *p) {
+    int line = p->current.line, col = p->current.column;
+    ASTNode *n = ast_new(AST_CONST_DECL, line, col);
+    n->name = strdup_lex(p->current.lexeme);
+    advance_parser(p);                 /* NAME */
+    expect(p, TOK_COLON, "expected ':'");
+    expect(p, TOK_COLON, "expected '::'");
+    ASTNode *v = parse_expr(p);
+    ASTNode *lit = v;
+    while (lit && lit->type == AST_EXPR_UNARY &&
+           (lit->op_token == TOK_MINUS || lit->op_token == TOK_PLUS || lit->op_token == TOK_TILDE))
+        lit = lit->left;
+    if (!lit || (lit->type != AST_EXPR_NUMBER && lit->type != AST_EXPR_STRING && lit->type != AST_EXPR_CHAR))
+        parser_error(p, "a '::' constant must be a number, character or string literal");
+    n->init = v;
+    match_tok(p, TOK_SEMICOLON);
+    return n;
+}
+
 static ASTNode *parse_decl_core(Parser *p) {
     /* `@package(name)` — the `@` sigil is required; a bare `package` keyword is
        rejected below with a pointer to the new form. */
@@ -1444,7 +1485,19 @@ static ASTNode *parse_decl_core(Parser *p) {
             token_free(&t);
             return parse_func(p);
         }
-        token_free(&t);
+        if (t.type == TOK_COLON) {
+            /* `NAME :: value;` has a second ':' right after the first */
+            Lexer l = *p->lex;
+            Token c1 = lexer_next(&l);
+            Token c2 = lexer_next(&l);
+            int is_const = (c1.type == TOK_COLON && c2.type == TOK_COLON);
+            token_free(&c1);
+            token_free(&c2);
+            token_free(&t);
+            if (is_const) return parse_const_decl(p);
+        } else {
+            token_free(&t);
+        }
     }
     if (is_vardecl_start(p)) return parse_var_decl(p, 1);
     parser_error(p, "expected top-level declaration");

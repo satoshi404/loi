@@ -1,0 +1,197 @@
+@package(examples.sdl2)
+@inc std
+@inc sdl2
+
+// SDL2 from loi: a window with a bouncing square, written the loi way.
+//
+//   Arrow keys steer the square. Esc or closing the window quits.
+//
+//   # one-time: generate the binding from the C headers
+//   echo '#include <SDL2/SDL.h>' > gen.h
+//   ./loi --mode=generator gen.h --out=thirdparty/sdl2/sdl2.loi
+//
+//   # build and run (needs clang, LLVM and the SDL2 development files)
+//   ./loi examples/sdl2_window.loi --lib=SDL2 --run
+//
+// Three ideas from the language carry this program; none of them costs
+// anything at run time (capabilities are erased, effects are compile-time):
+//
+//   packages      `@inc sdl2` brings in thirdparty/sdl2/sdl2.loi, generated from
+//                 SDL.h. Its names are used qualified (`sdl2.Init`, `sdl2.Window`,
+//                 `sdl2.QUIT`), so they never collide with this file's.
+//
+//   effects       Every function that talks to SDL is marked `!Gfx`. A caller
+//                 must declare `!Gfx` too, or hold a live Gfx capability.
+//
+//   capabilities  A capability is a linear proof. `Gfx` is the right to use SDL,
+//                 `Window` and `Renderer` prove that one of those objects is
+//                 alive. They must be handed back to the function that destroys
+//                 the object, so the compiler rejects a window that is never
+//                 destroyed, one destroyed twice, a renderer made without a
+//                 window, and any SDL call after `stop_gfx`.
+
+@capability(Gfx, Window, Renderer)
+
+WIDTH  :: 640;
+HEIGHT :: 480;
+SIDE   :: 48;     // edge of the bouncing square, in pixels
+SPEED  :: 5;
+
+struct Box { int x; int y; int dx; int dy; }
+
+// ---- Gfx: the right to talk to SDL at all ---------------------------------
+
+start_gfx = (gfx: @cap(borrow Gfx)): int !Gfx
+{
+    return sdl2.Init(sdl2.INIT_VIDEO);
+}
+
+// Consumes the capability: after this call no SDL function can be reached.
+stop_gfx = (gfx: @cap(Gfx)): void !Gfx
+{
+    sdl2.Quit();
+}
+
+// ---- Window: created with Gfx, proven alive by a Window capability --------
+
+open_window = (title: char*, w: int, h: int, gfx: @cap(borrow Gfx)): sdl2.Window* !Gfx
+{
+    return sdl2.CreateWindow(title, sdl2.WINDOWPOS_CENTERED, sdl2.WINDOWPOS_CENTERED,
+                             w, h, sdl2.WINDOW_SHOWN);
+}
+
+// Call this only for a window that exists (after the null check).
+claim_window = (win: sdl2.Window*, gfx: @cap(borrow Gfx)): @cap(Window)
+{
+    @grant(Window) proof;
+    return proof;
+}
+
+// Takes the Window proof by value: the window can only be destroyed once.
+close_window = (win: sdl2.Window*, proof: @cap(Window)): void !Gfx
+{
+    sdl2.DestroyWindow(win);
+}
+
+// ---- Renderer: needs a live Window to be created ---------------------------
+
+open_renderer = (win: sdl2.Window*, w: @cap(borrow Window)): sdl2.Renderer* !Gfx
+{
+    return sdl2.CreateRenderer(win, -1, sdl2.RENDERER_ACCELERATED | sdl2.RENDERER_PRESENTVSYNC);
+}
+
+claim_renderer = (ren: sdl2.Renderer*, w: @cap(borrow Window)): @cap(Renderer)
+{
+    @grant(Renderer) proof;
+    return proof;
+}
+
+close_renderer = (ren: sdl2.Renderer*, proof: @cap(Renderer)): void !Gfx
+{
+    sdl2.DestroyRenderer(ren);
+}
+
+// ---- The program -----------------------------------------------------------
+
+fail = (what: char*): int !IO
+{
+    std.print_str(what);
+    std.print_str(sdl2.GetError());
+    return 1;
+}
+
+// Returns 0 to stop the loop. Events are a union: `ev.type_` is always valid,
+// and the member for that event type (`ev.key`) tells the rest.
+on_event = (ev: sdl2.Event*, box: Box*): int
+{
+    if (ev.type_ == sdl2.QUIT) { return 0; }
+    if (ev.type_ == sdl2.KEYDOWN) {
+        sym: sdl2.Keycode = ev.key.keysym.sym;
+        if (sym == sdl2.SDLK_ESCAPE) { return 0; }
+        if (sym == sdl2.SDLK_LEFT)   { box.dx = -SPEED; }
+        if (sym == sdl2.SDLK_RIGHT)  { box.dx = SPEED; }
+        if (sym == sdl2.SDLK_UP)     { box.dy = -SPEED; }
+        if (sym == sdl2.SDLK_DOWN)   { box.dy = SPEED; }
+    }
+    return 1;
+}
+
+step = (box: Box*): void
+{
+    box.x += box.dx;
+    box.y += box.dy;
+    if (box.x < 0)              { box.x = 0;              box.dx = -box.dx; }
+    if (box.x + SIDE > WIDTH)   { box.x = WIDTH - SIDE;   box.dx = -box.dx; }
+    if (box.y < 0)              { box.y = 0;              box.dy = -box.dy; }
+    if (box.y + SIDE > HEIGHT)  { box.y = HEIGHT - SIDE;  box.dy = -box.dy; }
+}
+
+// Drawing needs a live Renderer: the capability is the proof.
+draw = (ren: sdl2.Renderer*, box: Box*, r: @cap(borrow Renderer)): void !Gfx
+{
+    sdl2.SetRenderDrawColor(ren, 24, 24, 32, 255);
+    sdl2.RenderClear(ren);
+
+    square: sdl2.Rect;
+    square.x = box.x;
+    square.y = box.y;
+    square.w = SIDE;
+    square.h = SIDE;
+    sdl2.SetRenderDrawColor(ren, 235, 90, 60, 255);
+    sdl2.RenderFillRect(ren, &square);
+
+    sdl2.RenderPresent(ren);
+}
+
+run_loop = (ren: sdl2.Renderer*, r: @cap(borrow Renderer)): int !Gfx
+{
+    ev: sdl2.Event;
+    box: Box;
+    box.x = 100;
+    box.y = 80;
+    box.dx = SPEED;
+    box.dy = SPEED;
+
+    int running = 1;
+    while (running != 0) {
+        while (sdl2.PollEvent(&ev) != 0) {
+            running = on_event(&ev, &box);
+        }
+        step(&box);
+        draw(ren, &box);      // the Renderer capability is inferred: only `r` proves it
+        sdl2.Delay(16);
+    }
+    return 0;
+}
+
+// Owns the whole lifetime. Each capability is created next to the object it
+// vouches for and consumed by the call that destroys that object.
+session = (gfx: @cap(borrow Gfx)): int !IO
+{
+    if (start_gfx() != 0) { return fail("SDL_Init failed: "); }
+
+    win: sdl2.Window* = open_window("loi + SDL2", WIDTH, HEIGHT);
+    if (win == null) { return fail("window creation failed: "); }
+    @cap(Window) wproof = claim_window(win);
+
+    int rc = 0;
+    ren: sdl2.Renderer* = open_renderer(win);
+    if (ren == null) {
+        rc = fail("renderer creation failed: ");
+    } else {
+        @cap(Renderer) rproof = claim_renderer(ren);
+        rc = run_loop(ren);
+        close_renderer(ren, rproof);
+    }
+
+    close_window(win, wproof);
+    return rc;
+}
+
+main = (): int !IO
+{
+    @grant(Gfx) gfx;          // main is a root: the only place Gfx is born
+    int rc = session();
+    stop_gfx(gfx);            // gives the capability back; SDL is unreachable after this
+    return rc;
+}

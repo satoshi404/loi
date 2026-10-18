@@ -1,0 +1,19 @@
+@package(const_untyped)
+/* `NAME :: literal;` constants are untyped: each use adapts to the numeric
+   type of its context, and `pkg.NAME` selects one by package. */
+FLAG_A :: 0x20;
+FLAG_B :: 0x04;
+BIG    :: 3221225472;   /* past INT32_MAX: still correct as a long */
+NEG    :: -5;
+LABEL  :: "hi";
+
+main = (): int
+{
+    unsigned int flags = FLAG_A | FLAG_B;     /* literal adapts to unsigned int */
+    long big = BIG;
+    char c = 7;                               /* a literal narrows to char too */
+    if (flags != 36) { return 1; }
+    if (big != const_untyped.BIG) { return 2; }
+    if (c + NEG != 2) { return 3; }
+    return 42;
+}

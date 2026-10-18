@@ -1,0 +1,20 @@
+@package(cap_resource_ok)
+/* The resource-lifetime pattern used by examples/sdl2_window.loi: a Gfx
+   capability gates the API, a Window capability proves a window is alive and
+   is consumed by the call that destroys it. Everything is erased at run time. */
+@capability(Gfx, Window)
+
+start = (g: @cap(borrow Gfx)): int !Gfx { return 1; }
+stop  = (g: @cap(Gfx)): void !Gfx { }
+claim = (g: @cap(borrow Gfx)): @cap(Window) { @grant(Window) p; return p; }
+close = (id: int, w: @cap(Window)): int !Gfx { return id; }
+
+main = (): int
+{
+    @grant(Gfx) g;
+    int n = start();                 /* Gfx inferred: `g` is the only proof in scope */
+    @cap(Window) w = claim();
+    int id = close(41, w);           /* consumes the Window proof */
+    stop(g);                         /* effect !Gfx is covered by the `g` it consumes */
+    return id + n;                   /* 42 */
+}

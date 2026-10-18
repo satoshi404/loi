@@ -1,0 +1,12 @@
+@package(cap_use_after_stop_fail)
+/* after `stop` consumes Gfx, nothing needing !Gfx is reachable any more */
+@capability(Gfx)
+start = (g: @cap(borrow Gfx)): int !Gfx { return 1; }
+stop  = (g: @cap(Gfx)): void !Gfx { }
+
+main = (): int
+{
+    @grant(Gfx) g;
+    stop(g);
+    return start();   /* error: requires effect 'Gfx' and no live proof remains */
+}

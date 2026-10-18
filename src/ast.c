@@ -155,6 +155,7 @@ const char *ast_node_type_str(ASTNodeType type) {
         case AST_FUNC_DECL: return "FUNC_DECL";
         case AST_STRUCT_DECL: return "STRUCT_DECL";
         case AST_TYPE_DECL: return "TYPE_DECL";
+        case AST_CONST_DECL: return "CONST_DECL";
         case AST_EXTERN_DECL: return "EXTERN_DECL";
         case AST_BLOCK: return "BLOCK";
         case AST_IF: return "IF";

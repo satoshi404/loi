@@ -70,6 +70,26 @@ Type error: 'helper' is local to package 'core' and is not visible here
 The last visibility attribute wins when several are stacked
 (`@attr(local, global)` == `global`).
 
+#### Qualified names
+
+A symbol of another package can be named with the package as a prefix, which
+is how a binding such as `sdl2` is meant to be used:
+
+```loi
+@inc sdl2
+w: sdl2.Window* = sdl2.CreateWindow("hi", sdl2.WINDOWPOS_CENTERED, 0, 640, 480, sdl2.WINDOW_SHOWN);
+```
+
+- `pkg.fn(...)` calls `fn` and is checked like any call (arity, argument types,
+  effects, capabilities). If `fn` belongs to a different package the compiler
+  reports `'fn' is not a member of package 'pkg'`.
+- `pkg.NAME` selects a `::` constant (see below); `pkg.Type` names a type.
+- `std.*` is handled by the runtime and is not checked this way.
+
+Top-level names still share one flat namespace at link time, so two packages
+cannot both define a function with the same name; generated bindings avoid
+clashes by using the C symbol through `@attr(link_name(...))`.
+
 There is no `import` keyword. Every inclusion — loi files, packages, and C
 header checks — is a preprocessor directive introduced by `@` and handled
 before parsing (see [`@inc` / `@cinc`](#inc--cinc-inlines-and-c-header-checks)):
@@ -88,7 +108,7 @@ before parsing (see [`@inc` / `@cinc`](#inc--cinc-inlines-and-c-header-checks)):
 ```
 Type        := BaseType TypeSuffix*
 BaseType    := Primitive
-             | Ident                       // user type
+             | Ident ('.' Ident)?          // user type, optionally package-qualified (`sdl2.Window`)
              | 'fn' '(' TypeList? ')' '->' Type ('!' EffectList)?
              | '(' Type ')'
              | '(' ParamName ':' Type (',' ParamName ':' Type)* ')' '->' Type ('!' EffectList)?
@@ -117,6 +137,8 @@ VarDecl     := Type Ident ('=' Expr)? ';'
              | 'static' Type Ident ('=' Expr)? ';'
              | 'let' Ident ':' Type ('=' Expr)? ';'
 
+ConstDecl   := Ident '::' Literal ';'            // untyped compile-time constant
+
 StructDecl  := 'struct' Ident '{' (Type Ident ';')+ '}'
              | 'union'  Ident '{' (Type Ident ';')+ '}'
              | 'enum'   Ident '{' Ident (',' Ident)* '}'
@@ -126,6 +148,47 @@ TypeDecl    := 'type' Ident '=' Type ';'
 ExternDecl  := 'extern' Type Ident '(' ParamList? ')' ';'
              | 'extern' 'asm' String ';'
 ```
+
+### Constants (`NAME :: literal;`)
+
+```loi
+FLAG_VIDEO :: 0x20;
+BIG        :: 3221225472;     // past INT32_MAX
+NEG        :: -5;
+TITLE      :: "loi";
+```
+
+A `::` constant is a number, character or string literal (optionally negated)
+with **no fixed type**: every use is replaced by the literal during type
+checking, so it is free at run time and adapts to its context. `pkg.NAME`
+selects the constant of a package. Generated bindings use them for C `#define`s
+and `enum` members.
+
+### Literal adaptation
+
+A numeric literal (or a `::` constant, or arithmetic on them) converts to the
+numeric type the context asks for: in a declaration (`unsigned int f = 32;`),
+an assignment, a call argument, or against the other operand of a binary
+operator (`flags | FLAG_VIDEO`). Only literals adapt. Two *typed* operands of
+different types — `int` and `unsigned int`, say — are still a type error, and
+a float literal never narrows to an integer.
+
+### Unions
+
+`union` members all start at offset 0. The union is as large and as aligned as
+its biggest member, `@offsetof(U, member)` is `0`, and writing one member then
+reading another reinterprets the same bytes:
+
+```loi
+union Event { unsigned int kind; KeyEv key; MouseEv mouse; char[56] pad; }
+ev.key.sym = 27;
+```
+
+### Field access
+
+`a.b.c`, `p.b` / `p->b` through a pointer to a struct (to any depth), `a.arr[i]`
+for an array field, and `&a.b` all work as expressions and as assignment
+targets (including `+=` and friends). The type of a field is its declared type.
 
 ## Functions
 
@@ -727,6 +790,12 @@ main = () -> int !IO
   `LOI_PATH`.
 - `@inc name` (no path) looks for `name.loi` in those search paths, enabling
   lightweight package use.
+- `thirdparty/` holds bindings to external C libraries. After `./lib`, a bare
+  name is also tried as `./thirdparty/name/name.loi` and
+  `./thirdparty/name.loi` (so `@inc sdl2` finds `thirdparty/sdl2/sdl2.loi`),
+  then under `/usr/share/loi/thirdparty`, `/usr/local/share/loi/thirdparty` and
+  `$LOI_PATH/thirdparty`. `lib/` is the language runtime and always wins.
+  See [`bindings.md`](bindings.md).
 - `@cinc <...>` searches `.`, `/usr/include`, `/usr/local/include`, and
   `/usr/include/x86_64-linux-gnu`; since C preprocessor ABI is not modeled, a
   trace marker (`/* @cinc: … */`) is emitted instead of inlining, and the

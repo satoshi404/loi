@@ -1,0 +1,12 @@
+@package(cap_leak_fail)
+/* a Window proof that is never handed to the destroying call is a leak */
+@capability(Gfx, Window)
+claim = (g: @cap(borrow Gfx)): @cap(Window) { @grant(Window) p; return p; }
+
+main = (): int
+{
+    @grant(Gfx) g;
+    @cap(Window) w = claim();
+    @drop(g);
+    return 0;      /* error: `w` is never consumed */
+}

@@ -1,0 +1,34 @@
+@package(union_fields)
+/* union members overlap; fields chain through values, pointers and arrays */
+struct Key   { int sym; int mod; }
+struct KeyEv { unsigned int kind; Key key; }
+struct Mouse { unsigned int kind; int x; int y; }
+union  Ev    { unsigned int kind; KeyEv key; Mouse mouse; char[64] pad; }
+
+struct Grid { int[4] cells; int n; }
+
+bump = (g: Grid*): void { g.cells[1] += 2; g.n += 1; }
+
+kind_of = (e: Ev*): int { return e.kind; }
+
+main = (): int
+{
+    if (@sizeof(Ev) != 64) { return 1; }               /* the largest member */
+    if (@offsetof(Ev, mouse) != 0) { return 2; }       /* members start at 0 */
+
+    e: Ev;
+    e.key.kind = 3;
+    e.key.key.sym = 27;
+    e.key.key.mod = 4;
+    if (e.mouse.kind != 3) { return 3; }               /* same storage as key.kind */
+    if (e.key.key.sym != 27) { return 4; }             /* chained fields */
+    if (kind_of(&e) != 3) { return 5; }                /* through a pointer parameter */
+
+    g: Grid;
+    g.cells[1] = 40;
+    g.n = 0;
+    bump(&g);
+    if (g.cells[1] != 42) { return 6; }                /* array field through a pointer */
+    if (g.n != 1) { return 7; }
+    return 42;
+}

@@ -297,13 +297,17 @@ static void cap_validate_type(Type *t, const char *ctx) {
 
 /* ---- type alias registry (`type X = ...`) ---- */
 typedef struct { char *name; Type *type; } AliasEnt;
-static AliasEnt g_aliases[128];
-static int g_nalias = 0;
+static AliasEnt *g_aliases = NULL;
+static int g_nalias = 0, g_alias_cap = 0;
 
 static void alias_add(const char *name, Type *t) {
-    if (!name || !t || g_nalias >= 128) return;
+    if (!name || !t) return;
     for (int i = 0; i < g_nalias; i++) {
         if (strcmp(g_aliases[i].name, name) == 0) { g_aliases[i].type = t; return; }
+    }
+    if (g_nalias == g_alias_cap) {
+        g_alias_cap = g_alias_cap ? g_alias_cap * 2 : 128;
+        g_aliases = realloc(g_aliases, (size_t)g_alias_cap * sizeof(AliasEnt));
     }
     g_aliases[g_nalias].name = strdup(name);
     g_aliases[g_nalias].type = t;
@@ -384,9 +388,24 @@ static Type *resolve_type(Type *t) {
 /* type representation checks: aliases resolved, compound types compared
    structurally. Effects are deliberately not part of equality — they are
    checked separately at call sites and assignments. */
+static int lit_fits(Type *want, ASTNode *e);
 static int type_equal(Type *a, Type *b) {
     if (!a || !b) return 1; /* unknown allowed */
     a = resolve_type(a); b = resolve_type(b);
+    /* the untyped `ptr` and `void*` convert to and from any pointer, as in C */
+    if (a->kind == TY_POINTER || b->kind == TY_POINTER) {
+        Type *pa = a->kind == TY_POINTER ? a : b;
+        Type *po = pa == a ? b : a;
+        int po_is_raw = (po->kind == TY_PRIMITIVE && po->name && strcmp(po->name, "ptr") == 0);
+        Type *vb = pa->base ? resolve_type(pa->base) : NULL;
+        int pa_is_void = (vb && vb->kind == TY_PRIMITIVE && vb->name && strcmp(vb->name, "void") == 0);
+        if (po_is_raw) return 1;
+        if (po->kind == TY_POINTER) {
+            Type *ob = po->base ? resolve_type(po->base) : NULL;
+            int po_is_void = (ob && ob->kind == TY_PRIMITIVE && ob->name && strcmp(ob->name, "void") == 0);
+            if (pa_is_void || po_is_void) return 1;
+        }
+    }
     if (a->kind != b->kind) return 0;
     if (a->kind == TY_FUNCTION) {
         if (a->param_count != b->param_count) return 0;
@@ -675,7 +694,7 @@ static void check_call_args(const char *what, size_t argc, ASTNode **argv,
             cap_arg_check(i, what, argv[i], ptypes[i]);
             continue;
         }
-        if (ats[i] && ptypes[i] && !type_equal(ats[i], ptypes[i])) {
+        if (ats[i] && ptypes[i] && !type_equal(ats[i], ptypes[i]) && !lit_fits(ptypes[i], argv[i])) {
             char eb[96], ab[96];
             type_name(ptypes[i], eb, sizeof(eb));
             type_name(ats[i], ab, sizeof(ats[i]) == 0 ? 0 : sizeof(ab));
@@ -723,9 +742,61 @@ static void infer_cap_args(ASTNode *call, size_t pcount, Type **ptypes) {
     }
 }
 
+static int is_float_lexeme(const char *lex) {
+    if (!lex) return 0;
+    if (lex[0] == '0' && (lex[1] == 'x' || lex[1] == 'X' || lex[1] == 'b' || lex[1] == 'B')) return 0;
+    return strchr(lex, '.') || strchr(lex, 'e') || strchr(lex, 'E');
+}
+
+/* ---- literal adaptation ------------------------------------------------
+   A numeric literal (or an untyped `::` constant, which becomes one) has no
+   fixed width: it converts to whichever numeric type the context wants, the
+   way `unsigned int flags = 32;` or `ev.kind == QUIT` read naturally. Only
+   literals adapt; two typed operands of different types still mismatch. */
+static int is_lit_expr(ASTNode *e, int *is_float) {
+    if (!e) return 0;
+    switch (e->type) {
+        case AST_EXPR_NUMBER:
+            if (is_float_lexeme(e->str_value)) { *is_float = 1; }
+            return 1;
+        case AST_EXPR_CHAR: return 1;
+        case AST_EXPR_UNARY:
+            if (e->op_token == TOK_MINUS || e->op_token == TOK_PLUS || e->op_token == TOK_TILDE)
+                return is_lit_expr(e->left, is_float);
+            return 0;
+        case AST_EXPR_BINARY:
+            if (e->op_token == TOK_PLUS || e->op_token == TOK_MINUS || e->op_token == TOK_STAR ||
+                e->op_token == TOK_SLASH || e->op_token == TOK_PERCENT || e->op_token == TOK_PIPE ||
+                e->op_token == TOK_AMP || e->op_token == TOK_CARET || e->op_token == TOK_LSHIFT ||
+                e->op_token == TOK_RSHIFT)
+                return is_lit_expr(e->left, is_float) && is_lit_expr(e->right, is_float);
+            return 0;
+        default: return 0;
+    }
+}
+
+static int numeric_prim_kind(Type *t) {   /* 1 = integer-like, 2 = floating, 0 = other */
+    t = resolve_type(t);
+    if (!t || t->kind != TY_PRIMITIVE || !t->name) return 0;
+    const char *n = t->name;
+    if (!strcmp(n, "float") || !strcmp(n, "double")) return 2;
+    if (!strcmp(n, "int") || !strcmp(n, "long") || !strcmp(n, "short") || !strcmp(n, "char") ||
+        !strcmp(n, "byte") || !strncmp(n, "unsigned", 8) || !strncmp(n, "signed", 6)) return 1;
+    return 0;
+}
+
+static int lit_fits(Type *want, ASTNode *e) {
+    int is_float = 0;
+    if (!is_lit_expr(e, &is_float)) return 0;
+    int k = numeric_prim_kind(want);
+    if (k == 0) return 0;
+    if (is_float && k == 1) return 0;     /* a float literal never narrows to an integer */
+    return 1;
+}
+
 static Type *number_type(const char *lex) {
     if (!lex) return NULL;
-    if (strchr(lex, '.') || strchr(lex, 'e') || strchr(lex, 'E')) {
+    if (is_float_lexeme(lex)) {
         Type *t = type_new(TY_PRIMITIVE); t->name = strdup("double"); return t;
     }
     Type *t = type_new(TY_PRIMITIVE); t->name = strdup("int"); return t;
@@ -778,6 +849,13 @@ static Type *type_of_expr(ASTNode *e) {
         }
         case AST_EXPR_UNARY: {
             if (e->op_token == TOK_AMP) {
+                Type *ot = type_of_expr(e->left);
+                if (ot && (e->left->type == AST_EXPR_IDENT || e->left->type == AST_EXPR_FIELD)) {
+                    Type *pt = type_new(TY_POINTER);
+                    pt->base = ot;
+                    pt->name = ot->name ? strdup(ot->name) : NULL;
+                    return pt;
+                }
                 Type *t = type_new(TY_PRIMITIVE); t->name = strdup("ptr"); return t;
             }
             if (e->op_token == TOK_STAR) {
@@ -793,7 +871,7 @@ static Type *type_of_expr(ASTNode *e) {
                 e->op_token == TOK_STAREQ || e->op_token == TOK_SLASHEQ || e->op_token == TOK_PERCENTEQ) {
                 Type *lt = type_of_expr(e->left);
                 Type *rt = type_of_expr(e->right);
-                if (lt && rt && !type_equal(lt, rt)) {
+                if (lt && rt && !type_equal(lt, rt) && !lit_fits(lt, e->right)) {
                     char lb[96], rb[96];
                     type_name(lt, lb, sizeof(lb));
                     type_name(rt, rb, sizeof(rb));
@@ -814,6 +892,8 @@ static Type *type_of_expr(ASTNode *e) {
                 return b;
             }
             if (lt && rt && !type_equal(lt, rt)) {
+                if (lit_fits(rt, e->left)) return rt;     /* literal adapts to the other side */
+                if (lit_fits(lt, e->right)) return lt;
                 char lb[96], rb[96];
                 type_name(lt, lb, sizeof(lb));
                 type_name(rt, rb, sizeof(rb));
@@ -836,32 +916,50 @@ static Type *type_of_expr(ASTNode *e) {
 
         case AST_EXPR_CALL: {
             const char *name = (e->left && e->left->type == AST_EXPR_IDENT) ? e->left->name : NULL;
+            const char *qual = NULL;   /* `pkg.fn(...)`: the package qualifier */
+            if (!name && e->left && e->left->type == AST_EXPR_FIELD && e->left->name &&
+                e->left->left && e->left->left->type == AST_EXPR_IDENT && e->left->left->name &&
+                !scope_lookup(e->left->left->name) && strcmp(e->left->left->name, "std") != 0) {
+                name = e->left->name;
+                qual = e->left->left->name;
+            }
             FuncInfo *finfo = NULL;
             for (size_t i = 0; i < func_count; i++) {
                 if (name && strcmp(funcs[i].name, name) == 0) { finfo = &funcs[i]; break; }
+            }
+            if (finfo && qual && finfo->node && finfo->node->package &&
+                strcmp(finfo->node->package, qual) != 0) {
+                add_error("'%s' is not a member of package '%s' (it belongs to '%s')",
+                          name, qual, finfo->node->package);
             }
             if (finfo) {
                 char what[160];
                 snprintf(what, sizeof(what), "call to '%s'", name);
                 infer_cap_args(e, finfo->param_count, finfo->param_types);
+                /* Effects and @needs are judged with the capabilities that are live
+                   *before* this call: an owned capability handed to the callee is
+                   consumed by check_call_args below, and a call such as
+                   `stop_gfx(gfx)` (!Gfx) is still covered by the `gfx` it consumes. */
+                int fx_ok = !(finfo->effects && !effects_cover(current_function_effects, finfo->effects)
+                              && !cap_live_covers(finfo->effects));
+                int needs_ok = !(finfo->node && finfo->node->needs && !needs_satisfied(finfo->node->needs));
                 check_call_args(what, e->arg_count, e->args, finfo->param_count, finfo->param_types);
                 if (!symvis_visible(name)) {
                     add_error("'%s' is local to package '%s' and is not visible here",
                               name, symvis_pkg(name));
                 }
-                if (finfo->effects && !effects_cover(current_function_effects, finfo->effects)
-                    && !cap_live_covers(finfo->effects)) {
+                if (!fx_ok) {
                     add_error("call to '%s' requires effect(s) '%s', not declared by '%s'",
                               name, finfo->effects, enclosing_name());
                 }
-                if (finfo->node && finfo->node->needs && !needs_satisfied(finfo->node->needs)) {
+                if (!needs_ok) {
                     add_error("call to '%s' @needs('%s'), which is not provided by '%s'",
                               name, finfo->node->needs, enclosing_name());
                 }
                 return finfo->return_type;
             }
             /* indirect call through a function-pointer value */
-            if (name) {
+            if (name && !qual) {
                 Type *ft = resolve_type(scope_lookup(name));
                 if (ft && ft->kind == TY_FUNCTION) {
                     char what[160];
@@ -891,8 +989,17 @@ static Type *type_of_expr(ASTNode *e) {
         }
         case AST_EXPR_FIELD: {
             Type *lt = type_of_expr(e->left);
-            if (lt && lt->kind == TY_NAMED && lt->name) {
-                ASTNode *sd = type_registry_find(lt->name);
+            /* the struct behind the base: a struct value or (for `p.f` / `p->f`) a pointer to one */
+            const char *sname = NULL;
+            Type *st = lt ? resolve_type(lt) : NULL;
+            if (st && st->kind == TY_POINTER) {
+                Type *pb = st->base ? resolve_type(st->base) : NULL;
+                sname = (pb && pb->name) ? pb->name : st->name;
+            } else if (st && (st->kind == TY_NAMED || st->kind == TY_PRIMITIVE)) {
+                sname = st->name;
+            }
+            if (sname) {
+                ASTNode *sd = type_registry_find(sname);
                 if (sd && sd->items) {
                     for (size_t i = 0; i < sd->item_count; i++) {
                         ASTNode *f = sd->items[i];
@@ -983,7 +1090,7 @@ static void check_stmt(ASTNode *s) {
             Type *t = s->ty;
             if (s->init) {
                 Type *it = type_of_expr(s->init);
-                if (t && it && !type_equal(t, it)) {
+                if (t && it && !type_equal(t, it) && !lit_fits(t, s->init)) {
                     char tb[96], ib[96];
                     type_name(t, tb, sizeof(tb));
                     type_name(it, ib, sizeof(ib));
@@ -1119,12 +1226,90 @@ static void check_stmt(ASTNode *s) {
     }
 }
 
+/* ---- `NAME :: literal;` constants --------------------------------------
+   Constants are substituted by their literal before any checking happens, so
+   they are zero-cost and adapt to the numeric type of their context (see
+   "literal adaptation" above). `pkg.NAME` selects the constant NAME declared
+   in package `pkg`; a bare `NAME` also works inside the package and for
+   packages whose names are not shadowed by a local. */
+typedef struct { const char *name; const char *package; ASTNode *init; } ConstEnt;
+static ConstEnt *g_consts = NULL;
+static size_t g_nconsts = 0;
+static const char **g_pkgnames = NULL;
+static size_t g_npkgs = 0;
+
+static ASTNode *clone_lit(ASTNode *e, int line, int col) {
+    ASTNode *n = ast_new(e->type, line, col);
+    n->op_token = e->op_token;
+    if (e->str_value) n->str_value = strdup(e->str_value);
+    if (e->left) n->left = clone_lit(e->left, line, col);
+    return n;
+}
+
+static ConstEnt *const_find(const char *name, const char *pkg) {
+    ConstEnt *any = NULL;
+    for (size_t i = 0; i < g_nconsts; i++) {
+        if (strcmp(g_consts[i].name, name) != 0) continue;
+        if (pkg && g_consts[i].package && strcmp(g_consts[i].package, pkg) == 0) return &g_consts[i];
+        if (!pkg && !any) any = &g_consts[i];
+    }
+    return any;
+}
+
+static int is_pkg_name(const char *name) {
+    for (size_t i = 0; i < g_npkgs; i++) if (strcmp(g_pkgnames[i], name) == 0) return 1;
+    return 0;
+}
+
+static void consts_walk(ASTNode **slot) {
+    ASTNode *n = *slot;
+    if (!n) return;
+    if (n->type == AST_EXPR_IDENT && n->name) {
+        ConstEnt *c = const_find(n->name, NULL);
+        if (c) { *slot = clone_lit(c->init, n->line, n->column); ast_free(n); return; }
+    } else if (n->type == AST_EXPR_FIELD && n->name && n->left &&
+               n->left->type == AST_EXPR_IDENT && n->left->name && is_pkg_name(n->left->name)) {
+        ConstEnt *c = const_find(n->name, n->left->name);
+        if (c) { *slot = clone_lit(c->init, n->line, n->column); ast_free(n); return; }
+    }
+    if (n->type == AST_CONST_DECL) return;
+    consts_walk(&n->left); consts_walk(&n->right); consts_walk(&n->cond);
+    consts_walk(&n->then_branch); consts_walk(&n->else_branch); consts_walk(&n->body);
+    consts_walk(&n->step); consts_walk(&n->update); consts_walk(&n->init);
+    consts_walk(&n->init_stmt); consts_walk(&n->cond_expr);
+    for (size_t i = 0; i < n->arg_count; i++) consts_walk(&n->args[i]);
+    for (size_t i = 0; i < n->item_count; i++) consts_walk(&n->items[i]);
+}
+
+static void consts_resolve(ASTNode *prog) {
+    free(g_consts); g_consts = NULL; g_nconsts = 0;
+    free(g_pkgnames); g_pkgnames = NULL; g_npkgs = 0;
+    size_t n = 0;
+    for (size_t i = 0; i < prog->item_count; i++) if (prog->items[i]) n++;
+    g_consts = calloc(n ? n : 1, sizeof(ConstEnt));
+    g_pkgnames = calloc(n ? n : 1, sizeof(char *));
+    for (size_t i = 0; i < prog->item_count; i++) {
+        ASTNode *d = prog->items[i];
+        if (!d) continue;
+        if (d->type == AST_PACKAGE && d->name) g_pkgnames[g_npkgs++] = d->name;
+        if (d->type == AST_CONST_DECL && d->name && d->init) {
+            g_consts[g_nconsts].name = d->name;
+            g_consts[g_nconsts].package = d->package;
+            g_consts[g_nconsts].init = d->init;
+            g_nconsts++;
+        }
+    }
+    if (g_nconsts == 0) return;
+    for (size_t i = 0; i < prog->item_count; i++) consts_walk(&prog->items[i]);
+}
+
 int typecheck_program(ASTNode *prog) {
     errors = 0;
     warnings = 0;
     alias_clear();
     free(g_capkinds); g_capkinds = NULL;
     if (!prog) return 0;
+    consts_resolve(prog);
     /* register type aliases so they resolve in every later pass */
     for (size_t i = 0; i < prog->item_count; i++) {
         ASTNode *d = prog->items[i];
@@ -1135,9 +1320,14 @@ int typecheck_program(ASTNode *prog) {
         ASTNode *d = prog->items[i];
         if (d && d->type == AST_CAP_DECL) capkind_add(d->caps);
     }
-    /* register functions */
+    /* register functions, and structs so field lookups work wherever they are declared */
+    type_registry_clear();
     for (size_t i = 0; i < prog->item_count; i++) {
-        if (prog->items[i] && prog->items[i]->type == AST_FUNC_DECL) register_func(prog->items[i]);
+        ASTNode *d = prog->items[i];
+        if (d && d->type == AST_FUNC_DECL) register_func(d);
+        /* `extern` prototypes are checked at call sites too (arity, argument types) */
+        if (d && d->type == AST_EXTERN_DECL && d->name) register_func(d);
+        if (d && d->type == AST_STRUCT_DECL && d->name) type_registry_add(d->name, d);
     }
     /* register top-level symbols with their package + visibility */
     symvis_clear();
@@ -1158,7 +1348,7 @@ int typecheck_program(ASTNode *prog) {
             /* global var */
             if (d->init) {
                 Type *it = type_of_expr(d->init);
-                if (d->ty && it && !type_equal(d->ty, it)) {
+                if (d->ty && it && !type_equal(d->ty, it) && !lit_fits(d->ty, d->init)) {
                     char tb[96], ib[96];
                     type_name(d->ty, tb, sizeof(tb));
                     type_name(it, ib, sizeof(ib));
@@ -1204,8 +1394,6 @@ int typecheck_program(ASTNode *prog) {
             current_function_return_type = saved_ret;
             current_function_name = saved_name;
             scope_pop();
-        } else if (d->type == AST_STRUCT_DECL) {
-            if (d->name) type_registry_add(d->name, d);
         }
     }
     scope_pop();

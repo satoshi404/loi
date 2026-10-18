@@ -10,6 +10,7 @@ typedef enum {
     AST_FUNC_DECL,
     AST_STRUCT_DECL,
     AST_TYPE_DECL,
+    AST_CONST_DECL, /* NAME :: literal;  untyped compile-time constant */
     AST_EXTERN_DECL,
     AST_BLOCK,
     AST_IF,

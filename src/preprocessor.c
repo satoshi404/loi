@@ -25,7 +25,7 @@
 #define MAX_INLINE_LEN    4096   /* a single directive line / meta argument  */
 #define MAX_BLOCK_LEN     8192   /* @repeat/@for body text                   */
 #define MAX_LIST_PARTS    4      /* @for(a,b,c,d) parts                      */
-#define MAX_INCLUDE_CAND  12     /* candidate paths tried by @inc/@cinc      */
+#define MAX_INCLUDE_CAND  24     /* candidate paths tried by @inc/@cinc      */
 #define MAX_PART_LEN      256    /* one @for/@repeat(...) argument           */
 #define MAX_NUM_LEN       32     /* a formatted integer                      */
 #ifndef PATH_MAX
@@ -318,14 +318,28 @@ static char *locate_include(const char *base_dir, const char *path, int c_header
         snprintf(cands[n++], MAX_PATH, "/usr/local/include/%s", path);
         snprintf(cands[n++], MAX_PATH, "/usr/include/x86_64-linux-gnu/%s", path);
     } else {
+        /* `lib/` is the language runtime and always wins; `thirdparty/` holds
+           bindings to external C libraries (`@inc sdl2` ->
+           thirdparty/sdl2/sdl2.loi, then thirdparty/sdl2.loi). */
+        const char *base = strrchr(path, '/');
+        base = base ? base + 1 : path;
         snprintf(cands[n++], MAX_PATH, "./lib/%s", path);
         snprintf(cands[n++], MAX_PATH, "./lib/%s.loi", path);
+        snprintf(cands[n++], MAX_PATH, "./thirdparty/%s/%s.loi", path, base);
+        snprintf(cands[n++], MAX_PATH, "./thirdparty/%s.loi", path);
+        snprintf(cands[n++], MAX_PATH, "./thirdparty/%s", path);
         snprintf(cands[n++], MAX_PATH, "./packages/%s", path);
         snprintf(cands[n++], MAX_PATH, "./packages/%s.loi", path);
         snprintf(cands[n++], MAX_PATH, "/usr/share/loi/%s.loi", path);
         snprintf(cands[n++], MAX_PATH, "/usr/local/share/loi/%s.loi", path);
+        snprintf(cands[n++], MAX_PATH, "/usr/share/loi/thirdparty/%s/%s.loi", path, base);
+        snprintf(cands[n++], MAX_PATH, "/usr/local/share/loi/thirdparty/%s/%s.loi", path, base);
         const char *env = getenv("LOI_PATH");
-        if (env && *env) snprintf(cands[n++], MAX_PATH, "%s/%s.loi", env, path);
+        if (env && *env) {
+            snprintf(cands[n++], MAX_PATH, "%s/%s.loi", env, path);
+            snprintf(cands[n++], MAX_PATH, "%s/thirdparty/%s/%s.loi", env, path, base);
+            snprintf(cands[n++], MAX_PATH, "%s/thirdparty/%s.loi", env, path);
+        }
     }
     for (int i = 0; i < n; i++) {
         char *content = read_text_file(cands[i]);
@@ -430,6 +444,10 @@ static char *expand_includes(const char *src, const char *base_dir, int depth) {
                 if (!content) {
                     fprintf(stderr, "error: line %zu: cannot find included file \"%s\"\n",
                             line_of(src, p), path);
+                    if (kind != 2 && !strchr(path, '.') && !strchr(path, '/'))
+                        fprintf(stderr, "hint: a C library binding goes in thirdparty/%s/%s.loi; "
+                                        "create it with: loi --mode=generator gen.h --out=thirdparty/%s/%s.loi\n",
+                                path, path, path, path);
                     exit(1);
                 }
                 if (kind == 2) {

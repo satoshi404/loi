@@ -12,10 +12,12 @@ typedef struct {
     char **field_types;
     int align;
     int packed;
+    int is_union;        /* all fields overlap at offset 0 */
+    Type **field_asty;   /* declared (loi) type of each field, for chained access */
 } StructInfo;
 
-static StructInfo struct_infos[64];
-static int struct_info_count = 0;
+static StructInfo *struct_infos = NULL;   /* grown on demand: bindings declare hundreds */
+static int struct_info_count = 0, struct_info_cap = 0;
 
 static StructInfo *find_struct(const char *name) {
     for (int i = 0; i < struct_info_count; i++) {
@@ -26,8 +28,8 @@ static StructInfo *find_struct(const char *name) {
 
 /* type aliases (`type X = ...`) — borrowed from the AST, which outlives codegen */
 typedef struct { char *name; Type *ty; } AliasInfo;
-static AliasInfo cg_aliases[64];
-static int cg_alias_count = 0;
+static AliasInfo *cg_aliases = NULL;
+static int cg_alias_count = 0, cg_alias_cap = 0;
 
 static Type *cg_resolve_type(Type *t) {
     for (int i = 0; i < 16 && t && t->name &&
@@ -368,6 +370,72 @@ static char *char_to_int(const char *lex) {
     return strdup("0");
 }
 
+/* ---------- lvalue addresses: variables, fields, chains, pointers, arrays ----------
+   Computes the address of `e` for expressions built from variables,
+   `.field` / `->field` (through struct values *and* struct pointers, to any
+   depth) and `[index]` on arrays. On success returns the pointer operand and
+   sets *ty to the LLVM type stored there and *asty to its declared type
+   (possibly NULL). A union member lives at offset 0 of the union, so its
+   address is the union's own address. Returns NULL when `e` is not of that
+   shape (the caller then falls back to the older, narrower paths). */
+static char *lvalue_addr(CG *cg, ASTNode *e, char **ty, Type **asty) {
+    if (!e) return NULL;
+    if (e->type == AST_EXPR_IDENT) {
+        CGVar *v = find_var(cg, e->name);
+        if (!v) return NULL;
+        *ty = v->type;
+        *asty = v->asty;
+        return strdup(v->ir);
+    }
+    if (e->type == AST_EXPR_FIELD && e->name) {
+        char *bty = NULL;
+        Type *bas = NULL;
+        char *baddr = lvalue_addr(cg, e->left, &bty, &bas);
+        if (!baddr) return NULL;
+        Type *rb = bas ? cg_resolve_type(bas) : NULL;
+        const char *sname = NULL;
+        if (rb && rb->kind == TY_POINTER) {
+            /* p->field: the variable holds the pointer; load it first */
+            char *ld = new_tmp(cg);
+            fprintf(cg->out, "  %s = load ptr, ptr %s\n", ld, baddr);
+            baddr = ld;
+            Type *pb = rb->base ? cg_resolve_type(rb->base) : NULL;
+            sname = (pb && pb->name) ? pb->name : rb->name;
+        } else if (rb) {
+            sname = rb->name;
+        }
+        StructInfo *si = sname ? find_struct(sname) : NULL;
+        if (!si) return NULL;
+        int idx = -1;
+        for (int i = 0; i < si->field_count; i++)
+            if (strcmp(si->field_names[i], e->name) == 0) { idx = i; break; }
+        if (idx < 0) return NULL;
+        *ty = si->field_types[idx];
+        *asty = si->field_asty ? si->field_asty[idx] : NULL;
+        if (si->is_union) return baddr;
+        char *gep = new_tmp(cg);
+        fprintf(cg->out, "  %s = getelementptr inbounds %%struct.%s, ptr %s, i32 0, i32 %d\n",
+                gep, si->name, baddr, idx);
+        return gep;
+    }
+    if (e->type == AST_EXPR_INDEX) {
+        char *bty = NULL;
+        Type *bas = NULL;
+        char *baddr = lvalue_addr(cg, e->left, &bty, &bas);
+        Type *rb = bas ? cg_resolve_type(bas) : NULL;
+        if (!baddr || !rb || rb->kind != TY_ARRAY || !rb->base) return NULL;
+        char *it = NULL;
+        char *iv = codegen_expr(cg, e->right, &it);
+        char *idx = cast_value(cg, iv, it ? it : "i32", "i32");
+        char *gep = new_tmp(cg);
+        fprintf(cg->out, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %s\n", gep, bty, baddr, idx);
+        *ty = llvm_type(rb->base);
+        *asty = rb->base;
+        return gep;
+    }
+    return NULL;
+}
+
 static char *codegen_expr(CG *cg, ASTNode *e, char **out_type) {
     if (!e) { if (out_type) *out_type = strdup("i32"); return strdup("0"); }
     if (e->type == AST_EXPR_SIZEOF) {
@@ -398,9 +466,16 @@ static char *codegen_expr(CG *cg, ASTNode *e, char **out_type) {
             if (out_type) *out_type = strdup("double");
             return strdup(lex);
         } else {
-            if (out_type) *out_type = strdup("i32");
-            /* normalize hex/binary? LLVM supports 0xFF? yes hex integer literal with 0x */
-            return strdup(lex);
+            /* Integer literals are written to the IR in decimal (LLVM has no 0x
+               integer syntax). Values past INT32_MAX widen to i64 so large
+               constants such as 0xC0000000 keep their value. */
+            unsigned long long v;
+            if (lex[0] == '0' && (lex[1] == 'b' || lex[1] == 'B')) v = strtoull(lex + 2, NULL, 2);
+            else v = strtoull(lex, NULL, 0);
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%llu", v);
+            if (out_type) *out_type = strdup(v > 2147483647ULL ? "i64" : "i32");
+            return strdup(buf);
         }
     }
     if (e->type == AST_EXPR_CHAR) {
@@ -480,6 +555,15 @@ static char *codegen_expr(CG *cg, ASTNode *e, char **out_type) {
                     return strdup(v->ir);
                 }
             }
+            if (e->left && (e->left->type == AST_EXPR_FIELD || e->left->type == AST_EXPR_INDEX)) {
+                char *aty = NULL;
+                Type *aas = NULL;
+                char *addr = lvalue_addr(cg, e->left, &aty, &aas);
+                if (addr) {
+                    if (out_type) *out_type = strdup("ptr");
+                    return addr;
+                }
+            }
             if (out_type) *out_type = strdup("ptr");
             return strdup("null");
         }
@@ -526,6 +610,40 @@ static char *codegen_expr(CG *cg, ASTNode *e, char **out_type) {
             fprintf(cg->out, "  store %s %s, ptr %s\n", base_type, cv, gep);
             if (out_type) *out_type = strdup(base_type);
             return cv ? cv : strdup("0");
+        }
+        if (is_assign_op_cg(op) && e->left &&
+            (e->left->type == AST_EXPR_FIELD ||
+             (e->left->type == AST_EXPR_INDEX && e->left->left && e->left->left->type != AST_EXPR_IDENT))) {
+            char *fty = NULL;
+            Type *fas = NULL;
+            char *addr = lvalue_addr(cg, e->left, &fty, &fas);
+            if (addr && fty[0] != '[' && fty[0] != '%') {
+                char *rt = NULL;
+                char *rv = codegen_expr(cg, e->right, &rt);
+                char *cv = cast_value(cg, rv, rt ? rt : "i32", fty);
+                if (op != TOK_ASSIGN) {
+                    char *cur = new_tmp(cg);
+                    fprintf(cg->out, "  %s = load %s, ptr %s\n", cur, fty, addr);
+                    int fl = is_float_type(fty);
+                    const char *ins = "add";
+                    if (op == TOK_MINUSEQ) ins = fl ? "fsub" : "sub";
+                    else if (op == TOK_STAREQ) ins = fl ? "fmul" : "mul";
+                    else if (op == TOK_SLASHEQ) ins = fl ? "fdiv" : "sdiv";
+                    else if (op == TOK_PERCENTEQ) ins = "srem";
+                    else if (op == TOK_AMPEQ) ins = "and";
+                    else if (op == TOK_PIPEEQ) ins = "or";
+                    else if (op == TOK_CARETEQ) ins = "xor";
+                    else if (op == TOK_LSHIFTEQ) ins = "shl";
+                    else if (op == TOK_RSHIFTEQ) ins = "ashr";
+                    else ins = fl ? "fadd" : "add";
+                    char *res = new_tmp(cg);
+                    fprintf(cg->out, "  %s = %s %s %s, %s\n", res, ins, fty, cur, cv);
+                    cv = res;
+                }
+                fprintf(cg->out, "  store %s %s, ptr %s\n", fty, cv, addr);
+                if (out_type) *out_type = strdup(fty);
+                return cv;
+            }
         }
         if (is_assign_op_cg(op) && e->left && e->left->type == AST_EXPR_FIELD &&
             e->left->left && e->left->left->type == AST_EXPR_IDENT) {
@@ -834,6 +952,17 @@ static char *codegen_expr(CG *cg, ASTNode *e, char **out_type) {
         if (out_type) *out_type = strdup(f->retty);
         return (strcmp(f->retty, "void")==0) ? strdup("0") : r;
     }
+    if (e->type == AST_EXPR_INDEX && e->left && e->left->type != AST_EXPR_IDENT) {
+        char *ety = NULL;
+        Type *eas = NULL;
+        char *addr = lvalue_addr(cg, e, &ety, &eas);
+        if (addr) {
+            char *ld = new_tmp(cg);
+            fprintf(cg->out, "  %s = load %s, ptr %s\n", ld, ety, addr);
+            if (out_type) *out_type = strdup(ety);
+            return ld;
+        }
+    }
     if (e->type == AST_EXPR_INDEX) {
         if (e->left && e->left->type == AST_EXPR_IDENT) {
             CGVar *v = find_var(cg, e->left->name);
@@ -853,6 +982,21 @@ static char *codegen_expr(CG *cg, ASTNode *e, char **out_type) {
         char *bt; codegen_expr(cg, e->left, &bt);
         if (out_type) *out_type = strdup("i32");
         return strdup("0");
+    }
+    if (e->type == AST_EXPR_FIELD) {
+        char *fty = NULL;
+        Type *fas = NULL;
+        char *addr = lvalue_addr(cg, e, &fty, &fas);
+        if (addr) {
+            if (fty[0] == '[') {              /* an array field decays to a pointer to it */
+                if (out_type) *out_type = strdup("ptr");
+                return addr;
+            }
+            char *ld = new_tmp(cg);
+            fprintf(cg->out, "  %s = load %s, ptr %s\n", ld, fty, addr);
+            if (out_type) *out_type = strdup(fty);
+            return ld;
+        }
     }
     if (e->type == AST_EXPR_FIELD && e->left && e->left->type == AST_EXPR_IDENT) {
         CGVar *v = find_var(cg, e->left->name);
@@ -1587,7 +1731,11 @@ void codegen_program(ASTNode *prog, FILE *out) {
     if (prog && prog->items) {
         for (size_t i = 0; i < prog->item_count; i++) {
             ASTNode *d = prog->items[i];
-            if (d && d->type == AST_TYPE_DECL && d->name && d->alias_type && cg_alias_count < 64) {
+            if (d && d->type == AST_TYPE_DECL && d->name && d->alias_type) {
+                if (cg_alias_count == cg_alias_cap) {
+                    cg_alias_cap = cg_alias_cap ? cg_alias_cap * 2 : 128;
+                    cg_aliases = realloc(cg_aliases, (size_t)cg_alias_cap * sizeof(AliasInfo));
+                }
                 cg_aliases[cg_alias_count].name = strdup(d->name);
                 cg_aliases[cg_alias_count].ty = d->alias_type;
                 cg_alias_count++;
@@ -1599,31 +1747,50 @@ void codegen_program(ASTNode *prog, FILE *out) {
         for (size_t i = 0; i < prog->item_count; i++) {
             ASTNode *d = prog->items[i];
             if (d && d->type == AST_STRUCT_DECL && d->name) {
+                if (struct_info_count == struct_info_cap) {
+                    struct_info_cap = struct_info_cap ? struct_info_cap * 2 : 128;
+                    struct_infos = realloc(struct_infos, (size_t)struct_info_cap * sizeof(StructInfo));
+                }
                 StructInfo *si = &struct_infos[struct_info_count++];
+                memset(si, 0, sizeof(*si));
                 si->name = strdup(d->name);
                 si->field_count = (int)d->item_count;
                 si->field_names = xmalloc((d->item_count ? d->item_count : 1) * sizeof(char*));
                 si->field_types = xmalloc((d->item_count ? d->item_count : 1) * sizeof(char*));
+                si->field_asty = xmalloc((d->item_count ? d->item_count : 1) * sizeof(Type*));
                 si->align = d->align;
                 si->packed = d->packed;
+                si->is_union = ast_has_attr(d, "union");
                 for (size_t j = 0; j < d->item_count; j++) {
                     ASTNode *f = d->items[j];
                     if (f && f->packed) si->packed = 1;
                     if (f && f->align > si->align) si->align = f->align;
-                }
-                if (si->packed) fprintf(out, "%%struct.%s = type <{ ", d->name);
-                else fprintf(out, "%%struct.%s = type { ", d->name);
-                for (size_t j = 0; j < d->item_count; j++) {
-                    ASTNode *f = d->items[j];
-                    char *ft = f && f->ty ? llvm_type(f->ty) : strdup("i32");
                     si->field_names[j] = f && f->name ? strdup(f->name) : strdup("field");
-                    si->field_types[j] = ft;
-                    if (j) fprintf(out, ", ");
-                    fprintf(out, "%s", ft);
+                    si->field_types[j] = f && f->ty ? llvm_type(f->ty) : strdup("i32");
+                    si->field_asty[j] = f ? f->ty : NULL;
                 }
-                if (d->item_count == 0) fprintf(out, "i8");
-                if (si->packed) fprintf(out, " }>\n");
-                else fprintf(out, " }\n");
+                if (si->is_union) {
+                    /* A union is one block of storage as large and as aligned as its
+                       biggest member; members are views of it (see lvalue_addr). */
+                    long al = 1;
+                    long sz = struct_size_align(si->name, &al);
+                    if (al < 1) al = 1;
+                    const char *unit = al >= 8 ? "i64" : (al >= 4 ? "i32" : (al >= 2 ? "i16" : "i8"));
+                    long unit_sz = al >= 8 ? 8 : (al >= 4 ? 4 : (al >= 2 ? 2 : 1));
+                    long n = sz / unit_sz;
+                    if (n < 1) n = 1;
+                    fprintf(out, "%%struct.%s = type { [%ld x %s] }\n", d->name, n, unit);
+                } else {
+                    if (si->packed) fprintf(out, "%%struct.%s = type <{ ", d->name);
+                    else fprintf(out, "%%struct.%s = type { ", d->name);
+                    for (size_t j = 0; j < d->item_count; j++) {
+                        if (j) fprintf(out, ", ");
+                        fprintf(out, "%s", si->field_types[j]);
+                    }
+                    if (d->item_count == 0) fprintf(out, "i8");
+                    if (si->packed) fprintf(out, " }>\n");
+                    else fprintf(out, " }\n");
+                }
             }
         }
         if (struct_info_count > 0) fprintf(out, "\n");
@@ -1692,11 +1859,18 @@ static long type_size_llvm(const char *t) {
     if (strcmp(t, "ptr") == 0) return 8;
     if (t[0] == '[') {
         const char *x = strchr(t, 'x');
-        if (x) return atoi(t + 1) * type_size_llvm(x + 1);
+        if (x) {   /* "[N x ELEM]": measure ELEM without the closing bracket */
+            char elem[128];
+            x++; while (*x == ' ') x++;
+            snprintf(elem, sizeof(elem), "%s", x);
+            size_t n = strlen(elem);
+            if (n && elem[n - 1] == ']') elem[n - 1] = 0;
+            return atoi(t + 1) * type_size_llvm(elem);
+        }
         return 0;
     }
     if (t[0] == '%' && strstr(t, "struct.")) {
-        const char *nm = t + 7; /* after "struct." */
+        const char *nm = t + 8; /* after "%struct." */
         long al;
         return struct_size_align(nm, &al);
     }
@@ -1712,8 +1886,20 @@ static long type_align_llvm(const char *t) {
     if (strcmp(t, "ptr") == 0) return 8;
     if (t[0] == '[') {
         const char *x = strchr(t, 'x');
-        if (x) return type_align_llvm(x + 1);
+        if (x) {
+            char elem[128];
+            x++; while (*x == ' ') x++;
+            snprintf(elem, sizeof(elem), "%s", x);
+            size_t n = strlen(elem);
+            if (n && elem[n - 1] == ']') elem[n - 1] = 0;
+            return type_align_llvm(elem);
+        }
         return 4;
+    }
+    if (t[0] == '%' && strstr(t, "struct.")) {
+        long al = 4;
+        struct_size_align(t + 8, &al);   /* after "%struct." */
+        return al;
     }
     return 4;
 }
@@ -1726,8 +1912,12 @@ static long struct_size_align(const char *name, long *align_out) {
         const char *ft = si->field_types[i];
         long al = si->packed ? 1 : type_align_llvm(ft);
         long fs = type_size_llvm(ft);
-        off = (off + al - 1) / al * al;
-        off += fs;
+        if (si->is_union) {            /* members overlap: size is the largest member */
+            if (fs > off) off = fs;
+        } else {
+            off = (off + al - 1) / al * al;
+            off += fs;
+        }
         if (al > maxal) maxal = al;
     }
     /* `@align(n)` raises the struct's alignment (never lowers it), so the
@@ -1741,6 +1931,7 @@ static long struct_size_align(const char *name, long *align_out) {
 static long struct_offset(Type *t, const char *field) {
     StructInfo *si = (t && t->name) ? find_struct(t->name) : NULL;
     if (!si) return 0;
+    if (si->is_union) return 0;
     long off = 0;
     for (int i = 0; i < si->field_count; i++) {
         const char *ft = si->field_types[i];

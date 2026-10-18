@@ -39,6 +39,11 @@ get_expected() {
     tests/54_cap_with_cap.loi) echo 42 ;;
     tests/56_cap_infer.loi) echo 42 ;;
     tests/59_cap_with_stmt.loi) echo 42 ;;
+    tests/61_const_untyped.loi) echo 42 ;;
+    tests/62_union_fields.loi) echo 42 ;;
+    tests/63_thirdparty_inc.loi) echo 42 ;;
+    tests/65_cap_resource_ok.loi) echo 42 ;;
+    tests/68_lib_flag.loi) echo 42 ;;
     *) echo "none" ;;
   esac
 }
@@ -99,6 +104,30 @@ if echo "$mu_used" | grep -q "must_use"; then
   fail=$((fail+1))
 else
   pass=$((pass+1))
+fi
+
+# --lib: flags resolve (pkg-config, NAME-config, -lNAME) and work with every mode.
+total=$((total+1))
+./loi tests/68_lib_flag.loi --lib=c,m --run >/dev/null 2>&1
+if [ $(( $? & 0xFF )) -eq 42 ]; then pass=$((pass+1)); else echo "FAIL (--lib=c,m --run): tests/68_lib_flag.loi"; fail=$((fail+1)); fi
+
+total=$((total+1))
+./loi tests/68_lib_flag.loi --lib='bad;name' --run >/dev/null 2>&1
+if [ $? -ne 0 ]; then pass=$((pass+1)); else echo "FAIL (--lib must reject unsafe names)"; fail=$((fail+1)); fi
+
+total=$((total+1))
+if ./loi tests/68_lib_flag.loi --lib=m --emit=asm 2>/dev/null | grep -q "link with"; then pass=$((pass+1)); else echo "FAIL (--lib with --emit=asm)"; fail=$((fail+1)); fi
+
+# Binding generator: header -> thirdparty/mini/mini.loi -> a program that uses it.
+total=$((total+1))
+bg=/tmp/opencode/bindgen_test
+rm -rf "$bg"; mkdir -p "$bg"
+if ./loi --mode=generator tests/bindgen/mini.h --out="$bg/thirdparty/mini/mini.loi" --strip-prefix=MINI_ >/dev/null 2>&1; then
+  LOI_PATH="$bg" ./loi tests/bindgen/use_mini.loi --run >/dev/null 2>&1
+  rc=$(( $? & 0xFF ))
+  if [ "$rc" -eq 42 ]; then pass=$((pass+1)); else echo "FAIL (rc=$rc, expected=42): tests/bindgen/use_mini.loi"; fail=$((fail+1)); fi
+else
+  echo "FAIL (generator): tests/bindgen/mini.h"; fail=$((fail+1))
 fi
 
 echo "$total tests, $pass passed, $fail failed"

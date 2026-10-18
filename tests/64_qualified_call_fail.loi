@@ -1,0 +1,9 @@
+@package(owner_a)
+helper = (): int { return 1; }
+
+@package(qualified_call_fail)
+/* `owner_a.helper` exists, but `other.helper` names a package that does not own it */
+main = (): int
+{
+    return other.helper();
+}

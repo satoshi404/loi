@@ -1,0 +1,21 @@
+@package(use_mini)
+@inc mini
+/* Uses the binding generated from tests/bindgen/mini.h (see tests/run.sh). */
+main = (): int
+{
+    if (mini.MAGIC != 42) { return 1; }
+    if (mini.FLAGS != 10) { return 2; }                 /* macro expanded by the C preprocessor */
+    if (mini.GREEN != 5) { return 3; }
+    if (mini.BLUE != 6) { return 4; }                   /* enum values continue after an explicit one */
+    p: mini.Point;
+    p.x = 3;
+    p.y = 4;
+    e: mini.Event;
+    e.move.at.y = 7;
+    if (e.move.at.y != 7) { return 5; }                 /* nested struct inside a union */
+    if (@sizeof(mini.Event) != 16) { return 6; }
+    id: mini.Id = 5;
+    if (id != 5) { return 8; }
+    if (mini.abs(-9) != 9) { return 7; }                /* link_name("abs") reaches libc */
+    return 42 + p.x - 3;
+}

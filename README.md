@@ -82,6 +82,8 @@ mkdir -p /tmp/opencode
 ./loi file.loi --emit=asm --out=out.s   # write assembly to a file
 ./loi file.loi --emit=exe --out=prog    # build a native executable
 ./loi file.loi --run            # build and run; propagates the exit code
+./loi file.loi --lib=SDL2 --run # link C libraries (comma separated; see below)
+./loi --mode=generator gen.h --out=thirdparty/sdl2/sdl2.loi   # generate a C binding
 ```
 
 Both `--emit=ir` and `--emit ir` (and likewise `--out=path` / `--out path`)
@@ -117,6 +119,9 @@ All forms start with `@`. There is **no `import` keyword** and no
   file's directory, `./lib`, `./packages`, `/usr/share/loi`,
   `/usr/local/share/loi`, and every entry in `LOI_PATH`. `@inc pkg.sub` maps
   dots to path separators (`pkg/sub`). Recursion is capped at depth 16.
+- **`thirdparty/`** holds bindings to external C libraries (`lib/` stays the
+  language runtime): `@inc sdl2` resolves to `thirdparty/sdl2/sdl2.loi`, then
+  `thirdparty/sdl2.loi`.
 - **Include guards**: each distinct real path is included at most once per
   compilation (like `#pragma once`), so libraries need no manual guards and
   include cycles terminate safely.
@@ -125,6 +130,33 @@ All forms start with `@`. There is **no `import` keyword** and no
   `/usr/include/x86_64-linux-gnu`); the header is *not* inlined. Since C ABIs
   are declared in loi via `extern`, `@cinc` leaves a trace marker in the source.
 - `@inc`/`@cinc` are *not* errors on their own — only an unresolved include is.
+
+## C libraries: `thirdparty/`, `--lib` and the generator
+
+```sh
+# 1. generate a binding from the C headers (once)
+echo '#include <SDL2/SDL.h>' > gen.h
+./loi --mode=generator gen.h --out=thirdparty/sdl2/sdl2.loi
+
+# 2. build and run a program that uses it
+./loi examples/sdl2_window.loi --lib=SDL2 --run
+```
+
+- **`thirdparty/`** — bindings to external C libraries (`lib/` is the
+  language runtime). A binding starts with `@package(name)`; `@inc name` finds
+  it.
+- **`--lib=NAME[,NAME...]`** — links libraries with `--run`, `--emit=exe` and
+  `--emit=asm`. Flags come from `pkg-config --libs`, then `NAME-config --libs`,
+  then `-lNAME`.
+- **`--mode=generator header.h`** — preprocesses the header with the system C
+  compiler, reads its constants, enums, typedefs, structs, unions and functions,
+  and writes a `.loi` package: `INIT_VIDEO :: 0x20;`,
+  `@attr(link_name("SDL_Init")) extern int Init(flags: Uint32);`, the `SDL_`
+  prefix dropped. Functions it cannot express (variadic, struct by value) are
+  listed in a comment at the end.
+
+Names are used qualified (`sdl2.Init`, `sdl2.Window*`, `sdl2.QUIT`). Full
+details, options and limits: [`docs/bindings.md`](docs/bindings.md).
 
 ## Language highlights
 
@@ -330,15 +362,18 @@ which only declare their `@package` so far.
 | `examples/24_effects_enforced.loi`            | effects enforcement demo                                                        |
 | `examples/25_fnpointers.loi`                  | typed function pointers (alias type, callback params, effects through pointers) |
 | `examples/26_macro_trio.loi`                  | `@stringify` / `@paste` / variadic macros                                       |
+| `examples/sdl2_window.loi`                    | generated SDL2 binding + effects + capabilities (`--lib=SDL2`)                  |
 | `examples/main.loi`                           | minimal entry point (`examples/helpers/lib.loi` is used by `15_include.loi`)    |
 
 ```
 ./loi examples/20_reflection.loi --run
 ```
 
-There are no capability examples under `examples/` yet; the best executable
-references for `@cap`, `@grant`, `@with_cap`, `@needs` and friends are
-`tests/43_cap_basic.loi` .. `tests/60_cap_fail_with_stmt.loi`.
+`examples/sdl2_window.loi` is the larger capability example: `Gfx`, `Window`
+and `Renderer` capabilities prove that SDL is initialised and that each window
+and renderer is destroyed exactly once. For the individual rules see
+`tests/43_cap_basic.loi` .. `tests/60_cap_fail_with_stmt.loi` and
+`tests/65_cap_resource_ok.loi`.
 
 ## Source layout
 
@@ -353,11 +388,13 @@ references for `@cap`, `@grant`, `@with_cap`, `@needs` and friends are
   `@if/@elif/@else`, `@repeat`/`@for`, `@inc`/`@cinc` includes, include guards,
   and the package-declaration check. Exposes a small API (`loi_preprocess`,
   `loi_source_declares_package`) so `main.c` only drives the pipeline.
+- `src/bindgen.*` — the `--mode=generator` C-header → `.loi` binding generator
 - `src/main.c` — CLI / driver (file loading, flags, invoking lexer→parser→
   typecheck→codegen→`opt`/`clang`)
 - `src/runtime.c` / `src/runtime.h` — runtime support (IO, threads, channels,
   regions, GC hook, math), linked into every executable
 - `lib/` — loi standard library packages (`std`, `std.math`, `std.os`)
+- `thirdparty/` — bindings to C libraries (`sdl2/sdl2.loi` is generated)
 - `docs/` — language documentation: [`syntax.md`](docs/syntax.md) and
   [`capabilities.md`](docs/capabilities.md)
 - `site/` — static documentation website (`index.html`, `docs.html`,
@@ -370,9 +407,11 @@ references for `@cap`, `@grant`, `@with_cap`, `@needs` and friends are
 make test          # or: bash tests/run.sh
 ```
 
-`tests/run.sh` compiles and runs every `tests/*.loi` (60 programs, plus two
-extra checks that `@attr(must_use)` warns on a discarded result and stays
-quiet when the result is used):
+`tests/run.sh` compiles and runs every `tests/*.loi` (68 programs), plus extra
+checks: `@attr(must_use)` warns on a discarded result and stays quiet when it
+is used, `--lib` resolves and rejects unsafe names (and works with
+`--emit=asm`), and the binding generator turns `tests/bindgen/mini.h` into a
+package that `tests/bindgen/use_mini.loi` compiles and runs:
 
 - tests whose name contains `fail` (plus a few explicitly listed, such as the
   parse, type, preprocessor and removed-syntax cases) must be rejected by the
@@ -391,13 +430,19 @@ packages (missing/bare/dotted declarations, shared namespaces, `std`),
 attributes (`link_name`, visibility for functions and variables, flags,
 `must_use`), capabilities (`@grant`/`@refine`/`@drop`, linearity, `@needs`,
 the effects bridge, regions with capabilities, `@with_cap`, `with` clauses and
-argument inference), and error cases for the parser, typechecker and
-preprocessor.
+argument inference), `::` constants and literal adaptation, unions and chained
+field access, the `thirdparty/` include path (`tests/63_thirdparty_inc.loi`
+needs the committed `thirdparty/sdl2/sdl2.loi`), package-qualified calls,
+capability resource lifetimes (`65`..`67`), and error cases for the parser,
+typechecker and preprocessor.
 
 ## Known limitations
 
 - `--run` and `--emit=exe|asm` write intermediates to a fixed `/tmp/opencode/`
-  directory, which must already exist.
+  directory (created on demand).
+- The binding generator skips variadic functions and functions that take or
+  return a struct by value, and top-level names share one flat namespace (see
+  [`docs/bindings.md`](docs/bindings.md)).
 - The driver links `src/runtime.c` by relative path, so it must be run from the
   repository root.
 - `std.math` and `std.os` are placeholders; math helpers are available through
