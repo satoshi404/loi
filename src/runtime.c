@@ -24,6 +24,24 @@ void loi_print_str(const char *s) {
     if (s) puts(s);
 }
 
+/* Print a string without trailing newline. */
+void loi_print_str_raw(const char *s) {
+    if (s) fputs(s, stdout);
+}
+
+/* Print n bytes from buffer (for u8[] / byte arrays). No trailing newline. */
+void loi_print_bytes(const char *s, size_t n) {
+    if (s) fwrite(s, 1, n, stdout);
+}
+
+/* Print n bytes from buffer followed by a newline. */
+void loi_print_bytes_nl(const char *s, size_t n) {
+    if (s) {
+        fwrite(s, 1, n, stdout);
+        putchar('\n');
+    }
+}
+
 long loi_thread_spawn(void *(*fn)(void*), void *arg) {
     pthread_t th;
     if (pthread_create(&th, NULL, fn, arg) != 0) return -1;

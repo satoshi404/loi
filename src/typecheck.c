@@ -779,9 +779,12 @@ static int numeric_prim_kind(Type *t) {   /* 1 = integer-like, 2 = floating, 0 =
     t = resolve_type(t);
     if (!t || t->kind != TY_PRIMITIVE || !t->name) return 0;
     const char *n = t->name;
-    if (!strcmp(n, "float") || !strcmp(n, "double")) return 2;
+    if (!strcmp(n, "float") || !strcmp(n, "double") ||
+        !strcmp(n, "f32") || !strcmp(n, "f64")) return 2;
     if (!strcmp(n, "int") || !strcmp(n, "long") || !strcmp(n, "short") || !strcmp(n, "char") ||
-        !strcmp(n, "byte") || !strncmp(n, "unsigned", 8) || !strncmp(n, "signed", 6)) return 1;
+        !strcmp(n, "byte") || !strcmp(n, "i8") || !strcmp(n, "i16") || !strcmp(n, "i32") ||
+        !strcmp(n, "i64") || !strcmp(n, "u8") || !strcmp(n, "u16") || !strcmp(n, "u32") ||
+        !strcmp(n, "u64") || !strncmp(n, "unsigned", 8) || !strncmp(n, "signed", 6)) return 1;
     return 0;
 }
 
@@ -1131,6 +1134,36 @@ static void check_stmt(ASTNode *s) {
             check_stmt(s->body);
             scope_pop();
             break;
+        case AST_WHEN: {
+            type_of_expr(s->cond);
+            for (size_t i = 0; i < s->item_count; i++) {
+                ASTNode *br = s->items[i];
+                if (br->type == AST_WHEN_BRANCH) {
+                    if (br->right) type_of_expr(br->right);
+                    check_stmt(br->then_branch);
+                }
+            }
+            break;
+        }
+        case AST_RANGE: {
+            type_of_expr(s->cond);
+            type_of_expr(s->right);
+            if (s->name) {
+                Type *iv = type_new(TY_PRIMITIVE); iv->name = strdup("i32");
+                scope_add(s->name, iv);
+            }
+            check_stmt(s->body);
+            break;
+        }
+        case AST_FOREACH: {
+            type_of_expr(s->cond);
+            if (s->name) {
+                Type *et = type_new(TY_PRIMITIVE); et->name = strdup("i32");
+                scope_add(s->name, et);
+            }
+            check_stmt(s->body);
+            break;
+        }
         case AST_RETURN:
             if (s->left) {
                 /* returning a capability moves it out (satisfies linearity) */

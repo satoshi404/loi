@@ -59,6 +59,15 @@ typedef enum {
     TOK_KW_INLINE,
     TOK_KW_SIZEOF,
     TOK_KW_ALIGNOF,
+    /* sized integer / float primitives */
+    TOK_KW_I8, TOK_KW_I16, TOK_KW_I32, TOK_KW_I64,
+    TOK_KW_U8, TOK_KW_U16, TOK_KW_U32, TOK_KW_U64,
+    TOK_KW_F32, TOK_KW_F64,
+    /* modern statements */
+    TOK_KW_WHEN, TOK_KW_RANGE, TOK_KW_FOREACH,
+    /* modern function forms */
+    TOK_KW_PROCEDURE, TOK_KW_FUNCTION, TOK_KW_OUT,
+    TOK_KW_OTHERWISE,
 
     /* Arithmetic operators */
     TOK_PLUS,
@@ -118,6 +127,7 @@ typedef enum {
     TOK_SEMICOLON,
     TOK_COLON,
     TOK_DOT,
+    TOK_DOTDOT,
     TOK_ARROW,
     TOK_FAT_ARROW,
     TOK_QUESTION,

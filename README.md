@@ -62,9 +62,26 @@ make clean    # removes object files and ./loi
 > files built on another architecture; otherwise the link step fails with
 > `file in wrong format`.
 
+To install `loi` so it works from any directory (binary in `$(PREFIX)/bin`,
+libraries and runtime in `$(PREFIX)/share/loi/lib`, both of which are on the
+default include search path):
+
+```
+make install            # PREFIX ?= /usr/local
+make uninstall
+```
+
+Without installing, running `./loi` from the repository root works too (the
+runtime is found via `src/runtime.c` next to the binary). From other
+directories, point `LOI_PATH` at the `lib` directory (a leading `~` is
+expanded):
+
+```
+export LOI_PATH=~/loi/lib
+```
+
 Before compiling programs, make sure the scratch directory used for
-intermediate files exists, and run `./loi` from the repository root (it links
-`src/runtime.c` by relative path):
+intermediate files exists:
 
 ```
 mkdir -p /tmp/opencode
@@ -117,7 +134,8 @@ All forms start with `@`. There is **no `import` keyword** and no
 
 - `@inc` inlines a loi library or package. Resolution searches the including
   file's directory, `./lib`, `./packages`, `/usr/share/loi`,
-  `/usr/local/share/loi`, and every entry in `LOI_PATH`. `@inc pkg.sub` maps
+  `/usr/local/share/loi/lib`, and every entry in `LOI_PATH` (which may use a
+  leading `~`, expanded to the user's home directory). `@inc pkg.sub` maps
   dots to path separators (`pkg/sub`). Recursion is capped at depth 16.
 - **`thirdparty/`** holds bindings to external C libraries (`lib/` stays the
   language runtime): `@inc sdl2` resolves to `thirdparty/sdl2/sdl2.loi`, then
@@ -296,6 +314,61 @@ macros capture the trailing arguments under the declared name.
 
 See [`docs/syntax.md`](docs/syntax.md) for the full grammar and specification.
 
+### Modern syntax highlights
+
+**Sized types**: `i8`/`i16`/`i32`/`i64`, `u8`/`u16`/`u32`/`u64`, `f32`/`f64`,
+`bool`, `void`. `int` remains an alias for `i32`.
+
+```loi
+i32 x = 42;
+f64 pi = 3.14;
+```
+
+**`when`** replaces `if`/`else` chains and `switch`:
+
+```loi
+when v {
+  == 1 -> { std.print_str("X"); }
+  == -1 -> { std.print_str("O"); }
+  otherwise -> { std.print_str("-"); }
+}
+```
+
+**`range`** and **`foreach`** (end-exclusive, preferred over C-style `for`):
+
+```loi
+range 0..9 -> i { std.print_int(i); }
+foreach nums -> n { std.print_int(nums[n]); }
+```
+
+**Procedures and functions** with a modern visual form:
+
+```loi
+procedure > draw_board(board: i32[9]) { ... }
+function > add(a: i32, b: i32) out i32 -> a + b
+```
+
+The entry point `main` also accepts both forms:
+
+```loi
+function > main() out i32 { return 0; }
+procedure > main() { }
+```
+
+**Multidimensional arrays** with stacked postfix suffixes:
+
+```loi
+i32[3][3] m;
+range 0..3 -> i {
+  range 0..3 -> j {
+    m[i][j] = i * 3 + j;
+  }
+}
+```
+
+**Optional semicolons** at block end and **implicit return** of the last
+expression in a function body.
+
 ## Runtime and the `std` package
 
 The runtime is reached through the `std` package — the internal `loi_` prefix
@@ -330,7 +403,7 @@ signatures):
 | ------------- | -------------------------------------------------------------------------- |
 | Memory        | `alloc`, `free`, `gc_alloc`, `gc_collect`, `gc_add_root`, `gc_remove_root` |
 | Regions       | `region_new`, `region_alloc`, `region_free`                                |
-| I/O           | `print_int`, `print_str`, `write_file`                                     |
+| I/O           | `print_int`, `print_str`, `print_str_raw`, `print_bytes`, `print_bytes_nl`, `write_file` |
 | Threads       | `thread_spawn`, `thread_join` (pthreads)                                   |
 | Channels      | `chan_new`, `chan_send`, `chan_recv`, `chan_close`, `chan_free`            |
 | Math          | `abs`, `min`, `max`, `sqrt`, `pow`, `sin`, `cos`, `tan`, `exp`, `log`, `floor`, `ceil` |

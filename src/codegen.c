@@ -188,6 +188,16 @@ static void collect_strings_stmt(CG *cg, ASTNode *s) {
         case AST_IF: collect_strings_expr(cg, s->cond); collect_strings_block(cg, s->then_branch); collect_strings_block(cg, s->else_branch); break;
         case AST_WHILE: collect_strings_expr(cg, s->cond); collect_strings_block(cg, s->body); break;
         case AST_FOR: collect_strings_stmt(cg, s->init_stmt); collect_strings_expr(cg, s->cond_expr); collect_strings_stmt(cg, s->update); collect_strings_block(cg, s->body); break;
+        case AST_WHEN: collect_strings_expr(cg, s->cond);
+                       for (size_t si = 0; si < s->item_count; si++) {
+                           ASTNode *br = s->items[si];
+                           if (br && br->type == AST_WHEN_BRANCH) {
+                               collect_strings_expr(cg, br->right);
+                               collect_strings_block(cg, br->then_branch);
+                           }
+                       } break;
+        case AST_RANGE: collect_strings_expr(cg, s->cond); collect_strings_expr(cg, s->right); collect_strings_block(cg, s->body); break;
+        case AST_FOREACH: collect_strings_expr(cg, s->cond); collect_strings_block(cg, s->body); break;
         case AST_REGION: collect_strings_expr(cg, s->cond); collect_strings_block(cg, s->body); break;
         case AST_RETURN: collect_strings_expr(cg, s->left); break;
         case AST_EXPR_STMT: collect_strings_expr(cg, s->left); break;
@@ -260,6 +270,17 @@ static char *llvm_type(Type *t) {
     if (strcmp(n, "short") == 0) return strdup("i16");
     if (strcmp(n, "long") == 0) return strdup("i64");
     if (strcmp(n, "void") == 0) return strdup("void");
+    /* modern sized primitives */
+    if (strcmp(n, "i8") == 0) return strdup("i8");
+    if (strcmp(n, "i16") == 0) return strdup("i16");
+    if (strcmp(n, "i32") == 0) return strdup("i32");
+    if (strcmp(n, "i64") == 0) return strdup("i64");
+    if (strcmp(n, "u8") == 0) return strdup("i8");
+    if (strcmp(n, "u16") == 0) return strdup("i16");
+    if (strcmp(n, "u32") == 0) return strdup("i32");
+    if (strcmp(n, "u64") == 0) return strdup("i64");
+    if (strcmp(n, "f32") == 0) return strdup("float");
+    if (strcmp(n, "f64") == 0) return strdup("double");
     if (strstr(n, "unsigned")) {
         if (strstr(n, "char")) return strdup("i8");
         if (strstr(n, "short")) return strdup("i16");
@@ -325,12 +346,18 @@ static char *cast_value(CG *cg, const char *val, const char *from, const char *t
         }
         if (fw > 0 && tw > 0 && fw > tw) {
             char *r = new_tmp(cg);
-            fprintf(cg->out, "  %s = trunc %s %s to %s\n", r, from, val, to);
+            const char *op = (tw == 1) ? "trunc" : "sext";
+            fprintf(cg->out, "  %s = %s %s %s to %s\n", r, op, from, val, to);
             return r;
         }
     }
+    /* Convert ptr to array [N x T]: load the array value from the pointer. */
+    if (from[0] == 'p' && to[0] == '[') {
+        char *r = new_tmp(cg);
+        fprintf(cg->out, "  %s = load %s, ptr %s\n", r, to, val);
+        return r;
+    }
     /* default: just return val */
-    return strdup(val);
     return strdup(val);
 }
 
@@ -498,6 +525,16 @@ static char *codegen_expr(CG *cg, ASTNode *e, char **out_type) {
         }
         CGVar *v = find_var(cg, e->name);
         if (v) {
+            /* If the variable is an array, return its pointer (ir) instead of
+               loading the value. This allows arrays to be passed to functions
+               expecting ptr arguments (e.g. std.print_bytes(arr, n)). When the
+               callee expects an array by value, cast_value will load from the
+               pointer back to the array value. Report the type as ptr so
+               cast_value knows to convert ptr->array when needed. */
+            if (v->asty && v->asty->kind == TY_ARRAY) {
+                if (out_type) *out_type = strdup("ptr");
+                return strdup(v->ir);
+            }
             char *ld = new_tmp(cg);
             fprintf(cg->out, "  %s = load %s, ptr %s\n", ld, v->type, v->ir);
             if (out_type) *out_type = strdup(v->type);
@@ -1407,6 +1444,190 @@ static void codegen_stmt(CG *cg, ASTNode *s) {
             cg->loop_depth--;
             break;
         }
+        case AST_WHEN: {
+            char *ct; char *cv = codegen_expr(cg, s->cond, &ct);
+            int is_fl = is_float_type(ct);
+            char *cond_slot = new_tmp(cg);
+            fprintf(cg->out, "  %s = alloca %s\n", cond_slot, ct);
+            fprintf(cg->out, "  store %s %s, ptr %s\n", ct, cv, cond_slot);
+            char *exitL = new_label(cg, "when_exit");
+            size_t nbr = 0;
+            for (size_t i = 0; i < s->item_count; i++)
+                if (s->items[i] && s->items[i]->type == AST_WHEN_BRANCH) nbr++;
+            if (nbr == 0) { fprintf(cg->out, "  br label %%%s\n", exitL); cg->terminated = 0; break; }
+            char **cmps = malloc(nbr * sizeof(char *));
+            char **bodies = malloc(nbr * sizeof(char *));
+            size_t bi = 0;
+            for (size_t i = 0; i < s->item_count; i++) {
+                ASTNode *br = s->items[i];
+                if (!br || br->type != AST_WHEN_BRANCH) continue;
+                cmps[bi] = new_label(cg, "when_cmp");
+                bodies[bi] = new_label(cg, "when_body");
+                bi++;
+            }
+            fprintf(cg->out, "  br label %%%s\n", cmps[0]);
+            bi = 0;
+            for (size_t i = 0; i < s->item_count; i++) {
+                ASTNode *br = s->items[i];
+                if (!br || br->type != AST_WHEN_BRANCH) continue;
+                int is_last = (bi + 1 == nbr);
+                int is_otherwise = (br->op_token == TOK_KW_OTHERWISE);
+                fprintf(cg->out, "%s:\n", cmps[bi]);
+                char *cond_load = new_tmp(cg);
+                fprintf(cg->out, "  %s = load %s, ptr %s\n", cond_load, ct, cond_slot);
+                if (is_otherwise) {
+                    fprintf(cg->out, "  br label %%%s\n", bodies[bi]);
+                } else {
+                    char *rt = NULL;
+                    char *rv = codegen_expr(cg, br->right, &rt);
+                    char *cmp = new_tmp(cg);
+                    if (is_fl) {
+                        const char *op = (br->op_token == TOK_EQEQ) ? "oeq" :
+                                         (br->op_token == TOK_BANGEQ) ? "one" :
+                                         (br->op_token == TOK_LT) ? "olt" :
+                                         (br->op_token == TOK_LTEQ) ? "ole" :
+                                         (br->op_token == TOK_GT) ? "ogt" : "oge";
+                        fprintf(cg->out, "  %s = fcmp %s %s %s, %s\n", cmp, op, ct, cond_load, rv);
+                    } else {
+                        const char *op = (br->op_token == TOK_EQEQ) ? "eq" :
+                                         (br->op_token == TOK_BANGEQ) ? "ne" :
+                                         (br->op_token == TOK_LT) ? "slt" :
+                                         (br->op_token == TOK_LTEQ) ? "sle" :
+                                         (br->op_token == TOK_GT) ? "sgt" : "sge";
+                        fprintf(cg->out, "  %s = icmp %s %s %s, %s\n", cmp, op, ct, cond_load, rv);
+                    }
+                    char *fallthrough = is_last ? exitL : cmps[bi + 1];
+                    fprintf(cg->out, "  br i1 %s, label %%%s, label %%%s\n", cmp, bodies[bi], fallthrough);
+                }
+                fprintf(cg->out, "%s:\n", bodies[bi]);
+                cg->terminated = 0;
+                scope_push(cg);
+                codegen_block(cg, br->then_branch);
+                scope_pop(cg);
+                if (!cg->terminated) { fprintf(cg->out, "  br label %%%s\n", exitL); cg->terminated = 1; }
+                bi++;
+            }
+            fprintf(cg->out, "%s:\n", exitL);
+            cg->terminated = 0;
+            free(cmps); free(bodies);
+            break;
+        }
+        case AST_RANGE: {
+            char *st;  char *sv = codegen_expr(cg, s->cond, &st);
+            char *en;  char *ev = codegen_expr(cg, s->right, &en);
+            int is_fl = is_float_type(st) || is_float_type(en);
+            char *vtype = is_fl ? "double" : "i32";
+            char *var_slot = new_tmp(cg);
+            fprintf(cg->out, "  %s = alloca %s\n", var_slot, vtype);
+            fprintf(cg->out, "  store %s %s, ptr %s\n", vtype, sv, var_slot);
+            char *end_slot = new_tmp(cg);
+            fprintf(cg->out, "  %s = alloca %s\n", end_slot, vtype);
+            fprintf(cg->out, "  store %s %s, ptr %s\n", vtype, ev, end_slot);
+            if (s->name) add_var(cg, s->name, var_slot, strdup(vtype), NULL);
+            char *hdr = new_label(cg, "range_hdr");
+            char *body = new_label(cg, "range_body");
+            char *exit = new_label(cg, "range_exit");
+            if (cg->loop_depth == cg->loop_cap) {
+                size_t nc = cg->loop_cap ? cg->loop_cap * 2 : 8;
+                cg->loop_exit_labels = realloc(cg->loop_exit_labels, nc * sizeof(char*));
+                cg->loop_cont_labels = realloc(cg->loop_cont_labels, nc * sizeof(char*));
+                cg->loop_update_labels = realloc(cg->loop_update_labels, nc * sizeof(char*));
+                cg->loop_cap = nc;
+            }
+            cg->loop_exit_labels[cg->loop_depth] = exit;
+            cg->loop_cont_labels[cg->loop_depth] = hdr;
+            cg->loop_update_labels[cg->loop_depth] = NULL;
+            cg->loop_depth++;
+            fprintf(cg->out, "  br label %%%s\n", hdr);
+            fprintf(cg->out, "%s:\n", hdr);
+            cg->terminated = 0;
+            char *cv = new_tmp(cg);
+            fprintf(cg->out, "  %s = load %s, ptr %s\n", cv, vtype, var_slot);
+            char *ev2 = new_tmp(cg);
+            fprintf(cg->out, "  %s = load %s, ptr %s\n", ev2, vtype, end_slot);
+            char *cmp = new_tmp(cg);
+            if (is_fl) fprintf(cg->out, "  %s = fcmp olt %s %s, %s\n", cmp, vtype, cv, ev2);
+            else fprintf(cg->out, "  %s = icmp slt %s %s, %s\n", cmp, vtype, cv, ev2);
+            fprintf(cg->out, "  br i1 %s, label %%%s, label %%%s\n", cmp, body, exit);
+            fprintf(cg->out, "%s:\n", body);
+            cg->terminated = 0;
+            scope_push(cg);
+            codegen_block(cg, s->body);
+            scope_pop(cg);
+            if (!cg->terminated) {
+                char *nv = new_tmp(cg);
+                if (is_fl) fprintf(cg->out, "  %s = fadd %s %s, 1.0\n", nv, vtype, cv);
+                else fprintf(cg->out, "  %s = add %s %s, 1\n", nv, vtype, cv);
+                fprintf(cg->out, "  store %s %s, ptr %s\n", vtype, nv, var_slot);
+                fprintf(cg->out, "  br label %%%s\n", hdr);
+            }
+            fprintf(cg->out, "%s:\n", exit);
+            cg->terminated = 0;
+            cg->loop_depth--;
+            break;
+        }
+        case AST_FOREACH: {
+            CGVar *coll = NULL;
+            if (s->cond && s->cond->type == AST_EXPR_IDENT && s->cond->name)
+                coll = find_var(cg, s->cond->name);
+            if (!coll || !coll->asty || coll->asty->kind != TY_ARRAY) {
+                fprintf(stderr, "error: foreach requires an array variable\n");
+                exit(1);
+            }
+            Type *arr_ty = coll->asty;
+            int array_len = 1;
+            if (arr_ty->array_size && arr_ty->array_size->str_value)
+                array_len = atoi(arr_ty->array_size->str_value);
+            char *elem_ll = llvm_type(arr_ty->base);
+            char *i_slot = new_tmp(cg);
+            fprintf(cg->out, "  %s = alloca i32\n", i_slot);
+            fprintf(cg->out, "  store i32 0, ptr %s\n", i_slot);
+            if (s->name) add_var(cg, s->name, i_slot, strdup("i32"), NULL);
+            char *hdr = new_label(cg, "foreach_hdr");
+            char *body = new_label(cg, "foreach_body");
+            char *exit = new_label(cg, "foreach_exit");
+            if (cg->loop_depth == cg->loop_cap) {
+                size_t nc = cg->loop_cap ? cg->loop_cap * 2 : 8;
+                cg->loop_exit_labels = realloc(cg->loop_exit_labels, nc * sizeof(char*));
+                cg->loop_cont_labels = realloc(cg->loop_cont_labels, nc * sizeof(char*));
+                cg->loop_update_labels = realloc(cg->loop_update_labels, nc * sizeof(char*));
+                cg->loop_cap = nc;
+            }
+            cg->loop_exit_labels[cg->loop_depth] = exit;
+            cg->loop_cont_labels[cg->loop_depth] = hdr;
+            cg->loop_update_labels[cg->loop_depth] = NULL;
+            cg->loop_depth++;
+            fprintf(cg->out, "  br label %%%s\n", hdr);
+            fprintf(cg->out, "%s:\n", hdr);
+            cg->terminated = 0;
+            char *cv = new_tmp(cg);
+            fprintf(cg->out, "  %s = load i32, ptr %s\n", cv, i_slot);
+            char *cmp = new_tmp(cg);
+            fprintf(cg->out, "  %s = icmp slt i32 %s, %d\n", cmp, cv, array_len);
+            fprintf(cg->out, "  br i1 %s, label %%%s, label %%%s\n", cmp, body, exit);
+            fprintf(cg->out, "%s:\n", body);
+            cg->terminated = 0;
+            scope_push(cg);
+            char *coll_ptr = new_tmp(cg);
+            fprintf(cg->out, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %s\n",
+                    coll_ptr, coll->type, coll->ir, cv);
+            char *elem = new_tmp(cg);
+            fprintf(cg->out, "  %s = load %s, ptr %s\n", elem, elem_ll, coll_ptr);
+            (void)elem;
+            codegen_block(cg, s->body);
+            scope_pop(cg);
+            if (!cg->terminated) {
+                char *nv = new_tmp(cg);
+                fprintf(cg->out, "  %s = add i32 %s, 1\n", nv, cv);
+                fprintf(cg->out, "  store i32 %s, ptr %s\n", nv, i_slot);
+                fprintf(cg->out, "  br label %%%s\n", hdr);
+            }
+            fprintf(cg->out, "%s:\n", exit);
+            cg->terminated = 0;
+            cg->loop_depth--;
+            free(elem_ll);
+            break;
+        }
         case AST_RETURN: {
             const char *ftarget = cg->current_retty ? cg->current_retty : "i32";
             if (s->left) {
@@ -1576,6 +1797,15 @@ static void add_runtime_funcs(CG *cg) {
     {
         char **pt = xmalloc(1*sizeof(char*)); pt[0]=strdup("ptr");
         add_func(cg,"loi_print_str","void",pt,1,0);
+    }
+    {
+        char **pt = xmalloc(1*sizeof(char*)); pt[0]=strdup("ptr");
+        add_func(cg,"loi_print_str_raw","void",pt,1,0);
+    }
+    {
+        char **pt = xmalloc(2*sizeof(char*)); pt[0]=strdup("ptr"); pt[1]=strdup("i64");
+        add_func(cg,"loi_print_bytes","void",pt,2,0);
+        add_func(cg,"loi_print_bytes_nl","void",pt,2,0);
     }
     {
         char **pt = xmalloc(1*sizeof(char*)); pt[0]=strdup("i64");

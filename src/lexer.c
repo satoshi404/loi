@@ -148,6 +148,26 @@ static TokenType keyword_type(const char *s, size_t len) {
     if (len == 6 && strncmp(s, "inline", 6) == 0) return TOK_KW_INLINE;
     if (len == 6 && strncmp(s, "sizeof", 6) == 0) return TOK_KW_SIZEOF;
     if (len == 7 && strncmp(s, "alignof", 7) == 0) return TOK_KW_ALIGNOF;
+    /* modern sized primitives */
+    if (len == 2 && strncmp(s, "i8", 2) == 0) return TOK_KW_I8;
+    if (len == 3 && strncmp(s, "i16", 3) == 0) return TOK_KW_I16;
+    if (len == 3 && strncmp(s, "i32", 3) == 0) return TOK_KW_I32;
+    if (len == 3 && strncmp(s, "i64", 3) == 0) return TOK_KW_I64;
+    if (len == 2 && strncmp(s, "u8", 2) == 0) return TOK_KW_U8;
+    if (len == 3 && strncmp(s, "u16", 3) == 0) return TOK_KW_U16;
+    if (len == 3 && strncmp(s, "u32", 3) == 0) return TOK_KW_U32;
+    if (len == 3 && strncmp(s, "u64", 3) == 0) return TOK_KW_U64;
+    if (len == 3 && strncmp(s, "f32", 3) == 0) return TOK_KW_F32;
+    if (len == 3 && strncmp(s, "f64", 3) == 0) return TOK_KW_F64;
+    /* modern statements */
+    if (len == 4 && strncmp(s, "when", 4) == 0) return TOK_KW_WHEN;
+    if (len == 5 && strncmp(s, "range", 5) == 0) return TOK_KW_RANGE;
+    if (len == 7 && strncmp(s, "foreach", 7) == 0) return TOK_KW_FOREACH;
+    /* modern function forms */
+    if (len == 9 && strncmp(s, "procedure", 9) == 0) return TOK_KW_PROCEDURE;
+    if (len == 8 && strncmp(s, "function", 8) == 0) return TOK_KW_FUNCTION;
+    if (len == 3 && strncmp(s, "out", 3) == 0) return TOK_KW_OUT;
+    if (len == 9 && strncmp(s, "otherwise", 9) == 0) return TOK_KW_OTHERWISE;
     return TOK_IDENTIFIER;
 }
 
@@ -361,6 +381,7 @@ Token lexer_next(Lexer *lex) {
     if (c == '&' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_AMPEQ, "&=", 2, line, col); }
     if (c == '|' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_PIPEEQ, "|=", 2, line, col); }
     if (c == '^' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_CARETEQ, "^=", 2, line, col); }
+    if (c == '.' && n1 == '.') { advance(lex); advance(lex); return make_token(lex, TOK_DOTDOT, "..", 2, line, col); }
 
     /* single char */
     advance(lex);

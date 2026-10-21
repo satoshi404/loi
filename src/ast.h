@@ -19,6 +19,12 @@ typedef enum {
     AST_WHILE,
     AST_FOR,
     AST_DO_WHILE,
+    AST_WHEN,
+    AST_WHEN_BRANCH,
+    AST_RANGE,
+    AST_FOREACH,
+    /* internal flag, not a real node type */
+    AST_WHEN_EXPR_FLAG = 1000,
     AST_SWITCH,
     AST_CASE,
     AST_DEFAULT,
@@ -80,6 +86,7 @@ struct ASTNode {
     int column;
     int align;     /* requested alignment (for fields/structs) */
     int packed;   /* packed layout hint */
+    int is_expr;   /* non-zero when this node is used in expression context */
     char *effects; /* function effects, e.g. "IO,Alloc" */
     char *section; /* target assembly section (metaprogramming @section) */
     /* lexical capabilities (see docs/capabilities.md) */

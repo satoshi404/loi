@@ -17,6 +17,21 @@ $(BIN): $(OBJ)
 clean:
 	rm -f $(OBJ) $(BIN)
 
+PREFIX ?= /usr/local
+BINDIR = $(PREFIX)/bin
+SHAREDIR = $(PREFIX)/share/loi
+
+install: $(BIN)
+	install -d $(BINDIR) $(SHAREDIR)/lib $(SHAREDIR)/thirdparty
+	install -m 755 $(BIN) $(BINDIR)/$(BIN)
+	install -m 644 lib/*.loi $(SHAREDIR)/lib/
+	install -m 644 src/runtime.c src/runtime.h $(SHAREDIR)/lib/
+	cp -r thirdparty/. $(SHAREDIR)/thirdparty/
+
+uninstall:
+	rm -f $(BINDIR)/$(BIN)
+	rm -rf $(SHAREDIR)
+
 test: $(BIN)
 	@bash tests/run.sh
 

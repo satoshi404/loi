@@ -7,6 +7,9 @@ void *loi_alloc(size_t sz);
 void loi_free(void *p);
 void loi_print_int(long v);
 void loi_print_str(const char *s);
+void loi_print_str_raw(const char *s);
+void loi_print_bytes(const char *s, size_t n);
+void loi_print_bytes_nl(const char *s, size_t n);
 
 /* concurrency (pthreads) */
 long loi_thread_spawn(void *(*fn)(void*), void *arg);

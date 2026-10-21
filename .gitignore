@@ -1,16 +1,16 @@
 # build artifacts
 *.o
 /loi
+*.ll
+*.s
+*.loi
 
 # editor / OS noise
 *.swp
-*~
 .DS_Store
 .vscode/
 .idea/
 
-dev/
+# development
+# disable - dev/
 
-# local scratch output
-*.ll
-*.s

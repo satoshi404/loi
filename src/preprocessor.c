@@ -332,6 +332,8 @@ static char *locate_include(const char *base_dir, const char *path, int c_header
         snprintf(cands[n++], MAX_PATH, "./packages/%s.loi", path);
         snprintf(cands[n++], MAX_PATH, "/usr/share/loi/%s.loi", path);
         snprintf(cands[n++], MAX_PATH, "/usr/local/share/loi/%s.loi", path);
+        snprintf(cands[n++], MAX_PATH, "/usr/share/loi/lib/%s.loi", path);
+        snprintf(cands[n++], MAX_PATH, "/usr/local/share/loi/lib/%s.loi", path);
         snprintf(cands[n++], MAX_PATH, "/usr/share/loi/thirdparty/%s/%s.loi", path, base);
         snprintf(cands[n++], MAX_PATH, "/usr/local/share/loi/thirdparty/%s/%s.loi", path, base);
         const char *env = getenv("LOI_PATH");

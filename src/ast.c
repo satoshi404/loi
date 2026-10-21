@@ -164,6 +164,10 @@ const char *ast_node_type_str(ASTNodeType type) {
         case AST_WHILE: return "WHILE";
         case AST_FOR: return "FOR";
         case AST_DO_WHILE: return "DO_WHILE";
+        case AST_WHEN: return "WHEN";
+        case AST_WHEN_BRANCH: return "WHEN_BRANCH";
+        case AST_RANGE: return "RANGE";
+        case AST_FOREACH: return "FOREACH";
         case AST_SWITCH: return "SWITCH";
         case AST_CASE: return "CASE";
         case AST_DEFAULT: return "DEFAULT";

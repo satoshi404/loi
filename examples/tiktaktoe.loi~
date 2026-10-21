@@ -1,0 +1,61 @@
+@package(tiktaktoe)
+@inc std
+
+/* Desenha o tabuleiro: 1 = X, -1 = O, 0 = vazio */
+procedure > draw_board(board: i32[9]) {
+  range 0..9 -> i {
+    when board[i] {
+      == 1  -> { std.print_str(" X "); }
+      == -1 -> { std.print_str(" O "); }
+      otherwise -> { std.print_str(" - "); }
+    }
+    when i % 3 {
+      == 2 -> { std.print_str("\n"); }
+      otherwise -> { std.print_str("|"); }
+    }
+  }
+  std.print_str("\n");
+}
+
+/* Verifica se houve vencedor. Retorna 1 (X), -1 (O) ou 0. */
+function > check_winner(board: i32[9]) out i32 {
+  /* Linhas */
+  if (board[0] == board[1] && board[1] == board[2] && board[0] != 0) { return board[0]; }
+  if (board[3] == board[4] && board[4] == board[5] && board[3] != 0) { return board[3]; }
+  if (board[6] == board[7] && board[7] == board[8] && board[6] != 0) { return board[6]; }
+  /* Colunas */
+  if (board[0] == board[3] && board[3] == board[6] && board[0] != 0) { return board[0]; }
+  if (board[1] == board[4] && board[4] == board[7] && board[1] != 0) { return board[1]; }
+  if (board[2] == board[5] && board[5] == board[8] && board[2] != 0) { return board[2]; }
+  /* Diagonais */
+  if (board[0] == board[4] && board[4] == board[8] && board[0] != 0) { return board[0]; }
+  if (board[2] == board[4] && board[4] == board[6] && board[2] != 0) { return board[2]; }
+  0
+}
+
+function > main() out i32 {
+  i32[9] board;
+  range 0..9 -> i {
+    board[i] = 0;
+  }
+
+  /* Tabuleiro de exemplo: X vence na diagonal principal */
+  board[0] = 1;
+  board[1] = -1;
+  board[4] = 1;
+  board[3] = -1;
+  board[8] = 1;
+
+  draw_board(board);
+
+  i32 winner = check_winner(board);
+  when winner {
+    == 1 -> { std.print_str("X venceu!\n"); }
+    == -1 -> { std.print_str("O venceu!\n"); }
+    otherwise -> { std.print_str("Sem vencedor ainda.\n"); }
+  }
+
+  std.print_str(0x7a);
+
+  return 0;
+}

@@ -4,6 +4,7 @@
 #include <ctype.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <errno.h>
 
 #include <limits.h>
@@ -106,6 +107,20 @@ static int resolve_libs(const char *list, char *flags, size_t cap) {
     return 0;
 }
 
+/* Absolute path of the directory containing the running loi binary, so the
+   runtime can be linked no matter the caller's working directory. Uses
+   /proc/self/exe (Linux) with a fallback to the current directory. */
+static void exe_dir(char *buf, size_t cap) {
+    ssize_t n = readlink("/proc/self/exe", buf, cap - 1);
+    if (n > 0) {
+        buf[n] = 0;
+        char *slash = strrchr(buf, '/');
+        if (slash) *slash = 0;
+        return;
+    }
+    buf[0] = '.'; buf[1] = 0;
+}
+
 /* Build the `clang` command that links the emitted IR with the runtime.
    Extra linker flags are appended after the runtime and the default
    libraries; they come from `lib_flags` (--lib) and $LOI_LDFLAGS (for
@@ -116,9 +131,30 @@ static int build_link_cmd(char *cmd, size_t cmd_size, const char *ll_path,
                           const char *out_path, const char *lib_flags) {
     const char *extra = getenv("LOI_LDFLAGS");
     if (!extra) extra = "";
+    char rt[PATH_MAX];
+    exe_dir(rt, sizeof(rt));
+    char runtime[PATH_MAX + 16];
+    /* Build tree:  <exe_dir>/src/runtime.c
+       Installed:   <exe_dir>/share/loi/lib/runtime.c  (PREFIX=/usr/local)
+       Installed:   <exe_dir>/../share/loi/lib/runtime.c (PREFIX=/usr)
+       Fallback:    src/runtime.c relative to CWD */
+    snprintf(runtime, sizeof(runtime), "%s/src/runtime.c", rt);
+    struct stat st;
+    if (stat(runtime, &st) != 0) {
+        snprintf(runtime, sizeof(runtime), "%s/share/loi/lib/runtime.c", rt);
+        if (stat(runtime, &st) != 0) {
+            snprintf(runtime, sizeof(runtime), "%s/../share/loi/lib/runtime.c", rt);
+            if (stat(runtime, &st) != 0)
+                snprintf(runtime, sizeof(runtime), "src/runtime.c");
+        }
+    }
+    char inc[PATH_MAX + 16];
+    snprintf(inc, sizeof(inc), "-I%s", runtime);
+    char *inc_slash = strrchr(inc, '/');
+    if (inc_slash) *inc_slash = 0;
     int n = snprintf(cmd, cmd_size,
-                     "clang -O3 %s src/runtime.c -o %s -lpthread -lm %s %s 2>/dev/null",
-                     ll_path, out_path, lib_flags, extra);
+                     "clang -O3 %s %s %s -o %s -lpthread -lm %s %s 2>/dev/null",
+                     ll_path, inc, runtime, out_path, lib_flags, extra);
     if (n < 0 || (size_t)n >= cmd_size) {
         fprintf(stderr, "link command too long (check --lib / LOI_LDFLAGS)\n");
         return 1;
@@ -309,15 +345,13 @@ char *processed = loi_preprocess(src, base_dir_buf);
         const char *ll_path = "/tmp/opencode/loi.ll";
 	//        const char *bin_path = "out";//"/tmp/opencode/loi_bin";
 	const char *bin_path = out_given ? out_path : "/tmp/opencode/loi_bin";
+        char cmd[PATH_MAX + 8];
 
         FILE *f = fopen(ll_path, "w");
         if (f && prog) { codegen_program(prog, f); fclose(f); }
 	else if (f) fclose(f);
 
 
-	char cmd[PATH_MAX + 8];
-        snprintf(cmd, sizeof(cmd), "%s%s", strchr(bin_path, '/') ? "" : "./", bin_path); 
-        // char cmd[4096];
         if (build_link_cmd(cmd, sizeof(cmd), ll_path, bin_path, lib_flags)) return 1;
         if (system(cmd) != 0) {
             fprintf(stderr, "compile failed\n");
@@ -325,8 +359,9 @@ char *processed = loi_preprocess(src, base_dir_buf);
                 fprintf(stderr, "hint: if the program calls a C library, link it with --lib=NAME (e.g. --lib=SDL2)\n");
             return 1;
         }
-	int st = system(cmd);
-        //int st = system(bin_path);
+        char run_cmd[PATH_MAX + 8];
+        snprintf(run_cmd, sizeof(run_cmd), "%s%s", strchr(bin_path, '/') ? "" : "./", bin_path);
+        int st = system(run_cmd);
         int code = (st >= 0 && WIFEXITED(st)) ? WEXITSTATUS(st) : 1;
         if (prog) ast_free(prog);
         free(src);

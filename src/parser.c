@@ -37,6 +37,12 @@ static int expect(Parser *p, TokenType t, const char *msg) {
     return 0;
 }
 
+static int is_sized_type_tok(TokenType t) {
+    return t == TOK_KW_I8 || t == TOK_KW_I16 || t == TOK_KW_I32 || t == TOK_KW_I64 ||
+           t == TOK_KW_U8 || t == TOK_KW_U16 || t == TOK_KW_U32 || t == TOK_KW_U64 ||
+           t == TOK_KW_F32 || t == TOK_KW_F64;
+}
+
 static int is_type_keyword(Parser *p) {
     TokenType t = p->current.type;
     return t == TOK_KW_INT || t == TOK_KW_FLOAT || t == TOK_KW_DOUBLE ||
@@ -45,7 +51,8 @@ static int is_type_keyword(Parser *p) {
            t == TOK_KW_UNSIGNED || t == TOK_KW_SIGNED ||
            t == TOK_KW_STRUCT || t == TOK_KW_UNION || t == TOK_KW_ENUM ||
            t == TOK_KW_CONST || t == TOK_KW_STATIC || t == TOK_KW_VOLATILE ||
-           t == TOK_KW_INLINE || t == TOK_KW_REGION || t == TOK_KW_EFFECT;
+           t == TOK_KW_INLINE || t == TOK_KW_REGION || t == TOK_KW_EFFECT ||
+           is_sized_type_tok(t);
 }
 
 static int is_type_start(Parser *p) {
@@ -57,7 +64,7 @@ static int is_type_start(Parser *p) {
         t == TOK_KW_STRUCT || t == TOK_KW_UNION || t == TOK_KW_ENUM ||
         t == TOK_KW_CONST || t == TOK_KW_STATIC || t == TOK_KW_VOLATILE ||
         t == TOK_KW_INLINE || t == TOK_IDENTIFIER || t == TOK_KW_FN ||
-        t == TOK_KW_REGION || t == TOK_KW_EFFECT ||
+        t == TOK_KW_REGION || t == TOK_KW_EFFECT || is_sized_type_tok(t) ||
         t == TOK_AT || t == TOK_LPAREN)
         return 1;
     return 0;
@@ -395,6 +402,11 @@ static ASTNode *parse_stmt(Parser *p);
 static ASTNode *parse_block(Parser *p);
 static ASTNode *parse_with_cap(Parser *p);
 static ASTNode *parse_var_decl(Parser *p, int require_semi);
+static ASTNode *parse_when(Parser *p);
+static ASTNode *parse_range(Parser *p);
+static ASTNode *parse_foreach(Parser *p);
+static ASTNode *parse_procedure(Parser *p);
+static ASTNode *parse_function_modern(Parser *p);
 
 static int is_vardecl_start(Parser *p) {
     if (is_type_keyword(p)) return 1;
@@ -456,7 +468,8 @@ static ASTNode *parse_var_decl(Parser *p, int require_semi) {
         decl->init = parse_assign(p);
     }
     if (decl->name) sym_set(decl->name, decl->ty);
-    if (require_semi) { expect(p, TOK_SEMICOLON, "expected ';'"); }
+    if (require_semi && !check(p, TOK_RBRACE) && !check(p, TOK_EOF))
+        expect(p, TOK_SEMICOLON, "expected ';'");
     return decl;
 }
 
@@ -575,6 +588,189 @@ static ASTNode *parse_for(Parser *p) {
     return n;
 }
 
+/* `procedure > name(params) { body }` — a void procedure. */
+static ASTNode *parse_procedure(Parser *p) {
+    int line = p->current.line, col = p->current.column;
+    advance_parser(p); /* 'procedure' */
+    expect(p, TOK_GT, "expected '>' after 'procedure'");
+    if (!check(p, TOK_IDENTIFIER) && !check(p, TOK_KW_MAIN)) {
+        parser_error(p, "expected procedure name");
+    }
+    ASTNode *n = ast_new(AST_FUNC_DECL, line, col);
+    n->name = strdup_lex(p->current.lexeme);
+    n->ty = NULL; /* void */
+    advance_parser(p);
+    expect(p, TOK_LPAREN, "expected '(' after procedure name");
+    if (!check(p, TOK_RPAREN)) {
+        do {
+            ASTNode *param = parse_param(p);
+            if (!n->args) { n->args = malloc(sizeof(ASTNode*)); n->arg_cap = 1; }
+            else if (n->arg_count == n->arg_cap) {
+                n->arg_cap *= 2;
+                n->args = realloc(n->args, n->arg_cap * sizeof(ASTNode*));
+            }
+            n->args[n->arg_count++] = param;
+        } while (match_tok(p, TOK_COMMA));
+    }
+    expect(p, TOK_RPAREN, "expected ')'");
+    n->body = parse_block(p);
+    return n;
+}
+
+/* `function > name(params) out Type { body }`
+   Compact: `function > name(params) out Type -> expr` */
+static ASTNode *parse_function_modern(Parser *p) {
+    int line = p->current.line, col = p->current.column;
+    advance_parser(p); /* 'function' */
+    expect(p, TOK_GT, "expected '>' after 'function'");
+    if (!check(p, TOK_IDENTIFIER) && !check(p, TOK_KW_MAIN)) {
+        parser_error(p, "expected function name");
+    }
+    ASTNode *n = ast_new(AST_FUNC_DECL, line, col);
+    n->name = strdup_lex(p->current.lexeme);
+    advance_parser(p);
+    expect(p, TOK_LPAREN, "expected '(' after function name");
+    if (!check(p, TOK_RPAREN)) {
+        do {
+            ASTNode *param = parse_param(p);
+            if (!n->args) { n->args = malloc(sizeof(ASTNode*)); n->arg_cap = 1; }
+            else if (n->arg_count == n->arg_cap) {
+                n->arg_cap *= 2;
+                n->args = realloc(n->args, n->arg_cap * sizeof(ASTNode*));
+            }
+            n->args[n->arg_count++] = param;
+        } while (match_tok(p, TOK_COMMA));
+    }
+    expect(p, TOK_RPAREN, "expected ')'");
+    expect(p, TOK_KW_OUT, "expected 'out' before return type");
+    n->ty = parse_type(p);
+    if (check(p, TOK_ARROW)) {
+        advance_parser(p);
+        ASTNode *expr = parse_expr(p);
+        match_tok(p, TOK_SEMICOLON);
+        ASTNode *block = ast_new(AST_BLOCK, n->line, n->column);
+        ASTNode *ret = ast_new(AST_RETURN, expr ? expr->line : n->line, expr ? expr->column : n->column);
+        ret->left = expr;
+        ast_add_item(block, ret);
+        n->body = block;
+        return n;
+    }
+    n->body = parse_block(p);
+    /* Implicit return: if the function has a non-void return type and the
+       last statement of the block is a bare expression, promote it to
+       'return <expr>'. */
+    if (n->ty && n->ty->kind == TY_PRIMITIVE && n->ty->name &&
+        strcmp(n->ty->name, "void") != 0 && n->body && n->body->type == AST_BLOCK &&
+        n->body->item_count > 0) {
+        ASTNode *last = n->body->items[n->body->item_count - 1];
+        if (last && last->type == AST_EXPR_STMT && last->left &&
+            last->left->type != AST_RETURN) {
+            ASTNode *ret = ast_new(AST_RETURN, last->left->line, last->left->column);
+            ret->left = last->left;
+            last->left = NULL;
+            n->body->items[n->body->item_count - 1] = ret;
+            ast_free(last);
+        } else if (last && last->type == AST_WHEN) {
+            last->is_expr = 1;
+            ASTNode *ret = ast_new(AST_RETURN, last->line, last->column);
+            ret->left = last;
+            n->body->items[n->body->item_count - 1] = ret;
+            last->item_count = 0;
+            free(last->items);
+            last->items = NULL;
+        }
+    }
+    return n;
+}
+
+static int is_cmp_op(TokenType t) {
+    return t == TOK_EQEQ || t == TOK_BANGEQ || t == TOK_LT ||
+           t == TOK_LTEQ || t == TOK_GT || t == TOK_GTEQ;
+}
+
+/* `when <expr> { <cmp> <expr> -> { block } | otherwise -> { block } }` */
+static ASTNode *parse_when(Parser *p) {
+    int line = p->current.line, col = p->current.column;
+    advance_parser(p); /* 'when' */
+    ASTNode *n = ast_new(AST_WHEN, line, col);
+    n->cond = parse_expr(p);
+    expect(p, TOK_LBRACE, "expected '{' after 'when' condition");
+    while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
+        int br_line = p->current.line, br_col = p->current.column;
+        ASTNode *br = ast_new(AST_WHEN_BRANCH, br_line, br_col);
+        if (check(p, TOK_KW_OTHERWISE)) {
+            advance_parser(p);
+            br->op_token = TOK_KW_OTHERWISE;
+            br->right = NULL;
+        } else {
+            if (!is_cmp_op(p->current.type)) {
+                parser_error(p, "expected a comparison operator or 'otherwise'");
+            }
+            br->op_token = p->current.type;
+            advance_parser(p);
+            br->right = parse_expr(p);
+        }
+        expect(p, TOK_ARROW, "expected '->' in 'when' branch");
+        br->then_branch = parse_block(p);
+        ast_add_item(n, br);
+    }
+    expect(p, TOK_RBRACE, "expected '}' to close 'when'");
+    n->body = NULL;
+    return n;
+}
+
+/* `range <start>..<end> -> <var> { <body> }` — end is exclusive. */
+static ASTNode *parse_range(Parser *p) {
+    int line = p->current.line, col = p->current.column;
+    advance_parser(p); /* 'range' */
+    ASTNode *n = ast_new(AST_RANGE, line, col);
+    n->cond = parse_expr(p);
+    expect(p, TOK_DOTDOT, "expected '..' in 'range'");
+    n->right = parse_expr(p);
+    /* Same `->` handling as foreach (see above). */
+    if (check(p, TOK_ARROW)) {
+        advance_parser(p);
+        if (!check(p, TOK_IDENTIFIER)) {
+            parser_error(p, "expected loop variable after '->'");
+        }
+        n->name = strdup_lex(p->current.lexeme);
+        advance_parser(p);
+    } else if (n->right->type == AST_EXPR_FIELD && n->right->name && n->right->left) {
+        /* `0..5 -> i` was parsed as `0..(5.i)` — undo it. */
+        n->name = strdup(n->right->name);
+        n->right = n->right->left;
+    } else {
+        parser_error(p, "expected '->' in 'range'");
+    }
+    n->body = parse_block(p);
+    return n;
+}
+
+/* `foreach <collection> -> <var> { <body> }` */
+static ASTNode *parse_foreach(Parser *p) {
+    int line = p->current.line, col = p->current.column;
+    advance_parser(p); /* 'foreach' */
+    ASTNode *n = ast_new(AST_FOREACH, line, col);
+    n->cond = parse_expr(p);
+    /* The `->` arrow may have been swallowed by postfix field-access parsing
+       (`nums -> n` reads as `nums.n`). Detect that case: if the parsed
+       expression is a field access, use the left-hand side as the collection
+       and the field name as the loop variable. */
+    if (n->cond->type == AST_EXPR_FIELD && n->cond->name && n->cond->left) {
+        n->name = strdup(n->cond->name);
+        n->cond = n->cond->left;
+    } else {
+        expect(p, TOK_ARROW, "expected '->' in 'foreach'");
+        if (!check(p, TOK_IDENTIFIER)) {
+            parser_error(p, "expected loop variable after '->'");
+        }
+        n->name = strdup_lex(p->current.lexeme);
+        advance_parser(p);
+    }
+    n->body = parse_block(p);
+    return n;
+}
+
 static ASTNode *parse_switch(Parser *p) {
     int line = p->current.line, col = p->current.column;
     ASTNode *n = ast_new(AST_SWITCH, line, col);
@@ -614,7 +810,8 @@ static ASTNode *parse_return(Parser *p) {
     if (!check(p, TOK_SEMICOLON) && !check(p, TOK_RBRACE)) {
         n->left = parse_expr(p);
     }
-    expect(p, TOK_SEMICOLON, "expected ';'");
+    if (!check(p, TOK_SEMICOLON) && !check(p, TOK_RBRACE) && !check(p, TOK_EOF))
+        expect(p, TOK_SEMICOLON, "expected ';'");
     return n;
 }
 
@@ -687,6 +884,9 @@ static ASTNode *parse_stmt(Parser *p) {
     }
     if (check(p, TOK_KW_WHILE)) return parse_while(p);
     if (check(p, TOK_KW_FOR)) return parse_for(p);
+    if (check(p, TOK_KW_WHEN)) return parse_when(p);
+    if (check(p, TOK_KW_RANGE)) return parse_range(p);
+    if (check(p, TOK_KW_FOREACH)) return parse_foreach(p);
     if (check(p, TOK_KW_DO)) return parse_do_while(p);
     if (check(p, TOK_KW_SWITCH)) return parse_switch(p);
     if (check(p, TOK_KW_RETURN)) return parse_return(p);
@@ -766,7 +966,9 @@ static ASTNode *parse_stmt(Parser *p) {
         advance_parser(p);
         es->caps = parse_cap_set_names(p);
     }
-    expect(p, TOK_SEMICOLON, "expected ';'");
+    /* Semicolon optional before '}' */
+    if (!check(p, TOK_RBRACE) && !check(p, TOK_EOF))
+        expect(p, TOK_SEMICOLON, "expected ';'");
     return es;
 }
 
@@ -1010,9 +1212,30 @@ static ASTNode *parse_postfix(Parser *p) {
             ix->left = node;
             ix->right = idx;
             node = ix;
-        } else if (check(p, TOK_DOT) || check(p, TOK_ARROW)) {
-            int is_arrow = check(p, TOK_ARROW);
-            (void)is_arrow;
+        } else if (check(p, TOK_DOT)) {
+            advance_parser(p);
+            int line = p->current.line, col = p->current.column;
+            ASTNode *f = ast_new(AST_EXPR_FIELD, line, col);
+            f->left = node;
+            if (check(p, TOK_IDENTIFIER)) {
+                f->name = strdup_lex(p->current.lexeme);
+                advance_parser(p);
+            } else {
+                parser_error(p, "expected field name");
+            }
+            node = f;
+        } else if (check(p, TOK_ARROW)) {
+            /* `->` is also the range/foreach/function arrow. Only treat it as
+               pointer field access (`p->f`) when the left operand is an
+               identifier or field access (a possible pointer) AND the next
+               token is an identifier. Otherwise leave it for the caller. */
+            int left_is_lvalue = (node->type == AST_EXPR_IDENT ||
+                                  node->type == AST_EXPR_FIELD);
+            if (!left_is_lvalue) break;
+            Token nx = lexer_peek(p->lex);
+            int arrow_is_field = (nx.type == TOK_IDENTIFIER);
+            token_free(&nx);
+            if (!arrow_is_field) break;
             advance_parser(p);
             int line = p->current.line, col = p->current.column;
             ASTNode *f = ast_new(AST_EXPR_FIELD, line, col);
@@ -1095,6 +1318,11 @@ static ASTNode *parse_primary(Parser *p) {
         ASTNode *e = parse_expr(p);
         expect(p, TOK_RPAREN, "expected ')'");
         return e;
+    }
+    if (check(p, TOK_KW_WHEN)) {
+        ASTNode *wn = parse_when(p);
+        wn->is_expr = 1;
+        return wn;
     }
     if (check(p, TOK_AT)) {
         int line = p->current.line, col = p->current.column;
@@ -1402,6 +1630,33 @@ static ASTNode *parse_func(Parser *p) {
     }
     ASTNode *b = parse_block(p);
     n->body = b;
+    /* Implicit return: if the function has a non-void return type and the
+       last statement of the block is a bare expression, promote it to
+       'return <expr>'. */
+    if (n->ty && n->ty->kind == TY_PRIMITIVE && n->ty->name &&
+        strcmp(n->ty->name, "void") != 0 && b && b->type == AST_BLOCK &&
+        b->item_count > 0) {
+        ASTNode *last = b->items[b->item_count - 1];
+        if (last && last->type == AST_EXPR_STMT && last->left &&
+            last->left->type != AST_RETURN) {
+            ASTNode *ret = ast_new(AST_RETURN, last->left->line, last->left->column);
+            ret->left = last->left;
+            last->left = NULL;
+            b->items[b->item_count - 1] = ret;
+            ast_free(last);
+        } else if (last && last->type == AST_WHEN) {
+            last->is_expr = 1;
+            ASTNode *ret = ast_new(AST_RETURN, last->line, last->column);
+            ret->left = last;
+            b->items[b->item_count - 1] = ret;
+            /* when node is now owned by ret->left; clear its items to avoid
+               double-free. */
+            last->item_count = 0;
+            free(last->items);
+            last->items = NULL;
+            /* do NOT ast_free(last) here — ret->left owns it */
+        }
+    }
     return n;
 }
 
@@ -1476,6 +1731,8 @@ static ASTNode *parse_decl_core(Parser *p) {
     if (check(p, TOK_KW_STRUCT) || check(p, TOK_KW_UNION) || check(p, TOK_KW_ENUM)) return parse_struct(p);
     if (check(p, TOK_KW_TYPE)) return parse_type_decl(p);
     if (check(p, TOK_KW_EXTERN)) return parse_extern(p);
+    if (check(p, TOK_KW_PROCEDURE)) return parse_procedure(p);
+    if (check(p, TOK_KW_FUNCTION)) return parse_function_modern(p);
     if (check(p, TOK_IDENTIFIER) || check(p, TOK_KW_MAIN)) {
         if (check(p, TOK_KW_MAIN)) {
             return parse_func(p);

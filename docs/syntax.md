@@ -23,6 +23,8 @@ Declaration := PackageDecl
               | ExternDecl
               | VarDecl
               | FuncDecl
+              | ProcDecl          // 'procedure > name(...) { ... }'
+              | FuncDeclModern    // 'function > name(...) out T { ... }'
 
 PackageDecl := '@package' '(' Ident ('.' Ident)* ')' (';')?
 Attr        := '@' 'section' '(' String ')'
@@ -119,6 +121,9 @@ BaseType    := Primitive
 Primitive   := 'int' | 'float' | 'double' | 'char' | 'bool'
              | 'byte' | 'short' | 'long' | 'void'
              | 'unsigned'? ( 'int' | 'char' | 'short' | 'long' | 'byte' )
+             | 'i8' | 'i16' | 'i32' | 'i64'        // signed integers
+             | 'u8' | 'u16' | 'u32' | 'u64'        // unsigned integers
+             | 'f32' | 'f64'                       // floating point
 
 TypeSuffix  := '*'                         // pointer
              | '[' Expr? ']'                // array / size (postfix, canonical)
@@ -127,6 +132,17 @@ TypeSuffix  := '*'                         // pointer
 Array types are written **postfix**: the length follows the element type, e.g.
 `int[10] a;` or `int[] a;` (inferred length). The old prefix form `[10]int` is
 not parsed.
+
+**Multidimensional arrays** are written by stacking postfix suffixes:
+
+```loi
+i32[3][3] m;        // 3x3 matrix of i32
+f64[4][2] table;    // 4x2 matrix of f64
+```
+
+Each index selects one level: `m[i][j]` accesses row `i`, column `j`. The type
+of `m[i]` is `[3 x i32]` (an array), so `m[i][j]` is `i32`. Arrays can be
+nested to any depth.
 
 ## Declarations
 
@@ -189,6 +205,45 @@ ev.key.sym = 27;
 `a.b.c`, `p.b` / `p->b` through a pointer to a struct (to any depth), `a.arr[i]`
 for an array field, and `&a.b` all work as expressions and as assignment
 targets (including `+=` and friends). The type of a field is its declared type.
+
+## `when` — conditional dispatch (replaces `if`/`else` chains and `switch`)
+
+`when` dispatches on a value using comparison patterns. It works both as a
+statement and as an expression (its value is the last expression of the
+selected branch).
+
+```loi
+when v {
+  == 1  -> { std.print_str("X"); }
+  == -1 -> { std.print_str("O"); }
+  otherwise -> { std.print_str("-"); }
+}
+
+when value {
+  < 0  -> { ... }
+  > 10 -> { ... }
+  otherwise -> { ... }
+}
+```
+
+Each branch is `<comparison> <expr> -> { block }` or `otherwise -> { block }`.
+Comparisons supported: `==`, `!=`, `<`, `<=`, `>`, `>=`. The `otherwise`
+branch is optional and matches when no other branch did.
+
+When used as an expression, all branches that produce a value must agree on
+the result type.
+
+```loi
+sign = (v: i32) out i32 {
+  when v {
+    > 0 -> { 1 }
+    < 0 -> { -1 }
+    otherwise -> { 0 }
+  }
+}
+```
+
+`if`/`else` and `switch` continue to work for backward compatibility.
 
 ## Functions
 
@@ -289,6 +344,44 @@ signature-first form `name (params): Ret = { ... }` is also accepted, and `:`
 may be written `->` before the return type in a declaration. Prefer the
 assignment form for consistency.
 
+### Modern function forms (`procedure` / `function`)
+
+A modern, more visual syntax is available for declaring procedures (no return)
+and functions (with return). The `>` after the keyword is part of the syntax:
+
+```loi
+procedure > draw_board(board: i32[9]) {
+  range 0..9 -> i {
+    std.print_int(board[i]);
+  }
+}
+
+function > add(a: i32, b: i32) out i32 {
+  a + b
+}
+
+function > add(a: i32, b: i32) out i32 -> a + b
+```
+
+`procedure` declares a `void` function. `function` declares a function with
+the return type given after `out`. The compact `-> expr` form is sugar for a
+block containing a single `return expr`.
+
+Both forms work alongside the classic assignment form (`name = (params) -> Ret { ... }`).
+
+**The `main` entry point** can use either the classic form or the modern forms:
+
+```loi
+// Classic form
+main = () -> int { return 0; }
+
+// Modern function form
+function > main() out i32 { return 0; }
+
+// Modern procedure form (void)
+procedure > main() { }
+```
+
 ### Typed function pointers
 
 Function types are first-class and carry effects:
@@ -327,6 +420,8 @@ Stmt        := VarDecl
 IfStmt      := 'if' '(' Expr ')' Block ('else' Block)?
 WhileStmt   := 'while' '(' Expr ')' Block
 ForStmt     := 'for' '(' (VarDecl | Expr)? ';' Expr? ';' Expr? ')' Block
+RangeStmt   := 'range' Expr '..' Expr '->' Ident Block
+ForeachStmt := 'foreach' Expr '->' Ident Block
 ReturnStmt  := 'return' Expr? ';'
 BreakStmt   := 'break' ';'
 ContinueStmt:= 'continue' ';'
@@ -336,6 +431,57 @@ GrantStmt   := '@' 'grant' '(' CapSet ')' Ident ';'   // birth a capability (roo
 RefineStmt  := '@' 'refine' '(' CapAtom '->' CapAtom ')' Ident ';'
 DropStmt    := '@' 'drop' '(' Ident ')' ';'
 WithCapStmt := '@' 'with_cap' '(' CapSet ')' Block   // ambient borrow of live caps
+```
+
+### `range` and `foreach`
+
+`range` iterates over an integer range (end-exclusive), binding the loop
+variable to each value:
+
+```loi
+range 0..9 -> i {
+  std.print_int(i);
+}
+```
+
+`foreach` iterates over an array variable, binding the loop variable to each
+element (the loop variable holds the index; index the array manually):
+
+```loi
+i32[3] nums;
+foreach nums -> n {
+  std.print_int(nums[n]);
+}
+```
+
+Both support `break` and `continue`. The classic C-style `for` remains
+available but `range`/`foreach` are the preferred forms.
+
+Semicolons are optional at the end of a block (before `}`). The last
+expression of a function block can serve as an implicit return when the
+function has a non-void return type.
+
+### `std` I/O functions
+
+The `std` package provides several functions for output:
+
+| Function | Description |
+|----------|-------------|
+| `std.print_str(s)` | Print a string followed by a newline |
+| `std.print_str_raw(s)` | Print a string **without** a trailing newline |
+| `std.print_bytes(arr, n)` | Print `n` bytes from array `arr` (no newline) |
+| `std.print_bytes_nl(arr, n)` | Print `n` bytes from array `arr` followed by a newline |
+
+```loi
+u8[5] data;
+data[0] = 72; data[1] = 101; data[2] = 108;
+data[3] = 108; data[4] = 111;  // "hello"
+
+std.print_str_raw("raw: ");
+std.print_bytes(data, 5);
+std.print_str("\n");
+
+std.print_bytes_nl(data, 5);  // prints "hello" with newline
 ```
 
 ## Expressions

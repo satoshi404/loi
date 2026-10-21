@@ -1448,7 +1448,7 @@ struct AssertData {
     char* condition;
     char* filename;
     int linenum;
-    char* function;
+    char* func_name;
     AssertData* next;
 }
 struct atomic_t {
