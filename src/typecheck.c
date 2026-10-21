@@ -234,6 +234,9 @@ static int cap_set_satisfies(Type *have, Type *need) {
     return 1;
 }
 
+/* Forward declaration for cap_live_candidates_ex (used before definition). */
+static size_t cap_live_candidates_ex(Type *need, const char **name);
+
 /* Count the live (unconsumed) capability bindings that prove `need`, and — when
    asked — the name of the single candidate. Ambient (non-owned) proofs take
    precedence over owned sources: an explicit `expr with S` or a region cap wins
@@ -253,7 +256,6 @@ static size_t cap_live_candidates_ex(Type *need, const char **name) {
     if (name) *name = amb_n ? amb_name : owned_name;
     return amb_n ? amb_n : owned_n;
 }
-static size_t cap_live_candidates(Type *need) { return cap_live_candidates_ex(need, NULL); }
 
 /* Enter an ambient-capability scope for `@with_cap(S)` and `expr with S`:
    borrows S from a live binding (it does not conjure authority), then binds

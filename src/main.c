@@ -148,7 +148,7 @@ static int build_link_cmd(char *cmd, size_t cmd_size, const char *ll_path,
                 snprintf(runtime, sizeof(runtime), "src/runtime.c");
         }
     }
-    char inc[PATH_MAX + 16];
+    char inc[PATH_MAX + 64];
     snprintf(inc, sizeof(inc), "-I%s", runtime);
     char *inc_slash = strrchr(inc, '/');
     if (inc_slash) *inc_slash = 0;
@@ -343,14 +343,13 @@ char *processed = loi_preprocess(src, base_dir_buf);
         }
     } else if (run_bin) {
         const char *ll_path = "/tmp/opencode/loi.ll";
-	//        const char *bin_path = "out";//"/tmp/opencode/loi_bin";
-	const char *bin_path = out_given ? out_path : "/tmp/opencode/loi_bin";
+        //        const char *bin_path = "out";//"/tmp/opencode/loi_bin";
+        const char *bin_path = out_given ? out_path : "/tmp/opencode/loi_bin";
         char cmd[PATH_MAX + 8];
 
         FILE *f = fopen(ll_path, "w");
         if (f && prog) { codegen_program(prog, f); fclose(f); }
-	else if (f) fclose(f);
-
+        else if (f) fclose(f);
 
         if (build_link_cmd(cmd, sizeof(cmd), ll_path, bin_path, lib_flags)) return 1;
         if (system(cmd) != 0) {

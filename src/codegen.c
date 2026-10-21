@@ -346,7 +346,7 @@ static char *cast_value(CG *cg, const char *val, const char *from, const char *t
         }
         if (fw > 0 && tw > 0 && fw > tw) {
             char *r = new_tmp(cg);
-            const char *op = (tw == 1) ? "trunc" : "sext";
+            const char *op = "trunc";
             fprintf(cg->out, "  %s = %s %s %s to %s\n", r, op, from, val, to);
             return r;
         }
