@@ -13,6 +13,7 @@
     <a href="index.html" class="active">Home</a>
     <a href="docs.html">Documentation</a>
     <a href="examples.html">Examples</a>
+    <a href="playground.html">Playground</a>
     <a href="https://github.com" target="_blank" rel="noopener">GitHub</a>
   </nav>
 </div></div>
@@ -24,6 +25,7 @@
   <div class="cta">
     <a class="btn" href="docs.html">Read the docs</a>
     <a class="btn ghost" href="examples.html">Browse examples</a>
+    <a class="btn ghost" href="playground.html">Try the Playground</a>
   </div>
 </div></section>
 
@@ -31,19 +33,20 @@
   <h2>Features</h2>
   <div class="feature-grid">
     <div class="card"><h3>C-like syntax</h3>Functions by assignment, hybrid variable declarations, semicolons, structs/unions, pointers, arrays, inline asm.</div>
-    <div class="card"><h3>Typed function pointers</h3>First-class <code>(a: int, b: int) -&gt; int !IO</code> types: alias with `type`, null initializers, effect tracking through calls.</div>
-    <div class="card"><h3>Effects</h3>Functions declare `!IO,Alloc`. Call sites are checked against the caller's effect set.</div>
+    <div class="card"><h3>Typed function pointers</h3>First-class <code>(a: int, b: int) -> int</code> types: alias with <code>type</code>, null initializers, effect tracking through calls.</div>
+    <div class="card"><h3>Effects</h3>Functions declare <code>!IO,Alloc</code>. Call sites are checked against the caller's effect set.</div>
     <div class="card"><h3>Regions</h3>Lexical regions with bump allocators and <code>std.region_alloc</code>.</div>
-    <div class="card"><h3>Macros &amp; meta</h3><p>Object/function-like <code>@(define ...)</code>, conditionals, <code>@repeat</code>/<code>@for</code>, <code>@stringify</code>, <code>@paste</code>, and variadic macros.</p></div>
-    <div class="card"><h3>Preprocessing &amp; packages</h3><p><code>@inc</code> (loi files/packages), <code>@cinc</code> (C headers), branch-scoped defines, compile-time codegen.</p></div>
+    <div class="card"><h3>Macros & meta</h3><p>Object/function-like <code>@(define ...)</code>, conditionals, <code>@repeat</code>/<code>@for</code>, <code>@stringify</code>, <code>@paste</code>, and variadic macros.</p></div>
+    <div class="card"><h3>Preprocessing & packages</h3><p><code>@inc</code> (loi files/packages), <code>@cinc</code> (C headers), branch-scoped defines, compile-time codegen.</p></div>
     <div class="card"><h3>LLVM IR output</h3>Emits optimizable IR and compiles to native via clang. Target triple included.</div>
-    <div class="card"><h3>Reflection</h3>`@sizeof`, `@offsetof`, `@typeof`, struct layout control with `@align`/`@pack`.</div>
+    <div class="card"><h3>Reflection</h3><code>@sizeof</code>, <code>@offsetof</code>, <code>@typeof</code>, struct layout control with <code>@align</code>/<code>@pack</code>.</div>
+    <div class="card"><h3>Source locations</h3><p><code>#line</code> directives track original source through <code>@inc</code> expansion. Error messages point to the right file/line.</p></div>
   </div>
 </section>
 
 <section class="section container">
   <h2>Quick start</h2>
-<pre><code class="lang-loi">
+  <pre><code class="lang-loi">
 @package(hello)
 
 @inc std
@@ -67,6 +70,7 @@ main = () -> int
     <li>Effect annotations that actually restrict which functions may be called.</li>
     <li>Region-scoped manual memory with lexical lifetime.</li>
     <li>Typed callbacks and function pointers that don't lose their effect contract.</li>
+    <li>Source locations through <code>@inc</code> expansion — errors point to original file/line.</li>
   </ul>
 </section>
 

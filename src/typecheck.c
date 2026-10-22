@@ -734,7 +734,7 @@ static void infer_cap_args(ASTNode *call, size_t pcount, Type **ptypes) {
                       i + 1, callee ? callee : "?", eb, n);
             return;
         }
-        ASTNode *id = ast_new(AST_EXPR_IDENT, call->line, call->column);
+        ASTNode *id = ast_new(AST_EXPR_IDENT, call->line, call->column, call->file);
         id->name = strdup(cand);
         if (call->arg_count == call->arg_cap) {
             call->arg_cap = call->arg_cap ? call->arg_cap * 2 : 4;
@@ -1273,11 +1273,11 @@ static size_t g_nconsts = 0;
 static const char **g_pkgnames = NULL;
 static size_t g_npkgs = 0;
 
-static ASTNode *clone_lit(ASTNode *e, int line, int col) {
-    ASTNode *n = ast_new(e->type, line, col);
+static ASTNode *clone_lit(ASTNode *e, int line, int col, const char *file) {
+    ASTNode *n = ast_new(e->type, line, col, file);
     n->op_token = e->op_token;
     if (e->str_value) n->str_value = strdup(e->str_value);
-    if (e->left) n->left = clone_lit(e->left, line, col);
+    if (e->left) n->left = clone_lit(e->left, line, col, e->file);
     return n;
 }
 
@@ -1301,11 +1301,11 @@ static void consts_walk(ASTNode **slot) {
     if (!n) return;
     if (n->type == AST_EXPR_IDENT && n->name) {
         ConstEnt *c = const_find(n->name, NULL);
-        if (c) { *slot = clone_lit(c->init, n->line, n->column); ast_free(n); return; }
+        if (c) { *slot = clone_lit(c->init, n->line, n->column, c->init->file); ast_free(n); return; }
     } else if (n->type == AST_EXPR_FIELD && n->name && n->left &&
                n->left->type == AST_EXPR_IDENT && n->left->name && is_pkg_name(n->left->name)) {
         ConstEnt *c = const_find(n->name, n->left->name);
-        if (c) { *slot = clone_lit(c->init, n->line, n->column); ast_free(n); return; }
+        if (c) { *slot = clone_lit(c->init, n->line, n->column, c->init->file); ast_free(n); return; }
     }
     if (n->type == AST_CONST_DECL) return;
     consts_walk(&n->left); consts_walk(&n->right); consts_walk(&n->cond);

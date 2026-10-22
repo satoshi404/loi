@@ -361,6 +361,8 @@ static char *expand_includes(const char *src, const char *base_dir, int depth) {
 
     StrBuf out;
     sb_init(&out);
+    /* Emit initial #line directive for the main file */
+    sb_printf(&out, "#line 1 \"%s\"\n", base_dir);
     char cur_pkg[256];
     cur_pkg[0] = 0;
     const char *p = src;
@@ -1135,6 +1137,13 @@ static char *pp_range(const char *s, size_t start, size_t end, int depth) {
             if (kw_match(dt, "#define")) register_define(dt + 7);
             else if (kw_match(dt, "#undef")) do_undef(dt + 6);
             else if (kw_match(dt, "#error")) do_error(dt + 6);
+            else if (kw_match(dt, "#line")) {
+                /* Pass #line directives through to the output for the lexer */
+                sb_put(&out, s + i, le - i);
+                if (le < end && s[le] == '\n') { sb_putc(&out, '\n'); i = le + 1; }
+                else i = le;
+                continue;
+            }
             /* Strip the directive line, keeping its newline for line numbers. */
             if (le < end && s[le] == '\n') { sb_putc(&out, '\n'); i = le + 1; }
             else i = le;

@@ -8,7 +8,7 @@
   const TYPES = new Set(['int','float','double','char','bool','byte','short','long','void','unsigned','ptr']);
   const TOKEN_RE = /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\/[^\n]*|\/\*[\s\S]*?\*\/|@[a-zA-Z_]\w*|@\(|\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b|[A-Za-z_]\w*|[^A-Za-z0-9_"'@]/g;
 
-  function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function esc(s) { return s.replace(/&/g,'&').replace(/</g,'<').replace(/>/g,'>'); }
   function cls(tok) {
     if (tok.startsWith('//') || tok.startsWith('/*')) return 'tok-comment';
     if (tok.startsWith('"')) return 'tok-str';
@@ -20,7 +20,9 @@
     if (/^[A-Za-z_]\w*$/.test(tok)) return '';
     return 'tok-punct';
   }
-  function highlight(code) {
+  
+  // Shared highlight function
+  window.loiHighlight = function highlight(code) {
     return code.replace(TOKEN_RE, (m) => {
       const c = cls(m);
       const e = esc(m);

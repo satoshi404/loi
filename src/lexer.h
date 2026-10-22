@@ -10,10 +10,12 @@ typedef struct {
     int line;
     int column;
     int at_eof;
+    const char *file;  /* current source file name */
 } Lexer;
 
 void lexer_init(Lexer *lex, const char *src);
 void lexer_init_n(Lexer *lex, const char *src, size_t length);
+void lexer_init_file(Lexer *lex, const char *src, size_t length, const char *file);
 
 /* Returns next token. Caller owns token.lexeme and must call token_free(). */
 Token lexer_next(Lexer *lex);

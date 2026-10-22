@@ -3,11 +3,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-ASTNode *ast_new(ASTNodeType type, int line, int col) {
+ASTNode *ast_new(ASTNodeType type, int line, int col, const char *file) {
     ASTNode *n = calloc(1, sizeof(ASTNode));
     n->type = type;
     n->line = line;
     n->column = col;
+    n->file = file;
     return n;
 }
 
@@ -71,7 +72,7 @@ Type *type_clone(Type *t) {
     c->base = type_clone(t->base);
     c->return_type = type_clone(t->return_type);
     if (t->array_size && t->array_size->str_value) {
-        ASTNode *sz = ast_new(AST_EXPR_NUMBER, t->array_size->line, t->array_size->column);
+        ASTNode *sz = ast_new(AST_EXPR_NUMBER, t->array_size->line, t->array_size->column, t->array_size->file);
         sz->str_value = strdup(t->array_size->str_value);
         c->array_size = sz;
     }

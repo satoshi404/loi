@@ -430,7 +430,7 @@ static char *strdup_lex(const char *s) { return s ? strdup(s) : NULL; }
 
 static ASTNode *parse_var_decl(Parser *p, int require_semi) {
     int line = p->current.line, col = p->current.column;
-    ASTNode *decl = ast_new(AST_VAR_DECL, line, col);
+    ASTNode *decl = ast_new(AST_VAR_DECL, line, col, p->current.file);
     if (check(p, TOK_IDENTIFIER)) {
         Token t = lexer_peek(p->lex);
         if (t.type == TOK_COLON) {
@@ -475,7 +475,7 @@ static ASTNode *parse_var_decl(Parser *p, int require_semi) {
 
 static ASTNode *parse_param(Parser *p) {
     int line = p->current.line, col = p->current.column;
-    ASTNode *param = ast_new(AST_VAR_DECL, line, col);
+    ASTNode *param = ast_new(AST_VAR_DECL, line, col, p->current.file);
     if (check(p, TOK_IDENTIFIER)) {
         Token t = lexer_peek(p->lex);
         if (t.type == TOK_COLON) {
@@ -508,7 +508,7 @@ static ASTNode *parse_param(Parser *p) {
 
 static ASTNode *parse_block(Parser *p) {
     int line = p->current.line, col = p->current.column;
-    ASTNode *blk = ast_new(AST_BLOCK, line, col);
+    ASTNode *blk = ast_new(AST_BLOCK, line, col, p->current.file);
     expect(p, TOK_LBRACE, "expected '{'");
     while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
         ASTNode *s = parse_stmt(p);
@@ -521,7 +521,7 @@ static ASTNode *parse_block(Parser *p) {
 
 static ASTNode *parse_if(Parser *p) {
     int line = p->current.line, col = p->current.column;
-    ASTNode *n = ast_new(AST_IF, line, col);
+    ASTNode *n = ast_new(AST_IF, line, col, p->current.file);
     expect(p, TOK_KW_IF, "expected 'if'");
     expect(p, TOK_LPAREN, "expected '('");
     n->cond = parse_expr(p);
@@ -535,7 +535,7 @@ static ASTNode *parse_if(Parser *p) {
 
 static ASTNode *parse_while(Parser *p) {
     int line = p->current.line, col = p->current.column;
-    ASTNode *n = ast_new(AST_WHILE, line, col);
+    ASTNode *n = ast_new(AST_WHILE, line, col, p->current.file);
     expect(p, TOK_KW_WHILE, "expected 'while'");
     expect(p, TOK_LPAREN, "expected '('");
     n->cond = parse_expr(p);
@@ -546,7 +546,7 @@ static ASTNode *parse_while(Parser *p) {
 
 static ASTNode *parse_do_while(Parser *p) {
     int line = p->current.line, col = p->current.column;
-    ASTNode *n = ast_new(AST_DO_WHILE, line, col);
+    ASTNode *n = ast_new(AST_DO_WHILE, line, col, p->current.file);
     expect(p, TOK_KW_DO, "expected 'do'");
     n->body = parse_block(p);
     expect(p, TOK_KW_WHILE, "expected 'while'");
@@ -559,7 +559,7 @@ static ASTNode *parse_do_while(Parser *p) {
 
 static ASTNode *parse_for(Parser *p) {
     int line = p->current.line, col = p->current.column;
-    ASTNode *n = ast_new(AST_FOR, line, col);
+    ASTNode *n = ast_new(AST_FOR, line, col, p->current.file);
     expect(p, TOK_KW_FOR, "expected 'for'");
     expect(p, TOK_LPAREN, "expected '('");
     if (!check(p, TOK_SEMICOLON)) {
@@ -567,7 +567,7 @@ static ASTNode *parse_for(Parser *p) {
             n->init_stmt = parse_var_decl(p, 0);
         } else {
             ASTNode *e = parse_expr(p);
-            ASTNode *es = ast_new(AST_EXPR_STMT, e->line, e->column);
+            ASTNode *es = ast_new(AST_EXPR_STMT, e->line, e->column, p->current.file);
             es->left = e;
             n->init_stmt = es;
         }
@@ -579,7 +579,7 @@ static ASTNode *parse_for(Parser *p) {
     expect(p, TOK_SEMICOLON, "expected ';'");
     if (!check(p, TOK_RPAREN)) {
         ASTNode *e = parse_expr(p);
-        ASTNode *es = ast_new(AST_EXPR_STMT, e->line, e->column);
+        ASTNode *es = ast_new(AST_EXPR_STMT, e->line, e->column, p->current.file);
         es->left = e;
         n->update = es;
     }
@@ -591,12 +591,14 @@ static ASTNode *parse_for(Parser *p) {
 /* `procedure > name(params) { body }` — a void procedure. */
 static ASTNode *parse_procedure(Parser *p) {
     int line = p->current.line, col = p->current.column;
+    const char *file = p->lex->file;
     advance_parser(p); /* 'procedure' */
     expect(p, TOK_GT, "expected '>' after 'procedure'");
     if (!check(p, TOK_IDENTIFIER) && !check(p, TOK_KW_MAIN)) {
         parser_error(p, "expected procedure name");
     }
-    ASTNode *n = ast_new(AST_FUNC_DECL, line, col);
+    ASTNode *n = ast_new(AST_FUNC_DECL, line, col, p->current.file);
+    n->file = file ? strdup(file) : NULL;
     n->name = strdup_lex(p->current.lexeme);
     n->ty = NULL; /* void */
     advance_parser(p);
@@ -626,7 +628,7 @@ static ASTNode *parse_function_modern(Parser *p) {
     if (!check(p, TOK_IDENTIFIER) && !check(p, TOK_KW_MAIN)) {
         parser_error(p, "expected function name");
     }
-    ASTNode *n = ast_new(AST_FUNC_DECL, line, col);
+    ASTNode *n = ast_new(AST_FUNC_DECL, line, col, p->current.file);
     n->name = strdup_lex(p->current.lexeme);
     advance_parser(p);
     expect(p, TOK_LPAREN, "expected '(' after function name");
@@ -648,8 +650,8 @@ static ASTNode *parse_function_modern(Parser *p) {
         advance_parser(p);
         ASTNode *expr = parse_expr(p);
         match_tok(p, TOK_SEMICOLON);
-        ASTNode *block = ast_new(AST_BLOCK, n->line, n->column);
-        ASTNode *ret = ast_new(AST_RETURN, expr ? expr->line : n->line, expr ? expr->column : n->column);
+        ASTNode *block = ast_new(AST_BLOCK, n->line, n->column, p->current.file);
+        ASTNode *ret = ast_new(AST_RETURN, expr ? expr->line : n->line, expr ? expr->column : n->column, p->current.file);
         ret->left = expr;
         ast_add_item(block, ret);
         n->body = block;
@@ -665,14 +667,14 @@ static ASTNode *parse_function_modern(Parser *p) {
         ASTNode *last = n->body->items[n->body->item_count - 1];
         if (last && last->type == AST_EXPR_STMT && last->left &&
             last->left->type != AST_RETURN) {
-            ASTNode *ret = ast_new(AST_RETURN, last->left->line, last->left->column);
+            ASTNode *ret = ast_new(AST_RETURN, last->left->line, last->left->column, p->current.file);
             ret->left = last->left;
             last->left = NULL;
             n->body->items[n->body->item_count - 1] = ret;
             ast_free(last);
         } else if (last && last->type == AST_WHEN) {
             last->is_expr = 1;
-            ASTNode *ret = ast_new(AST_RETURN, last->line, last->column);
+            ASTNode *ret = ast_new(AST_RETURN, last->line, last->column, p->current.file);
             ret->left = last;
             n->body->items[n->body->item_count - 1] = ret;
             last->item_count = 0;
@@ -692,12 +694,12 @@ static int is_cmp_op(TokenType t) {
 static ASTNode *parse_when(Parser *p) {
     int line = p->current.line, col = p->current.column;
     advance_parser(p); /* 'when' */
-    ASTNode *n = ast_new(AST_WHEN, line, col);
+    ASTNode *n = ast_new(AST_WHEN, line, col, p->current.file);
     n->cond = parse_expr(p);
     expect(p, TOK_LBRACE, "expected '{' after 'when' condition");
     while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
         int br_line = p->current.line, br_col = p->current.column;
-        ASTNode *br = ast_new(AST_WHEN_BRANCH, br_line, br_col);
+        ASTNode *br = ast_new(AST_WHEN_BRANCH, br_line, br_col, p->current.file);
         if (check(p, TOK_KW_OTHERWISE)) {
             advance_parser(p);
             br->op_token = TOK_KW_OTHERWISE;
@@ -723,7 +725,7 @@ static ASTNode *parse_when(Parser *p) {
 static ASTNode *parse_range(Parser *p) {
     int line = p->current.line, col = p->current.column;
     advance_parser(p); /* 'range' */
-    ASTNode *n = ast_new(AST_RANGE, line, col);
+    ASTNode *n = ast_new(AST_RANGE, line, col, p->current.file);
     n->cond = parse_expr(p);
     expect(p, TOK_DOTDOT, "expected '..' in 'range'");
     n->right = parse_expr(p);
@@ -750,7 +752,7 @@ static ASTNode *parse_range(Parser *p) {
 static ASTNode *parse_foreach(Parser *p) {
     int line = p->current.line, col = p->current.column;
     advance_parser(p); /* 'foreach' */
-    ASTNode *n = ast_new(AST_FOREACH, line, col);
+    ASTNode *n = ast_new(AST_FOREACH, line, col, p->current.file);
     n->cond = parse_expr(p);
     /* The `->` arrow may have been swallowed by postfix field-access parsing
        (`nums -> n` reads as `nums.n`). Detect that case: if the parsed
@@ -773,7 +775,7 @@ static ASTNode *parse_foreach(Parser *p) {
 
 static ASTNode *parse_switch(Parser *p) {
     int line = p->current.line, col = p->current.column;
-    ASTNode *n = ast_new(AST_SWITCH, line, col);
+    ASTNode *n = ast_new(AST_SWITCH, line, col, p->current.file);
     expect(p, TOK_KW_SWITCH, "expected 'switch'");
     expect(p, TOK_LPAREN, "expected '('");
     n->cond = parse_expr(p);
@@ -783,14 +785,14 @@ static ASTNode *parse_switch(Parser *p) {
     while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
         if (check(p, TOK_KW_CASE)) {
             advance_parser(p);
-            ASTNode *case_node = ast_new(AST_CASE, p->current.line, p->current.column);
+            ASTNode *case_node = ast_new(AST_CASE, p->current.line, p->current.column, p->current.file);
             case_node->cond = parse_expr(p);
             expect(p, TOK_COLON, "expected ':'");
             case_node->body = parse_block(p);
             ast_add_item(n, case_node);
         } else if (check(p, TOK_KW_DEFAULT)) {
             advance_parser(p);
-            ASTNode *def_node = ast_new(AST_DEFAULT, p->current.line, p->current.column);
+            ASTNode *def_node = ast_new(AST_DEFAULT, p->current.line, p->current.column, p->current.file);
             expect(p, TOK_COLON, "expected ':'");
             def_node->body = parse_block(p);
             ast_add_item(n, def_node);
@@ -805,7 +807,7 @@ static ASTNode *parse_switch(Parser *p) {
 
 static ASTNode *parse_return(Parser *p) {
     int line = p->current.line, col = p->current.column;
-    ASTNode *n = ast_new(AST_RETURN, line, col);
+    ASTNode *n = ast_new(AST_RETURN, line, col, p->current.file);
     expect(p, TOK_KW_RETURN, "expected 'return'");
     if (!check(p, TOK_SEMICOLON) && !check(p, TOK_RBRACE)) {
         n->left = parse_expr(p);
@@ -817,7 +819,7 @@ static ASTNode *parse_return(Parser *p) {
 
 static ASTNode *parse_asm(Parser *p) {
     int line = p->current.line, col = p->current.column;
-    ASTNode *n = ast_new(AST_ASM, line, col);
+    ASTNode *n = ast_new(AST_ASM, line, col, p->current.file);
     expect(p, TOK_KW_ASM, "expected 'asm'");
     if (check(p, TOK_LPAREN)) {
         advance_parser(p);
@@ -845,7 +847,7 @@ static ASTNode *parse_stmt(Parser *p) {
     if (check(p, TOK_KW_REGION)) {
         int line = p->current.line, col = p->current.column;
         advance_parser(p);
-        ASTNode *n = ast_new(AST_REGION, line, col);
+        ASTNode *n = ast_new(AST_REGION, line, col, p->current.file);
         if (check(p, TOK_IDENTIFIER)) {
             n->name = strdup_lex(p->current.lexeme);
             advance_parser(p);
@@ -876,7 +878,7 @@ static ASTNode *parse_stmt(Parser *p) {
         int line = p->current.line, col = p->current.column;
         TokenType kw = p->current.type;
         advance_parser(p);
-        ASTNode *n = ast_new(AST_CONTRACT, line, col);
+        ASTNode *n = ast_new(AST_CONTRACT, line, col, p->current.file);
         n->cond = parse_expr(p);
         n->op_token = kw;
         match_tok(p, TOK_SEMICOLON);
@@ -894,13 +896,13 @@ static ASTNode *parse_stmt(Parser *p) {
         int line = p->current.line, col = p->current.column;
         advance_parser(p);
         expect(p, TOK_SEMICOLON, "expected ';'");
-        return ast_new(AST_BREAK, line, col);
+        return ast_new(AST_BREAK, line, col, p->current.file);
     }
     if (check(p, TOK_KW_CONTINUE)) {
         int line = p->current.line, col = p->current.column;
         advance_parser(p);
         expect(p, TOK_SEMICOLON, "expected ';'");
-        return ast_new(AST_CONTINUE, line, col);
+        return ast_new(AST_CONTINUE, line, col, p->current.file);
     }
     if (check(p, TOK_KW_ASM)) return parse_asm(p);
     /* lexical capability statements: @grant / @refine / @drop / @with_cap. */
@@ -916,7 +918,7 @@ static ASTNode *parse_stmt(Parser *p) {
             advance_parser(p); /* '@' */
             advance_parser(p); /* 'grant' */
             expect(p, TOK_LPAREN, "expected '(' after @grant");
-            ASTNode *n = ast_new(AST_GRANT, line, col);
+            ASTNode *n = ast_new(AST_GRANT, line, col, p->current.file);
             n->caps = parse_cap_set_names(p);
             expect(p, TOK_RPAREN, "expected ')'");
             if (check(p, TOK_IDENTIFIER)) { n->name = strdup_lex(p->current.lexeme); advance_parser(p); }
@@ -929,7 +931,7 @@ static ASTNode *parse_stmt(Parser *p) {
             advance_parser(p); /* '@' */
             advance_parser(p); /* 'refine' */
             expect(p, TOK_LPAREN, "expected '(' after @refine");
-            ASTNode *n = ast_new(AST_REFINE, line, col);
+            ASTNode *n = ast_new(AST_REFINE, line, col, p->current.file);
             if (check(p, TOK_IDENTIFIER)) { n->caps = strdup_lex(p->current.lexeme); advance_parser(p); }
             else parser_error(p, "expected capability name in @refine");
             expect(p, TOK_ARROW, "expected '->' in @refine");
@@ -945,7 +947,7 @@ static ASTNode *parse_stmt(Parser *p) {
             advance_parser(p); /* '@' */
             advance_parser(p); /* 'drop' */
             expect(p, TOK_LPAREN, "expected '(' after @drop");
-            ASTNode *n = ast_new(AST_DROP, line, col);
+            ASTNode *n = ast_new(AST_DROP, line, col, p->current.file);
             if (check(p, TOK_IDENTIFIER)) { n->name = strdup_lex(p->current.lexeme); advance_parser(p); }
             else parser_error(p, "expected capability binding name in @drop");
             expect(p, TOK_RPAREN, "expected ')'");
@@ -957,7 +959,7 @@ static ASTNode *parse_stmt(Parser *p) {
     ASTNode *e = parse_expr(p);
     int line = e ? e->line : p->current.line;
     int col = e ? e->column : p->current.column;
-    ASTNode *es = ast_new(AST_EXPR_STMT, line, col);
+    ASTNode *es = ast_new(AST_EXPR_STMT, line, col, p->current.file);
     es->left = e;
     /* `expr with CapSet;` — ambient (borrowed) capabilities scoped to this
        statement, equivalent to `@with_cap(CapSet) { expr; }`. */
@@ -989,7 +991,7 @@ static ASTNode *parse_assign(Parser *p) {
         TokenType op = p->current.type;
         advance_parser(p);
         ASTNode *right = parse_assign(p);
-        ASTNode *b = ast_new(AST_EXPR_BINARY, line, col);
+        ASTNode *b = ast_new(AST_EXPR_BINARY, line, col, p->current.file);
         b->left = left;
         b->op_token = op;
         b->right = right;
@@ -1001,7 +1003,7 @@ static ASTNode *parse_assign(Parser *p) {
 static ASTNode *parse_ternary(Parser *p) {
     ASTNode *cond = parse_log_or(p);
     if (match_tok(p, TOK_QUESTION)) {
-        ASTNode *n = ast_new(AST_EXPR_TERNARY, cond->line, cond->column);
+        ASTNode *n = ast_new(AST_EXPR_TERNARY, cond->line, cond->column, p->current.file);
         n->cond = cond;
         n->then_branch = parse_expr(p);
         expect(p, TOK_COLON, "expected ':'");
@@ -1018,7 +1020,7 @@ static ASTNode *parse_log_or(Parser *p) {
         TokenType op = p->current.type;
         advance_parser(p);
         ASTNode *r = parse_log_and(p);
-        ASTNode *b = ast_new(AST_EXPR_BINARY, line, col);
+        ASTNode *b = ast_new(AST_EXPR_BINARY, line, col, p->current.file);
         b->left = node; b->op_token = op; b->right = r;
         node = b;
     }
@@ -1032,7 +1034,7 @@ static ASTNode *parse_log_and(Parser *p) {
         TokenType op = p->current.type;
         advance_parser(p);
         ASTNode *r = parse_bit_or(p);
-        ASTNode *b = ast_new(AST_EXPR_BINARY, line, col);
+        ASTNode *b = ast_new(AST_EXPR_BINARY, line, col, p->current.file);
         b->left = node; b->op_token = op; b->right = r;
         node = b;
     }
@@ -1046,7 +1048,7 @@ static ASTNode *parse_bit_or(Parser *p) {
         TokenType op = p->current.type;
         advance_parser(p);
         ASTNode *r = parse_bit_xor(p);
-        ASTNode *b = ast_new(AST_EXPR_BINARY, line, col);
+        ASTNode *b = ast_new(AST_EXPR_BINARY, line, col, p->current.file);
         b->left = node; b->op_token = op; b->right = r;
         node = b;
     }
@@ -1060,7 +1062,7 @@ static ASTNode *parse_bit_xor(Parser *p) {
         TokenType op = p->current.type;
         advance_parser(p);
         ASTNode *r = parse_bit_and(p);
-        ASTNode *b = ast_new(AST_EXPR_BINARY, line, col);
+        ASTNode *b = ast_new(AST_EXPR_BINARY, line, col, p->current.file);
         b->left = node; b->op_token = op; b->right = r;
         node = b;
     }
@@ -1074,7 +1076,7 @@ static ASTNode *parse_bit_and(Parser *p) {
         TokenType op = p->current.type;
         advance_parser(p);
         ASTNode *r = parse_eq(p);
-        ASTNode *b = ast_new(AST_EXPR_BINARY, line, col);
+        ASTNode *b = ast_new(AST_EXPR_BINARY, line, col, p->current.file);
         b->left = node; b->op_token = op; b->right = r;
         node = b;
     }
@@ -1088,7 +1090,7 @@ static ASTNode *parse_eq(Parser *p) {
         TokenType op = p->current.type;
         advance_parser(p);
         ASTNode *r = parse_rel(p);
-        ASTNode *b = ast_new(AST_EXPR_BINARY, line, col);
+        ASTNode *b = ast_new(AST_EXPR_BINARY, line, col, p->current.file);
         b->left = node; b->op_token = op; b->right = r;
         node = b;
     }
@@ -1102,7 +1104,7 @@ static ASTNode *parse_rel(Parser *p) {
         TokenType op = p->current.type;
         advance_parser(p);
         ASTNode *r = parse_shift(p);
-        ASTNode *b = ast_new(AST_EXPR_BINARY, line, col);
+        ASTNode *b = ast_new(AST_EXPR_BINARY, line, col, p->current.file);
         b->left = node; b->op_token = op; b->right = r;
         node = b;
     }
@@ -1116,7 +1118,7 @@ static ASTNode *parse_shift(Parser *p) {
         TokenType op = p->current.type;
         advance_parser(p);
         ASTNode *r = parse_add(p);
-        ASTNode *b = ast_new(AST_EXPR_BINARY, line, col);
+        ASTNode *b = ast_new(AST_EXPR_BINARY, line, col, p->current.file);
         b->left = node; b->op_token = op; b->right = r;
         node = b;
     }
@@ -1130,7 +1132,7 @@ static ASTNode *parse_add(Parser *p) {
         TokenType op = p->current.type;
         advance_parser(p);
         ASTNode *r = parse_mul(p);
-        ASTNode *b = ast_new(AST_EXPR_BINARY, line, col);
+        ASTNode *b = ast_new(AST_EXPR_BINARY, line, col, p->current.file);
         b->left = node; b->op_token = op; b->right = r;
         node = b;
     }
@@ -1144,7 +1146,7 @@ static ASTNode *parse_mul(Parser *p) {
         TokenType op = p->current.type;
         advance_parser(p);
         ASTNode *r = parse_pow(p);
-        ASTNode *b = ast_new(AST_EXPR_BINARY, line, col);
+        ASTNode *b = ast_new(AST_EXPR_BINARY, line, col, p->current.file);
         b->left = node; b->op_token = op; b->right = r;
         node = b;
     }
@@ -1157,7 +1159,7 @@ static ASTNode *parse_pow(Parser *p) {
         int line = p->current.line, col = p->current.column;
         advance_parser(p);
         ASTNode *r = parse_pow(p);
-        ASTNode *b = ast_new(AST_EXPR_BINARY, line, col);
+        ASTNode *b = ast_new(AST_EXPR_BINARY, line, col, p->current.file);
         b->left = node; b->op_token = TOK_STARSTAR;
         b->right = r;
         return b;
@@ -1173,7 +1175,7 @@ static ASTNode *parse_unary(Parser *p) {
         TokenType op = p->current.type;
         advance_parser(p);
         ASTNode *operand = parse_unary(p);
-        ASTNode *u = ast_new(AST_EXPR_UNARY, line, col);
+        ASTNode *u = ast_new(AST_EXPR_UNARY, line, col, p->current.file);
         u->op_token = op;
         u->left = operand;
         return u;
@@ -1188,7 +1190,7 @@ static ASTNode *parse_postfix(Parser *p) {
         if (check(p, TOK_LPAREN)) {
             int line = p->current.line, col = p->current.column;
             advance_parser(p);
-            ASTNode *call = ast_new(AST_EXPR_CALL, line, col);
+            ASTNode *call = ast_new(AST_EXPR_CALL, line, col, p->current.file);
             call->left = node;
             if (!check(p, TOK_RPAREN)) {
                 do {
@@ -1208,14 +1210,14 @@ static ASTNode *parse_postfix(Parser *p) {
             advance_parser(p);
             ASTNode *idx = parse_expr(p);
             expect(p, TOK_RBRACKET, "expected ']'");
-            ASTNode *ix = ast_new(AST_EXPR_INDEX, line, col);
+            ASTNode *ix = ast_new(AST_EXPR_INDEX, line, col, p->current.file);
             ix->left = node;
             ix->right = idx;
             node = ix;
         } else if (check(p, TOK_DOT)) {
             advance_parser(p);
             int line = p->current.line, col = p->current.column;
-            ASTNode *f = ast_new(AST_EXPR_FIELD, line, col);
+            ASTNode *f = ast_new(AST_EXPR_FIELD, line, col, p->current.file);
             f->left = node;
             if (check(p, TOK_IDENTIFIER)) {
                 f->name = strdup_lex(p->current.lexeme);
@@ -1238,7 +1240,7 @@ static ASTNode *parse_postfix(Parser *p) {
             if (!arrow_is_field) break;
             advance_parser(p);
             int line = p->current.line, col = p->current.column;
-            ASTNode *f = ast_new(AST_EXPR_FIELD, line, col);
+            ASTNode *f = ast_new(AST_EXPR_FIELD, line, col, p->current.file);
             f->left = node;
             if (check(p, TOK_IDENTIFIER)) {
                 f->name = strdup_lex(p->current.lexeme);
@@ -1251,7 +1253,7 @@ static ASTNode *parse_postfix(Parser *p) {
             int line = p->current.line, col = p->current.column;
             TokenType op = p->current.type;
             advance_parser(p);
-            ASTNode *u = ast_new(AST_EXPR_UNARY, line, col);
+            ASTNode *u = ast_new(AST_EXPR_UNARY, line, col, p->current.file);
             u->op_token = op;
             u->left = node;
             node = u;
@@ -1264,30 +1266,30 @@ static ASTNode *parse_postfix(Parser *p) {
 
 static ASTNode *parse_primary(Parser *p) {
     if (check(p, TOK_NUMBER)) {
-        ASTNode *n = ast_new(AST_EXPR_NUMBER, p->current.line, p->current.column);
+        ASTNode *n = ast_new(AST_EXPR_NUMBER, p->current.line, p->current.column, p->current.file);
         n->str_value = strdup_lex(p->current.lexeme);
         advance_parser(p);
         return n;
     }
     if (check(p, TOK_STRING)) {
-        ASTNode *n = ast_new(AST_EXPR_STRING, p->current.line, p->current.column);
+        ASTNode *n = ast_new(AST_EXPR_STRING, p->current.line, p->current.column, p->current.file);
         n->str_value = strdup_lex(p->current.lexeme);
         advance_parser(p);
         return n;
     }
     if (check(p, TOK_CHAR)) {
-        ASTNode *n = ast_new(AST_EXPR_CHAR, p->current.line, p->current.column);
+        ASTNode *n = ast_new(AST_EXPR_CHAR, p->current.line, p->current.column, p->current.file);
         n->str_value = strdup_lex(p->current.lexeme);
         advance_parser(p);
         return n;
     }
     if (check(p, TOK_KW_NULL)) {
-        ASTNode *n = ast_new(AST_EXPR_NULL, p->current.line, p->current.column);
+        ASTNode *n = ast_new(AST_EXPR_NULL, p->current.line, p->current.column, p->current.file);
         advance_parser(p);
         return n;
     }
     if (check(p, TOK_IDENTIFIER) || check(p, TOK_KW_MAIN)) {
-        ASTNode *n = ast_new(AST_EXPR_IDENT, p->current.line, p->current.column);
+        ASTNode *n = ast_new(AST_EXPR_IDENT, p->current.line, p->current.column, p->current.file);
         n->name = strdup_lex(p->current.lexeme);
         advance_parser(p);
         return n;
@@ -1297,7 +1299,7 @@ static ASTNode *parse_primary(Parser *p) {
         advance_parser(p);
         expect(p, TOK_LPAREN, "expected '('");
         Type *t = parse_type(p);
-        ASTNode *n = ast_new(AST_EXPR_SIZEOF, line, col);
+        ASTNode *n = ast_new(AST_EXPR_SIZEOF, line, col, p->current.file);
         n->ty = type_clone(t);
         type_free(t);
         expect(p, TOK_RPAREN, "expected ')'");
@@ -1308,7 +1310,7 @@ static ASTNode *parse_primary(Parser *p) {
         advance_parser(p);
         expect(p, TOK_LPAREN, "expected '('");
         Type *t = parse_type(p);
-        ASTNode *n = ast_new(AST_EXPR_ALIGNOF, line, col);
+        ASTNode *n = ast_new(AST_EXPR_ALIGNOF, line, col, p->current.file);
         n->ty = type_clone(t);
         type_free(t);
         return n;
@@ -1331,7 +1333,7 @@ static ASTNode *parse_primary(Parser *p) {
             advance_parser(p);
             expect(p, TOK_LPAREN, "expected '('");
             Type *t = parse_type(p);
-            ASTNode *n = ast_new(AST_EXPR_SIZEOF, line, col);
+            ASTNode *n = ast_new(AST_EXPR_SIZEOF, line, col, p->current.file);
             n->ty = type_clone(t);
             type_free(t);
             expect(p, TOK_RPAREN, "expected ')'");
@@ -1341,7 +1343,7 @@ static ASTNode *parse_primary(Parser *p) {
             advance_parser(p);
             expect(p, TOK_LPAREN, "expected '('");
             Type *t = parse_type(p);
-            ASTNode *n = ast_new(AST_EXPR_ALIGNOF, line, col);
+            ASTNode *n = ast_new(AST_EXPR_ALIGNOF, line, col, p->current.file);
             n->ty = type_clone(t);
             type_free(t);
             expect(p, TOK_RPAREN, "expected ')'");
@@ -1351,19 +1353,19 @@ static ASTNode *parse_primary(Parser *p) {
             const char *id = p->current.lexeme;
             if (strcmp(id, "sizeof") == 0) {
                 advance_parser(p); expect(p, TOK_LPAREN, "expected '('");
-                Type *t = parse_type(p); ASTNode *n = ast_new(AST_EXPR_SIZEOF, line, col); n->ty = type_clone(t); type_free(t); expect(p, TOK_RPAREN, "expected ')'");
+                Type *t = parse_type(p); ASTNode *n = ast_new(AST_EXPR_SIZEOF, line, col, p->current.file); n->ty = type_clone(t); type_free(t); expect(p, TOK_RPAREN, "expected ')'");
                 return n;
             }
             if (strcmp(id, "alignof") == 0) {
                 advance_parser(p); expect(p, TOK_LPAREN, "expected '('");
-                Type *t = parse_type(p); ASTNode *n = ast_new(AST_EXPR_ALIGNOF, line, col); n->ty = type_clone(t); type_free(t); expect(p, TOK_RPAREN, "expected ')'");
+                Type *t = parse_type(p); ASTNode *n = ast_new(AST_EXPR_ALIGNOF, line, col, p->current.file); n->ty = type_clone(t); type_free(t); expect(p, TOK_RPAREN, "expected ')'");
                 return n;
             }
             if (strcmp(id, "offsetof") == 0) {
                 advance_parser(p); expect(p, TOK_LPAREN, "expected '('");
                 Type *t = parse_type(p);
                 match_tok(p, TOK_COMMA);
-                ASTNode *n = ast_new(AST_EXPR_OFFSETOF, line, col);
+                ASTNode *n = ast_new(AST_EXPR_OFFSETOF, line, col, p->current.file);
                 n->ty = type_clone(t);
                 type_free(t);
                 if (check(p, TOK_IDENTIFIER)) { n->name = strdup_lex(p->current.lexeme); advance_parser(p); }
@@ -1380,7 +1382,7 @@ static ASTNode *parse_primary(Parser *p) {
             /* skip unknown */
             advance_parser(p);
             if (check(p, TOK_LPAREN)) { advance_parser(p); while (!check(p,TOK_RPAREN)&&!check(p,TOK_EOF)) advance_parser(p); match_tok(p,TOK_RPAREN); }
-            return ast_new(AST_EXPR_NUMBER, line, col);
+            return ast_new(AST_EXPR_NUMBER, line, col, p->current.file);
         }
     }
     parser_error(p, "expected expression");
@@ -1391,7 +1393,7 @@ static ASTNode *parse_primary(Parser *p) {
 /* `@package(name)` — dotted names are allowed (`@package(core.utils)`). */
 static ASTNode *parse_package(Parser *p) {
     int line = p->current.line, col = p->current.column;
-    ASTNode *n = ast_new(AST_PACKAGE, line, col);
+    ASTNode *n = ast_new(AST_PACKAGE, line, col, p->current.file);
     expect(p, TOK_AT, "expected '@'");
     expect(p, TOK_KW_PACKAGE, "expected 'package'");
     expect(p, TOK_LPAREN, "expected '(' after '@package'");
@@ -1427,7 +1429,7 @@ static ASTNode *parse_import(Parser *p) {
 
 static ASTNode *parse_struct(Parser *p) {
     int line = p->current.line, col = p->current.column;
-    ASTNode *n = ast_new(AST_STRUCT_DECL, line, col);
+    ASTNode *n = ast_new(AST_STRUCT_DECL, line, col, p->current.file);
     TokenType kw = p->current.type;
     advance_parser(p);
     if (kw == TOK_KW_UNION) ast_add_attr(n, "union", NULL);
@@ -1463,7 +1465,7 @@ static ASTNode *parse_struct(Parser *p) {
     while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
         if (kw == TOK_KW_ENUM) {
             if (check(p, TOK_IDENTIFIER)) {
-                ASTNode *id = ast_new(AST_EXPR_IDENT, p->current.line, p->current.column);
+                ASTNode *id = ast_new(AST_EXPR_IDENT, p->current.line, p->current.column, p->current.file);
                 id->name = strdup_lex(p->current.lexeme);
                 advance_parser(p);
                 ast_add_item(n, id);
@@ -1509,7 +1511,7 @@ static ASTNode *parse_struct(Parser *p) {
 
 static ASTNode *parse_type_decl(Parser *p) {
     int line = p->current.line, col = p->current.column;
-    ASTNode *n = ast_new(AST_TYPE_DECL, line, col);
+    ASTNode *n = ast_new(AST_TYPE_DECL, line, col, p->current.file);
     expect(p, TOK_KW_TYPE, "expected 'type'");
     if (check(p, TOK_IDENTIFIER)) {
         n->name = strdup_lex(p->current.lexeme);
@@ -1523,7 +1525,7 @@ static ASTNode *parse_type_decl(Parser *p) {
 
 static ASTNode *parse_extern(Parser *p) {
     int line = p->current.line, col = p->current.column;
-    ASTNode *n = ast_new(AST_EXTERN_DECL, line, col);
+    ASTNode *n = ast_new(AST_EXTERN_DECL, line, col, p->current.file);
     expect(p, TOK_KW_EXTERN, "expected 'extern'");
     if (check(p, TOK_KW_ASM)) {
         advance_parser(p);
@@ -1564,7 +1566,7 @@ static ASTNode *parse_func(Parser *p) {
         parser_error(p, "expected function name");
         return NULL;
     }
-    ASTNode *n = ast_new(AST_FUNC_DECL, line, col);
+    ASTNode *n = ast_new(AST_FUNC_DECL, line, col, p->current.file);
     n->name = strdup_lex(p->current.lexeme);
     advance_parser(p);
     /* signature may appear before or after '=' */
@@ -1621,8 +1623,8 @@ static ASTNode *parse_func(Parser *p) {
         advance_parser(p);
         ASTNode *expr = parse_expr(p);
         match_tok(p, TOK_SEMICOLON);
-        ASTNode *block = ast_new(AST_BLOCK, n->line, n->column);
-        ASTNode *ret = ast_new(AST_RETURN, expr ? expr->line : n->line, expr ? expr->column : n->column);
+        ASTNode *block = ast_new(AST_BLOCK, n->line, n->column, p->current.file);
+        ASTNode *ret = ast_new(AST_RETURN, expr ? expr->line : n->line, expr ? expr->column : n->column, p->current.file);
         ret->left = expr;
         ast_add_item(block, ret);
         n->body = block;
@@ -1639,14 +1641,14 @@ static ASTNode *parse_func(Parser *p) {
         ASTNode *last = b->items[b->item_count - 1];
         if (last && last->type == AST_EXPR_STMT && last->left &&
             last->left->type != AST_RETURN) {
-            ASTNode *ret = ast_new(AST_RETURN, last->left->line, last->left->column);
+            ASTNode *ret = ast_new(AST_RETURN, last->left->line, last->left->column, p->current.file);
             ret->left = last->left;
             last->left = NULL;
             b->items[b->item_count - 1] = ret;
             ast_free(last);
         } else if (last && last->type == AST_WHEN) {
             last->is_expr = 1;
-            ASTNode *ret = ast_new(AST_RETURN, last->line, last->column);
+            ASTNode *ret = ast_new(AST_RETURN, last->line, last->column, p->current.file);
             ret->left = last;
             b->items[b->item_count - 1] = ret;
             /* when node is now owned by ret->left; clear its items to avoid
@@ -1663,7 +1665,7 @@ static ASTNode *parse_func(Parser *p) {
 /* `@capability(Read, Write, ...)` — declares the capability kinds in scope. */
 static ASTNode *parse_cap_decl(Parser *p) {
     int line = p->current.line, col = p->current.column;
-    ASTNode *n = ast_new(AST_CAP_DECL, line, col);
+    ASTNode *n = ast_new(AST_CAP_DECL, line, col, p->current.file);
     advance_parser(p); /* '@' */
     advance_parser(p); /* 'capability' */
     expect(p, TOK_LPAREN, "expected '(' after @capability");
@@ -1676,7 +1678,7 @@ static ASTNode *parse_cap_decl(Parser *p) {
 /* `@with_cap(Write + Alloc) { ... }` — ambient (borrowed) capabilities in block */
 static ASTNode *parse_with_cap(Parser *p) {
     int line = p->current.line, col = p->current.column;
-    ASTNode *n = ast_new(AST_WITH_CAP, line, col);
+    ASTNode *n = ast_new(AST_WITH_CAP, line, col, p->current.file);
     advance_parser(p); /* '@' */
     advance_parser(p); /* 'with_cap' */
     expect(p, TOK_LPAREN, "expected '(' after @with_cap");
@@ -1692,7 +1694,7 @@ static ASTNode *parse_with_cap(Parser *p) {
    it adapts to whatever numeric type the context needs and costs nothing. */
 static ASTNode *parse_const_decl(Parser *p) {
     int line = p->current.line, col = p->current.column;
-    ASTNode *n = ast_new(AST_CONST_DECL, line, col);
+    ASTNode *n = ast_new(AST_CONST_DECL, line, col, p->current.file);
     n->name = strdup_lex(p->current.lexeme);
     advance_parser(p);                 /* NAME */
     expect(p, TOK_COLON, "expected ':'");
@@ -1826,7 +1828,7 @@ static void parse_attr_list(Parser *p, ASTNode *target) {
    declaration; they may be stacked in any order. */
 static ASTNode *parse_top_level(Parser *p) {
     char *sec = NULL;
-    ASTNode *pending = ast_new(AST_PROGRAM, 0, 0); /* collects @attr entries */
+    ASTNode *pending = ast_new(AST_PROGRAM, 0, 0, p->current.file); /* collects @attr entries */
     while (check(p, TOK_AT)) {
         Token t = lexer_peek(p->lex);
         int is_section = (t.type == TOK_IDENTIFIER && t.lexeme && strcmp(t.lexeme, "section") == 0);
@@ -1881,7 +1883,7 @@ static ASTNode *parse_top_level(Parser *p) {
 }
 
 ASTNode *parse_program(Parser *p) {
-    ASTNode *prog = ast_new(AST_PROGRAM, 1, 1);
+    ASTNode *prog = ast_new(AST_PROGRAM, 1, 1, p->current.file);
     p->current_package[0] = 0;
     while (!check(p, TOK_EOF)) {
         ASTNode *d = parse_top_level(p);

@@ -28,7 +28,6 @@ static char advance(Lexer *lex) {
 }
 
 static Token make_token(Lexer *lex, TokenType type, const char *start, size_t length, int line, int col) {
-    (void)lex;
     Token t;
     t.type = type;
     t.lexeme = (char *)malloc(length + 1);
@@ -41,11 +40,11 @@ static Token make_token(Lexer *lex, TokenType type, const char *start, size_t le
     t.length = length;
     t.line = line;
     t.column = col;
+    t.file = lex->file;
     return t;
 }
 
 static Token make_error(Lexer *lex, const char *msg, int line, int col) {
-    (void)lex;
     Token t;
     size_t len = strlen(msg);
     t.type = TOK_ERROR;
@@ -56,6 +55,7 @@ static Token make_error(Lexer *lex, const char *msg, int line, int col) {
     t.length = len;
     t.line = line;
     t.column = col;
+    t.file = lex->file;
     return t;
 }
 
@@ -227,6 +227,7 @@ static Token lex_string(Lexer *lex) {
             t.length = len;
             t.line = line;
             t.column = col;
+            t.file = lex->file;
             return t;
         }
         if (c == '\n') {
@@ -295,6 +296,7 @@ static Token lex_char(Lexer *lex) {
     t.length = 1;
     t.line = line;
     t.column = col;
+    t.file = lex->file;
     return t;
 }
 
@@ -326,95 +328,155 @@ void lexer_init_n(Lexer *lex, const char *src, size_t length) {
     lex->line = 1;
     lex->column = 1;
     lex->at_eof = (length == 0);
+    lex->file = NULL;
+}
+
+void lexer_init_file(Lexer *lex, const char *src, size_t length, const char *file) {
+    lexer_init_n(lex, src, length);
+    if (file) lex->file = file;
 }
 
 Token lexer_next(Lexer *lex) {
-    skip_whitespace_and_comments(lex);
-    if (lex->pos >= lex->length) {
-        lex->at_eof = 1;
-        return make_token(lex, TOK_EOF, "", 0, lex->line, lex->column);
-    }
-    int line = lex->line;
-    int col = lex->column;
-    char c = lex->src[lex->pos];
+    while (1) {
+        skip_whitespace_and_comments(lex);
+        if (lex->pos >= lex->length) {
+            lex->at_eof = 1;
+            return make_token(lex, TOK_EOF, "", 0, lex->line, lex->column);
+        }
+        
+        /* Handle #line directives at the start of a line (after optional whitespace) */
+        if (lex->src[lex->pos] == '#') {
+            size_t save_pos = lex->pos;
+            advance(lex); /* consume '#' */
+            skip_whitespace_and_comments(lex);
+            if (lex->pos < lex->length && lex->src[lex->pos] == 'l') {
+                /* Check for "line" keyword */
+                if (lex->pos + 3 < lex->length &&
+                    lex->src[lex->pos] == 'l' &&
+                    lex->src[lex->pos + 1] == 'i' &&
+                    lex->src[lex->pos + 2] == 'n' &&
+                    lex->src[lex->pos + 3] == 'e') {
+                    lex->pos += 4; /* consume "line" */
+                    while (lex->pos < lex->length && isspace((unsigned char)lex->src[lex->pos])) advance(lex);
+                    
+                    /* Parse line number */
+                    int new_line = 0;
+                    while (lex->pos < lex->length && isdigit((unsigned char)lex->src[lex->pos])) {
+                        new_line = new_line * 10 + (lex->src[lex->pos] - '0');
+                        advance(lex);
+                    }
+                    if (new_line > 0) {
+                        lex->line = new_line;
+                    }
+                    
+                    /* Optional filename */
+                    while (lex->pos < lex->length && isspace((unsigned char)lex->src[lex->pos])) advance(lex);
+                    if (lex->pos < lex->length && lex->src[lex->pos] == '"') {
+                        advance(lex); /* consume opening quote */
+                        const char *start = lex->src + lex->pos;
+                        while (lex->pos < lex->length && lex->src[lex->pos] != '"') advance(lex);
+                        if (lex->pos < lex->length && lex->src[lex->pos] == '"') {
+                            size_t len = (lex->src + lex->pos) - start;
+                            char *fname = malloc(len + 1);
+                            memcpy(fname, start, len);
+                            fname[len] = '\0';
+                            advance(lex); /* consume closing quote */
+                            /* Update the current file name */
+                            lex->file = fname;
+                        }
+                    }
+                    /* Skip to end of line */
+                    while (lex->pos < lex->length && lex->src[lex->pos] != '\n') advance(lex);
+                    if (lex->pos < lex->length && lex->src[lex->pos] == '\n') advance(lex);
+                    lex->column = 1;
+                    continue; /* get next token */
+                }
+            }
+            lex->pos = save_pos; /* not a #line directive, backtrack */
+        }
+        
+        int line = lex->line;
+        int col = lex->column;
+        char c = lex->src[lex->pos];
 
-    if (is_ident_start(c)) {
-        return lex_identifier(lex);
-    }
-    if (isdigit((unsigned char)c)) {
-        return lex_number(lex);
-    }
-    if (c == '"') {
-        return lex_string(lex);
-    }
-    if (c == '\'') {
-        return lex_char(lex);
-    }
+        if (is_ident_start(c)) {
+            return lex_identifier(lex);
+        }
+        if (isdigit((unsigned char)c)) {
+            return lex_number(lex);
+        }
+        if (c == '"') {
+            return lex_string(lex);
+        }
+        if (c == '\'') {
+            return lex_char(lex);
+        }
+        
+        /* Multi-char operators */
+        char n1 = peek_char(lex, 1);
+        /* three? none currently */
+        char n2 = peek_char(lex, 2);
+        /* three-char */
+        if (c == '<' && n1 == '<' && n2 == '=') { advance(lex); advance(lex); advance(lex); return make_token(lex, TOK_LSHIFTEQ, "<<=", 3, line, col); }
+        if (c == '>' && n1 == '>' && n2 == '=') { advance(lex); advance(lex); advance(lex); return make_token(lex, TOK_RSHIFTEQ, ">>=", 3, line, col); }
+        /* two-char */
+        if (c == '=' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_EQEQ, "==", 2, line, col); }
+        if (c == '!' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_BANGEQ, "!=", 2, line, col); }
+        if (c == '<' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_LTEQ, "<=", 2, line, col); }
+        if (c == '>' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_GTEQ, ">=", 2, line, col); }
+        if (c == '&' && n1 == '&') { advance(lex); advance(lex); return make_token(lex, TOK_AMPAMP, "&&", 2, line, col); }
+        if (c == '|' && n1 == '|') { advance(lex); advance(lex); return make_token(lex, TOK_PIPEPIPE, "||", 2, line, col); }
+        if (c == '+' && n1 == '+') { advance(lex); advance(lex); return make_token(lex, TOK_PLUSPLUS, "++", 2, line, col); }
+        if (c == '-' && n1 == '-') { advance(lex); advance(lex); return make_token(lex, TOK_MINUSMINUS, "--", 2, line, col); }
+        if (c == '=' && n1 == '>') { advance(lex); advance(lex); return make_token(lex, TOK_FAT_ARROW, "=>", 2, line, col); }
+        if (c == '+' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_PLUSEQ, "+=", 2, line, col); }
+        if (c == '-' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_MINUSEQ, "-=", 2, line, col); }
+        if (c == '*' && n1 == '*') { advance(lex); advance(lex); return make_token(lex, TOK_STARSTAR, "**", 2, line, col); }
+        if (c == '*' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_STAREQ, "*=", 2, line, col); }
+        if (c == '/' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_SLASHEQ, "/=", 2, line, col); }
+        if (c == '%' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_PERCENTEQ, "%=", 2, line, col); }
+        if (c == '-' && n1 == '>') { advance(lex); advance(lex); return make_token(lex, TOK_ARROW, "->", 2, line, col); }
+        if (c == '=' && n1 == '>') { advance(lex); advance(lex); return make_token(lex, TOK_FAT_ARROW, "=>", 2, line, col); }
+        if (c == '<' && n1 == '<') { advance(lex); advance(lex); return make_token(lex, TOK_LSHIFT, "<<", 2, line, col); }
+        if (c == '>' && n1 == '>') { advance(lex); advance(lex); return make_token(lex, TOK_RSHIFT, ">>", 2, line, col); }
+        if (c == '&' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_AMPEQ, "&=", 2, line, col); }
+        if (c == '|' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_PIPEEQ, "|=", 2, line, col); }
+        if (c == '^' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_CARETEQ, "^=", 2, line, col); }
+        if (c == '.' && n1 == '.') { advance(lex); advance(lex); return make_token(lex, TOK_DOTDOT, "..", 2, line, col); }
 
-    /* Multi-char operators */
-    char n1 = peek_char(lex, 1);
-    /* three? none currently */
-    char n2 = peek_char(lex, 2);
-    /* three-char */
-    if (c == '<' && n1 == '<' && n2 == '=') { advance(lex); advance(lex); advance(lex); return make_token(lex, TOK_LSHIFTEQ, "<<=", 3, line, col); }
-    if (c == '>' && n1 == '>' && n2 == '=') { advance(lex); advance(lex); advance(lex); return make_token(lex, TOK_RSHIFTEQ, ">>=", 3, line, col); }
-    /* two-char */
-    if (c == '=' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_EQEQ, "==", 2, line, col); }
-    if (c == '!' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_BANGEQ, "!=", 2, line, col); }
-    if (c == '<' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_LTEQ, "<=", 2, line, col); }
-    if (c == '>' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_GTEQ, ">=", 2, line, col); }
-    if (c == '&' && n1 == '&') { advance(lex); advance(lex); return make_token(lex, TOK_AMPAMP, "&&", 2, line, col); }
-    if (c == '|' && n1 == '|') { advance(lex); advance(lex); return make_token(lex, TOK_PIPEPIPE, "||", 2, line, col); }
-    if (c == '+' && n1 == '+') { advance(lex); advance(lex); return make_token(lex, TOK_PLUSPLUS, "++", 2, line, col); }
-    if (c == '-' && n1 == '-') { advance(lex); advance(lex); return make_token(lex, TOK_MINUSMINUS, "--", 2, line, col); }
-    if (c == '=' && n1 == '>') { advance(lex); advance(lex); return make_token(lex, TOK_FAT_ARROW, "=>", 2, line, col); }
-    if (c == '+' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_PLUSEQ, "+=", 2, line, col); }
-    if (c == '-' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_MINUSEQ, "-=", 2, line, col); }
-    if (c == '*' && n1 == '*') { advance(lex); advance(lex); return make_token(lex, TOK_STARSTAR, "**", 2, line, col); }
-    if (c == '*' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_STAREQ, "*=", 2, line, col); }
-    if (c == '/' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_SLASHEQ, "/=", 2, line, col); }
-    if (c == '%' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_PERCENTEQ, "%=", 2, line, col); }
-    if (c == '-' && n1 == '>') { advance(lex); advance(lex); return make_token(lex, TOK_ARROW, "->", 2, line, col); }
-    if (c == '=' && n1 == '>') { advance(lex); advance(lex); return make_token(lex, TOK_FAT_ARROW, "=>", 2, line, col); }
-    if (c == '<' && n1 == '<') { advance(lex); advance(lex); return make_token(lex, TOK_LSHIFT, "<<", 2, line, col); }
-    if (c == '>' && n1 == '>') { advance(lex); advance(lex); return make_token(lex, TOK_RSHIFT, ">>", 2, line, col); }
-    if (c == '&' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_AMPEQ, "&=", 2, line, col); }
-    if (c == '|' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_PIPEEQ, "|=", 2, line, col); }
-    if (c == '^' && n1 == '=') { advance(lex); advance(lex); return make_token(lex, TOK_CARETEQ, "^=", 2, line, col); }
-    if (c == '.' && n1 == '.') { advance(lex); advance(lex); return make_token(lex, TOK_DOTDOT, "..", 2, line, col); }
-
-    /* single char */
-    advance(lex);
-    switch (c) {
-        case '+': return make_token(lex, TOK_PLUS, "+", 1, line, col);
-        case '-': return make_token(lex, TOK_MINUS, "-", 1, line, col);
-        case '*': return make_token(lex, TOK_STAR, "*", 1, line, col);
-        case '/': return make_token(lex, TOK_SLASH, "/", 1, line, col);
-        case '%': return make_token(lex, TOK_PERCENT, "%", 1, line, col);
-        case '=': return make_token(lex, TOK_ASSIGN, "=", 1, line, col);
-        case '<': return make_token(lex, TOK_LT, "<", 1, line, col);
-        case '>': return make_token(lex, TOK_GT, ">", 1, line, col);
-        case '!': return make_token(lex, TOK_BANG, "!", 1, line, col);
-        case '&': return make_token(lex, TOK_AMP, "&", 1, line, col);
-        case '|': return make_token(lex, TOK_PIPE, "|", 1, line, col);
-        case '^': return make_token(lex, TOK_CARET, "^", 1, line, col);
-        case '~': return make_token(lex, TOK_TILDE, "~", 1, line, col);
-        case '(': return make_token(lex, TOK_LPAREN, "(", 1, line, col);
-        case ')': return make_token(lex, TOK_RPAREN, ")", 1, line, col);
-        case '{': return make_token(lex, TOK_LBRACE, "{", 1, line, col);
-        case '}': return make_token(lex, TOK_RBRACE, "}", 1, line, col);
-        case '[': return make_token(lex, TOK_LBRACKET, "[", 1, line, col);
-        case ']': return make_token(lex, TOK_RBRACKET, "]", 1, line, col);
-        case ',': return make_token(lex, TOK_COMMA, ",", 1, line, col);
-        case ';': return make_token(lex, TOK_SEMICOLON, ";", 1, line, col);
-        case ':': return make_token(lex, TOK_COLON, ":", 1, line, col);
-        case '.': return make_token(lex, TOK_DOT, ".", 1, line, col);
-        case '?': return make_token(lex, TOK_QUESTION, "?", 1, line, col);
-        case '@': return make_token(lex, TOK_AT, "@", 1, line, col);
-        default: {
-            char buf[256];
-            snprintf(buf, sizeof(buf), "unexpected character '%c'", c);
-            return make_error(lex, buf, line, col);
+        /* single char */
+        advance(lex);
+        switch (c) {
+            case '+': return make_token(lex, TOK_PLUS, "+", 1, line, col);
+            case '-': return make_token(lex, TOK_MINUS, "-", 1, line, col);
+            case '*': return make_token(lex, TOK_STAR, "*", 1, line, col);
+            case '/': return make_token(lex, TOK_SLASH, "/", 1, line, col);
+            case '%': return make_token(lex, TOK_PERCENT, "%", 1, line, col);
+            case '=': return make_token(lex, TOK_ASSIGN, "=", 1, line, col);
+            case '<': return make_token(lex, TOK_LT, "<", 1, line, col);
+            case '>': return make_token(lex, TOK_GT, ">", 1, line, col);
+            case '!': return make_token(lex, TOK_BANG, "!", 1, line, col);
+            case '&': return make_token(lex, TOK_AMP, "&", 1, line, col);
+            case '|': return make_token(lex, TOK_PIPE, "|", 1, line, col);
+            case '^': return make_token(lex, TOK_CARET, "^", 1, line, col);
+            case '~': return make_token(lex, TOK_TILDE, "~", 1, line, col);
+            case '(': return make_token(lex, TOK_LPAREN, "(", 1, line, col);
+            case ')': return make_token(lex, TOK_RPAREN, ")", 1, line, col);
+            case '{': return make_token(lex, TOK_LBRACE, "{", 1, line, col);
+            case '}': return make_token(lex, TOK_RBRACE, "}", 1, line, col);
+            case '[': return make_token(lex, TOK_LBRACKET, "[", 1, line, col);
+            case ']': return make_token(lex, TOK_RBRACKET, "]", 1, line, col);
+            case ',': return make_token(lex, TOK_COMMA, ",", 1, line, col);
+            case ';': return make_token(lex, TOK_SEMICOLON, ";", 1, line, col);
+            case ':': return make_token(lex, TOK_COLON, ":", 1, line, col);
+            case '.': return make_token(lex, TOK_DOT, ".", 1, line, col);
+            case '?': return make_token(lex, TOK_QUESTION, "?", 1, line, col);
+            case '@': return make_token(lex, TOK_AT, "@", 1, line, col);
+            default: {
+                char buf[256];
+                snprintf(buf, sizeof(buf), "unexpected character '%c'", c);
+                return make_error(lex, buf, line, col);
+            }
         }
     }
 }

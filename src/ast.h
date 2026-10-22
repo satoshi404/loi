@@ -84,6 +84,7 @@ struct ASTNode {
     ASTNodeType type;
     int line;
     int column;
+    const char *file;
     int align;     /* requested alignment (for fields/structs) */
     int packed;   /* packed layout hint */
     int is_expr;   /* non-zero when this node is used in expression context */
@@ -132,7 +133,7 @@ struct ASTNode {
 };
 
 /* helpers */
-ASTNode *ast_new(ASTNodeType type, int line, int col);
+ASTNode *ast_new(ASTNodeType type, int line, int col, const char *file);
 void ast_add_item(ASTNode *parent, ASTNode *item);
 Type *type_new(int kind);
 Type *type_clone(Type *t);

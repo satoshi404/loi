@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>loi — Playground</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="topbar"><div class="container topbar-inner">
+  <a class="brand" href="index.html"><img src="logo.png" alt="loi logo"><code>loi</code></a>
+  <nav class="main-nav">
+    <a href="index.html">Home</a>
+    <a href="docs.html">Documentation</a>
+    <a href="examples.html">Examples</a>
+    <a href="playground.html" class="active">Playground</a>
+    <a href="https://github.com" target="_blank" rel="noopener">GitHub</a>
+  </nav>
+</div></div>
+
+<section class="section container">
+  <h2>Playground</h2>
+  <p>Write loi code, compile to LLVM IR, and run it directly in the browser (via server-side compilation). The editor highlights loi syntax.</p>
+  
+  <div class="playground-layout">
+    <div class="editor-pane">
+      <div class="pane-header">
+        <span>Editor</span>
+        <select id="example-select" onchange="loadExample(this.value)">
+          <option value="">-- Select example --</option>
+          <option value="hello">Hello World</option>
+          <option value="factorial">Factorial (recursion)</option>
+          <option value="tictactoe">Tic-Tac-Toe (auto demo)</option>
+          <option value="effects">Effects enforcement</option>
+          <option value="regions">Regions & bump allocation</option>
+          <option value="capabilities">Linear capabilities</option>
+          <option value="macros">Macros (stringify/paste)</option>
+          <option value="fnpointers">Function pointers</option>
+        </select>
+      </div>
+      <textarea id="editor" spellcheck="false" placeholder="// Write your loi code here..."></textarea>
+      <div class="editor-actions">
+        <button id="btn-run" class="btn" onclick="runCode()">Run</button>
+        <button id="btn-ir" class="btn ghost" onclick="emitIR()">Emit IR</button>
+        <button id="btn-clear" class="btn ghost" onclick="clearEditor()">Clear</button>
+      </div>
+    </div>
+    
+    <div class="output-pane">
+      <div class="pane-header">
+        <span>Output</span>
+        <select id="output-mode" onchange="toggleOutputMode()">
+          <option value="run">Run Output</option>
+          <option value="ir">LLVM IR</option>
+          <option value="tokens">Tokens</option>
+        </select>
+      </div>
+      <pre id="output" class="output-content"></pre>
+    </div>
+  </div>
+</section>
+
+<footer><div class="container">
+  &copy; loi project — Playground compiles on the server.
+</div></footer>
+
+<script src="script.js"></script>
+<script>
+const EXAMPLES = {
+  hello: `@package(hello)
+
+@inc std
+
+main = () -> int
+{
+    std.print_str("hello from loi\\n");
+    return 0;
+}`,
+  factorial: `@package(factorial)
+
+@inc std
+
+factorial = (n: int): int
+{
+    if (n <= 1) { return 1; }
+    return n * factorial(n - 1);
+}
+
+main = () -> int !IO
+{
+    std.print_str("factorial(5) = ");
+    std.print_int(factorial(5));
+    std.print_str("\\n");
+    return 0;
+}`,
+  tictactoe: `@package(tictactoe)
+
+@inc std
+
+board: int[9];
+current: int;
+
+print_cell = (v: int): void !IO
+{
+    if (v == 1) { std.print_str("X"); }
+    else {
+        if (v == 2) { std.print_str("O"); }
+        else { std.print_str(" "); }
+    }
+}
+
+print_board = (): void !IO
+{
+    std.print_str("\\n");
+    for (int i = 0; i < 9; i = i + 3) {
+        std.print_str(" ");
+        print_cell(board[i]);
+        std.print_str(" | ");
+        print_cell(board[i+1]);
+        std.print_str(" | ");
+        print_cell(board[i+2]);
+        std.print_str("\\n");
+        if (i < 6) { std.print_str("---+---+---\\n"); }
+    }
+    std.print_str("\\n");
+}
+
+check_win = (p: int): int
+{
+    int win = 0;
+    for (int i = 0; i < 9; i = i + 3) {
+        if (board[i] == p && board[i+1] == p && board[i+2] == p) { win = 1; }
+    }
+    for (int i = 0; i < 3; i = i + 1) {
+        if (board[i] == p && board[i+3] == p && board[i+6] == p) { win = 1; }
+    }
+    if (board[0] == p && board[4] == p && board[8] == p) { win = 1; }
+    if (board[2] == p && board[4] == p && board[6] == p) { win = 1; }
+    return win;
+}
+
+check_draw = (): int
+{
+    int draw = 1;
+    for (int i = 0; i < 9; i = i + 1) {
+        if (board[i] == 0) { draw = 0; }
+    }
+    return draw;
+}
+
+main = () -> int !IO
+{
+    for (int i = 0; i < 9; i = i + 1) { board[i] = 0; }
+    current = 1;
+    
+    std.print_str("=== Tic-Tac-Toe Auto Demo ===\\n");
+    
+    std.print_str("Move 1: X plays position 1\\n");
+    board[0] = 1;
+    print_board();
+    
+    std.print_str("Move 2: O plays position 2\\n");
+    board[1] = 2;
+    print_board();
+    
+    std.print_str("Move 3: X plays position 5\\n");
+    board[4] = 1;
+    print_board();
+    
+    std.print_str("Move 4: O plays position 3\\n");
+    board[2] = 2;
+    print_board();
+    
+    std.print_str("Move 5: X plays position 9 (wins!)\\n");
+    board[8] = 1;
+    print_board();
+    
+    if (check_win(1)) {
+        std.print_str("Player X wins!\\n");
+    }
+    return 0;
+}`,
+  effects: `@package(effects_demo)
+
+@inc std
+
+read_file = (): int !IO
+{
+    std.print_str("Reading file...\\n");
+    return 42;
+}
+
+pure_func = (): int
+{
+    return 7;
+}
+
+main = () -> int !IO
+{
+    int a = read_file();    // OK: caller has !IO
+    int b = pure_func();    // OK: no effects
+    std.print_int(a + b);
+    std.print_str("\\n");
+    return 0;
+}`,
+  regions: `@package(regions_demo)
+
+@inc std
+
+main = () -> int !Alloc
+{
+    region r(1024) {
+        void* p = std.region_alloc(r, 64);
+        int* arr = (int*)p;
+        arr[0] = 1; arr[1] = 2; arr[2] = 3;
+        std.print_int(arr[2]);
+        std.print_str("\\n");
+    }
+    return 0;
+}`,
+  capabilities: `@package(capabilities_demo)
+
+@inc std
+
+@capability(Read, Write)
+
+peek = (buf: ptr, c: @cap(borrow Read)): int { return *buf; }
+poke = (buf: ptr, c: @cap(Write)): void { *buf = 42; }
+
+new_page = (buf: ptr): @cap(Write)
+{
+    @grant(Write) w;
+    return w;
+}
+
+main = () -> int !IO
+{
+    int p = 0;
+    @cap(Write) w = new_page(&p);
+    poke(&p, w);                      
+    @grant(Read) rd;
+    @with_cap(Read) { peek(&p, rd); } 
+    @drop(rd);
+    region r(64) with Write { }       
+    return p;
+}`,
+  macros: `@package(macros_demo)
+
+@inc std
+
+@(define STR(x) @stringify(x))
+@(define CONCAT(a, b) @paste(a, b))
+@(define LOG(level, ...msg) { @if(level >= 1) { std.print_str(msg); } })
+
+int foobar = 77;
+
+main = () -> int !IO
+{
+    std.print_str(STR(hello));        // "hello"
+    int foo = 1, bar = 2;
+    std.print_int(CONCAT(foo, bar));  // foobar -> 77
+    LOG(1, "log: variadic works\\n");
+    return 0;
+}`,
+  fnpointers: `@package(fnpointers_demo)
+
+@inc std
+
+type CmpFn = (a: int, b: int) -> int;
+
+my_less = (a: int, b: int): int { return a < b; }
+apply = (f: (a:int,b:int)->int, x:int, y:int): int { return f(x, y); }
+
+main = () -> int !IO
+{
+    std.print_int(apply(my_less, 2, 3));
+    return 0;
+}`
+};
+
+const editor = document.getElementById('editor');
+const output = document.getElementById('output');
+const runBtn = document.getElementById('btn-run');
+const irBtn = document.getElementById('btn-ir');
+const clearBtn = document.getElementById('btn-clear');
+const outputMode = document.getElementById('output-mode');
+
+function highlight(code) {
+  const KEYWORDS = new Set([
+    'static','const','let','struct','union','enum','type','fn','region',
+    'return','if','else','while','for','do','switch','case','default','break',
+    'continue','main','extern','asm','sizeof','typeof','defined','asm','package'
+  ]);
+  const TYPES = new Set(['int','float','double','char','bool','byte','short','long','void','unsigned','ptr']);
+  const TOKEN_RE = /("(?:\\.|[^"\\\\])*"|'(?:\\.|[^'\\\\])*'|\\/\\/[^\\n]*|\\/\\*[\\s\\S]*?\\*\\/|@[a-zA-Z_]\\w*|@\(|\b\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?\b|[A-Za-z_]\w*|[^A-Za-z0-9_"'@]/g;
+  function esc(s) { return s.replace(/&/g,'&').replace(/</g,'<').replace(/>/g,'>'); }
+  function cls(tok) {
+    if (tok.startsWith('//') || tok.startsWith('/*')) return 'tok-comment';
+    if (tok.startsWith('"')) return 'tok-str';
+    if (tok.startsWith("'")) return 'tok-char';
+    if (tok.startsWith('@')) return 'tok-directive';
+    if (/^\\d/.test(tok)) return 'tok-num';
+    if (KEYWORDS.has(tok)) return 'tok-kw';
+    if (TYPES.has(tok)) return 'tok-type';
+    if (/^[A-Za-z_]\w*$/.test(tok)) return '';
+    return 'tok-punct';
+  }
+  return code.replace(TOKEN_RE, (m) => {
+    const c = cls(m);
+    const e = esc(m);
+    return c ? '<span class="' + c + '">' + e + '</span>' : e;
+  });
+}
+
+function loadExample(name) {
+  if (!name) return;
+  editor.value = EXAMPLES[name];
+  // Re-highlight
+  setTimeout(() => {
+    document.querySelectorAll('pre code').forEach((el) => {
+      const raw = el.textContent;
+      el.innerHTML = highlight(raw);
+    });
+  }, 0);
+}
+
+function setOutput(text, isError = false) {
+  output.textContent = text;
+  output.className = 'output-content' + (isError ? ' error' : '');
+}
+
+async function runCommand(args) {
+  const code = editor.value;
+  if (!code.trim()) {
+    setOutput('Error: No code to compile.', true);
+    return;
+  }
+  
+  runBtn.disabled = true;
+  irBtn.disabled = true;
+  setOutput('Compiling...');
+  
+  try {
+    const res = await fetch('/api/compile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, args })
+    });
+    const data = await res.json();
+    if (data.error) {
+      setOutput(data.error, true);
+    } else {
+      setOutput(data.output);
+    }
+  } catch (e) {
+    setOutput('Error: ' + e.message, true);
+  } finally {
+    runBtn.disabled = false;
+    irBtn.disabled = false;
+  }
+}
+
+function runCode() {
+  runCommand(['--run']);
+}
+
+function emitIR() {
+  runCommand(['--emit=ir']);
+}
+
+function clearEditor() {
+  editor.value = '';
+}
+
+function toggleOutputMode() {
+  const mode = outputMode.value;
+  if (mode === 'ir') {
+    emitIR();
+  } else if (mode === 'tokens') {
+    runCommand(['--tokens']);
+  } else {
+    runCode();
+  }
+}
+
+// Initial example load
+document.addEventListener('DOMContentLoaded', () => {
+  // Load hello world by default
+  editor.value = EXAMPLES.hello;
+  // Highlight code blocks on page
+  document.querySelectorAll('pre code').forEach((el) => {
+    const raw = el.textContent;
+    el.innerHTML = highlight(raw);
+  });
+});
+</script>
+</body>
+</html>

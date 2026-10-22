@@ -299,7 +299,7 @@ char *processed = loi_preprocess(src, base_dir_buf);
     src = processed;
 
     Lexer lex;
-    lexer_init(&lex, src);
+    lexer_init_file(&lex, src, strlen(src), path);
     Parser p;
     parser_init(&p, &lex);
     ASTNode *prog = parse_program(&p);
@@ -313,7 +313,7 @@ char *processed = loi_preprocess(src, base_dir_buf);
 
     if (tokens_only) {
         /* re-tokenize from src */
-        Lexer l2; lexer_init(&l2, src);
+        Lexer l2; lexer_init_file(&l2, src, strlen(src), path);
         for (;;) {
             Token t = lexer_next(&l2);
             printf("%d:%d  %-12s  %s\n", t.line, t.column, token_type_str(t.type), t.lexeme ? t.lexeme : "");

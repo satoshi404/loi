@@ -13,6 +13,7 @@
     <a href="index.html">Home</a>
     <a href="docs.html">Documentation</a>
     <a href="examples.html" class="active">Examples</a>
+    <a href="playground.html">Playground</a>
     <a href="https://github.com" target="_blank" rel="noopener">GitHub</a>
   </nav>
 </div></div>
@@ -24,7 +25,7 @@
 
 <div class="container example-grid">
   <div class="example-card">
-    <h4>01_basics — recursion &amp; control</h4>
+    <h4>01_basics — recursion & control</h4>
     <pre><code class="lang-loi">
 @package(examples_01_basics)
 
@@ -93,10 +94,10 @@ main =
 @inc std
 type CmpFn = (a: int, b: int) -> int;
 
-my_less = (a: int, b: int): int { return a &lt; b; }
-apply = (f: (a:int,b:int)-&gt;int, x:int, y:int): int { return f(x, y); }
+my_less = (a: int, b: int): int { return a < b; }
+apply = (f: (a:int,b:int)->int, x:int, y:int): int { return f(x, y); }
 
-main = () -&gt; int !IO
+main = () -> int !IO
 {
     std.print_int(apply(my_less, 2, 3));
     return 0;
@@ -113,7 +114,7 @@ main = () -&gt; int !IO
 @inc std
 @(define STR(x) @stringify(x))
 @(define CONCAT(a, b) @paste(a, b))
-@(define LOG(level, ...msg) { @if(level &gt;= 1) { std.print_str(msg); } })
+@(define LOG(level, ...msg) { @if(level >= 1) { std.print_str(msg); } })
 
 int foobar = 77;
 
@@ -125,15 +126,181 @@ main = () -> int !IO
     LOG(1, "log: variadic works\n");
     return 0;
 }
-
-    </code></pre>
+</code></pre>
     <div class="output">exit: 0</div>
+  </div>
+
+  <div class="example-card">
+    <h4>27_effects — effects enforcement</h4>
+    <pre><code class="lang-loi">
+@package(examples_27_effects)
+
+@inc std
+
+do_io = (): int !IO
+{
+    std.print_str("in do_io\n");
+    return 42;
+}
+
+no_io = (): int { return 7; }
+
+main = () -> int !IO
+{
+    int a = do_io();       // OK: caller has !IO
+    int b = no_io();       // OK: no effects
+    return a + b;
+}
+</code></pre>
+    <div class="output">exit: 49</div>
+  </div>
+
+  <div class="example-card">
+    <h4>28_regions — bump allocation</h4>
+    <pre><code class="lang-loi">
+@package(examples_28_regions)
+
+@inc std
+
+main = () -> int !Alloc
+{
+    region r(1024) {
+        void* p = std.region_alloc(r, 64);
+        int* arr = (int*)p;
+        arr[0] = 1; arr[1] = 2;
+        std.print_int(arr[1]);
+    }
+    return 0;
+}
+</code></pre>
+    <div class="output">exit: 0 (prints 2)</div>
+  </div>
+
+  <div class="example-card">
+    <h4>29_capabilities — linear permissions</h4>
+    <pre><code class="lang-loi">
+@package(examples_29_capabilities)
+
+@inc std
+
+@capability(Read, Write)
+
+peek = (buf: ptr, c: @cap(borrow Read)): int { return *buf; }
+poke = (buf: ptr, c: @cap(Write)): void { *buf = 42; }
+
+new_page = (buf: ptr): @cap(Write)
+{
+    @grant(Write) w;
+    return w;
+}
+
+main = (): int !IO
+{
+    int p = 0;
+    @cap(Write) w = new_page(&p);
+    poke(&p, w);                      /* consumes w */
+    @grant(Read) rd;
+    @with_cap(Read) { peek(&p, rd); } /* ambient borrow, block-scoped */
+    @drop(rd);
+    region r(64) with Write { }       /* ambient cap released with region */
+    return p;
+}
+</code></pre>
+    <div class="output">exit: 42</div>
+  </div>
+
+  <div class="example-card">
+    <h4>tictactoe — interactive game (Playground)</h4>
+    <pre><code class="lang-loi">
+@package(tictactoe)
+
+@inc std
+
+board: int[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+current: int = 1; /* 1 = X, 2 = O */
+
+print_board = (): void !IO
+{
+    std.print_str("\n");
+    for (int i = 0; i < 9; i += 3) {
+        char c0 = (board[i] == 1) ? 'X' : (board[i] == 2 ? 'O' : '0' + i + 1);
+        char c1 = (board[i+1] == 1) ? 'X' : (board[i+1] == 2 ? 'O' : '0' + i + 2);
+        char c2 = (board[i+2] == 1) ? 'X' : (board[i+2] == 2 ? 'O' : '0' + i + 3);
+        std.print_str(" ");
+        std.print_char(c0);
+        std.print_str(" | ");
+        std.print_char(c1);
+        std.print_str(" | ");
+        std.print_char(c2);
+        std.print_str("\n");
+        if (i < 6) { std.print_str("---+---+---\n"); }
+    }
+    std.print_str("\n");
+}
+
+check_win = (p: int): int
+{
+    /* rows */
+    for (int i = 0; i < 9; i += 3)
+        if (board[i] == p && board[i+1] == p && board[i+2] == p) return 1;
+    /* cols */
+    for (int i = 0; i < 3; ++i)
+        if (board[i] == p && board[i+3] == p && board[i+6] == p) return 1;
+    /* diags */
+    if (board[0] == p && board[4] == p && board[8] == p) return 1;
+    if (board[2] == p && board[4] == p && board[6] == p) return 1;
+    return 0;
+}
+
+check_draw = (): int
+{
+    for (int i = 0; i < 9; ++i)
+        if (board[i] == 0) return 0;
+    return 1;
+}
+
+main = () -> int !IO
+{
+    std.print_str("=== Tic-Tac-Toe ===\n");
+    std.print_str("Enter position 1-9:\n");
+    
+    while (1) {
+        print_board();
+        std.print_str("Player ");
+        std.print_char(current == 1 ? 'X' : 'O');
+        std.print_str(" turn (1-9): ");
+        
+        int pos = std.read_int();  /* reads integer from stdin */
+        if (pos < 1 || pos > 9 || board[pos-1] != 0) {
+            std.print_str("Invalid move!\n");
+            continue;
+        }
+        board[pos-1] = current;
+        
+        if (check_win(current)) {
+            print_board();
+            std.print_str("Player ");
+            std.print_char(current == 1 ? 'X' : 'O');
+            std.print_str(" wins!\n");
+            break;
+        }
+        if (check_draw()) {
+            print_board();
+            std.print_str("Draw!\n");
+            break;
+        }
+        current = (current == 1) ? 2 : 1;
+    }
+    return 0;
+}
+</code></pre>
+    <div class="output">Try it in the <a href="playground.html">Playground</a>!</div>
   </div>
 </div>
 
 <section class="section container">
   <h2>More</h2>
-  <p>See the full list in the repository <code>examples/</code> directory, including 24 (effects enforcement), 11 (regions), 09 (channels), 19 (compile-time unrolling).</p>
+  <p>See the full list in the repository <code>examples/</code> directory, including effects enforcement (24), regions (11), channels (09), compile-time unrolling (19).</p>
 </section>
 
 <footer><div class="container">

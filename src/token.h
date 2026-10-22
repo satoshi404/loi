@@ -142,6 +142,7 @@ typedef struct {
     size_t length;
     int line;          /* 1-based */
     int column;        /* 1-based */
+    const char *file;  /* source file name, or NULL */
 } Token;
 
 const char *token_type_str(TokenType type);
