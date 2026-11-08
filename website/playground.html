@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0a0e14">
+  <title>Playground — Loi</title>
+  <meta name="description" content="Edit, check, format and run Loi in the browser. The playground drives the real Loi compiler on a local Node server.">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="container nav">
+      <a class="brand" href="index.html" aria-label="Loi home">
+        <span class="brand-mark"><img src="assets/logo.svg" alt="" width="20" height="20"></span>
+        <span>Loi</span>
+        <span class="brand-badge">v0.1</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="docs.html">Documentation</a>
+        <a href="docs.html#language">Language</a>
+        <a href="docs.html#ownership">Ownership</a>
+        <a href="docs.html#stdlib">Standard library</a>
+        <a href="playground.html" aria-current="page">Playground</a>
+      </nav>
+      <div class="nav-actions">
+        <a class="btn btn-primary btn-small" href="docs.html#getting-started">Get started</a>
+        <button class="nav-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">
+          <span></span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="playground-page">
+      <div class="container">
+        <div class="playground-head">
+          <div>
+            <p class="section-kicker">Playground</p>
+            <h1>Write Loi. Run the real compiler.</h1>
+            <p>
+              The editor sends your program to a local Node server, which invokes the same
+              <code>loi</code> binary used by the CLI. Nothing is simulated: the compiler checks,
+              formats, emits C and links a native executable.
+            </p>
+          </div>
+          <span class="playground-status" id="playground-status">
+            <i aria-hidden="true"></i><span>Checking server…</span>
+          </span>
+        </div>
+
+        <div class="playground-grid">
+          <div class="editor-panel">
+            <div class="panel-bar">
+              <span class="panel-title"><i aria-hidden="true"></i> main.loi</span>
+              <div class="panel-actions">
+                <select class="preset-select" id="preset" aria-label="Load an example">
+                  <option value="hello">Hello, Loi</option>
+                  <option value="directions">Directions &amp; flows</option>
+                  <option value="ownership">Ownership &amp; regions</option>
+                  <option value="tictactoe">Tic-tac-toe</option>
+                </select>
+                <button class="btn btn-small" type="button" data-action="check" title="Check without running (Shift+Ctrl+Enter)">Check</button>
+                <button class="btn btn-small" type="button" data-action="format" title="Format the program">Format</button>
+                <button class="btn btn-primary btn-small" type="button" data-action="run" title="Build and run (Ctrl+Enter)">Run</button>
+              </div>
+            </div>
+            <div class="editor-wrap">
+              <div class="line-gutter" id="gutter" aria-hidden="true">1</div>
+              <div class="editor-stack">
+                <pre class="editor-highlight" id="highlight" aria-hidden="true"><code></code></pre>
+                <textarea id="editor" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="Loi source code">shape Greeting [
+    message: [u8]
+    times:   u32
+]
+
+open flow greet
+    &lt;- greeting: Greeting
+{
+    for i in 0..greeting.times {
+        print(greeting.message)
+    }
+}
+
+open flow main
+    =&gt; i32
+{
+    greet(Greeting[ message: "Hello, Loi!\n", times: 3 ])
+    print("The playground runs the real compiler.\n")
+    =&gt; 0
+}</textarea>
+              </div>
+            </div>
+          </div>
+
+          <div class="output-panel">
+            <div class="panel-bar">
+              <span class="panel-title"><i aria-hidden="true"></i> Output</span>
+              <div class="panel-actions">
+                <button class="btn btn-small" type="button" id="clear-output">Clear</button>
+              </div>
+            </div>
+            <div class="output-body">
+              <pre class="output-console" id="output" aria-live="polite"><span class="placeholder">Run a program to see compiler output and program stdout. Press Ctrl+Enter to run, Shift+Ctrl+Enter to check.</span></pre>
+              <div class="output-meta" id="output-meta"></div>
+            </div>
+          </div>
+        </div>
+
+        <p class="playground-hint">
+          Press <kbd>Ctrl</kbd> + <kbd>Enter</kbd> to run, <kbd>Shift</kbd> + <kbd>Ctrl</kbd> + <kbd>Enter</kbd>
+          to check, and <kbd>Tab</kbd> to indent. Programs are limited to 200 KB and execute on the
+          machine running the server, so run the server locally only. Start it with
+          <code>node website/server.mjs</code> after <code>cargo build</code>.
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <div class="footer-grid">
+        <div class="footer-brand">
+          <a class="brand" href="index.html">
+            <span class="brand-mark"><img src="assets/logo.svg" alt="" width="20" height="20"></span>
+            <span>Loi</span>
+          </a>
+          <p>A compiled systems language built around explicit flow, single ownership and lexical memory regions.</p>
+        </div>
+        <div class="footer-col">
+          <h4>Learn</h4>
+          <a href="docs.html#getting-started">Getting started</a>
+          <a href="docs.html#language">Language tour</a>
+          <a href="docs.html#ownership">Ownership</a>
+          <a href="docs.html#stdlib">Standard library</a>
+        </div>
+        <div class="footer-col">
+          <h4>Tools</h4>
+          <a href="playground.html">Playground</a>
+          <a href="docs.html#cli">CLI reference</a>
+          <a href="docs.html#examples">Examples</a>
+          <a href="docs.html#reference">Reference</a>
+        </div>
+        <div class="footer-col">
+          <h4>Project</h4>
+          <a href="docs.html#status">Status</a>
+          <a href="docs.html#design">Design decisions</a>
+          <a href="docs.html#roadmap">Roadmap</a>
+          <a href="docs.html#contribute">Contributing</a>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <span><i></i> Loi 0.1.0 · Flow Syntax</span>
+        <span>MIT OR Apache-2.0 · built with Rust and C11</span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="assets/highlight.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/playground.js"></script>
+</body>
+</html>

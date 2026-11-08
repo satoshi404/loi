@@ -1,0 +1,15 @@
+{
+  "name": "loi-website",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Static website, documentation and local playground for the Loi programming language.",
+  "license": "MIT OR Apache-2.0",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "serve": "node server.mjs"
+  }
+}

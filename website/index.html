@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0a0e14">
+  <title>Loi — a flow-shaped systems language</title>
+  <meta name="description" content="Loi is a compiled systems language built around explicit directions, single ownership and lexical memory regions. Canonical Flow Syntax, a C11 backend and a real playground.">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="container nav">
+      <a class="brand" href="index.html" aria-label="Loi home">
+        <span class="brand-mark"><img src="assets/logo.svg" alt="" width="20" height="20"></span>
+        <span>Loi</span>
+        <span class="brand-badge">v0.1</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="docs.html">Documentation</a>
+        <a href="docs.html#language">Language</a>
+        <a href="docs.html#ownership">Ownership</a>
+        <a href="docs.html#stdlib">Standard library</a>
+        <a href="playground.html">Playground</a>
+      </nav>
+      <div class="nav-actions">
+        <a class="btn btn-primary btn-small" href="playground.html">Try Loi</a>
+        <button class="nav-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">
+          <span></span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero">
+      <div class="container hero-grid">
+        <div>
+          <span class="eyebrow"><span class="dot"></span> Loi Flow Syntax · canonical</span>
+          <h1>Program like <span class="gradient-text">data flows.</span></h1>
+          <p class="hero-lead">
+            Loi is a compiled systems language where every signature states what comes in
+            and what goes out. <strong>Brackets are data, braces are scopes, arrows are movement.</strong>
+            One owner, no lifetimes, no borrow checker.
+          </p>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="docs.html#getting-started">Get started</a>
+            <a class="btn" href="playground.html">Open playground <span aria-hidden="true">→</span></a>
+          </div>
+          <div class="hero-meta">
+            <span><i></i> C11 backend</span>
+            <span><i></i> 163 automated tests</span>
+            <span><i></i> MIT OR Apache-2.0</span>
+          </div>
+        </div>
+
+        <div class="code-window reveal">
+          <div class="code-window-bar">
+            <span class="code-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="code-filename">particle.loi</span>
+            <button class="code-copy" type="button" data-copy>copy</button>
+          </div>
+          <pre><code class="language-loi" data-loi>shape Vec2 [ x: f64, y: f64 ]
+
+shape Particle [
+    pos:   Vec2
+    vel:   Vec2
+    alive: bool = true
+]
+
+open flow step
+    &lt;-&gt; p: Particle
+    &lt;- dt: f64
+{
+    p.pos.x += p.vel.x * dt
+    p.pos.y += p.vel.y * dt
+
+    if p.pos.y &lt; 0 {
+        p.alive = false
+    }
+}
+
+open flow main
+    =&gt; i32
+{
+    mut p: Particle &lt;- Particle[
+        pos: Vec2[ x: 0, y: 10 ],
+        vel: Vec2[ x: 2, y: -1 ],
+    ]
+
+    step(&lt;-&gt; p, 1.0)
+    print("particle updated\n")
+    =&gt; 0
+}</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="section-tight">
+      <div class="container">
+        <div class="stats reveal">
+          <div class="stat">
+            <div class="stat-value">4</div>
+            <div class="stat-label">flow directions</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value">0</div>
+            <div class="stat-label">legacy syntax forms</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value">1</div>
+            <div class="stat-label">owner per value</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value">C11</div>
+            <div class="stat-label">production backend</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container">
+        <div class="section-head reveal">
+          <p class="section-kicker">Why Loi</p>
+          <h2>The language tells you where the data goes.</h2>
+          <p class="section-sub">
+            Loi removes the hidden parts of systems programming: implicit copies,
+            borrowed-forever values and cleanup you have to remember. The shape of a
+            declaration is the shape of its data flow.
+          </p>
+        </div>
+
+        <div class="feature-grid">
+          <article class="feature-card reveal">
+            <div class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h13"/><path d="m13 6 6 6-6 6"/><path d="M4 6v12"/></svg>
+            </div>
+            <h3>Arrows, not guesswork</h3>
+            <p>
+              Every parameter declares <code>&lt;-</code>, <code>-&gt;</code> or <code>&lt;-&gt;</code>.
+              Calls mark writes, so a reader can see which arguments will change.
+            </p>
+          </article>
+
+          <article class="feature-card reveal">
+            <div class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h10v10H7z"/><path d="M4 12h3M17 12h3M12 4v3M12 17v3"/></svg>
+            </div>
+            <h3>Ownership without lifetimes</h3>
+            <p>
+              One live name per value. Transfer with <code>give(x)</code>, duplicate explicitly
+              with <code>clone(x)</code>. No garbage collector and no borrow checker.
+            </p>
+          </article>
+
+          <article class="feature-card reveal">
+            <div class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16v10H4z"/><path d="M8 7V4h8v3M8 17v3h8v-3"/></svg>
+            </div>
+            <h3>Regions, not leaks</h3>
+            <p>
+              <code>protect { }</code> owns every allocation inside it. When the block ends,
+              its memory dies as a region — no per-value destructors, no defer.
+            </p>
+          </article>
+
+          <article class="feature-card reveal">
+            <div class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5h14v14H5z"/><path d="M9 9h6M9 13h6M9 17h3"/></svg>
+            </div>
+            <h3>Shapes are data</h3>
+            <p>
+              <code>shape Vec2 [ x: f64, y: f64 ]</code> declares a named record with defaults
+              and no methods. Literals use brackets: <code>Vec2[ x: 1, y: 2 ]</code>.
+            </p>
+          </article>
+
+          <article class="feature-card reveal">
+            <div class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5M4 19h16"/><path d="m7 15 4-5 3 3 5-7"/></svg>
+            </div>
+            <h3>A small, closed core</h3>
+            <p>
+              A fixed intrinsic set covers I/O, math and <code>len</code>. Everything else grows
+              in <code>lib/std.loi</code>, written in Loi itself.
+            </p>
+          </article>
+
+          <article class="feature-card reveal">
+            <div class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m8 9-4 3 4 3M16 9l4 3-4 3M14 5l-4 14"/></svg>
+            </div>
+            <h3>A real, inspectable compiler</h3>
+            <p>
+              Lex, parse, format, check, emit C, build and run. The pipeline is deliberately
+              small enough to read, test and extend.
+            </p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container split">
+        <div class="split-head reveal">
+          <p class="section-kicker">The Flow Syntax</p>
+          <h2>Read the direction of every value.</h2>
+          <p>
+            Loi's surface is built from three ideas: braces delimit scopes, brackets delimit
+            data, and arrows show movement. The same glyphs appear in declarations, calls
+            and loops.
+          </p>
+          <ul class="check-list">
+            <li>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6"/></svg>
+              <span><code>&lt;-</code> reads, <code>-&gt;</code> initializes, <code>&lt;-&gt;</code> reads and writes.</span>
+            </li>
+            <li>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6"/></svg>
+              <span><code>x &lt;- v</code> binds immutably; <code>mut x &lt;- v</code> allows assignment.</span>
+            </li>
+            <li>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6"/></svg>
+              <span><code>=&gt; value</code> is the result flowing out; there is no <code>return</code> keyword.</span>
+            </li>
+            <li>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6"/></svg>
+              <span><code>open</code> exports; <code>sealed</code> is the default.</span>
+            </li>
+          </ul>
+          <div class="hero-actions">
+            <a class="btn" href="docs.html#language">Language tour</a>
+          </div>
+        </div>
+
+        <div class="code-window reveal">
+          <div class="code-window-bar">
+            <span class="code-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="code-filename">directions.loi</span>
+            <button class="code-copy" type="button" data-copy>copy</button>
+          </div>
+          <pre><code class="language-loi" data-loi>// A flow declares its data flow up front.
+open flow normalize
+    &lt;- value: f64        // read-only view
+    -&gt; out: f64          // caller's variable is initialized
+    &lt;-&gt; total: f64       // read and write
+    =&gt; f64               // single result
+{
+    total += value
+    out = value / total
+    =&gt; out
+}
+
+open flow main
+    =&gt; i32
+{
+    mut sum: f64 &lt;- 0
+    mut ratio: f64
+
+    normalize(10, -&gt; ratio, &lt;-&gt; sum)
+    print("normalized\n")
+    =&gt; 0
+}</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container">
+        <div class="section-head reveal">
+          <p class="section-kicker">Quick start</p>
+          <h2>From source to executable in three commands.</h2>
+        </div>
+
+        <div class="split">
+          <div class="install-block reveal">
+            <div class="install-tabs" role="tablist" aria-label="Quick start modes">
+              <button class="install-tab is-active" type="button" data-tab="build" role="tab">Build</button>
+              <button class="install-tab" type="button" data-tab="run" role="tab">Run an example</button>
+              <button class="install-tab" type="button" data-tab="play" role="tab">Playground</button>
+            </div>
+            <div class="install-panel is-active" data-panel="build" role="tabpanel">
+              <pre><span class="prompt">$</span> cargo build
+<span class="prompt">$</span> ./target/debug/loi --version</pre>
+            </div>
+            <div class="install-panel" data-panel="run" role="tabpanel">
+              <pre><span class="prompt">$</span> ./target/debug/loi check examples/tictactoe.loi
+<span class="prompt">$</span> ./target/debug/loi build examples/tictactoe.loi -o tictactoe
+<span class="prompt">$</span> ./tictactoe</pre>
+            </div>
+            <div class="install-panel" data-panel="play" role="tabpanel">
+              <pre><span class="prompt">$</span> cargo build
+<span class="prompt">$</span> node website/server.mjs
+<span class="prompt">#</span> open http://localhost:4173/playground.html</pre>
+            </div>
+          </div>
+
+          <div class="split-head reveal">
+            <p class="section-kicker">No hidden runtime</p>
+            <h2>Compile it, read the C, run the binary.</h2>
+            <p>
+              Loi's production backend emits one C11 translation unit and invokes the system
+              C compiler. There is no VM, no package manager dependency and no runtime
+              framework.
+            </p>
+            <ul class="check-list">
+              <li>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6"/></svg>
+                <span><code>loi gen</code> writes the generated C you can inspect.</span>
+              </li>
+              <li>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6"/></svg>
+                <span><code>loi build --emit exe|obj|lib</code> produces executables, objects or archives.</span>
+              </li>
+              <li>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4L19 6"/></svg>
+                <span><code>loi fmt</code> is the canonical formatter for the only accepted syntax.</span>
+              </li>
+            </ul>
+            <div class="hero-actions">
+              <a class="btn" href="docs.html#cli">CLI reference</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container">
+        <div class="section-head reveal">
+          <p class="section-kicker">Explore</p>
+          <h2>Documentation, examples and a real playground.</h2>
+          <p class="section-sub">
+            The playground compiles and runs code with the actual Loi compiler on a local
+            Node server. The documentation covers the complete canonical language.
+          </p>
+        </div>
+
+        <div class="feature-grid">
+          <a class="feature-card reveal" href="docs.html#getting-started">
+            <div class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h11l3 3v13H5z"/><path d="M9 9h6M9 13h6M9 17h4"/></svg>
+            </div>
+            <h3>Getting started</h3>
+            <p>Build the compiler, run your first flow, and learn the project layout.</p>
+          </a>
+          <a class="feature-card reveal" href="docs.html#language">
+            <div class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h10M4 17h13"/></svg>
+            </div>
+            <h3>Language tour</h3>
+            <p>Shapes, flows, directions, bindings, control flow and slice literals.</p>
+          </a>
+          <a class="feature-card reveal" href="docs.html#ownership">
+            <div class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 5 6v5c0 4.5 2.8 8.5 7 10 4.2-1.5 7-5.5 7-10V6z"/><path d="m9 12 2 2 4-5"/></svg>
+            </div>
+            <h3>Ownership & memory</h3>
+            <p><code>give</code>, <code>clone</code>, <code>protect</code> and the region model.</p>
+          </a>
+          <a class="feature-card reveal" href="docs.html#stdlib">
+            <div class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h14v16H5z"/><path d="M9 8h6M9 12h6M9 16h6"/></svg>
+            </div>
+            <h3>Standard library</h3>
+            <p>The closed intrinsic set and the explicitly imported <code>lib/std.loi</code>.</p>
+          </a>
+          <a class="feature-card reveal" href="docs.html#examples">
+            <div class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3h8l3 3v15H5V3z"/><path d="m10 12 2 2 4-5"/></svg>
+            </div>
+            <h3>Examples</h3>
+            <p>Tic-tac-toe, particles, geometry, iteration and the standard library.</p>
+          </a>
+          <a class="feature-card reveal" href="playground.html">
+            <div class="feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 7-5 5 5 5M15 7l5 5-5 5"/></svg>
+            </div>
+            <h3>Playground</h3>
+            <p>Edit, check, format and execute Loi without leaving the browser.</p>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <section class="section-tight">
+      <div class="container">
+        <div class="callout reveal">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg>
+          <div>
+            <strong>Flow Syntax cleanup is complete.</strong> Legacy keywords such as
+            <code>fun</code>, <code>interface</code>, <code>let</code>, <code>move</code> and
+            <code>copy</code> are no longer accepted. Every example and test uses canonical Loi.
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <div class="footer-grid">
+        <div class="footer-brand">
+          <a class="brand" href="index.html">
+            <span class="brand-mark"><img src="assets/logo.svg" alt="" width="20" height="20"></span>
+            <span>Loi</span>
+          </a>
+          <p>A compiled systems language built around explicit flow, single ownership and lexical memory regions.</p>
+        </div>
+        <div class="footer-col">
+          <h4>Learn</h4>
+          <a href="docs.html#getting-started">Getting started</a>
+          <a href="docs.html#language">Language tour</a>
+          <a href="docs.html#ownership">Ownership</a>
+          <a href="docs.html#stdlib">Standard library</a>
+        </div>
+        <div class="footer-col">
+          <h4>Tools</h4>
+          <a href="playground.html">Playground</a>
+          <a href="docs.html#cli">CLI reference</a>
+          <a href="docs.html#examples">Examples</a>
+          <a href="docs.html#reference">Reference</a>
+        </div>
+        <div class="footer-col">
+          <h4>Project</h4>
+          <a href="docs.html#status">Status</a>
+          <a href="docs.html#design">Design decisions</a>
+          <a href="docs.html#roadmap">Roadmap</a>
+          <a href="docs.html#contribute">Contributing</a>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <span><i></i> Loi 0.1.0 · Flow Syntax</span>
+        <span>MIT OR Apache-2.0 · built with Rust and C11</span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="assets/highlight.js"></script>
+  <script src="assets/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,44 @@
+// Language basics added in the P0-P2 pass: string and slice literals,
+// `len`/`.len`, top-level globals, imports and the minimal standard library.
+
+import "../lib/std.loi"
+
+GREETING: [u8] <- "Loi language basics\n"
+LIMIT: i32 <- 3
+
+open flow total
+    <- xs: [i32]
+    => i32
+{
+    mut sum: i32 <- 0
+    for i in 0..len(xs) {
+        sum += xs[i]
+    }
+    => sum
+}
+
+open flow main
+    => i32
+{
+    print(GREETING)
+
+    explicit: [i32] <- [i32: 1, 2, 3]
+    inferred <- [4, 5, 6]
+    sum <- total(explicit) + total(inferred)
+
+    if sum != 21 or explicit.len != 3 or len(inferred) != 3 {
+        => 1
+    }
+    if LIMIT != 3 {
+        => 2
+    }
+    if not str_eq("loi", "loi") {
+        => 3
+    }
+    if str_find("hello", "ll") != 2 {
+        => 4
+    }
+
+    print("language basics ok\n")
+    => 0
+}

@@ -1,0 +1,23 @@
+open flow main
+    => i32
+{
+    protect {
+        x: f64 <- 25.0
+        r: f64 <- sqrt(x)
+        mut buf: [u8]
+        alloc(-> buf, u8, 8)
+        buf[0] = 83
+        buf[1] = 113
+        buf[2] = 114
+        buf[3] = 116
+        buf[4] = 32
+        buf[5] = 53
+        buf[6] = 46
+        buf[7] = 48
+        print(buf)
+        if r != 5.0 {
+            => 1
+        }
+    }
+    => 0
+}

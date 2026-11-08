@@ -1,0 +1,12 @@
+flow main
+    => i32
+{
+    protect {
+        mut xs: [i32]
+        alloc(-> xs, i32, 3)
+        xs[0] = 1
+        xs[1] = 2
+        xs[2] = 3
+        => xs[-1]
+    }
+}

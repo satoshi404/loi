@@ -1,0 +1,1064 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0a0e14">
+  <title>Documentation — Loi</title>
+  <meta name="description" content="The complete Loi documentation: getting started, the language tour, ownership and memory, the standard library, the CLI, examples and reference.">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="container nav">
+      <a class="brand" href="index.html" aria-label="Loi home">
+        <span class="brand-mark"><img src="assets/logo.svg" alt="" width="20" height="20"></span>
+        <span>Loi</span>
+        <span class="brand-badge">v0.1</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="docs.html" aria-current="page">Documentation</a>
+        <a href="docs.html#language">Language</a>
+        <a href="docs.html#ownership">Ownership</a>
+        <a href="docs.html#stdlib">Standard library</a>
+        <a href="playground.html">Playground</a>
+      </nav>
+      <div class="nav-actions">
+        <a class="btn btn-primary btn-small" href="playground.html">Try Loi</a>
+        <button class="nav-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">
+          <span></span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="container docs-shell">
+      <aside class="docs-sidebar">
+        <h3>Learn</h3>
+        <nav class="docs-nav" aria-label="Documentation">
+          <a href="#getting-started">Getting started</a>
+          <a href="#language">Language tour</a>
+          <a href="#ownership">Ownership &amp; memory</a>
+          <a href="#stdlib">Standard library</a>
+        </nav>
+        <h3>Tools</h3>
+        <nav class="docs-nav" aria-label="Tools">
+          <a href="#cli">CLI reference</a>
+          <a href="#examples">Examples</a>
+          <a href="playground.html">Playground</a>
+        </nav>
+        <h3>Reference</h3>
+        <nav class="docs-nav" aria-label="Reference">
+          <a href="#reference">Syntax reference</a>
+          <a href="#status">Status &amp; limits</a>
+          <a href="#design">Design decisions</a>
+          <a href="#roadmap">Roadmap</a>
+          <a href="#contribute">Contributing</a>
+        </nav>
+      </aside>
+
+      <div class="docs-main">
+        <h1>Loi documentation</h1>
+        <p class="docs-lead">
+          Loi is a compiled systems language built around explicit data flow, single
+          ownership and lexical memory regions. This documentation describes the only
+          accepted surface, <strong>Loi Flow Syntax</strong>, and the compiler as it exists today.
+        </p>
+
+        <section id="getting-started">
+          <h2>Getting started</h2>
+          <p>
+            Loi is a Rust workspace with a library and a CLI. The compiler emits C11 and invokes
+            the system C compiler to produce a native executable. The playground is a small
+            Node server that drives the same compiler, so no WebAssembly toolchain is needed.
+          </p>
+
+          <h3>Requirements</h3>
+          <ul>
+            <li>A recent stable Rust toolchain (the crate uses the 2024 edition).</li>
+            <li>A C compiler available as <code>cc</code> (or through <code>CC</code>) for <code>loi build</code>.</li>
+            <li>Node 18 or newer only if you want to run the local playground server.</li>
+          </ul>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
+            <pre><code>cargo build
+./target/debug/loi --version</code></pre>
+          </div>
+
+          <p>
+            The compiler has no third-party Rust dependencies. On unusual toolchains you may need
+            to point Cargo at a working linker, for example
+            <code>RUSTFLAGS="-C linker=/usr/bin/gcc"</code>.
+          </p>
+
+          <h3>Hello, Loi</h3>
+          <p>Create <code>hello.loi</code>:</p>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>hello.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-loi">shape Greeting [
+    message: [u8]
+    times:   u32
+]
+
+open flow greet
+    &lt;- greeting: Greeting
+{
+    for i in 0..greeting.times {
+        print(greeting.message)
+    }
+}
+
+open flow main
+    =&gt; i32
+{
+    greet(Greeting[ message: "Hello, Loi!\n", times: 3 ])
+    =&gt; 0
+}</code></pre>
+          </div>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
+            <pre><code>./target/debug/loi check hello.loi
+./target/debug/loi build hello.loi -o hello
+./hello</code></pre>
+          </div>
+
+          <div class="doc-callout">
+            <strong>No hidden runtime.</strong> <code>loi gen</code> prints the generated C, so you can
+            read exactly what the language lowers to before compiling it.
+          </div>
+
+          <h3>Project layout</h3>
+          <table class="doc-table">
+            <thead>
+              <tr><th>Path</th><th>Contents</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>src/</code></td><td>Lexer, parser, AST, checker, ownership analysis, C backend, IR/ASM drafts and CLI.</td></tr>
+              <tr><td><code>lib/std.loi</code></td><td>The explicit standard library, written in Loi.</td></tr>
+              <tr><td><code>examples/</code></td><td>Reference programs, including the particle simulation and tic-tac-toe.</td></tr>
+              <tr><td><code>tests/</code></td><td>Integration tests for the lexer, parser, checker, formatter, CLI and code generator.</td></tr>
+              <tr><td><code>website/</code></td><td>This site, its shared assets, example mirrors and the playground server.</td></tr>
+              <tr><td><code>development/LOI_SPEC.md</code></td><td>The language specification and development protocol.</td></tr>
+              <tr><td><code>PROGRESS.md</code>, <code>DECISIONS.md</code></td><td>Current state and the decision log.</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="language">
+          <h2>Language tour</h2>
+          <p>
+            The surface follows one principle: <strong>braces are scopes, brackets are data,
+            arrows are movement.</strong> A declaration shows where each value goes, and calls
+            repeat those arrows at the call site.
+          </p>
+
+          <table class="doc-table">
+            <thead>
+              <tr><th>Glyph</th><th>Meaning</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>&lt;-</code></td><td>Read-only direction. Also binds a new immutable name.</td></tr>
+              <tr><td><code>-&gt;</code></td><td>Write/initialize direction. Marks the caller's variable at a call.</td></tr>
+              <tr><td><code>&lt;-&gt;</code></td><td>Read-write direction. Explicitly exclusive during a call.</td></tr>
+              <tr><td><code>=&gt;</code></td><td>The result flowing out of a flow. Replaces <code>return</code>.</td></tr>
+              <tr><td><code>[ ]</code></td><td>Data: shape bodies, shape literals, slice types and slice literals.</td></tr>
+              <tr><td><code>{ }</code></td><td>Scope: flow bodies, blocks and <code>protect</code> regions.</td></tr>
+            </tbody>
+          </table>
+
+          <h3>Shapes</h3>
+          <p>
+            A <code>shape</code> is a named record with fields and optional defaults. Shapes have
+            no methods. Field separators may be commas or newlines.
+          </p>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>shapes.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-loi">shape Vec2 [ x: f64, y: f64 ]
+
+shape Particle [
+    pos:   Vec2
+    vel:   Vec2
+    mass:  f64
+    alive: bool = true
+]
+
+mut p: Particle &lt;- Particle[
+    pos: Vec2[ x: 0, y: 10 ],
+    vel: Vec2[ x: 2, y: -1 ],
+]</code></pre>
+          </div>
+
+          <p>
+            A literal always carries its shape name and uses brackets. A field with a default may
+            be omitted. <code>shape Name []</code> is the empty shape.
+          </p>
+
+          <h3>Flows</h3>
+          <p>
+            Functions are called <code>flows</code>. Every parameter declares a direction. The
+            signature may be written on one line or vertically; the vertical form is canonical
+            when there is more than one clause.
+          </p>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>directions.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-loi">open flow normalize
+    &lt;- value: f64        // read-only view
+    -&gt; out: f64          // caller's variable is initialized
+    &lt;-&gt; total: f64       // read and write
+    =&gt; f64               // single result
+{
+    total += value
+    out = value / total
+    =&gt; out
+}
+
+open flow main
+    =&gt; i32
+{
+    mut sum: f64 &lt;- 0
+    mut ratio: f64
+
+    normalize(10, -&gt; ratio, &lt;-&gt; sum)
+    print("normalized\n")
+    =&gt; 0
+}</code></pre>
+          </div>
+
+          <p>
+            A flow may declare any number of <code>-&gt;</code> parameters and at most one
+            <code>=&gt; T</code> result. <code>=&gt; T</code> is conceptually a hidden out-flow.
+            A flow with no result can use a shorter header such as <code>flow f {</code>.
+          </p>
+
+          <h3>Bindings and assignment</h3>
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>bindings.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-loi">answer &lt;- 42                  // immutable
+mut total: i64 &lt;- 0           // mutable, explicit type
+mut pending: Vec2             // uninitialized: only valid as -&gt;
+pending = Vec2[ x: 1, y: 2 ]  // assignment after initialization
+
+total += 10                   // +=, -=, *= and /= are supported
+count &lt;- total as i32         // numeric cast with `as`</code></pre>
+          </div>
+
+          <p>
+            An uninitialized binding exists but cannot be read until it has been written or passed
+            through a <code>-&gt;</code> parameter. Shadowing is scoped like any other binding.
+          </p>
+
+          <h3>Expression rules</h3>
+          <p>
+            Expressions support arithmetic (<code>+</code>, <code>-</code>, <code>*</code>,
+            <code>/</code>, <code>%</code>), comparisons, the boolean operators
+            <code>and</code>, <code>or</code> and <code>not</code>, unary negation and
+            <code>as</code> casts. There is no assignment inside an expression and no
+            <code>++</code>/<code>--</code>.
+          </p>
+          <p>
+            <code>==</code> and <code>!=</code> are defined for scalar numeric types, <code>bool</code>
+            and <code>[u8]</code>. Byte slices compare structurally. Other shapes and slices must be
+            compared field by field.
+          </p>
+
+          <h3>Number and string literals</h3>
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>literals.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-loi">dec &lt;- 1_000_000
+hex &lt;- 0xFF
+bin &lt;- 0b1010_0101
+ratio &lt;- 1.5
+small &lt;- 1e-3
+
+name &lt;- "Loi\n"
+raw &lt;- "tab:\tquote:\"slash:\\"
+byte &lt;- "\x4c"              // ASCII escape, type [u8]</code></pre>
+          </div>
+
+          <p>
+            String escapes are <code>\n</code>, <code>\t</code>, <code>\r</code>,
+            <code>\0</code>, <code>\\</code>, <code>\"</code> and ASCII
+            <code>\xNN</code>. A string has type <code>[u8]</code>, holds decoded UTF-8 bytes and
+            carries no implicit trailing NUL.
+          </p>
+
+          <h3>Control flow</h3>
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>control.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-loi">if value &gt; 0 {
+    print("positive\n")
+} else if value &lt; 0 {
+    print("negative\n")
+} else {
+    print("zero\n")
+}
+
+mut i: i32 &lt;- 0
+while i &lt; 3 {
+    i += 1
+    if i == 2 {
+        continue
+    }
+    if i == 3 {
+        break
+    }
+}
+
+for n in 0..10 {            // half-open range
+    print(".")
+}
+
+for &lt;- item in items {      // read each element
+    print(item.name)
+}
+
+for &lt;-&gt; item in items {     // mutate each element
+    item.value += 1
+}
+
+=&gt; 0                        // the result flows out</code></pre>
+          </div>
+
+          <h3>Slices</h3>
+          <p>
+            Slice types are written <code>[T]</code>. The explicit literal is
+            <code>[T: a, b, c]</code>; an inferred literal is <code>[a, b, c]</code>; the empty
+            literal is <code>[T:]</code>. <code>len(xs)</code> and <code>xs.len</code> both
+            return a <code>u64</code>. Indexing is bounds-checked at runtime.
+          </p>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>slices.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-loi">explicit: [i32] &lt;- [i32: 1, 2, 3]
+inferred &lt;- [4, 5, 6]
+empty: [u8] &lt;- [u8:]
+
+mut total: i32 &lt;- 0
+for i in 0..len(explicit) {
+    total += explicit[i]
+}</code></pre>
+          </div>
+
+          <div class="doc-callout warn">
+            <strong>Literal lifetime.</strong> A slice literal's backing array has automatic storage
+            in the enclosing block. Do not return it from a flow. If the data must outlive the block,
+            allocate it inside a <code>protect</code> region with <code>alloc</code>.
+          </div>
+
+          <h3>Globals and imports</h3>
+          <p>
+            A top-level binding is a global. It is initialized once, before any flow runs, and its
+            initializer must be a compile-time constant. Imports are textual:
+            <code>import "lib/std.loi"</code>.
+          </p>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>globals.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-loi">import "lib/std.loi"
+
+GREETING: [u8] &lt;- "hello from Loi\n"
+LIMIT: i32 &lt;- 3
+mut counter: u64 &lt;- 0
+
+open flow main
+    =&gt; i32
+{
+    print(GREETING)
+    if not str_starts_with(GREETING, "hello") {
+        =&gt; 1
+    }
+    =&gt; 0
+}</code></pre>
+          </div>
+
+          <p>
+            Relative imports resolve from the importing file's directory. A file is visited at most
+            once per compilation unit, so diamond imports do not duplicate declarations. Visibility
+            is not yet enforced across files; that is an implementation gap, not a language rule.
+          </p>
+
+          <h3>Visibility</h3>
+          <p>
+            <code>open</code> exports a declaration. <code>sealed</code> is the default and may be
+            written for emphasis. Visibility applies to flows, shapes and globals. <code>main</code>
+            is the implicit entry point.
+          </p>
+        </section>
+
+        <section id="ownership">
+          <h2>Ownership &amp; memory</h2>
+          <p>
+            Loi has no garbage collector and no borrow checker. It has one rule instead: every
+            value has exactly one owner and one live name.
+          </p>
+
+          <h3>Transfer and duplication</h3>
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>ownership.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-loi">shape Point [ x: i32, y: i32 ]
+
+point &lt;- Point[ x: 10, y: 20 ]
+copy  &lt;- clone(point)      // explicit deep duplicate
+other &lt;- give(point)       // ownership moves; `point` is now dead
+
+// print(point.x)          // compile error: use of moved value
+print(other.x)</code></pre>
+          </div>
+          <ul>
+            <li><code>give(x)</code> transfers ownership and kills <code>x</code>.</li>
+            <li><code>clone(x)</code> duplicates composite values explicitly.</li>
+            <li><code>clone</code> of a value containing a slice is rejected: two names must not
+              alias the same backing array.</li>
+            <li>Scalars (<code>i32</code>, <code>f64</code>, <code>bool</code>, ...) copy
+              implicitly because they have no identity and no destructor.</li>
+            <li>Composite values never copy implicitly.</li>
+          </ul>
+
+          <h3>Borrows are scoped views</h3>
+          <p>
+            A <code>&lt;-</code> parameter is a read-only view of the caller's value. It can be read
+            but never stored or returned. To keep part of it, <code>clone</code> that part. A
+            <code>&lt;-&gt;</code> parameter is exclusive for the duration of the call: no other use
+            of the same value is allowed in that call. Passing the same value twice as
+            <code>&lt;-</code> is allowed because both are reads.
+          </p>
+
+          <h3>Regions and <code>protect</code></h3>
+          <p>
+            Allocation happens only inside a <code>protect</code> block. Everything allocated there
+            belongs to that region and dies when the block ends. Nothing allocated inside may escape.
+            Code inside may write into memory that existed before the block; that is how results get
+            out.
+          </p>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>regions.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-loi">open flow main
+    =&gt; i32
+{
+    mut total: i32 &lt;- 0
+
+    protect {
+        mut xs: [i32]
+        alloc(-&gt; xs, i32, 4)
+        xs[0] = 1
+        xs[1] = 2
+        xs[2] = 3
+        xs[3] = 4
+        for i in 0..len(xs) {
+            total += xs[i]
+        }
+    }   // xs and its backing array die here
+
+    print("done\n")
+    =&gt; 0
+}</code></pre>
+          </div>
+
+          <ul>
+            <li><code>alloc(-&gt; xs, T, n)</code> allocates <code>n</code> elements of <code>T</code>.</li>
+            <li><code>alloc</code> outside any <code>protect</code> is a compile error. There is no manual
+              <code>free</code>.</li>
+            <li>An allocation made by a called flow belongs to the nearest enclosing
+              <code>protect</code> of the caller.</li>
+            <li>Region taint is checked: allocated data cannot be returned or stored past the block.</li>
+          </ul>
+
+          <h3>No pointers</h3>
+          <p>
+            Loi has no general pointers, no <code>&amp;</code>/<code>*</code> operators and no
+            <code>nil</code>. Graphs use integer handles into an owning array; absent values use an
+            explicit flag or a sentinel; foreign pointers stay opaque at the FFI boundary. This avoids
+            a second memory model and the lifetime rules that address-of would require.
+          </p>
+
+          <h3>Resources</h3>
+          <p>
+            A linear-resource design for files and sockets is specified (<code>guard</code> plus a
+            compiler-known <code>&lt;Shape&gt;_release</code>) but not implemented yet. Until it is,
+            the closed intrinsic set intentionally has no file or network I/O.
+          </p>
+        </section>
+
+        <section id="stdlib">
+          <h2>Standard library</h2>
+          <p>
+            Loi has two tiers: a small, closed set of compiler intrinsics that are always available,
+            and <code>lib/std.loi</code>, which is ordinary Loi and must be imported explicitly.
+            There is no prelude.
+          </p>
+
+          <h3>Intrinsics</h3>
+          <table class="doc-table">
+            <thead>
+              <tr><th>Name</th><th>Signature</th><th>Notes</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>print</code></td><td><code>&lt;- [u8]</code></td><td>Writes bytes to standard output.</td></tr>
+              <tr><td><code>eprint</code></td><td><code>&lt;- [u8]</code></td><td>Writes bytes to standard error.</td></tr>
+              <tr><td><code>panic</code></td><td><code>&lt;- [u8]</code></td><td>Reports and aborts the program.</td></tr>
+              <tr><td><code>sqrt</code></td><td><code>&lt;- f64 =&gt; f64</code></td><td>Square root.</td></tr>
+              <tr><td><code>floor</code></td><td><code>&lt;- f64 =&gt; f64</code></td><td>Round toward negative infinity.</td></tr>
+              <tr><td><code>ceil</code></td><td><code>&lt;- f64 =&gt; f64</code></td><td>Round toward positive infinity.</td></tr>
+              <tr><td><code>fabs</code></td><td><code>&lt;- f64 =&gt; f64</code></td><td>Absolute value.</td></tr>
+              <tr><td><code>pow</code></td><td><code>&lt;- f64, &lt;- f64 =&gt; f64</code></td><td>Exponentiation.</td></tr>
+              <tr><td><code>fmod</code></td><td><code>&lt;- f64, &lt;- f64 =&gt; f64</code></td><td>Floating remainder.</td></tr>
+              <tr><td><code>len</code></td><td><code>[T] =&gt; u64</code></td><td>Slice length; also <code>xs.len</code>.</td></tr>
+            </tbody>
+          </table>
+          <p>
+            Intrinsic names are reserved. User code may not redeclare them. <code>len</code> and the
+            math intrinsics are checked against the same signatures as an ordinary flow.
+          </p>
+
+          <h3><code>lib/std.loi</code></h3>
+          <p>Import it with <code>import "lib/std.loi"</code>. The library is deliberately prefixed by kind.</p>
+
+          <table class="doc-table">
+            <thead>
+              <tr><th>Group</th><th>Functions</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Integers</td>
+                <td><code>min_i32</code>, <code>max_i32</code>, <code>abs_i32</code>,
+                  <code>clamp_i32</code> — all <code>&lt;- i32... =&gt; i32</code></td>
+              </tr>
+              <tr>
+                <td>Floats</td>
+                <td><code>min_f64</code>, <code>max_f64</code>, <code>abs_f64</code>,
+                  <code>clamp_f64</code> — all <code>&lt;- f64... =&gt; f64</code></td>
+              </tr>
+              <tr>
+                <td>Byte strings</td>
+                <td><code>str_len(&lt;- [u8]) =&gt; u64</code>,
+                  <code>str_eq(&lt;- [u8], &lt;- [u8]) =&gt; bool</code>,
+                  <code>str_starts_with(&lt;- [u8], &lt;- [u8]) =&gt; bool</code>,
+                  <code>str_find(&lt;- [u8], &lt;- [u8]) =&gt; i64</code></td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>stdlib.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-loi">import "lib/std.loi"
+
+open flow main
+    =&gt; i32
+{
+    low &lt;- min_i32(3, 8)
+    high &lt;- clamp_i32(100, 0, 10)
+    found &lt;- str_find("hello", "ll")
+
+    if low != 3 or high != 10 or found != 2 {
+        =&gt; 1
+    }
+
+    print("standard library ok\n")
+    =&gt; 0
+}</code></pre>
+          </div>
+
+          <p>
+            New functionality belongs in the library by default. An intrinsic is added only when the
+            operation must be implemented by the backend or the operating system.
+          </p>
+        </section>
+
+        <section id="cli">
+          <h2>CLI reference</h2>
+          <p>
+            The <code>loi</code> binary exposes the compiler pipeline directly. Paths are ordinary
+            filesystem paths; outputs default to <code>./a.out</code>, <code>&lt;stem&gt;.o</code> or
+            <code>lib&lt;stem&gt;.a</code>.
+          </p>
+
+          <table class="doc-table">
+            <thead>
+              <tr><th>Command</th><th>What it does</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>loi lex FILE</code></td><td>Prints the token stream, one token per line.</td></tr>
+              <tr><td><code>loi parse FILE</code></td><td>Prints the parsed program as a debug AST.</td></tr>
+              <tr><td><code>loi fmt FILE</code></td><td>Prints canonical Flow Syntax to standard output.</td></tr>
+              <tr><td><code>loi check FILE</code></td><td>Runs the checker and ownership analysis; no output on success.</td></tr>
+              <tr><td><code>loi gen FILE [-o out.c]</code></td><td>Prints or writes the generated C11 translation unit.</td></tr>
+              <tr><td><code>loi build FILE... [-o out]</code></td><td>Checks, generates C, invokes <code>cc</code> and links the output.</td></tr>
+              <tr><td><code>loi clean FILE [-o out]</code></td><td>Removes the output and its incremental stamp; does not read the source.</td></tr>
+            </tbody>
+          </table>
+
+          <h3>Build options</h3>
+          <table class="doc-table">
+            <thead>
+              <tr><th>Option</th><th>Effect</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>--emit exe|obj|lib</code></td><td>Executable (default), object file, or static archive.</td></tr>
+              <tr><td><code>--debug</code> / <code>--release</code></td><td>Adds <code>-g</code> or <code>-O2</code> to the C compiler.</td></tr>
+              <tr><td><code>--rebuild</code></td><td>Ignores the incremental stamp and rebuilds.</td></tr>
+              <tr><td><code>--emit-c FILE</code></td><td>Retains the generated C alongside the output.</td></tr>
+              <tr><td><code>--emit-h FILE</code></td><td>Writes a C header for exported declarations.</td></tr>
+              <tr><td><code>--emit-ir FILE</code></td><td>Writes the draft three-address IR.</td></tr>
+              <tr><td><code>--emit-asm FILE</code></td><td>Writes the draft x86-64 assembly lowering.</td></tr>
+              <tr><td><code>--source-map FILE</code></td><td>Writes source-map JSON Lines.</td></tr>
+              <tr><td><code>--arena-size BYTES</code></td><td>Sets the <code>protect</code> arena size (default 64 MiB).</td></tr>
+              <tr><td><code>--cc-flag FLAG</code></td><td>Passes an extra flag to <code>cc</code>; repeatable.</td></tr>
+            </tbody>
+          </table>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>building.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code># Inspect the generated C
+loi gen examples/tictactoe.loi -o tictactoe.c
+
+# Build an optimized executable and keep the C
+loi build examples/tictactoe.loi -o tictactoe --release --emit-c tictactoe.c
+
+# Reformat in place (the input is read before output is written)
+loi fmt hello.loi &gt; hello.formatted.loi &amp;&amp; mv hello.formatted.loi hello.loi
+
+# Multi-file build: one object per explicit input
+loi build main.loi helpers.loi -o app</code></pre>
+          </div>
+
+          <p>
+            <code>build</code> invokes <code>cc</code> and <code>ar</code>. Set <code>CC</code> or
+            <code>AR</code> to override them; both values may contain shell-like arguments
+            (<code>ccache cc</code>, for example). A successful build leaves a <code>.loi-stamp</code>
+            file next to the output so unchanged rebuilds are skipped.
+          </p>
+          <p>
+            Diagnostics are printed as <code>path:line:column: message</code> to standard error.
+            <code>check</code> and <code>build</code> exit non-zero when any diagnostic is reported.
+          </p>
+
+          <h3>Playground server</h3>
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
+            <pre><code>cargo build
+node website/server.mjs
+# open http://localhost:4173/playground.html</code></pre>
+          </div>
+          <p>
+            The server serves the static site and exposes <code>POST /api/run</code>,
+            <code>/api/check</code> and <code>/api/format</code>. Each request writes the program to a
+            temporary directory, copies <code>lib/std.loi</code> there so imports resolve, and runs the
+            real <code>loi</code> binary. Set <code>LOI_BIN</code> to use a specific compiler, and
+            <code>PORT</code>/<code>HOST</code> to change the listen address. It binds to
+            <code>127.0.0.1</code> by default; it is a development tool, not a public sandbox.
+          </p>
+        </section>
+
+        <section id="examples">
+          <h2>Examples</h2>
+          <p>
+            Every example below is canonical Flow Syntax and is compiled by the test suite or by
+            <code>loi build</code>. The website keeps a copy under <code>website/examples/</code>.
+          </p>
+
+          <div class="feature-grid">
+            <a class="feature-card" href="examples/tictactoe.loi">
+              <h3>Tic-tac-toe</h3>
+              <p>A complete deterministic self-play game: win/block/center/corner heuristics, board printing, a draw and a scripted X win.</p>
+            </a>
+            <a class="feature-card" href="examples/particles.loi">
+              <h3>Particles</h3>
+              <p>The reference simulation. Shapes, regions, <code>give</code>/<code>clone</code>, direction flows and allocation.</p>
+            </a>
+            <a class="feature-card" href="examples/language_basics.loi">
+              <h3>Language basics</h3>
+              <p>Globals, imports, slice literals, <code>len</code>, casts and the standard library.</p>
+            </a>
+            <a class="feature-card" href="examples/iteration.loi">
+              <h3>Iteration</h3>
+              <p><code>for</code> over ranges and slices, read-only and read-write element directions, and a <code>protect</code> region.</p>
+            </a>
+            <a class="feature-card" href="examples/geometry.loi">
+              <h3>Geometry</h3>
+              <p>Shapes with defaults, nested shape literals and out-flow parameters.</p>
+            </a>
+            <a class="feature-card" href="examples/math_demo.loi">
+              <h3>Math and buffers</h3>
+              <p>The math intrinsics plus a byte buffer allocated in a region.</p>
+            </a>
+          </div>
+
+          <h3>Tic-tac-toe</h3>
+          <p>
+            Loi has no stdin or file API yet, so the tic-tac-toe example is a deterministic
+            demonstration rather than an interactive game. Two heuristic players share the same
+            turn logic; after the self-play game the program also runs a fixed scripted game in
+            which X completes the top row.
+          </p>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>tictactoe.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-loi">/// Return the third cell of a line when `player` already owns the other two.
+/// In every other case the result is -1.
+sealed flow winning_line
+    &lt;- board: [i32]
+    &lt;- first: i32
+    &lt;- second: i32
+    &lt;- third: i32
+    &lt;- player: i32
+    =&gt; i32
+{
+    mut owned: i32 &lt;- 0
+    mut empty: i32 &lt;- -1
+
+    if board[first] == player {
+        owned += 1
+    }
+    if board[second] == player {
+        owned += 1
+    }
+    if board[third] == player {
+        owned += 1
+    }
+
+    if board[first] == 0 {
+        empty = first
+    }
+    if board[second] == 0 {
+        empty = second
+    }
+    if board[third] == 0 {
+        empty = third
+    }
+
+    if owned == 2 and empty &gt;= 0 {
+        =&gt; empty
+    }
+    =&gt; -1
+}</code></pre>
+          </div>
+
+          <div class="doc-callout">
+            <strong>Run it.</strong> <code>loi build examples/tictactoe.loi -o tictactoe &amp;&amp; ./tictactoe</code>.
+            The output ends with a draw and then a scripted <code>X wins!</code>.
+          </div>
+
+          <h3>Error examples</h3>
+          <p>
+            The repository also keeps deliberately invalid programs for diagnostics:
+            <code>literal_range_error.loi</code>, <code>negative_index_error.loi</code>,
+            <code>constant_folding_error.loi</code> and <code>cycle_interface.loi</code>. They are
+            expected to fail <code>loi check</code>.
+          </p>
+        </section>
+
+        <section id="reference">
+          <h2>Syntax reference</h2>
+          <p>
+            This is a compact reference for the accepted surface. The full specification lives in
+            <code>development/LOI_SPEC.md</code>.
+          </p>
+
+          <h3>Keywords</h3>
+          <p>
+            <code>shape</code>, <code>flow</code>, <code>open</code>, <code>sealed</code>,
+            <code>mut</code>, <code>give</code>, <code>clone</code>, <code>protect</code>,
+            <code>alloc</code>, <code>import</code>, <code>comptime</code>, <code>if</code>,
+            <code>else</code>, <code>while</code>, <code>for</code>, <code>in</code>,
+            <code>continue</code>, <code>break</code>, <code>and</code>, <code>or</code>,
+            <code>not</code>, <code>as</code>, <code>true</code>, <code>false</code>.
+          </p>
+          <p>
+            <code>in</code> is only the separator in <code>for i in a..b</code> and
+            <code>for &lt;- p in xs</code>. It is not a parameter direction and it is not a call marker.
+          </p>
+
+          <h3>Types</h3>
+          <table class="doc-table">
+            <thead>
+              <tr><th>Type</th><th>Notes</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>i8</code>, <code>i16</code>, <code>i32</code>, <code>i64</code></td><td>Signed integers. Unsuffixed integer literals default to <code>i32</code>.</td></tr>
+              <tr><td><code>u8</code>, <code>u16</code>, <code>u32</code>, <code>u64</code></td><td>Unsigned integers.</td></tr>
+              <tr><td><code>f32</code>, <code>f64</code></td><td>Floating point. Unsuffixed float literals default to <code>f64</code>.</td></tr>
+              <tr><td><code>bool</code></td><td><code>true</code> / <code>false</code>.</td></tr>
+              <tr><td><code>[T]</code></td><td>A slice of <code>T</code>.</td></tr>
+              <tr><td><code>Name</code></td><td>A declared <code>shape</code>.</td></tr>
+            </tbody>
+          </table>
+
+          <h3>Declarations and statements</h3>
+          <table class="doc-table">
+            <thead>
+              <tr><th>Form</th><th>Example</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Shape</td><td><code>shape Vec2 [ x: f64, y: f64 ]</code></td></tr>
+              <tr><td>Flow with result</td><td><code>flow f &lt;- x: i32 =&gt; i32 { =&gt; x }</code></td></tr>
+              <tr><td>Immutable binding</td><td><code>x &lt;- 1</code></td></tr>
+              <tr><td>Mutable binding</td><td><code>mut x: i32 &lt;- 1</code></td></tr>
+              <tr><td>Assignment</td><td><code>x = 2</code>, <code>x += 1</code>, <code>x -= 1</code>, <code>x *= 2</code>, <code>x /= 2</code></td></tr>
+              <tr><td>Conditional</td><td><code>if c { } else if d { } else { }</code></td></tr>
+              <tr><td>While</td><td><code>while c { }</code></td></tr>
+              <tr><td>Range loop</td><td><code>for i in 0..n { }</code></td></tr>
+              <tr><td>Slice loop</td><td><code>for &lt;- p in xs { }</code>, <code>for &lt;-&gt; p in xs { }</code></td></tr>
+              <tr><td>Region</td><td><code>protect { alloc(-&gt; xs, T, n) }</code></td></tr>
+              <tr><td>Return</td><td><code>=&gt; value</code> or <code>=&gt;</code></td></tr>
+              <tr><td>Import</td><td><code>import "lib/std.loi"</code></td></tr>
+            </tbody>
+          </table>
+
+          <h3>Directions</h3>
+          <table class="doc-table">
+            <thead>
+              <tr><th>Declaration</th><th>Call</th><th>Meaning</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>&lt;- x: T</code></td><td><code>f(x)</code></td><td>Read-only.</td></tr>
+              <tr><td><code>-&gt; x: T</code></td><td><code>f(-&gt; x)</code></td><td>Initialize the caller's variable.</td></tr>
+              <tr><td><code>&lt;-&gt; x: T</code></td><td><code>f(&lt;-&gt; x)</code></td><td>Read and write the caller's variable.</td></tr>
+              <tr><td><code>=&gt; T</code></td><td><code>v &lt;- f()</code></td><td>The single result.</td></tr>
+            </tbody>
+          </table>
+
+          <h3>Diagnostics</h3>
+          <p>
+            Diagnostics use the canonical glyphs: <code>expects direction '-&gt;', found '&lt;-'</code>,
+            <code>use of moved value 'p'</code>, <code>shape 'Vec2' has no field 'nope'</code>.
+            Source positions are 1-based lines and columns, printed as
+            <code>file.loi:line:column: message</code>.
+          </p>
+
+          <h3>Formally absent</h3>
+          <ul>
+            <li>No <code>fun</code>, <code>interface</code>, <code>let</code>, <code>var</code>,
+              <code>return</code>, <code>move</code>, <code>copy</code>, <code>visible</code> or
+              <code>hidden</code>.</li>
+            <li>No <code>&amp;</code> or pointer operators.</li>
+            <li>No brace shape literals (<code>Vec2{ ... }</code>) and no <code>[]T{ ... }</code>
+              slice literals.</li>
+            <li>No classes, methods, inheritance, exceptions, macros or implicit prelude.</li>
+            <li>No <code>null</code>/<code>nil</code>; use a flag or a sentinel.</li>
+          </ul>
+        </section>
+
+        <section id="status">
+          <h2>Status &amp; limits</h2>
+          <p>
+            Loi is a working compiler in Phase 4 (C backend). The language surface is stable enough
+            to write real programs, but the implementation still has explicit provisional limits.
+          </p>
+
+          <table class="doc-table">
+            <thead>
+              <tr><th>Component</th><th>State</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Lexer, parser, pretty-printer</td><td>Working; canonical Flow Syntax only.</td></tr>
+              <tr><td>Type checker</td><td>Working, including literal ranges, intrinsic signatures, shape cycle detection and canonical diagnostics.</td></tr>
+              <tr><td>Ownership analysis</td><td>Working: give liveness, definite assignment, exclusive <code>&lt;-&gt;</code>, region escape checks.</td></tr>
+              <tr><td>C backend</td><td>Working: one C11 translation unit, bounds checks, regions, source maps, headers, multi-file objects.</td></tr>
+              <tr><td>IR and assembly</td><td>Draft: emitted on request, not used for production builds yet.</td></tr>
+              <tr><td><code>comptime</code></td><td>Specified but not implemented: no constant evaluator or parser support yet.</td></tr>
+              <tr><td>Resources (<code>guard</code>)</td><td>Specified, not implemented.</td></tr>
+            </tbody>
+          </table>
+
+          <h3>Known limitations</h3>
+          <ul>
+            <li>No stdin, file, socket or process API. Programs are deterministic unless they use time-like external inputs; Loi has none yet.</li>
+            <li>Imports are textual and cross-file visibility is not enforced. Multi-file builds give sealed flows external linkage so cross-file calls link.</li>
+            <li>Globals are limited to scalars, <code>bool</code> and <code>[u8]</code> initialized from a string literal. Composite globals await a runtime constructor.</li>
+            <li>A slice literal cannot be returned from a flow; allocate long-lived data in a <code>protect</code> region.</li>
+            <li><code>&lt;-</code> composite parameters are passed to C by value. The checker forbids storing or returning the borrowed value, so single-threaded semantics are preserved, but the spec's "by address" wording is not literally implemented.</li>
+            <li>The pretty-printer discards comments and prints shape literals on one line.</li>
+            <li>The playground executes code on the machine running the server. Run it locally and do not expose it as a public service.</li>
+          </ul>
+
+          <h3>Verification</h3>
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
+            <pre><code>export RUSTFLAGS="-C linker=/usr/bin/gcc"   # only if your default linker fails
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test --all-targets</code></pre>
+          </div>
+          <p>
+            The suite covers the lexer, parser, formatter, checker, ownership rules, CLI, code
+            generation, the reference programs and the tic-tac-toe example.
+          </p>
+        </section>
+
+        <section id="design">
+          <h2>Design decisions</h2>
+          <p>
+            The language is deliberately smaller than its feature list. These decisions explain
+            what is in, what is out and why.
+          </p>
+
+          <table class="doc-table">
+            <thead>
+              <tr><th>Decision</th><th>Reason</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Flow Syntax is the only surface.</td>
+                <td>The migration is complete. Legacy keywords and forms were removed, not deprecated, so there is one spelling for every construct.</td>
+              </tr>
+              <tr>
+                <td>One owner, no lifetimes.</td>
+                <td>Aliases are impossible by construction. <code>give</code> and <code>clone</code> make transfer and duplication explicit.</td>
+              </tr>
+              <tr>
+                <td>No pointers.</td>
+                <td>Address-of would create a second name for one owner and require a lifetime system. Handles cover graphs; slices cover arrays.</td>
+              </tr>
+              <tr>
+                <td>Lexical regions.</td>
+                <td><code>protect</code> gives allocation a syntactic lifetime. There is no per-value destructor and no manual <code>free</code>.</td>
+              </tr>
+              <tr>
+                <td>Brackets are data, braces are scopes.</td>
+                <td>Shape bodies, literals, slices and indexes use brackets. Blocks and regions use braces. The visual grammar matches the semantics.</td>
+              </tr>
+              <tr>
+                <td>Closed intrinsics plus a Loi library.</td>
+                <td>A tiny backend surface keeps the compiler portable; everything else grows in <code>lib/std.loi</code> without changing the compiler.</td>
+              </tr>
+              <tr>
+                <td><code>sealed</code> by default.</td>
+                <td>Least privilege. <code>open</code> is the only way to export.</td>
+              </tr>
+              <tr>
+                <td>C11 backend.</td>
+                <td>The generated output is inspectable, portable and easy to link. There is no VM and no hidden runtime.</td>
+              </tr>
+              <tr>
+                <td>Deterministic tic-tac-toe.</td>
+                <td>Without stdin or file I/O, a self-play demo is the honest showcase. The rules and heuristics are real; only the input source is fixed.</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="roadmap">
+          <h2>Roadmap</h2>
+          <h3>Done</h3>
+          <ul>
+            <li>Foundation, lexer, parser, AST, formatter and diagnostics.</li>
+            <li>Shapes, flows, directions, bindings, control flow, casts, literals, globals and imports.</li>
+            <li>Ownership checks, definite assignment, exclusive directions and region escape analysis.</li>
+            <li>C11 code generation, runtime bounds checks, <code>protect</code> arenas, headers and source maps.</li>
+            <li>Multi-file builds, incremental stamps and the <code>clean</code> command.</li>
+            <li>Canonical Flow Syntax migration and legacy cleanup.</li>
+          </ul>
+
+          <h3>In progress</h3>
+          <ul>
+            <li>Cross-file visibility enforcement and module semantics.</li>
+            <li>Composite globals through a runtime constructor.</li>
+            <li>IR and assembly backend completion.</li>
+            <li>Playground hardening and deployment documentation.</li>
+          </ul>
+
+          <h3>Next</h3>
+          <ul>
+            <li><code>comptime</code>: parser support, a step-limited constant evaluator, and constant contexts for globals, defaults and extents.</li>
+            <li>The linear-resource design for <code>guard</code> and <code>&lt;Shape&gt;_release</code>.</li>
+            <li>Richer I/O once the resource model exists.</li>
+            <li>Examples that exercise interactive input after stdin support.</li>
+          </ul>
+        </section>
+
+        <section id="contribute">
+          <h2>Contributing</h2>
+          <p>
+            The project keeps a strict written protocol so that any contributor can resume without
+            the previous conversation.
+          </p>
+          <ol>
+            <li>Read <code>development/LOI_SPEC.md</code> before changing the language.</li>
+            <li>Record status in <code>PROGRESS.md</code> and one-line decisions in <code>DECISIONS.md</code>.</li>
+            <li>Keep the surface canonical: do not reintroduce legacy keywords, brace shape literals,
+              <code>[]T{ ... }</code> literals or <code>&amp;</code>.</li>
+            <li>Add or update tests for every behavior change and retire tests that only covered removed syntax.</li>
+            <li>Do not silently rewrite working code. Verify with the compiler before claiming success.</li>
+            <li>Keep the specification, examples and this website in sync with the implementation.</li>
+          </ol>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
+            <pre><code>export PATH="$HOME/.cargo/bin:$PATH"
+export RUSTFLAGS="-C linker=/usr/bin/gcc"
+
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test --all-targets</code></pre>
+          </div>
+
+          <p>
+            The codebase favors small stages with explicit data: tokens, AST, semantic types,
+            diagnostics, then C. The IR and assembly modules are intentionally separate drafts.
+          </p>
+        </section>
+
+        <p style="margin-top: 40px; color: var(--muted-2); font-size: 0.86rem;">
+          Loi is licensed under MIT OR Apache-2.0. The reference program is
+          <code>examples/particles.loi</code>; the syntax tour is
+          <code>examples/flow_syntax.loi</code>.
+        </p>
+      </div>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <div class="footer-grid">
+        <div class="footer-brand">
+          <a class="brand" href="index.html">
+            <span class="brand-mark"><img src="assets/logo.svg" alt="" width="20" height="20"></span>
+            <span>Loi</span>
+          </a>
+          <p>A compiled systems language built around explicit flow, single ownership and lexical memory regions.</p>
+        </div>
+        <div class="footer-col">
+          <h4>Learn</h4>
+          <a href="docs.html#getting-started">Getting started</a>
+          <a href="docs.html#language">Language tour</a>
+          <a href="docs.html#ownership">Ownership</a>
+          <a href="docs.html#stdlib">Standard library</a>
+        </div>
+        <div class="footer-col">
+          <h4>Tools</h4>
+          <a href="playground.html">Playground</a>
+          <a href="docs.html#cli">CLI reference</a>
+          <a href="docs.html#examples">Examples</a>
+          <a href="docs.html#reference">Reference</a>
+        </div>
+        <div class="footer-col">
+          <h4>Project</h4>
+          <a href="docs.html#status">Status</a>
+          <a href="docs.html#design">Design decisions</a>
+          <a href="docs.html#roadmap">Roadmap</a>
+          <a href="docs.html#contribute">Contributing</a>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <span><i></i> Loi 0.1.0 · Flow Syntax</span>
+        <span>MIT OR Apache-2.0 · built with Rust and C11</span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="assets/highlight.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/docs.js"></script>
+</body>
+</html>

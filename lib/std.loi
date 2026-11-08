@@ -1,0 +1,175 @@
+//! Minimal Loi standard library.
+//!
+//! Import it explicitly:
+//!
+//! ```loi
+//! import "lib/std.loi"
+//! ```
+//!
+//! Imports are textual, so every helper below lives in the program namespace.
+//! Names are prefixed by kind (`min_i32`, `str_find`, ...) to avoid clashes
+//! with user code.
+
+// ---------------------------------------------------------------------------
+// Integers
+// ---------------------------------------------------------------------------
+
+open flow min_i32
+    <- a: i32
+    <- b: i32
+    => i32
+{
+    if a < b {
+        => a
+    }
+    => b
+}
+
+open flow max_i32
+    <- a: i32
+    <- b: i32
+    => i32
+{
+    if a > b {
+        => a
+    }
+    => b
+}
+
+open flow abs_i32
+    <- value: i32
+    => i32
+{
+    if value < 0 {
+        => -value
+    }
+    => value
+}
+
+open flow clamp_i32
+    <- value: i32
+    <- low: i32
+    <- high: i32
+    => i32
+{
+    if value < low {
+        => low
+    }
+    if value > high {
+        => high
+    }
+    => value
+}
+
+// ---------------------------------------------------------------------------
+// Floats
+// ---------------------------------------------------------------------------
+
+open flow min_f64
+    <- a: f64
+    <- b: f64
+    => f64
+{
+    if a < b {
+        => a
+    }
+    => b
+}
+
+open flow max_f64
+    <- a: f64
+    <- b: f64
+    => f64
+{
+    if a > b {
+        => a
+    }
+    => b
+}
+
+open flow abs_f64
+    <- value: f64
+    => f64
+{
+    if value < 0.0 {
+        => -value
+    }
+    => value
+}
+
+open flow clamp_f64
+    <- value: f64
+    <- low: f64
+    <- high: f64
+    => f64
+{
+    if value < low {
+        => low
+    }
+    if value > high {
+        => high
+    }
+    => value
+}
+
+// ---------------------------------------------------------------------------
+// Byte strings (`[u8]`)
+// ---------------------------------------------------------------------------
+
+open flow str_len
+    <- text: [u8]
+    => u64
+{
+    => text.len
+}
+
+open flow str_eq
+    <- left: [u8]
+    <- right: [u8]
+    => bool
+{
+    => left == right
+}
+
+open flow str_starts_with
+    <- text: [u8]
+    <- prefix: [u8]
+    => bool
+{
+    if prefix.len > text.len {
+        => false
+    }
+    for i in 0..prefix.len {
+        if text[i] != prefix[i] {
+            => false
+        }
+    }
+    => true
+}
+
+/// Return the byte offset of `needle` in `text`, or -1 when it is absent.
+open flow str_find
+    <- text: [u8]
+    <- needle: [u8]
+    => i64
+{
+    if needle.len > text.len {
+        => -1
+    }
+    if needle.len == 0 {
+        => 0
+    }
+    for i in 0..(text.len - needle.len + 1) {
+        mut matches: bool <- true
+        for j in 0..needle.len {
+            if text[i + j] != needle[j] {
+                matches = false
+                break
+            }
+        }
+        if matches {
+            => i as i64
+        }
+    }
+    => -1
+}

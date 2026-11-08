@@ -1,0 +1,37 @@
+shape Point [ x: i32, y: i32 ]
+
+sealed flow sum_points
+    <- pts: [Point]
+    <- n: u32
+    => i32
+{
+    mut total: i32 <- 0
+    for i in 0..n {
+        total += pts[i].x + pts[i].y
+    }
+    => total
+}
+
+sealed flow fill_points
+    -> pts: [Point]
+    <- n: u32
+{
+    alloc(-> pts, Point, n)
+    for i in 0..n {
+        pts[i] = Point[ x: i as i32, y: (n - i) as i32 ]
+    }
+}
+
+open flow main
+    => i32
+{
+    protect {
+        mut pts: [Point]
+        fill_points(-> pts, 10)
+        mut total: i32 <- sum_points(pts, 10)
+        if total != 100 {
+            => 2
+        }
+    }
+    => 0
+}

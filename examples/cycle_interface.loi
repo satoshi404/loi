@@ -1,0 +1,2 @@
+shape A [ b: B ]
+shape B [ a: A ]

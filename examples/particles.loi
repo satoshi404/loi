@@ -1,0 +1,100 @@
+// The reference simulation written in canonical Loi Flow Syntax.
+//
+// Braces are scopes, brackets are data, arrows are movement.
+
+shape Vec2 [ x: f64, y: f64 ]
+
+shape Particle [
+    pos:   Vec2
+    vel:   Vec2
+    mass:  f64
+    alive: bool = true
+]
+
+shape World [
+    particles: [Particle]
+    gravity:   Vec2
+    bounds:    Vec2
+    tick:      u64 = 0
+]
+
+open flow world_new
+    <- count: u32
+    <- size: Vec2
+    -> w: World
+{
+    mut ps: [Particle]
+    alloc(-> ps, Particle, count)          // belongs to the caller's protect
+    for i in 0..count {
+        ps[i] = Particle[
+            pos:  Vec2[ x: i as f64 / count as f64 * size.x, y: size.y / 2 ],
+            vel:  Vec2[ x: i as f64 * 0.1 - 5, y: 0 ],
+            mass: 1 + (i % 3) as f64,
+        ]
+    }
+    w.particles = give(ps)                 // ps is dead, w owns the array
+    w.gravity   = Vec2[ x: 0, y: -9.81 ]
+    w.bounds    = clone(size)              // size is borrowed, so copy it
+}
+
+sealed flow clamp
+    <- v: f64
+    <- lo: f64
+    <- hi: f64
+    => f64
+{
+    if v < lo { => lo }
+    if v > hi { => hi }
+    => v
+}
+
+sealed flow bounce
+    <-> p: Particle
+    <- axis: u8
+{
+    if axis == 0 { p.vel.x = -p.vel.x } else { p.vel.y = -p.vel.y }
+}
+
+open flow step
+    <-> w: World
+    <- dt: f64
+{
+    w.tick += 1
+    for <-> p in w.particles {
+        if not p.alive { continue }
+        p.vel.x += w.gravity.x * dt
+        p.vel.y += w.gravity.y * dt
+        p.pos.x += p.vel.x * dt
+        p.pos.y += p.vel.y * dt
+        if p.pos.x < 0 or p.pos.x > w.bounds.x {
+            p.pos.x = clamp(p.pos.x, 0, w.bounds.x)
+            bounce(<-> p, 0)
+        }
+        if p.pos.y < 0 or p.pos.y > w.bounds.y {
+            p.pos.y = clamp(p.pos.y, 0, w.bounds.y)
+            bounce(<-> p, 1)
+        }
+    }
+}
+
+open flow total_mass
+    <- w: World
+    => f64
+{
+    mut m: f64 <- 0
+    for <- p in w.particles { m += p.mass }
+    => m
+}
+
+open flow main
+    => i32
+{
+    mut mass: f64                          // exists before the protect
+    protect {
+        mut w: World
+        world_new(256, Vec2[ x: 800, y: 600 ], -> w)
+        for _ in 0..3600 { step(<-> w, 1.0 / 60) }
+        mass = total_mass(w)               // scalar result written outside
+    }                                      // w and all its memory die here
+    => 0
+}

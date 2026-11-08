@@ -1,0 +1,337 @@
+// Tic-tac-toe in canonical Loi Flow Syntax.
+//
+// Loi has no stdin yet, so this is a deterministic self-play demo: two
+// heuristic players (win, block, center, corners, edges) share the same
+// rules. The board is a flat slice of nine cells:
+//
+//     0 | 1 | 2
+//    ---+---+---
+//     3 | 4 | 5
+//    ---+---+---
+//     6 | 7 | 8
+//
+// 0 = empty, 1 = X, 2 = O.
+
+sealed flow print_cell
+    <- value: i32
+{
+    if value == 1 {
+        print("X")
+    } else {
+        if value == 2 {
+            print("O")
+        } else {
+            print(".")
+        }
+    }
+}
+
+sealed flow print_board
+    <- board: [i32]
+{
+    print("\n")
+    print(" ")
+    print_cell(board[0])
+    print(" | ")
+    print_cell(board[1])
+    print(" | ")
+    print_cell(board[2])
+    print("\n---+---+---\n")
+    print(" ")
+    print_cell(board[3])
+    print(" | ")
+    print_cell(board[4])
+    print(" | ")
+    print_cell(board[5])
+    print("\n---+---+---\n")
+    print(" ")
+    print_cell(board[6])
+    print(" | ")
+    print_cell(board[7])
+    print(" | ")
+    print_cell(board[8])
+    print("\n\n")
+}
+
+/// Return the third cell of a line when `player` already owns the other two.
+/// In every other case the result is -1.
+sealed flow winning_line
+    <- board: [i32]
+    <- first: i32
+    <- second: i32
+    <- third: i32
+    <- player: i32
+    => i32
+{
+    mut owned: i32 <- 0
+    mut empty: i32 <- -1
+
+    if board[first] == player {
+        owned += 1
+    }
+    if board[second] == player {
+        owned += 1
+    }
+    if board[third] == player {
+        owned += 1
+    }
+
+    if board[first] == 0 {
+        empty = first
+    }
+    if board[second] == 0 {
+        empty = second
+    }
+    if board[third] == 0 {
+        empty = third
+    }
+
+    if owned == 2 and empty >= 0 {
+        => empty
+    }
+    => -1
+}
+
+/// Find a cell that immediately completes a line for `player`, or -1.
+sealed flow winning_move
+    <- board: [i32]
+    <- player: i32
+    => i32
+{
+    mut move: i32 <- winning_line(board, 0, 1, 2, player)
+    if move >= 0 {
+        => move
+    }
+
+    move = winning_line(board, 3, 4, 5, player)
+    if move >= 0 {
+        => move
+    }
+
+    move = winning_line(board, 6, 7, 8, player)
+    if move >= 0 {
+        => move
+    }
+
+    move = winning_line(board, 0, 3, 6, player)
+    if move >= 0 {
+        => move
+    }
+
+    move = winning_line(board, 1, 4, 7, player)
+    if move >= 0 {
+        => move
+    }
+
+    move = winning_line(board, 2, 5, 8, player)
+    if move >= 0 {
+        => move
+    }
+
+    move = winning_line(board, 0, 4, 8, player)
+    if move >= 0 {
+        => move
+    }
+
+    move = winning_line(board, 2, 4, 6, player)
+    if move >= 0 {
+        => move
+    }
+
+    => -1
+}
+
+/// Heuristic move choice for either player.
+sealed flow choose_move
+    <- board: [i32]
+    <- player: i32
+    => i32
+{
+    // 1. Win now if possible.
+    mut move: i32 <- winning_move(board, player)
+    if move >= 0 {
+        => move
+    }
+
+    // 2. Otherwise block the opponent.
+    mut opponent: i32 <- 1
+    if player == 1 {
+        opponent = 2
+    }
+    move = winning_move(board, opponent)
+    if move >= 0 {
+        => move
+    }
+
+    // 3. Take the center, then the first free corner, then the first free edge.
+    if board[4] == 0 {
+        => 4
+    }
+    if board[0] == 0 {
+        => 0
+    }
+    if board[2] == 0 {
+        => 2
+    }
+    if board[6] == 0 {
+        => 6
+    }
+    if board[8] == 0 {
+        => 8
+    }
+    if board[1] == 0 {
+        => 1
+    }
+    if board[3] == 0 {
+        => 3
+    }
+    if board[5] == 0 {
+        => 5
+    }
+    if board[7] == 0 {
+        => 7
+    }
+    => -1
+}
+
+/// Return 1 for X, 2 for O, or 0 when there is no winner yet.
+sealed flow winner
+    <- board: [i32]
+    => i32
+{
+    if board[0] != 0 and board[0] == board[1] and board[1] == board[2] {
+        => board[0]
+    }
+    if board[3] != 0 and board[3] == board[4] and board[4] == board[5] {
+        => board[3]
+    }
+    if board[6] != 0 and board[6] == board[7] and board[7] == board[8] {
+        => board[6]
+    }
+    if board[0] != 0 and board[0] == board[3] and board[3] == board[6] {
+        => board[0]
+    }
+    if board[1] != 0 and board[1] == board[4] and board[4] == board[7] {
+        => board[1]
+    }
+    if board[2] != 0 and board[2] == board[5] and board[5] == board[8] {
+        => board[2]
+    }
+    if board[0] != 0 and board[0] == board[4] and board[4] == board[8] {
+        => board[0]
+    }
+    if board[2] != 0 and board[2] == board[4] and board[4] == board[6] {
+        => board[2]
+    }
+    => 0
+}
+
+/// Play one complete self-play game and print every position.
+open flow play_game
+    => i32
+{
+    mut board: [i32] <- [i32: 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    mut turn: i32 <- 1
+    mut moves: i32 <- 0
+
+    print("Loi tic-tac-toe: X moves first\n")
+
+    while moves < 9 {
+        mut chosen: i32 <- choose_move(board, turn)
+        if chosen < 0 {
+            break
+        }
+
+        board[chosen] = turn
+        moves += 1
+        print_board(board)
+
+        mut won: i32 <- winner(board)
+        if won == 1 {
+            print("X wins!\n")
+            => 1
+        }
+        if won == 2 {
+            print("O wins!\n")
+            => 2
+        }
+
+        if turn == 1 {
+            turn = 2
+        } else {
+            turn = 1
+        }
+    }
+
+    print("Draw: the board is full.\n")
+    => 0
+}
+
+/// Show the winning path with a fixed game: X takes the top row.
+open flow play_scripted_game
+    => i32
+{
+    mut board: [i32] <- [i32: 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    mut moves: i32 <- 0
+
+    print("Scripted game: X completes the top row\n")
+
+    board[0] = 1
+    moves += 1
+    print_board(board)
+
+    board[3] = 2
+    moves += 1
+    print_board(board)
+
+    board[1] = 1
+    moves += 1
+    print_board(board)
+
+    board[4] = 2
+    moves += 1
+    print_board(board)
+
+    board[2] = 1
+    moves += 1
+    print_board(board)
+
+    mut won: i32 <- winner(board)
+    if won == 1 {
+        print("X wins!\n")
+        => 1
+    }
+    if won == 2 {
+        print("O wins!\n")
+        => 2
+    }
+    => 0
+}
+
+open flow main
+    => i32
+{
+    mut result: i32 <- play_game()
+    if result == 0 {
+        print("Result: draw\n")
+    } else {
+        if result == 1 {
+            print("Result: X wins\n")
+        } else {
+            print("Result: O wins\n")
+        }
+    }
+
+    print("\n")
+    result = play_scripted_game()
+    if result == 1 {
+        print("Result: X wins\n")
+    } else {
+        if result == 2 {
+            print("Result: O wins\n")
+        } else {
+            print("Result: draw\n")
+        }
+    }
+    => 0
+}
