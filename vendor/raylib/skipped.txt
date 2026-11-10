@@ -1,0 +1,219 @@
+Declarations skipped by tools/bindgen/bindgen.py
+Header: /root/loi/vendor/raylib/include/raylib.h
+Functions bound: 410
+Constants bound: 312
+Shapes bound: 17
+Opaque handles bound: 3
+
+AttachAudioMixedProcessor: parameter 'processor' has unsupported type 'AudioCallback'
+AttachAudioStreamProcessor: parameter 'stream' is an unsafe record by value ('struct AudioStream')
+BeginShaderMode: parameter 'shader' is an unsafe record by value ('struct Shader')
+BeginVrStereoMode: parameter 'config' is an unsafe record by value ('struct VrStereoConfig')
+CompressData: returns unsupported pointer type 'unsigned char *'
+ComputeMD5: returns unsupported pointer type 'unsigned int *'
+ComputeSHA1: returns unsupported pointer type 'unsigned int *'
+DecodeDataBase64: returns unsupported pointer type 'unsigned char *'
+DecompressData: returns unsupported pointer type 'unsigned char *'
+DetachAudioMixedProcessor: parameter 'processor' has unsupported type 'AudioCallback'
+DetachAudioStreamProcessor: parameter 'stream' is an unsafe record by value ('struct AudioStream')
+DrawMesh: parameter 'mesh' is an unsafe record by value ('struct Mesh')
+DrawMeshInstanced: parameter 'mesh' is an unsafe record by value ('struct Mesh')
+DrawModel: parameter 'model' is an unsafe record by value ('struct Model')
+DrawModelEx: parameter 'model' is an unsafe record by value ('struct Model')
+DrawModelPoints: parameter 'model' is an unsafe record by value ('struct Model')
+DrawModelPointsEx: parameter 'model' is an unsafe record by value ('struct Model')
+DrawModelWires: parameter 'model' is an unsafe record by value ('struct Model')
+DrawModelWiresEx: parameter 'model' is an unsafe record by value ('struct Model')
+DrawTextCodepoint: parameter 'font' is an unsafe record by value ('struct Font')
+DrawTextCodepoints: parameter 'font' is an unsafe record by value ('struct Font')
+DrawTextEx: parameter 'font' is an unsafe record by value ('struct Font')
+DrawTextPro: parameter 'font' is an unsafe record by value ('struct Font')
+EncodeDataBase64: returns unsupported pointer type 'char *'
+ExportAutomationEventList: parameter 'list' is an unsafe record by value ('struct AutomationEventList')
+ExportDataAsCode: parameter 'data' is a const pointer to a scalar
+ExportFontAsCode: parameter 'font' is an unsafe record by value ('struct Font')
+ExportImageToMemory: returns unsupported pointer type 'unsigned char *'
+ExportMesh: parameter 'mesh' is an unsafe record by value ('struct Mesh')
+ExportMeshAsCode: parameter 'mesh' is an unsafe record by value ('struct Mesh')
+GenImageFontAtlas: parameter 'glyphRecs' is a pointer-to-pointer
+GenMeshCone: returns unsafe record 'struct Mesh' by value
+GenMeshCube: returns unsafe record 'struct Mesh' by value
+GenMeshCubicmap: returns unsafe record 'struct Mesh' by value
+GenMeshCylinder: returns unsafe record 'struct Mesh' by value
+GenMeshHeightmap: returns unsafe record 'struct Mesh' by value
+GenMeshHemiSphere: returns unsafe record 'struct Mesh' by value
+GenMeshKnot: returns unsafe record 'struct Mesh' by value
+GenMeshPlane: returns unsafe record 'struct Mesh' by value
+GenMeshPoly: returns unsafe record 'struct Mesh' by value
+GenMeshSphere: returns unsafe record 'struct Mesh' by value
+GenMeshTangents: parameter 'mesh' points to unsafe record 'struct Mesh'
+GenMeshTorus: returns unsafe record 'struct Mesh' by value
+GetFontDefault: returns unsafe record 'struct Font' by value
+GetGlyphAtlasRec: parameter 'font' is an unsafe record by value ('struct Font')
+GetGlyphIndex: parameter 'font' is an unsafe record by value ('struct Font')
+GetGlyphInfo: parameter 'font' is an unsafe record by value ('struct Font')
+GetMeshBoundingBox: parameter 'mesh' is an unsafe record by value ('struct Mesh')
+GetModelBoundingBox: parameter 'model' is an unsafe record by value ('struct Model')
+GetMusicTimeLength: parameter 'music' is an unsafe record by value ('struct Music')
+GetMusicTimePlayed: parameter 'music' is an unsafe record by value ('struct Music')
+GetRayCollisionMesh: parameter 'mesh' is an unsafe record by value ('struct Mesh')
+GetShaderLocation: parameter 'shader' is an unsafe record by value ('struct Shader')
+GetShaderLocationAttrib: parameter 'shader' is an unsafe record by value ('struct Shader')
+ImageDrawTextEx: parameter 'font' is an unsafe record by value ('struct Font')
+ImageKernelConvolution: parameter 'kernel' is a const pointer to a scalar
+ImageTextEx: parameter 'font' is an unsafe record by value ('struct Font')
+IsAudioStreamPlaying: parameter 'stream' is an unsafe record by value ('struct AudioStream')
+IsAudioStreamProcessed: parameter 'stream' is an unsafe record by value ('struct AudioStream')
+IsAudioStreamValid: parameter 'stream' is an unsafe record by value ('struct AudioStream')
+IsFontValid: parameter 'font' is an unsafe record by value ('struct Font')
+IsMaterialValid: parameter 'material' is an unsafe record by value ('struct Material')
+IsModelAnimationValid: parameter 'model' is an unsafe record by value ('struct Model')
+IsModelValid: parameter 'model' is an unsafe record by value ('struct Model')
+IsMusicStreamPlaying: parameter 'music' is an unsafe record by value ('struct Music')
+IsMusicValid: parameter 'music' is an unsafe record by value ('struct Music')
+IsShaderValid: parameter 'shader' is an unsafe record by value ('struct Shader')
+IsSoundPlaying: parameter 'sound' is an unsafe record by value ('struct Sound')
+IsSoundValid: parameter 'sound' is an unsafe record by value ('struct Sound')
+LoadAudioStream: returns unsafe record 'struct AudioStream' by value
+LoadAutomationEventList: returns unsafe record 'struct AutomationEventList' by value
+LoadCodepoints: returns unsupported pointer type 'int *'
+LoadDirectoryFiles: returns unsafe record 'struct FilePathList' by value
+LoadDirectoryFilesEx: returns unsafe record 'struct FilePathList' by value
+LoadDroppedFiles: returns unsafe record 'struct FilePathList' by value
+LoadFileData: returns unsupported pointer type 'unsigned char *'
+LoadFileText: returns unsupported pointer type 'char *'
+LoadFont: returns unsafe record 'struct Font' by value
+LoadFontData: returns a pointer to record 'struct GlyphInfo'
+LoadFontEx: returns unsafe record 'struct Font' by value
+LoadFontFromImage: returns unsafe record 'struct Font' by value
+LoadFontFromMemory: returns unsafe record 'struct Font' by value
+LoadImageAnimFromMemory: parameter 'fileData' is a const pointer to a scalar
+LoadImageColors: returns a pointer to record 'struct Color'
+LoadImageFromMemory: parameter 'fileData' is a const pointer to a scalar
+LoadImagePalette: returns a pointer to record 'struct Color'
+LoadMaterialDefault: returns unsafe record 'struct Material' by value
+LoadModel: returns unsafe record 'struct Model' by value
+LoadModelFromMesh: returns unsafe record 'struct Model' by value
+LoadMusicStream: returns unsafe record 'struct Music' by value
+LoadMusicStreamFromMemory: returns unsafe record 'struct Music' by value
+LoadRandomSequence: returns unsupported pointer type 'int *'
+LoadShader: returns unsafe record 'struct Shader' by value
+LoadShaderFromMemory: returns unsafe record 'struct Shader' by value
+LoadSound: returns unsafe record 'struct Sound' by value
+LoadSoundAlias: returns unsafe record 'struct Sound' by value
+LoadSoundFromWave: returns unsafe record 'struct Sound' by value
+LoadUTF8: returns unsupported pointer type 'char *'
+LoadVrStereoConfig: returns unsafe record 'struct VrStereoConfig' by value
+LoadWaveFromMemory: parameter 'fileData' is a const pointer to a scalar
+LoadWaveSamples: returns unsupported pointer type 'float *'
+MeasureTextEx: parameter 'font' is an unsafe record by value ('struct Font')
+PauseAudioStream: parameter 'stream' is an unsafe record by value ('struct AudioStream')
+PauseMusicStream: parameter 'music' is an unsafe record by value ('struct Music')
+PauseSound: parameter 'sound' is an unsafe record by value ('struct Sound')
+PlayAudioStream: parameter 'stream' is an unsafe record by value ('struct AudioStream')
+PlayAutomationEvent: parameter 'event' is an unsafe record by value ('struct AutomationEvent')
+PlayMusicStream: parameter 'music' is an unsafe record by value ('struct Music')
+PlaySound: parameter 'sound' is an unsafe record by value ('struct Sound')
+ResumeAudioStream: parameter 'stream' is an unsafe record by value ('struct AudioStream')
+ResumeMusicStream: parameter 'music' is an unsafe record by value ('struct Music')
+ResumeSound: parameter 'sound' is an unsafe record by value ('struct Sound')
+SaveFileText: parameter 'text' is a mutable char buffer; use a vendored shim
+SeekMusicStream: parameter 'music' is an unsafe record by value ('struct Music')
+SetAudioStreamCallback: parameter 'stream' is an unsafe record by value ('struct AudioStream')
+SetAudioStreamPan: parameter 'stream' is an unsafe record by value ('struct AudioStream')
+SetAudioStreamPitch: parameter 'stream' is an unsafe record by value ('struct AudioStream')
+SetAudioStreamVolume: parameter 'stream' is an unsafe record by value ('struct AudioStream')
+SetAutomationEventList: parameter 'list' points to unsafe record 'struct AutomationEventList'
+SetLoadFileDataCallback: parameter 'callback' has unsupported type 'LoadFileDataCallback'
+SetLoadFileTextCallback: parameter 'callback' has unsupported type 'LoadFileTextCallback'
+SetMaterialTexture: parameter 'material' points to unsafe record 'struct Material'
+SetModelMeshMaterial: parameter 'model' points to unsafe record 'struct Model'
+SetMusicPan: parameter 'music' is an unsafe record by value ('struct Music')
+SetMusicPitch: parameter 'music' is an unsafe record by value ('struct Music')
+SetMusicVolume: parameter 'music' is an unsafe record by value ('struct Music')
+SetSaveFileDataCallback: parameter 'callback' has unsupported type 'SaveFileDataCallback'
+SetSaveFileTextCallback: parameter 'callback' has unsupported type 'SaveFileTextCallback'
+SetShaderValue: parameter 'shader' is an unsafe record by value ('struct Shader')
+SetShaderValueMatrix: parameter 'shader' is an unsafe record by value ('struct Shader')
+SetShaderValueTexture: parameter 'shader' is an unsafe record by value ('struct Shader')
+SetShaderValueV: parameter 'shader' is an unsafe record by value ('struct Shader')
+SetSoundPan: parameter 'sound' is an unsafe record by value ('struct Sound')
+SetSoundPitch: parameter 'sound' is an unsafe record by value ('struct Sound')
+SetSoundVolume: parameter 'sound' is an unsafe record by value ('struct Sound')
+SetTraceLogCallback: parameter 'callback' has unsupported type 'TraceLogCallback'
+StopAudioStream: parameter 'stream' is an unsafe record by value ('struct AudioStream')
+StopMusicStream: parameter 'music' is an unsafe record by value ('struct Music')
+StopSound: parameter 'sound' is an unsafe record by value ('struct Sound')
+TextAppend: parameter 'text' is a mutable char buffer; use a vendored shim
+TextCopy: parameter 'dst' is a mutable char buffer; use a vendored shim
+TextFormat: variadic function
+TextInsert: returns unsupported pointer type 'char *'
+TextJoin: parameter 'textList' is a pointer-to-pointer
+TextReplace: returns unsupported pointer type 'char *'
+TextSplit: returns a pointer-to-pointer
+TraceLog: variadic function
+UnloadAudioStream: parameter 'stream' is an unsafe record by value ('struct AudioStream')
+UnloadAutomationEventList: parameter 'list' is an unsafe record by value ('struct AutomationEventList')
+UnloadDirectoryFiles: parameter 'files' is an unsafe record by value ('struct FilePathList')
+UnloadDroppedFiles: parameter 'files' is an unsafe record by value ('struct FilePathList')
+UnloadFileText: parameter 'text' is a mutable char buffer; use a vendored shim
+UnloadFont: parameter 'font' is an unsafe record by value ('struct Font')
+UnloadMaterial: parameter 'material' is an unsafe record by value ('struct Material')
+UnloadMesh: parameter 'mesh' is an unsafe record by value ('struct Mesh')
+UnloadModel: parameter 'model' is an unsafe record by value ('struct Model')
+UnloadModelAnimation: parameter 'anim' is an unsafe record by value ('struct ModelAnimation')
+UnloadModelAnimations: parameter 'animations' points to unsafe record 'struct ModelAnimation'
+UnloadMusicStream: parameter 'music' is an unsafe record by value ('struct Music')
+UnloadShader: parameter 'shader' is an unsafe record by value ('struct Shader')
+UnloadSound: parameter 'sound' is an unsafe record by value ('struct Sound')
+UnloadSoundAlias: parameter 'alias' is an unsafe record by value ('struct Sound')
+UnloadUTF8: parameter 'text' is a mutable char buffer; use a vendored shim
+UnloadVrStereoConfig: parameter 'config' is an unsafe record by value ('struct VrStereoConfig')
+UpdateAudioStream: parameter 'stream' is an unsafe record by value ('struct AudioStream')
+UpdateMeshBuffer: parameter 'mesh' is an unsafe record by value ('struct Mesh')
+UpdateModelAnimation: parameter 'model' is an unsafe record by value ('struct Model')
+UpdateModelAnimationBones: parameter 'model' is an unsafe record by value ('struct Model')
+UpdateMusicStream: parameter 'music' is an unsafe record by value ('struct Music')
+UpdateSound: parameter 'sound' is an unsafe record by value ('struct Sound')
+UploadMesh: parameter 'mesh' points to unsafe record 'struct Mesh'
+macro BEIGE: unsupported token near '{ 211, 176, 131, 255'
+macro BLACK: unsupported token near '{ 0, 0, 0, 255 }'
+macro BLANK: unsupported token near '{ 0, 0, 0, 0 }'
+macro BLUE: unsupported token near '{ 0, 121, 241, 255 }'
+macro BROWN: unsupported token near '{ 127, 106, 79, 255 '
+macro DARKBLUE: unsupported token near '{ 0, 82, 172, 255 }'
+macro DARKBROWN: unsupported token near '{ 76, 63, 47, 255 }'
+macro DARKGRAY: unsupported token near '{ 80, 80, 80, 255 }'
+macro DARKGREEN: unsupported token near '{ 0, 117, 44, 255 }'
+macro DARKPURPLE: unsupported token near '{ 112, 31, 126, 255 '
+macro DEG2RAD: unsupported token near '.0f)'
+macro GOLD: unsupported token near '{ 255, 203, 0, 255 }'
+macro GRAY: unsupported token near '{ 130, 130, 130, 255'
+macro GREEN: unsupported token near '{ 0, 228, 48, 255 }'
+macro GetMouseRay: unknown identifier 'GetScreenToWorldRay'
+macro LIGHTGRAY: unsupported token near '{ 200, 200, 200, 255'
+macro LIME: unsupported token near '{ 0, 158, 47, 255 }'
+macro MAGENTA: unsupported token near '{ 255, 0, 255, 255 }'
+macro MAROON: unsupported token near '{ 190, 33, 55, 255 }'
+macro ORANGE: unsupported token near '{ 255, 161, 0, 255 }'
+macro PI: unsupported token near '.1415926535897932384'
+macro PINK: unsupported token near '{ 255, 109, 194, 255'
+macro PURPLE: unsupported token near '{ 200, 122, 255, 255'
+macro RAD2DEG: unsupported token near '.0f/PI)'
+macro RAYLIB_H: empty macro
+macro RAYLIB_VERSION: unsupported token near '"5.5"'
+macro RAYWHITE: unsupported token near '{ 245, 245, 245, 255'
+macro RED: unsupported token near '{ 230, 41, 55, 255 }'
+macro RLAPI: empty macro
+macro RL_COLOR_TYPE: empty macro
+macro RL_MATRIX_TYPE: empty macro
+macro RL_QUATERNION_TYPE: empty macro
+macro RL_RECTANGLE_TYPE: empty macro
+macro RL_VECTOR2_TYPE: empty macro
+macro RL_VECTOR3_TYPE: empty macro
+macro RL_VECTOR4_TYPE: empty macro
+macro SKYBLUE: unsupported token near '{ 102, 191, 255, 255'
+macro VIOLET: unsupported token near '{ 135, 60, 190, 255 '
+macro WHITE: unsupported token near '{ 255, 255, 255, 255'
+macro YELLOW: unsupported token near '{ 253, 249, 0, 255 }'
+macro bool: unknown identifier '_Bool'

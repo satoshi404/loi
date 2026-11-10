@@ -61,7 +61,9 @@ public service without adding real sandboxing.
 ## Notes
 
 - The site is deliberately dependency-free: plain HTML, CSS and JavaScript.
-- `examples/` contains copies of `../examples/*.loi`; update both when an example
-  changes.
+- `examples/` contains copies of `../examples/*.loi`. Run
+  `python3 tools/sync_examples.py` after editing an example; `--check` fails
+  when the mirror is stale.
 - The docs are hand-written HTML so they work without a build step. Keep them in
-  sync with `development/LOI_SPEC.md`, `PROGRESS.md` and `DECISIONS.md`.
+  sync with `development/LOI_SPEC.md`, `development/PROGRESS.md` and
+  `development/DECISIONS.md`.

@@ -148,7 +148,7 @@ open flow main
               <tr><td><code>tests/</code></td><td>Integration tests for the lexer, parser, checker, formatter, CLI and code generator.</td></tr>
               <tr><td><code>website/</code></td><td>This site, its shared assets, example mirrors and the playground server.</td></tr>
               <tr><td><code>development/LOI_SPEC.md</code></td><td>The language specification and development protocol.</td></tr>
-              <tr><td><code>PROGRESS.md</code>, <code>DECISIONS.md</code></td><td>Current state and the decision log.</td></tr>
+              <tr><td><code>development/PROGRESS.md</code>, <code>development/DECISIONS.md</code></td><td>Current state and the decision log.</td></tr>
             </tbody>
           </table>
         </section>
@@ -635,8 +635,17 @@ extern flow SDL_DestroyWindow
           <p>
             <code>loi build ... --c-source shim.c --cc-flag -Ipath --cc-flag -lname</code>
             compiles and links vendored C shims. Link flags are placed after the objects, so
-            <code>-l</code> libraries resolve normally.
+            <code>-l</code> libraries resolve normally. For the vendored raylib 5.5 bindings:
           </p>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
+            <pre><code>loi build game.loi -o game \
+    --c-source vendor/raylib/raylib_shim.c \
+    --cc-flag -Ivendor/raylib/include \
+    --cc-flag -lraylib \
+    --cc-flag -lm</code></pre>
+          </div>
 
           <p>
             Generate bindings from a C header with the conservative binding generator:
@@ -660,8 +669,8 @@ extern flow SDL_DestroyWindow
             generated <code>memcpy</code> shim with <code>_Static_assert</code> layout checks.
             Callbacks, variadics, unions, bitfields, inline arrays, pointer-to-pointer, mutable
             <code>char *</code> buffers, wide strings and pointers to unsafe records are skipped and
-            reported in <code>skipped.txt</code>. <code>vendor/sdl2/</code> is a complete worked
-            example.
+            reported in <code>skipped.txt</code>. <code>vendor/sdl2/</code> and
+            <code>vendor/raylib/</code> are complete worked examples.
           </p>
         </section>
 
@@ -992,8 +1001,11 @@ cargo test --all-targets</code></pre>
           <p>
             The suite covers the lexer, parser, formatter, checker, ownership rules, CLI, code
             generation, C interop/bindgen, the reference programs and the tic-tac-toe example.
-            Generated SDL2 bindings are checked with <code>loi check vendor/sdl2/sdl2.loi</code>,
-            and the generated shim with <code>clang -fsyntax-only</code>.
+            Generated SDL2 and raylib bindings are checked with
+            <code>loi check vendor/sdl2/sdl2.loi</code> and
+            <code>loi check vendor/raylib/raylib.loi</code>, and both generated shims with
+            <code>clang -fsyntax-only</code>. The example mirror is guarded by
+            <code>python3 tools/sync_examples.py --check</code>.
           </p>
         </section>
 
@@ -1086,7 +1098,7 @@ cargo test --all-targets</code></pre>
           </p>
           <ol>
             <li>Read <code>development/LOI_SPEC.md</code> before changing the language.</li>
-            <li>Record status in <code>PROGRESS.md</code> and one-line decisions in <code>DECISIONS.md</code>.</li>
+            <li>Record status in <code>development/PROGRESS.md</code> and one-line decisions in <code>development/DECISIONS.md</code>.</li>
             <li>Keep the surface canonical: do not reintroduce legacy keywords, brace shape literals,
               <code>[]T{ ... }</code> literals or <code>&amp;</code>.</li>
             <li>Add or update tests for every behavior change and retire tests that only covered removed syntax.</li>

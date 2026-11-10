@@ -19,14 +19,14 @@ Any AI agent (OpenCode or others) working on this project **must**:
 
 1. Read this entire document before making changes.
 2. Follow the rules and architecture defined here.
-3. After every significant step, update the companion file `PROGRESS.md` with:
+3. After every significant step, update the companion file `development/PROGRESS.md` with:
    - What was done
    - Current state of each component
    - Known bugs / limitations
    - Next recommended steps
    - Important design decisions made
 
-The goal is that any new model can open `PROGRESS.md` and immediately understand exactly where the project is, without needing the previous conversation history.
+The goal is that any new model can open `development/PROGRESS.md` and immediately understand exactly where the project is, without needing the previous conversation history.
 
 ---
 
@@ -713,18 +713,19 @@ The full Flow Syntax was chosen because it makes the three distinctive ideas —
 
 ## 8. Implementation Rules for the AI Agent
 
-1. Always update `PROGRESS.md` after finishing a meaningful task.
+1. Always update `development/PROGRESS.md` after finishing a meaningful task.
 2. Prefer small, correct steps over large incomplete ones.
-3. When you encounter an ambiguity in the language design, document it in `PROGRESS.md` under "Open Design Questions" and continue with a reasonable temporary decision.
-4. Keep the code clean and modular (separate lexer, parser, ast, types, etc.).
+3. When you encounter an ambiguity in the language design, document it in `development/PROGRESS.md` under "Open Design Questions" and continue with a reasonable temporary decision.
+4. Keep the code clean and modular (separate lexer, parser, AST, types, backend, etc.).
 5. Write tests as soon as a feature is implemented.
-6. Never delete or rewrite large parts of working code without documenting why in `PROGRESS.md`.
+6. Never delete or rewrite large parts of working code without recording why in `development/DECISIONS.md`.
+7. Keep the canonical surface in `SINTAXE.md` and the public documentation in `website/docs.html` in sync with the compiler.
 
 ---
 
 ## 9. Required Companion File
 
-You must maintain a file called `PROGRESS.md` with the following structure:
+You must maintain `development/PROGRESS.md` with the following structure:
 
 ````markdown
 # Loi Compiler — Implementation Progress
@@ -743,8 +744,9 @@ You must maintain a file called `PROGRESS.md` with the following structure:
 | Type Checker    | ...             |       |
 | ...             | ...             |       |
 
-## Recent Changes
-- YYYY-MM-DD: ...
+## Verification
+- Command: ...
+- Result: ...
 
 ## Known Bugs / Limitations
 - ...
@@ -761,9 +763,15 @@ This file is the memory of the project. Treat it seriously.
 
 ---
 
-## 10. First Task for the Agent
+## 10. Orientation for a New Agent
 
-1. Create the project structure.
-2. Create `PROGRESS.md` with the initial status.
-3. Implement a basic Lexer that can tokenize the `examples/particles.loi` example.
-4. Update `PROGRESS.md` after finishing.
+1. Read `development/AGENTS.md`, this specification, `SINTAXE.md`,
+   `development/PROGRESS.md` and `development/DECISIONS.md`.
+2. Build and run the test suite with the host toolchain:
+   `export PATH=/root/.cargo/bin:$PATH`,
+   `export RUSTFLAGS="-C linker=/usr/bin/gcc"`,
+   `cargo test --all-targets`.
+3. Reproduce the current state with `loi check examples/flow_syntax.loi` and,
+   if `cc` is available, `loi build examples/flow_syntax.loi -o /tmp/flow_demo`.
+4. Pick the next item from `development/PROGRESS.md` → "Next Steps", write the
+   test with the feature, and update the progress and decision logs when done.

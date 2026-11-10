@@ -14,7 +14,7 @@ library.
 4. `development/DECISIONS.md` — why each design or implementation choice was
    made.
 
-Do not start work before reading all four. If `LOI_SPEC.md` and `SINTAXE.md`
+Do not start work before reading all four. If `development/LOI_SPEC.md` and `SINTAXE.md`
 disagree, fix one of them in the same change. If the compiler and the canonical
 surface disagree, fix the compiler or record the change explicitly.
 
@@ -56,21 +56,21 @@ surface disagree, fix the compiler or record the change explicitly.
 ## Rules
 
 1. **Verify before claiming.** A task is done only after you ran the build and
-   the tests. Write the exact command and its result in `PROGRESS.md`. Never
+   the tests. Write the exact command and its result in `development/PROGRESS.md`. Never
    write "done" from memory or assumption.
 2. **Small steps.** Prefer a small correct change over a large incomplete one.
    Write the test together with the feature.
 3. **The spec is not yours to change silently.** Do not alter language rules,
    syntax or keywords on your own. If something is ambiguous or wrong, add it
-   to "Open Design Questions" in `PROGRESS.md`, pick a reasonable temporary
+   to "Open Design Questions" in `development/PROGRESS.md`, pick a reasonable temporary
    behavior, mark it clearly, and keep going.
 4. **Respect decisions.** Before "fixing" something that looks odd (for example
    no `defer`, `shape` instead of `struct`, `open` / `sealed`), check
-   `DECISIONS.md`. It may be intentional.
+   `development/DECISIONS.md`. It may be intentional.
 5. **Provisional items** in the spec may change. Do not build large features on
-   top of them without saying so in `PROGRESS.md`.
+   top of them without saying so in `development/PROGRESS.md`.
 6. **No large rewrites.** Never delete or rewrite big parts of working code
-   without recording why in `DECISIONS.md`.
+   without recording why in `development/DECISIONS.md`.
 7. **Keep it modular.** Separate lexer, parser, AST, types and backend.
 
 ## After every meaningful task

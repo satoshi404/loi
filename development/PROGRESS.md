@@ -59,7 +59,11 @@ cargo test --all-targets
   exit 0.
 - `clang -std=c11 -fsyntax-only` on both generated shims: exit 0.
 - `python3 tools/sync_examples.py --check`: `website/examples` is in sync.
-- `loi check` on every code snippet embedded in `website/docs.html`: exit 0.
+- `loi check` on the complete program snippets in `website/docs.html` and the
+  README example, plus the build/run of the README example: exit 0. Shorter
+  documentation fragments were reviewed against `SINTAXE.md`.
+- Re-running the raylib generator produces byte-identical `.loi`, shim and skip
+  report files.
 - Full SDL2/raylib link-and-run is blocked locally by missing runtime
   dependencies (X11, Wayland, ALSA, GL, ...); the bindings and shims are
   syntax-verified only.
@@ -68,16 +72,16 @@ cargo test --all-targets
 
 ### Semantics and analysis
 
-- Initialization and move tracking are whole-path based. Writing any field of
-  an uninitialized `out` parameter initializes the whole value; joining a moved
-  value with a live one keeps the conservative (moved) state. Loops are
+- Initialization and ownership-transfer tracking are whole-path based. Writing any field of
+  an uninitialized `->` parameter initializes the whole value; joining a
+  consumed value with a live one keeps the conservative (consumed) state. Loops are
   treated as possibly executing zero times.
-- Cross-flow consumption is summarized per whole parameter. Partial moves
-  (for example only `p.pos`) are widened to the whole argument.
-- `protect` taints follow locals, fields, moves, shape literals, `out`
-  arguments and returns, and are conservatively forwarded from consumed
+- Cross-flow consumption is summarized per whole parameter. Partial consumption
+  (for example only `p.pos`) is widened to the whole argument.
+- `protect` taints follow locals, fields, ownership transfers, shape literals,
+  `->` arguments and returns, and are conservatively forwarded from consumed
   `<->` arguments to every slice-containing output or composite result. They
-  are not tracked through callees that only mutate `inout` storage in place.
+  are not tracked through callees that only mutate `<->` storage in place.
 - The entry-point heuristic treats `main` and every uncalled non-`sealed`
   flow as an entry for the allocation check; an uncalled `sealed` helper may
   rely on a caller's `protect`.
