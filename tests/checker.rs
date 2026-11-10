@@ -888,6 +888,58 @@ fn globals_are_checked_and_must_be_constant() {
 }
 
 #[test]
+fn accepts_opaque_handles_extern_flows_and_cstr_literals() {
+    assert_clean(
+        "opaque Handle\n\n\
+         extern flow make\n\
+             <- x: i32\n\
+             => Handle\n\n\
+         extern flow take\n\
+             <- h: Handle\n\n\
+         extern flow title\n\
+             <- text: cstr\n\
+             => i32\n\n\
+         flow use\n\
+             => i32\n\
+         {\n\
+             mut h: Handle\n\
+             h = make(1)\n\
+             take(h)\n\
+             => title(\"hello\")\n\
+         }\n",
+    );
+}
+
+#[test]
+fn cstr_requires_a_string_literal() {
+    assert_message(
+        "extern flow title\n\
+             <- text: cstr\n\
+             => i32\n\n\
+         flow use\n\
+             <- text: [u8]\n\
+             => i32\n\
+         {\n\
+             => title(text)\n\
+         }\n",
+        "argument 'text' has type [u8], expected cstr",
+    );
+}
+
+#[test]
+fn opaque_names_cannot_collide_with_other_declarations() {
+    assert_message("opaque Same\nopaque Same\n", "duplicate type 'Same'");
+    assert_message(
+        "opaque Same\nshape Same [ x: i32 ]\n",
+        "duplicate type 'Same'",
+    );
+    assert_message(
+        "opaque Same\nflow Same {\n}\n",
+        "conflicts with an opaque type",
+    );
+}
+
+#[test]
 fn equality_is_limited_to_scalars_and_byte_slices() {
     assert_clean(
         "shape Vec2 [\n    x: i32\n    y: i32\n]\n\nflow same\n    <- a: [u8]\n    <- b: [u8]\n    => bool\n{\n    => a == b\n}\n\nflow different\n    <- a: [u8]\n    <- b: [u8]\n    => bool\n{\n    => a != b\n}\n\nflow scalar\n    <- a: i32\n    <- b: i32\n    => bool\n{\n    => a == b\n}\n",
@@ -912,5 +964,37 @@ fn disjoint_constant_indices_do_not_alias() {
     assert_message(
         "flow pair\n    -> a: i32\n    -> b: i32\n{\n    a = 1\n    b = 2\n}\n\nflow f\n    -> xs: [i32]\n{\n    alloc(-> xs, i32, 2)\n    pair(-> xs[0], -> xs[0])\n}\n",
         "cannot pass 'xs' as '->'",
+    );
+}
+
+#[test]
+fn slice_literal_cannot_escape_the_block_that_created_it() {
+    assert_message(
+        "open flow main => i32 {\n    mut outer: [i32]\n    if true {\n        outer = [7, 8, 9]\n    } else {\n        outer = [1, 2, 3]\n    }\n    mut i: u64 <- 1\n    => outer[i]\n}\n",
+        "slice literal storage escapes the block",
+    );
+
+    assert_message(
+        "shape Bag [\n    items: [i32]\n]\n\nflow main {\n    mut bag: Bag\n    if true {\n        bag = Bag[ items: [1, 2] ]\n    } else {\n        bag = Bag[ items: [3, 4] ]\n    }\n}\n",
+        "slice literal storage escapes the block",
+    );
+}
+
+#[test]
+fn returning_a_slice_literal_through_a_local_is_rejected() {
+    assert_message(
+        "flow f\n    => [i32]\n{\n    xs <- [1, 2]\n    => xs\n}\n",
+        "cannot return a slice literal",
+    );
+}
+
+#[test]
+fn slice_literals_are_safe_within_their_block() {
+    assert_clean(
+        "flow first\n    <- xs: [i32]\n    => i32\n{\n    => xs[0]\n}\n\nflow main\n    => i32\n{\n    xs <- [1, 2, 3]\n    shape_local <- Bag[ items: [4, 5] ]\n    => first(xs) + shape_local.items[1]\n}\n\nshape Bag [\n    items: [i32]\n]\n",
+    );
+
+    assert_clean(
+        "flow take\n    <- xs: [i32]\n    => i32\n{\n    => xs[0]\n}\n\nflow main\n    => i32\n{\n    => take([1, 2, 3])\n}\n",
     );
 }

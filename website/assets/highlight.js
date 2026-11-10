@@ -3,15 +3,16 @@
   "use strict";
 
   const KEYWORDS = new Set([
-    "shape", "flow", "open", "sealed", "mut", "in", "give", "clone",
-    "protect", "alloc", "import", "comptime", "if", "else", "while",
-    "for", "continue", "break", "and", "or", "not", "as", "true", "false",
+    "shape", "flow", "open", "sealed", "extern", "opaque", "mut", "in",
+    "give", "clone", "protect", "alloc", "import", "comptime", "if", "else",
+    "while", "for", "continue", "break", "and", "or", "not", "as", "true",
+    "false",
   ]);
 
   const TYPES = new Set([
     "i8", "i16", "i32", "i64", "i128",
     "u8", "u16", "u32", "u64", "u128",
-    "f32", "f64", "bool", "void",
+    "f32", "f64", "bool", "void", "cstr",
   ]);
 
   const TOKEN = /(\/\/[^\n]*)|("(?:\\.|[^"\\])*")|(\b(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?)\b)|([A-Za-z_][A-Za-z0-9_]*)|(<-|<->|->|=>|\.\.|==|!=|<=|>=|\+=|-=|\*=|\/=)/g;

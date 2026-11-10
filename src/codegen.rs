@@ -16,7 +16,7 @@
 //!   Allocations made by callees use the nearest caller arena because the arena
 //!   is global.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::Path;
 
@@ -99,7 +99,20 @@ typedef struct {
     size_t len;
 } LoiSlice;
 
-static unsigned char loi_arena[LOI_ARENA_SIZE];
+/* Growable bump arena. `loi_arena_top` is a logical offset into a chain of
+ * chunks; generated code and tests may save/restore it directly. Chunks are
+ * never moved or freed, so slices already handed out stay valid. */
+typedef struct LoiArenaChunk {
+    struct LoiArenaChunk* next;
+    size_t base;
+    size_t size;
+    unsigned char* data;
+} LoiArenaChunk;
+
+static LoiArenaChunk* loi_arena_chunks = NULL;
+static LoiArenaChunk* loi_arena_current = NULL;
+static size_t loi_arena_capacity = 0;
+static size_t loi_arena_next_size = LOI_ARENA_SIZE;
 static size_t loi_arena_top = 0;
 
 static inline void loi_runtime_fail(const char* message, size_t line, size_t column) {
@@ -107,15 +120,174 @@ static inline void loi_runtime_fail(const char* message, size_t line, size_t col
     exit(1);
 }
 
+/* Checked integer arithmetic. Signed overflow traps instead of relying on the
+ * undefined behaviour of the corresponding C expression. Unsigned +, - and *
+ * wrap, which C already guarantees; the backend casts their result back to the
+ * Loi type so integer promotion does not leak into the language semantics. */
+#define LOI_SIGNED_OPS(suffix, type, min_value) \
+    static inline type loi_add_##suffix(type a, type b, size_t line, size_t column) { \
+        type r; \
+        if (__builtin_add_overflow(a, b, &r)) \
+            loi_runtime_fail("integer overflow", line, column); \
+        return r; \
+    } \
+    static inline type loi_sub_##suffix(type a, type b, size_t line, size_t column) { \
+        type r; \
+        if (__builtin_sub_overflow(a, b, &r)) \
+            loi_runtime_fail("integer overflow", line, column); \
+        return r; \
+    } \
+    static inline type loi_mul_##suffix(type a, type b, size_t line, size_t column) { \
+        type r; \
+        if (__builtin_mul_overflow(a, b, &r)) \
+            loi_runtime_fail("integer overflow", line, column); \
+        return r; \
+    } \
+    static inline type loi_neg_##suffix(type a, size_t line, size_t column) { \
+        type r; \
+        if (__builtin_sub_overflow((type)0, a, &r)) \
+            loi_runtime_fail("integer overflow", line, column); \
+        return r; \
+    } \
+    static inline type loi_div_##suffix(type a, type b, size_t line, size_t column) { \
+        if (b == 0) \
+            loi_runtime_fail("division by zero", line, column); \
+        if (a == (min_value) && b == (type)-1) \
+            loi_runtime_fail("integer overflow", line, column); \
+        return a / b; \
+    } \
+    static inline type loi_rem_##suffix(type a, type b, size_t line, size_t column) { \
+        if (b == 0) \
+            loi_runtime_fail("remainder by zero", line, column); \
+        if (a == (min_value) && b == (type)-1) \
+            return 0; \
+        return a % b; \
+    }
+
+LOI_SIGNED_OPS(i8, int8_t, INT8_MIN)
+LOI_SIGNED_OPS(i16, int16_t, INT16_MIN)
+LOI_SIGNED_OPS(i32, int32_t, INT32_MIN)
+LOI_SIGNED_OPS(i64, int64_t, INT64_MIN)
+
+#define LOI_UNSIGNED_OPS(suffix, type) \
+    static inline type loi_div_##suffix(type a, type b, size_t line, size_t column) { \
+        if (b == 0) \
+            loi_runtime_fail("division by zero", line, column); \
+        return a / b; \
+    } \
+    static inline type loi_rem_##suffix(type a, type b, size_t line, size_t column) { \
+        if (b == 0) \
+            loi_runtime_fail("remainder by zero", line, column); \
+        return a % b; \
+    }
+
+LOI_UNSIGNED_OPS(u8, uint8_t)
+LOI_UNSIGNED_OPS(u16, uint16_t)
+LOI_UNSIGNED_OPS(u32, uint32_t)
+LOI_UNSIGNED_OPS(u64, uint64_t)
+
+#undef LOI_SIGNED_OPS
+#undef LOI_UNSIGNED_OPS
+
+static LoiArenaChunk* loi_arena_chunk_at(size_t offset) {
+    for (LoiArenaChunk* chunk = loi_arena_chunks; chunk != NULL; chunk = chunk->next) {
+        if (offset >= chunk->base && offset < chunk->base + chunk->size) {
+            return chunk;
+        }
+    }
+    return NULL;
+}
+
+static LoiArenaChunk* loi_arena_chunk_from(size_t offset, size_t size) {
+    for (LoiArenaChunk* chunk = loi_arena_chunks; chunk != NULL; chunk = chunk->next) {
+        if (chunk->base >= offset && chunk->size >= size) {
+            return chunk;
+        }
+    }
+    return NULL;
+}
+
+static void loi_arena_grow(size_t minimum, size_t line, size_t column) {
+    size_t chunk_size = loi_arena_next_size;
+    if (chunk_size < minimum) {
+        chunk_size = minimum;
+    }
+    if (chunk_size > SIZE_MAX - 7u) {
+        loi_runtime_fail("allocation size overflow", line, column);
+    }
+    chunk_size = (chunk_size + 7u) & ~(size_t)7u;
+    if (chunk_size > SIZE_MAX - loi_arena_capacity) {
+        loi_runtime_fail("arena capacity overflow", line, column);
+    }
+
+    LoiArenaChunk* chunk = (LoiArenaChunk*)malloc(sizeof(*chunk));
+    if (chunk == NULL) {
+        loi_runtime_fail("arena allocation failed", line, column);
+    }
+    unsigned char* data = (unsigned char*)malloc(chunk_size);
+    if (data == NULL) {
+        free(chunk);
+        loi_runtime_fail("arena allocation failed", line, column);
+    }
+    chunk->next = NULL;
+    chunk->base = loi_arena_capacity;
+    chunk->size = chunk_size;
+    chunk->data = data;
+    if (loi_arena_chunks == NULL) {
+        loi_arena_chunks = chunk;
+    } else {
+        LoiArenaChunk* tail = loi_arena_chunks;
+        while (tail->next != NULL) {
+            tail = tail->next;
+        }
+        tail->next = chunk;
+    }
+    loi_arena_capacity += chunk_size;
+    loi_arena_current = chunk;
+    loi_arena_top = chunk->base;
+    if (chunk_size <= SIZE_MAX / 2) {
+        loi_arena_next_size = chunk_size * 2;
+    } else {
+        loi_arena_next_size = chunk_size;
+    }
+}
+
 static inline void* loi_alloc(size_t size, size_t line, size_t column) {
     if (size > SIZE_MAX - 7u) {
         loi_runtime_fail("allocation size overflow", line, column);
     }
-    size = (size + 7u) & ~(size_t)7u;
-    if (size > sizeof(loi_arena) - loi_arena_top) {
-        loi_runtime_fail("protect arena exhausted", line, column);
+    if (size == 0) {
+        size = 8;
     }
-    void* result = loi_arena + loi_arena_top;
+    size = (size + 7u) & ~(size_t)7u;
+
+    /* `loi_arena_top` may have been restored directly (protect blocks and
+     * user C code do that), so resynchronise the current chunk lazily. */
+    LoiArenaChunk* chunk = loi_arena_current;
+    if (chunk == NULL
+        || loi_arena_top < chunk->base
+        || loi_arena_top > chunk->base + chunk->size) {
+        chunk = loi_arena_chunk_at(loi_arena_top);
+        loi_arena_current = chunk;
+    }
+
+    size_t available = 0;
+    if (chunk != NULL && loi_arena_top >= chunk->base) {
+        available = chunk->base + chunk->size - loi_arena_top;
+    }
+    if (chunk == NULL || available < size) {
+        LoiArenaChunk* reuse = loi_arena_chunk_from(loi_arena_top, size);
+        if (reuse != NULL) {
+            chunk = reuse;
+            loi_arena_current = chunk;
+            loi_arena_top = chunk->base;
+        } else {
+            loi_arena_grow(size, line, column);
+            chunk = loi_arena_current;
+        }
+    }
+
+    void* result = chunk->data + (loi_arena_top - chunk->base);
     loi_arena_top += size;
     return result;
 }
@@ -169,6 +341,8 @@ struct SourceMapEntry {
 
 struct Generator<'a> {
     interfaces: HashMap<String, &'a InterfaceDecl>,
+    /// Foreign handle names declared with `opaque`.
+    opaques: HashSet<String>,
     functions: HashMap<String, &'a FunctionDecl>,
     globals: HashMap<String, &'a GlobalDecl>,
     global_order: Vec<String>,
@@ -199,6 +373,7 @@ impl<'a> Generator<'a> {
         defined: Option<std::collections::HashSet<String>>,
     ) -> Self {
         let mut interfaces = HashMap::new();
+        let mut opaques = HashSet::new();
         let mut functions = HashMap::new();
         let mut globals = HashMap::new();
         let mut global_order = Vec::new();
@@ -228,6 +403,9 @@ impl<'a> Generator<'a> {
                         interface_order.push(decl.name.clone());
                     }
                 }
+                Item::Opaque(decl) => {
+                    opaques.insert(decl.name.clone());
+                }
                 Item::Global(decl) => {
                     if !globals.contains_key(&decl.name) {
                         globals.insert(decl.name.clone(), decl);
@@ -249,6 +427,7 @@ impl<'a> Generator<'a> {
 
         Self {
             interfaces,
+            opaques,
             functions,
             globals,
             global_order,
@@ -425,10 +604,14 @@ impl<'a> Generator<'a> {
 
     fn c_func(&self, name: &str) -> String {
         if name == "main" {
-            "main".to_string()
-        } else {
-            format!("loi_fn_{name}")
+            return "main".to_string();
         }
+        if let Some(decl) = self.functions.get(name)
+            && decl.external
+        {
+            return decl.link_name.clone().unwrap_or_else(|| name.to_string());
+        }
+        format!("loi_fn_{name}")
     }
 
     fn c_interface(&self, name: &str) -> String {
@@ -445,7 +628,17 @@ impl<'a> Generator<'a> {
 
     fn resolve_type(&self, ty: &Type) -> Ty {
         match ty {
-            Type::Named(name) => Ty::from_name(name).unwrap_or_else(|| Ty::Named(name.clone())),
+            Type::Named(name) => {
+                if let Some(primitive) = Ty::from_name(name) {
+                    primitive
+                } else if name == "cstr" {
+                    Ty::CStr
+                } else if self.opaques.contains(name) {
+                    Ty::Opaque(name.clone())
+                } else {
+                    Ty::Named(name.clone())
+                }
+            }
             Type::Slice(element) => Ty::Slice(Box::new(self.resolve_type(element))),
         }
     }
@@ -464,6 +657,8 @@ impl<'a> Generator<'a> {
             Ty::F64 => "double".to_string(),
             Ty::Bool => "bool".to_string(),
             Ty::Named(name) => self.c_interface(name),
+            Ty::Opaque(_) => "void *".to_string(),
+            Ty::CStr => "const char *".to_string(),
             Ty::Slice(_) => "LoiSlice".to_string(),
             Ty::IntLiteral => "int32_t".to_string(),
             Ty::FloatLiteral => "double".to_string(),
@@ -559,11 +754,14 @@ impl<'a> Generator<'a> {
             let values = if bytes.is_empty() {
                 "0".to_string()
             } else {
-                bytes
+                let bytes = bytes
                     .iter()
                     .map(|byte| byte.to_string())
                     .collect::<Vec<_>>()
-                    .join(", ")
+                    .join(", ");
+                // Always keep a trailing NUL so the same literal can be used
+                // as a `cstr` at the FFI boundary. The slice length excludes it.
+                format!("{bytes}, 0")
             };
             self.emit(format!(
                 "static unsigned char loi_str_{index}[] = {{ {values} }};"
@@ -595,7 +793,7 @@ impl<'a> Generator<'a> {
                 .unwrap_or_else(|| self.ty_of(&decl.value).concretize());
             let c_ty = self.c_type(&ty);
             if local {
-                let initializer = self.global_initializer(&decl.value);
+                let initializer = self.global_initializer(&ty, &decl.value);
                 self.emit(format!("{c_ty} {c_name} = {initializer};"));
             } else {
                 self.emit(format!("extern {c_ty} {c_name};"));
@@ -607,7 +805,10 @@ impl<'a> Generator<'a> {
         }
     }
 
-    fn global_initializer(&mut self, value: &Expr) -> String {
+    fn global_initializer(&mut self, ty: &Ty, value: &Expr) -> String {
+        if matches!(ty, Ty::CStr) {
+            return self.gen_coerced_expr(value, ty);
+        }
         match &value.kind {
             ExprKind::String(text) => {
                 let index = self.string_index(text);
@@ -715,7 +916,7 @@ impl<'a> Generator<'a> {
             };
             if name == "main" {
                 self.emit_with_span("int main(void);", decl.span, "function");
-            } else if subset || decl.visibility == Visibility::Visible {
+            } else if decl.external || subset || decl.visibility == Visibility::Visible {
                 let ret = self.c_type(&self.function_return_ty(name));
                 let params = self.param_list(&decl.params);
                 self.emit_with_span(
@@ -747,7 +948,7 @@ impl<'a> Generator<'a> {
                 self.emit_with_span("int main(void);", decl.span, "function");
                 continue;
             }
-            if decl.visibility != Visibility::Visible {
+            if decl.external || decl.visibility != Visibility::Visible {
                 continue;
             }
             let ret = self.c_type(&self.function_return_ty(name));
@@ -777,6 +978,9 @@ impl<'a> Generator<'a> {
         let Some(decl) = self.functions.get(name).copied() else {
             return;
         };
+        if decl.external {
+            return;
+        }
 
         self.scopes.clear();
         self.protect_saves.clear();
@@ -901,12 +1105,14 @@ impl<'a> Generator<'a> {
             } => {
                 let declared = ty.as_ref().map(|ty| self.resolve_type(ty));
                 let value_ty = value.as_ref().map(|value| self.ty_of(value));
-                let initializer = value.as_ref().map(|value| self.gen_expr(value));
                 let resolved = match (declared, value_ty) {
                     (Some(declared), _) => declared,
                     (None, Some(value_ty)) => value_ty.concretize(),
                     (None, None) => Ty::Error,
                 };
+                let initializer = value
+                    .as_ref()
+                    .map(|value| self.gen_coerced_expr(value, &resolved));
                 let c_type = self.c_type(&resolved);
                 let c_name = self.c_local(name);
                 match initializer {
@@ -916,16 +1122,37 @@ impl<'a> Generator<'a> {
                 self.declare_var(name, resolved, Repr::Value);
             }
             StmtKind::Assign { target, op, value } => {
+                let target_ty = self.ty_of(target);
                 let target = self.gen_expr(target);
-                let value = self.gen_expr(value);
-                let operator = match op {
-                    AssignOp::Assign => "=",
-                    AssignOp::Add => "+=",
-                    AssignOp::Sub => "-=",
-                    AssignOp::Mul => "*=",
-                    AssignOp::Div => "/=",
-                };
-                self.emit(format!("{target} {operator} {value};"));
+                let value = self.gen_coerced_expr(value, &target_ty);
+                if matches!(op, AssignOp::Assign) {
+                    self.emit(format!("{target} = {value};"));
+                } else {
+                    let (helper, operator) = match op {
+                        AssignOp::Add => ("add", "+"),
+                        AssignOp::Sub => ("sub", "-"),
+                        AssignOp::Mul => ("mul", "*"),
+                        AssignOp::Div => ("div", "/"),
+                        AssignOp::Assign => unreachable!(),
+                    };
+                    let result_ty = target_ty.concretize();
+                    let call = match integer_suffix(&result_ty) {
+                        Some(suffix)
+                            if matches!(op, AssignOp::Div) || is_signed_integer(&result_ty) =>
+                        {
+                            format!(
+                                "loi_{helper}_{suffix}({target}, {value}, {}, {})",
+                                statement.span.line, statement.span.column
+                            )
+                        }
+                        Some(_) => {
+                            let c_type = self.c_type(&result_ty);
+                            format!("(({c_type})(({target}) {operator} ({value})))")
+                        }
+                        None => format!("({target} {operator} {value})"),
+                    };
+                    self.emit(format!("{target} = {call};"));
+                }
             }
             StmtKind::Expr(expr) => {
                 if let ExprKind::Alloc {
@@ -1073,8 +1300,17 @@ impl<'a> Generator<'a> {
                 self.scopes.pop();
             }
             StmtKind::Return(value) => {
-                let value_ty = value.as_ref().map(|value| self.ty_of(value));
-                let value = value.as_ref().map(|value| self.gen_expr(value));
+                let expected = self.function_return_ty(&self.current_function);
+                let value_ty = value.as_ref().map(|value| {
+                    if matches!(expected, Ty::CStr) {
+                        expected.clone()
+                    } else {
+                        self.ty_of(value)
+                    }
+                });
+                let value = value
+                    .as_ref()
+                    .map(|value| self.gen_coerced_expr(value, &expected));
                 match value {
                     Some(value) => {
                         let temp = self.fresh("ret");
@@ -1262,14 +1498,30 @@ impl<'a> Generator<'a> {
                 self.interface_literal_code(name, fields)
             }
             ExprKind::Unary { op, operand } => {
+                let operand_ty = self.ty_of(operand).concretize();
                 let operand = self.gen_expr(operand);
                 match op {
-                    UnaryOp::Neg => format!("(-{operand})"),
+                    UnaryOp::Neg => {
+                        if let Some(suffix) = integer_suffix(&operand_ty) {
+                            if is_signed_integer(&operand_ty) {
+                                format!(
+                                    "loi_neg_{suffix}({operand}, {}, {})",
+                                    expr.span.line, expr.span.column
+                                )
+                            } else {
+                                let c_type = self.c_type(&operand_ty);
+                                format!("(({c_type})(-({c_type})({operand})))")
+                            }
+                        } else {
+                            format!("(-{operand})")
+                        }
+                    }
                     UnaryOp::Not => format!("(!{operand})"),
                 }
             }
             ExprKind::Binary { op, left, right } => {
                 let left_ty = self.ty_of(left);
+                let right_ty = self.ty_of(right);
                 let left = self.gen_expr(left);
                 let right = self.gen_expr(right);
                 if matches!(op, BinaryOp::Eq | BinaryOp::Neq) && matches!(left_ty, Ty::Slice(_)) {
@@ -1295,6 +1547,38 @@ impl<'a> Generator<'a> {
                     BinaryOp::Div => "/",
                     BinaryOp::Mod => "%",
                 };
+                let result_ty = types::common_numeric(&left_ty, &right_ty)
+                    .unwrap_or(Ty::Error)
+                    .concretize();
+                let helper = match op {
+                    BinaryOp::Add => Some("add"),
+                    BinaryOp::Sub => Some("sub"),
+                    BinaryOp::Mul => Some("mul"),
+                    BinaryOp::Div => Some("div"),
+                    BinaryOp::Mod => Some("rem"),
+                    BinaryOp::Or
+                    | BinaryOp::And
+                    | BinaryOp::Eq
+                    | BinaryOp::Neq
+                    | BinaryOp::Lt
+                    | BinaryOp::Lte
+                    | BinaryOp::Gt
+                    | BinaryOp::Gte => None,
+                };
+                if let Some(helper) = helper
+                    && let Some(suffix) = integer_suffix(&result_ty)
+                {
+                    let checked = matches!(op, BinaryOp::Div | BinaryOp::Mod)
+                        || is_signed_integer(&result_ty);
+                    if checked {
+                        return format!(
+                            "loi_{helper}_{suffix}({left}, {right}, {}, {})",
+                            expr.span.line, expr.span.column
+                        );
+                    }
+                    let c_type = self.c_type(&result_ty);
+                    return format!("(({c_type})(({left}) {operator} ({right})))");
+                }
                 format!("({left} {operator} {right})")
             }
             ExprKind::Cast { expr: inner, ty } => {
@@ -1341,6 +1625,18 @@ impl<'a> Generator<'a> {
         }
     }
 
+    /// Generate an expression in a context expecting `expected`. The only
+    /// coercion is a string literal becoming a NUL-terminated `cstr`.
+    fn gen_coerced_expr(&mut self, expr: &Expr, expected: &Ty) -> String {
+        if matches!(expected, Ty::CStr)
+            && let ExprKind::String(text) = &expr.kind
+        {
+            let index = self.string_index(text);
+            return format!("((const char*)loi_str_{index})");
+        }
+        self.gen_expr(expr)
+    }
+
     fn gen_call(&mut self, callee: &Expr, args: &[CallArg]) -> String {
         let ExprKind::Ident(name) = &callee.kind else {
             return "/* unsupported call target */ 0".to_string();
@@ -1353,21 +1649,24 @@ impl<'a> Generator<'a> {
             return c_code;
         }
 
-        let directions = self
+        let params = self
             .functions
             .get(name)
             .map(|decl| {
                 decl.params
                     .iter()
-                    .map(|param| param.direction)
+                    .map(|param| (param.direction, self.resolve_type(&param.ty)))
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
 
         let mut lowered = Vec::new();
         for (index, arg) in args.iter().enumerate() {
-            let direction = directions.get(index).copied().unwrap_or(arg.direction);
-            let value = self.gen_expr(&arg.value);
+            let (direction, expected) = params
+                .get(index)
+                .cloned()
+                .unwrap_or((arg.direction, Ty::Error));
+            let value = self.gen_coerced_expr(&arg.value, &expected);
             match direction {
                 Direction::In => lowered.push(value),
                 Direction::Out | Direction::Inout => lowered.push(format!("&({value})")),
@@ -1435,10 +1734,14 @@ impl<'a> Generator<'a> {
             .unwrap_or_default();
         let mut initializers = Vec::new();
         for field in &declared {
+            let field_ty = self.resolve_type(&field.ty);
             let value = if let Some(init) = fields.iter().find(|init| init.name == field.name) {
-                Some(self.gen_expr(&init.value))
+                Some(self.gen_coerced_expr(&init.value, &field_ty))
             } else {
-                field.default.as_ref().map(|value| self.gen_expr(value))
+                field
+                    .default
+                    .as_ref()
+                    .map(|value| self.gen_coerced_expr(value, &field_ty))
             };
             if let Some(value) = value {
                 initializers.push(format!(".{} = {value}", self.c_field(&field.name)));
@@ -1474,6 +1777,7 @@ fn collect_program_strings(
                     }
                 }
             }
+            Item::Opaque(_) => {}
             Item::Global(decl) => collect_expr_strings(&decl.value, indices, order),
             Item::Function(decl) => collect_block_strings(&decl.body, indices, order),
         }
@@ -1591,6 +1895,24 @@ fn collect_expr_strings(
         }
         ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Ident(_) => {}
     }
+}
+
+fn integer_suffix(ty: &Ty) -> Option<&'static str> {
+    match ty {
+        Ty::I8 => Some("i8"),
+        Ty::I16 => Some("i16"),
+        Ty::I32 => Some("i32"),
+        Ty::I64 => Some("i64"),
+        Ty::U8 => Some("u8"),
+        Ty::U16 => Some("u16"),
+        Ty::U32 => Some("u32"),
+        Ty::U64 => Some("u64"),
+        _ => None,
+    }
+}
+
+fn is_signed_integer(ty: &Ty) -> bool {
+    matches!(ty, Ty::I8 | Ty::I16 | Ty::I32 | Ty::I64)
 }
 
 fn c_int_literal(text: &str) -> String {

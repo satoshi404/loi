@@ -6,7 +6,7 @@ use std::process::{self, Command};
 
 use std::collections::HashSet;
 
-const USAGE: &str = "usage:\n  loi <lex|parse|fmt|check> <file.loi>\n  loi gen <file.loi> [-o output.c] [--emit-h header.h] [--source-map map.json]\n  loi build <file.loi> [-o output] [--emit exe|obj|lib]\n                    [--debug|--release] [--rebuild] [--emit-c file.c] [--emit-h header.h]\n                    [--arena-size BYTES] [--source-map map.json] [--cc-flag FLAG]...\n  loi clean <file.loi> [-o output]\n\n'gen', 'build' and 'clean' accept -o/--output.\n'--emit', '--debug', '--release', '--rebuild', '--emit-c', '--emit-h', '--arena-size', '--source-map' and '--cc-flag'\nare only supported by 'build'.\n'--emit-h' and '--source-map' are also supported by 'gen'.\nWith '--emit obj' the default output is '<input stem>.o'; with '--emit lib'\nit is 'lib<input stem>.a'; otherwise it is './a.out'.\n'build' invokes 'cc' and 'ar'; set 'CC'/'AR' to override them. Those values\nmay contain arguments, split like a POSIX shell command line ('...' quotes,\n\"...\" quotes and backslash escapes).\nWithout -o, 'clean' removes ./a.out, <input stem>.o and lib<input stem>.a\nwhen their .loi-stamp files exist; with -o it removes exactly that output\nand its stamp. Both forms also remove generated C retained for that output\nthrough 'build --emit-c'. It does not read or check the source.\n\noptions:\n  -h, --help     show this help\n  -V, --version  show the compiler version\n  -g, --debug    compile with debug info (-g)\n      --release  compile with optimizations (-O2)\n      --rebuild  force recompilation, ignoring the incremental stamp\n      --arena-size BYTES  set the protect arena size (default 67108864 = 64 MiB)\n      --source-map FILE  write source map JSON Lines to FILE";
+const USAGE: &str = "usage:\n  loi <lex|parse|fmt|check> <file.loi>\n  loi gen <file.loi> [-o output.c] [--emit-h header.h] [--source-map map.json]\n  loi build <file.loi> [-o output] [--emit exe|obj|lib]\n                    [--debug|--release] [--rebuild] [--emit-c file.c] [--emit-h header.h]\n                    [--arena-size BYTES] [--source-map map.json] [--cc-flag FLAG]...\n                    [--c-source FILE]...\n  loi clean <file.loi> [-o output]\n\n'gen', 'build' and 'clean' accept -o/--output.\n'--emit', '--debug', '--release', '--rebuild', '--emit-c', '--emit-h', '--arena-size', '--source-map', '--cc-flag' and '--c-source'\nare only supported by 'build'. '--c-source' compiles an extra C file (a vendored\nFFI shim) and links it into an executable or library; it is rejected with '--emit obj'.\n'--emit-h' and '--source-map' are also supported by 'gen'.\nWith '--emit obj' the default output is '<input stem>.o'; with '--emit lib'\nit is 'lib<input stem>.a'; otherwise it is './a.out'.\n'build' invokes 'cc' and 'ar'; set 'CC'/'AR' to override them. Those values\nmay contain arguments, split like a POSIX shell command line ('...' quotes,\n\"...\" quotes and backslash escapes).\nWithout -o, 'clean' removes ./a.out, <input stem>.o and lib<input stem>.a\nwhen their .loi-stamp files exist; with -o it removes exactly that output\nand its stamp. Both forms also remove generated C retained for that output\nthrough 'build --emit-c'. It does not read or check the source.\n\noptions:\n  -h, --help     show this help\n  -V, --version  show the compiler version\n  -g, --debug    compile with debug info (-g)\n      --release  compile with optimizations (-O2)\n      --rebuild  force recompilation, ignoring the incremental stamp\n      --arena-size BYTES  set the protect arena size (default 67108864 = 64 MiB)\n      --source-map FILE  write source map JSON Lines to FILE";
 
 fn main() {
     let options = Options::parse();
@@ -38,7 +38,6 @@ fn main() {
             options.emit_h.as_deref(),
             options.source_map.as_deref(),
             options.emit_ir.as_deref(),
-            options.emit_asm.as_deref(),
         ),
         "build" => build_source(
             &options.paths,
@@ -53,8 +52,8 @@ fn main() {
                 arena_size: options.arena_size,
                 source_map: options.source_map.as_deref(),
                 emit_ir: options.emit_ir.as_deref(),
-                emit_asm: options.emit_asm.as_deref(),
                 cc_flags: &options.cc_flags,
+                c_sources: &options.c_sources,
             },
         ),
         other => {
@@ -232,8 +231,8 @@ struct Options {
     arena_size: Option<u64>,
     source_map: Option<PathBuf>,
     emit_ir: Option<PathBuf>,
-    emit_asm: Option<PathBuf>,
     cc_flags: Vec<String>,
+    c_sources: Vec<PathBuf>,
 }
 
 impl Options {
@@ -268,8 +267,8 @@ impl Options {
         let mut arena_size = None;
         let mut source_map = None;
         let mut emit_ir = None;
-        let mut emit_asm = None;
         let mut cc_flags = Vec::new();
+        let mut c_sources = Vec::new();
         let mut index = 1;
 
         while index < args.len() {
@@ -378,15 +377,10 @@ impl Options {
                     }
                 }
                 "--emit-asm" => {
-                    index += 1;
-                    let Some(value) = args.get(index) else {
-                        eprintln!("loi: '--emit-asm' requires a path");
-                        process::exit(2);
-                    };
-                    if emit_asm.replace(PathBuf::from(value)).is_some() {
-                        eprintln!("loi: assembly output path specified more than once");
-                        process::exit(2);
-                    }
+                    eprintln!(
+                        "loi: '--emit-asm' is disabled: the x86-64 assembly backend is an unfinished draft and does not generate runnable code; use 'loi gen' or '--emit-c' and compile the result with cc"
+                    );
+                    process::exit(2);
                 }
                 "--cc-flag" => {
                     index += 1;
@@ -395,6 +389,14 @@ impl Options {
                         process::exit(2);
                     };
                     cc_flags.push(value.clone());
+                }
+                "--c-source" => {
+                    index += 1;
+                    let Some(value) = args.get(index) else {
+                        eprintln!("loi: '--c-source' requires a path");
+                        process::exit(2);
+                    };
+                    c_sources.push(PathBuf::from(value));
                 }
                 other if other.starts_with('-') => {
                     eprintln!("loi: unknown option '{other}'");
@@ -450,16 +452,16 @@ impl Options {
             eprintln!("loi: '--emit-ir' is only supported by 'gen' and 'build'");
             process::exit(2);
         }
-        if emit_asm.is_some() && !matches!(mode.as_str(), "gen" | "build") {
-            eprintln!("loi: '--emit-asm' is only supported by 'gen' and 'build'");
-            process::exit(2);
-        }
         if source_map.is_some() && !matches!(mode.as_str(), "gen" | "build") {
             eprintln!("loi: '--source-map' is only supported by 'gen' and 'build'");
             process::exit(2);
         }
         if !cc_flags.is_empty() && mode != "build" {
             eprintln!("loi: '--cc-flag' is only supported by 'build'");
+            process::exit(2);
+        }
+        if !c_sources.is_empty() && mode != "build" {
+            eprintln!("loi: '--c-source' is only supported by 'build'");
             process::exit(2);
         }
 
@@ -482,8 +484,8 @@ impl Options {
             arena_size,
             source_map,
             emit_ir,
-            emit_asm,
             cc_flags,
+            c_sources,
         }
     }
 }
@@ -534,7 +536,6 @@ fn gen_source(
     emit_h: Option<&Path>,
     source_map: Option<&Path>,
     emit_ir: Option<&Path>,
-    emit_asm: Option<&Path>,
 ) {
     let program = load_program_with_imports(source, path);
     let c_source = generate_checked_program(&program, path, source_map);
@@ -577,20 +578,6 @@ fn gen_source(
             }
         }
     }
-    if let Some(asm_path) = emit_asm {
-        match loi::generate_asm_from_program(&program) {
-            Ok(asm) => {
-                if let Err(error) = fs::write(asm_path, asm) {
-                    eprintln!("loi: {}: {error}", asm_path.display());
-                    process::exit(1);
-                }
-            }
-            Err(error) => {
-                eprintln!("loi: {}: {error}", path.display());
-                process::exit(1);
-            }
-        }
-    }
 }
 
 struct BuildRequest<'a> {
@@ -603,8 +590,8 @@ struct BuildRequest<'a> {
     arena_size: Option<u64>,
     source_map: Option<&'a Path>,
     emit_ir: Option<&'a Path>,
-    emit_asm: Option<&'a Path>,
     cc_flags: &'a [String],
+    c_sources: &'a [PathBuf],
 }
 
 fn clean_source(options: &Options) {
@@ -680,9 +667,14 @@ fn build_source(paths: &[PathBuf], primary_path: &Path, request: BuildRequest<'_
         arena_size,
         source_map,
         emit_ir,
-        emit_asm,
         cc_flags,
+        c_sources,
     } = request;
+
+    if !c_sources.is_empty() && kind == BuildKind::Object {
+        eprintln!("loi: '--c-source' cannot be combined with '--emit obj'");
+        process::exit(2);
+    }
 
     let compiler = Tool::from_env("CC", "cc");
     let archiver = (kind == BuildKind::Library).then(|| Tool::from_env("AR", "ar"));
@@ -734,6 +726,7 @@ fn build_source(paths: &[PathBuf], primary_path: &Path, request: BuildRequest<'_
             kind,
             profile,
             cc_flags,
+            c_sources,
             arena_size,
         );
         let stamp_path = build_stamp_path(&output_path);
@@ -790,22 +783,6 @@ fn build_source(paths: &[PathBuf], primary_path: &Path, request: BuildRequest<'_
             }
         }
 
-        // Emit assembly if requested.
-        if let Some(asm_path) = emit_asm {
-            match loi::generate_asm_from_program(&load_program(&source, input_path)) {
-                Ok(asm) => {
-                    if let Err(error) = fs::write(asm_path, asm) {
-                        eprintln!("loi: {}: {error}", asm_path.display());
-                        process::exit(1);
-                    }
-                }
-                Err(error) => {
-                    eprintln!("loi: {}: {error}", input_path.display());
-                    process::exit(1);
-                }
-            }
-        }
-
         if up_to_date {
             return;
         }
@@ -818,6 +795,7 @@ fn build_source(paths: &[PathBuf], primary_path: &Path, request: BuildRequest<'_
                 arena_flag.as_deref(),
                 &output_path,
                 &c_path,
+                c_sources,
                 false,
             ),
             BuildKind::Object => compile_c(
@@ -827,6 +805,7 @@ fn build_source(paths: &[PathBuf], primary_path: &Path, request: BuildRequest<'_
                 arena_flag.as_deref(),
                 &output_path,
                 &c_path,
+                &[],
                 true,
             ),
             BuildKind::Library => build_library(
@@ -839,6 +818,7 @@ fn build_source(paths: &[PathBuf], primary_path: &Path, request: BuildRequest<'_
                 arena_flag.as_deref(),
                 &output_path,
                 &c_path,
+                c_sources,
             ),
         };
         if temporary {
@@ -947,6 +927,11 @@ fn build_source(paths: &[PathBuf], primary_path: &Path, request: BuildRequest<'_
         object_files.push(object_path);
     }
 
+    if kind == BuildKind::Library && !c_sources.is_empty() {
+        eprintln!("loi: '--c-source' is not supported by multi-file library builds");
+        process::exit(2);
+    }
+
     match kind {
         BuildKind::Exe => {
             let output_path = output
@@ -962,12 +947,16 @@ fn build_source(paths: &[PathBuf], primary_path: &Path, request: BuildRequest<'_
             if let Some(flag) = &arena_flag {
                 command.arg(flag);
             }
-            for flag in cc_flags {
-                command.arg(flag);
-            }
             command.arg("-o").arg(&output_path);
             for obj in &object_files {
                 command.arg(obj);
+            }
+            for source in c_sources {
+                command.arg(source);
+            }
+            // Linker inputs (notably `-l` flags) must follow the objects.
+            for flag in cc_flags {
+                command.arg(flag);
             }
             command.arg("-lm");
             if !run_tool(&compiler, "C compiler/linker", &mut command) {
@@ -1015,6 +1004,7 @@ fn run_tool(tool: &Tool, description: &str, command: &mut Command) -> bool {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_fingerprint(
     c_source: &str,
     compiler: &Tool,
@@ -1022,6 +1012,7 @@ fn build_fingerprint(
     kind: BuildKind,
     profile: Option<BuildProfile>,
     cc_flags: &[String],
+    c_sources: &[PathBuf],
     arena_size: Option<u64>,
 ) -> String {
     let mut hash = 0xcbf2_9ce4_8422_2325u64;
@@ -1045,6 +1036,12 @@ fn build_fingerprint(
     );
     for flag in cc_flags {
         mix(&mut hash, flag.as_bytes());
+    }
+    for source in c_sources {
+        mix(&mut hash, source.to_string_lossy().as_bytes());
+        if let Ok(contents) = fs::read(source) {
+            mix(&mut hash, &contents);
+        }
     }
     if let Some(size) = arena_size {
         mix(&mut hash, &size.to_le_bytes());
@@ -1148,6 +1145,7 @@ fn decode_stamp_path(text: &str) -> Option<PathBuf> {
     Some(PathBuf::from(decoded))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compile_c(
     compiler: &Tool,
     profile: Option<BuildProfile>,
@@ -1155,8 +1153,13 @@ fn compile_c(
     arena_flag: Option<&str>,
     output: &Path,
     c_path: &Path,
+    c_sources: &[PathBuf],
     object_only: bool,
 ) -> bool {
+    if object_only && !c_sources.is_empty() {
+        eprintln!("loi: '--c-source' cannot be combined with '--emit obj'");
+        return false;
+    }
     let mut command = compiler.command();
     command.arg("-std=c11");
     if let Some(profile) = profile {
@@ -1165,20 +1168,29 @@ fn compile_c(
     if let Some(flag) = arena_flag {
         command.arg(flag);
     }
-    for flag in cc_flags {
-        command.arg(flag);
-    }
     if object_only {
+        for flag in cc_flags {
+            command.arg(flag);
+        }
         command.arg("-c");
     }
     command.arg("-o").arg(output).arg(c_path);
     if !object_only {
+        for source in c_sources {
+            command.arg(source);
+        }
+        // Linker inputs (notably `-l` flags) must follow the objects that
+        // reference them, so forward extra compiler flags here.
+        for flag in cc_flags {
+            command.arg(flag);
+        }
         // Link with the math library so intrinsics such as `sqrt` resolve.
         command.arg("-lm");
     }
     run_tool(compiler, "C compiler", &mut command)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_library(
     compiler: &Tool,
     archiver: &Tool,
@@ -1187,20 +1199,58 @@ fn build_library(
     arena_flag: Option<&str>,
     output: &Path,
     c_path: &Path,
+    c_sources: &[PathBuf],
 ) -> bool {
     let object = temporary_object_path();
     let compiled = compile_c(
-        compiler, profile, cc_flags, arena_flag, &object, c_path, true,
+        compiler,
+        profile,
+        cc_flags,
+        arena_flag,
+        &object,
+        c_path,
+        &[],
+        true,
     );
-    let archived = if compiled {
+    let mut extra_objects = Vec::new();
+    let mut extras_ok = true;
+    if compiled {
+        for source in c_sources {
+            let extra = temporary_object_path();
+            let ok = compile_c(
+                compiler,
+                profile,
+                cc_flags,
+                arena_flag,
+                &extra,
+                source,
+                &[],
+                true,
+            );
+            if ok {
+                extra_objects.push(extra);
+            } else {
+                extras_ok = false;
+                break;
+            }
+        }
+    }
+    let archived = if compiled && extras_ok {
         let mut command = archiver.command();
-        command.arg("rcs").arg(output).arg(&object);
+        command
+            .arg("rcs")
+            .arg(output)
+            .arg(&object)
+            .args(&extra_objects);
         run_tool(archiver, "archiver", &mut command)
     } else {
         false
     };
     let _ = fs::remove_file(&object);
-    compiled && archived
+    for extra in extra_objects {
+        let _ = fs::remove_file(extra);
+    }
+    compiled && extras_ok && archived
 }
 
 fn temporary_object_path() -> PathBuf {

@@ -2,10 +2,12 @@
 
 **Version:** 0.3.0-draft  
 **Status:** Active Development  
-**Last Updated:** 2026-11-08
+**Last Updated:** 2026-11-10
 **Author:** Clayton Pedro (Satoshi)
 
 Items marked **(provisional)** are temporary decisions made to close a gap. They can change. The nine former *Open Design Questions* are resolved in section 5. The distinctive surface (Loi Flow Syntax) is the only surface, adopted in 5.10 and fully cleaned up: legacy forms are no longer accepted, and `fmt` emits the canonical Flow Syntax.
+
+The canonical surface reference is [`SINTAXE.md`](../SINTAXE.md). This file defines the language rules; when a syntax example here and `SINTAXE.md` disagree, `SINTAXE.md` wins for the surface form and both must be corrected in the same change.
 
 ---
 
@@ -192,7 +194,7 @@ Every parameter declares its direction. The direction is mandatory.
 
 | Direction | Meaning                                                              |
 |-----------|----------------------------------------------------------------------|
-| `<-`      | Read-only access to the caller's value, by its own address. No copy  |
+| `<-`      | Read-only access to the caller's value. The checker forbids storing or returning a borrowed part; the C backend passes composites by value (slice headers still point at the caller's storage). |
 | `->`      | The function initializes the caller's variable                       |
 | `<->`     | Read and write access to the caller's value                          |
 
@@ -238,6 +240,7 @@ protect {
 - An `alloc` made inside a called function belongs to the nearest enclosing `protect` of the **caller**, not to the callee. **(provisional)**
 - `alloc` outside any `protect` is a compile error, so there is no manual `free`. **(provisional)**
 - Static and dynamic checks must prevent escape.
+- **Implementation:** `protect` is a bump arena that grows in chunks. `--arena-size BYTES` (default 64 MiB) sets the size of the first chunk, not a hard cap. Later chunks grow geometrically, and an allocation larger than the current chunk gets a dedicated chunk. Chunks are never moved or freed, so slices already handed out stay valid; leaving the block restores the arena offset. The arena is process-global and not thread-safe.
 
 ### 4.6 Visibility
 
@@ -262,13 +265,13 @@ These rules were added to unblock real programs and are implemented and tested. 
 
 - A string literal is written with double quotes: `"hello"`.
 - Supported escapes: `\n`, `\t`, `\r`, `\0`, `\\`, `\"` and `\xNN` for ASCII bytes (`0x00`-`0x7f`).
-- The runtime type is `[u8]`. The value is the decoded UTF-8 bytes and carries no implicit trailing NUL; its length is the byte count.
-- A string literal has static storage and may be used to initialize a `[u8]` global.
+- The runtime type is `[u8]`. The value is the decoded UTF-8 bytes; its length is the byte count. For C interop the backend stores an extra trailing NUL, but that byte is not part of the slice length.
+- A string literal has static storage and may be used to initialize a `[u8]` global, and may be passed to or bound as `cstr`.
 
 **Slice literals**
 
 - `[a, b, c]` infers the element type from the elements. The explicit form is `[T: a, b, c]`; `[T:]` is the empty literal.
-- The backing array has automatic storage in the enclosing block. A slice literal must not be returned from a function (the checker rejects it); bind it to a local first. Use `alloc` for data that must outlive the block.
+- The backing array has automatic storage in the enclosing lexical block. A slice literal must not escape that block: the checker rejects returning it, storing it in a variable declared outside the block, or embedding it in a shape that then escapes. Bind it to a local in the same block. Use `alloc` for data that must outlive the block.
 
 **Length**
 
@@ -299,6 +302,82 @@ These rules were added to unblock real programs and are implemented and tested. 
 - Intrinsics: `print(<- [u8])`, `eprint(<- [u8])`, `panic(<- [u8])`, `sqrt/floor/ceil/fabs(<- f64) => f64`, `pow/fmod(<- f64, <- f64) => f64` and `len([T]) => u64`.
 - `lib/std.loi` is a minimal, explicitly imported standard library (integer/float min/max/abs/clamp and byte-string helpers). It is written in Loi and uses only the features above.
 
+### 4.9 Foreign C interop
+
+Foreign declarations are ordinary Loi declarations written in vendored binding
+files; application code imports them.
+
+**Opaque handles**
+
+- `opaque Name` declares a foreign handle. It has no layout, fields or methods.
+- A handle is a copyable scalar and the C backend represents it as `void *`.
+- A handle may be stored, passed, returned and compared by identity; it cannot
+  be dereferenced, indexed or converted to another type.
+
+**C strings**
+
+- `cstr` is the FFI-only type for a NUL-terminated C string and is represented
+  as `const char *`.
+- A string literal may initialize a `cstr` or be passed to a `cstr` parameter.
+  An arbitrary `[u8]` value may not, because it is not guaranteed to be
+  NUL-terminated.
+- `cstr` is copyable but cannot be indexed, measured, compared or printed in
+  Loi. Convert it in a vendored shim when byte access is needed.
+
+**Extern flows**
+
+- `extern flow Name` declares a signature with no body.
+- Directions keep their normal meaning: `<-` passes by value, while `->` and
+  `<->` pass an address.
+- The Loi name is the C symbol by default. `extern flow Name as c_symbol` calls
+  a different symbol, typically a generated or hand-written shim.
+- Supported types are scalars, `bool`, `opaque` handles, `cstr` and shapes whose
+  fields are themselves FFI-safe. Slices, callbacks, variadics and unions
+  require a C shim.
+- Extern flows are not checked for a body, ownership effects or allocation
+  regions. Their contracts are the binding author's responsibility.
+- `loi build ... --c-source FILE` compiles and links extra C sources.
+  `--cc-flag FLAG` forwards a flag to the C compiler; on link steps the flags
+  follow the objects so `-l` libraries resolve normally.
+
+**Binding generation**
+
+- `tools/bindgen/bindgen.py` generates vendored bindings from a C header using
+  clang's JSON AST. It emits `opaque` handles, safe `shape`s, typed integer
+  constants and `extern flow` declarations, plus an optional C shim and a skip
+  report.
+- The generator is conservative: callbacks, variadics, unions, bitfields,
+  inline arrays, pointer-to-pointer, mutable `char *` buffers, wide strings and
+  pointers to records that are not layout-safe are skipped and reported rather
+  than guessed.
+- Safe records passed or returned by value, shape pointers and scalar out
+  parameters go through generated `memcpy` shims with `_Static_assert`
+  size/alignment checks. Generated symbol names are `loi_bind_<module>_<name>`.
+- `vendor/sdl2/` is the reference generated binding, including its shim,
+  skipped report and build command. `vendor/raylib/` is the raylib 5.5 binding.
+
+### 4.10 Checked integer arithmetic
+
+Integer arithmetic is defined by Loi, not delegated to C's undefined behaviour.
+The generated C uses checked helpers built on `__builtin_{add,sub,mul}_overflow`;
+each failure prints `loi: <message> at <line>:<column>` and exits with status 1.
+
+- **Signed `+`, `-`, `*` and unary `-`** trap on overflow. The result type is
+  the checked common width, so wrapping at `int` width never leaks through.
+- **Unsigned `+`, `-`, `*`** wrap modulo `2^N` for their declared width. This is
+  defined behaviour, not an error.
+- **`/` and `%`** trap when the divisor is zero. `MIN / -1` traps as signed
+  overflow; `MIN % -1` evaluates to `0`. Integer `/` truncates toward zero and
+  `%` takes the sign of the dividend.
+- **Compound assignments** (`+=`, `-=`, `*=`, `/=`) follow the same rules as the
+  corresponding binary operator. Shift, bitwise and `%=` forms do not exist yet.
+- **`as`** remains an unchecked truncating cast; it is the explicit escape hatch
+  for modular conversion.
+- **Literal-only constant expressions** are folded by the checker and rejected
+  at compile time when they overflow the expected type or divide by a constant
+  zero. Non-constant failures are runtime traps.
+- **`float` arithmetic** follows C/IEEE-754 and is not trapped.
+
 ---
 
 ## 5. Design Decisions (formerly Open Questions)
@@ -327,11 +406,11 @@ All nine questions from the 0.2 draft are decided. Each entry states the rule, t
 - Read-only access is already expressed by `<-`, by a slice `[T]`, or by reading a local. These are checked, scoped views, not storable addresses.
 - Cyclic and shared structures use handles/indices (5.5).
 - Absent values are explicit: a `present`/`valid` flag inside a shape, or a documented sentinel index such as `NO_NODE`. There is no null.
-- Foreign pointers, if ever needed, live behind a future `extern`/FFI boundary as opaque handles and never enter ordinary Loi values.
+- Foreign pointers are represented only at the FFI boundary, as `opaque` handles (`void *`) or `cstr` (`const char *`); they never enter ordinary Loi values and cannot be dereferenced.
 
 **Why:** adding pointers would give Loi two competing memory models. The features that need them (graphs, optional values, foreign calls) have simpler representations that preserve single ownership.
 
-**Status:** no pointer support; the partial implementation was reverted. Revisit only if FFI requires it.
+**Status:** general pointers remain absent. The FFI surface (`opaque`, `cstr`, `extern flow`, generated shims) is implemented; see 4.9.
 
 ### 5.3 Default visibility — `sealed` (question 3)
 
@@ -581,27 +660,28 @@ The full Flow Syntax was chosen because it makes the three distinctive ideas —
 
 ## 6. Development Roadmap
 
-### Phase 0 — Foundation
+### Phase 0 — Foundation (done)
 
-- [ ] Project structure
-- [ ] Lexer
-- [ ] Parser (produce AST)
-- [ ] Pretty-printer / AST dump
+- [x] Project structure
+- [x] Lexer
+- [x] Parser (produce AST)
+- [x] Pretty-printer / AST dump
 
-### Phase 1 — Core Type System
+### Phase 1 — Core Type System (done)
 
-- [ ] Basic types (`i32`, `u32`, `u64`, `f64`, `bool`, etc.)
-- [ ] `shape` declarations, defaults and literals
-- [ ] Flows + `<-` / `->` / `<->` / `=> T`
-- [ ] `open` / `sealed`
-- [ ] Simple type checking
+- [x] Basic types (`i32`, `u32`, `u64`, `f64`, `bool`, etc.)
+- [x] `shape` declarations, defaults and literals
+- [x] Flows + `<-` / `->` / `<->` / `=> T`
+- [x] `open` / `sealed`
+- [x] Simple type checking
 
-### Phase 2 — Ownership & Memory
+### Phase 2 — Ownership & Memory (done)
 
-- [ ] Single owner and alias checks (double reference)
-- [ ] `give()` and `clone()`
-- [ ] Slices `[T]` with bounds checking
-- [ ] `alloc` and `protect` blocks
+- [x] Single owner and alias checks (double reference)
+- [x] `give()` and `clone()`
+- [x] Slices `[T]` with bounds checking
+- [x] `alloc` and `protect` blocks
+- [x] Lexical-block escape analysis for slice literals
 
 ### Phase 3 — Advanced Features
 
@@ -610,15 +690,17 @@ The full Flow Syntax was chosen because it makes the three distinctive ideas —
 
 ### Phase 4 — Backend
 
-- [ ] Code generation to C (first target). `protect` can become a bump allocator reset at the end of the block
-- [ ] Later: x86-64 or LLVM
+- [x] Code generation to C11 (first target), including a growable `protect` bump arena, checked arithmetic, runtime bounds checks, headers, source maps and multi-file builds
+- [x] Foreign C interop (`opaque`, `cstr`, `extern flow`, shims) and the binding generator
+- [ ] Later: x86-64 or LLVM. `src/ir.rs` and `src/asm.rs` are drafts; `--emit-ir` emits IR text, while `--emit-asm` is disabled with a clear CLI error until the assembly backend can generate runnable code.
 
 ---
 
 ## 7. Lexical Notes
 
-- **Keywords:** `shape`, `flow`, `open`, `sealed`, `mut`, `give`, `clone`, `protect`, `alloc`, `import`, `comptime`, `if`, `else`, `while`, `for`, `in`, `continue`, `break`, `and`, `or`, `not`, `as`, `true`, `false`.
+- **Keywords:** `shape`, `flow`, `open`, `sealed`, `extern`, `opaque`, `mut`, `give`, `clone`, `protect`, `alloc`, `import`, `comptime`, `if`, `else`, `while`, `for`, `in`, `continue`, `break`, `and`, `or`, `not`, `as`, `true`, `false`.
 - **Direction glyphs:** `<-` (read), `->` (write/out), `<->` (read-write), `=>` (result).
+- **FFI types:** `opaque Name`, `cstr`.
 - `in` is a keyword only as the separator in `for i in a..b` and `for <- p in xs`; it is not a direction.
 - String literals are double-quoted; see 4.8 for escapes and type.
 - Numeric literals: decimal integers and floats, `_` separators, exponents, and `0x`/`0b` integer prefixes.

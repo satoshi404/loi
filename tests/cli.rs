@@ -942,6 +942,77 @@ fn build_passes_extra_compiler_flags() {
 }
 
 #[test]
+fn build_resolves_libraries_passed_through_cc_flag() {
+    if !has_c_compiler() || !has_tool("ar") {
+        eprintln!("skipping build_resolves_libraries_passed_through_cc_flag: cc or ar not found");
+        return;
+    }
+
+    let dir = test_dir("build-cc-flag-library");
+    let library_source = dir.join("foo.c");
+    let library_object = dir.join("foo.o");
+    let library = dir.join("libfoo.a");
+    fs::write(&library_source, "int foo_value(void) { return 7; }\n")
+        .expect("library source should be writable");
+
+    let compile = Command::new("cc")
+        .arg("-c")
+        .arg("-o")
+        .arg(&library_object)
+        .arg(&library_source)
+        .output()
+        .expect("cc should run");
+    assert!(
+        compile.status.success(),
+        "cc failed: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let archive = Command::new("ar")
+        .arg("rcs")
+        .arg(&library)
+        .arg(&library_object)
+        .output()
+        .expect("ar should run");
+    assert!(
+        archive.status.success(),
+        "ar failed: {}",
+        String::from_utf8_lossy(&archive.stderr)
+    );
+
+    let input = dir.join("program.loi");
+    fs::write(
+        &input,
+        "extern flow foo_value\n    => i32\n\nflow main\n    => i32\n{\n    => foo_value() - 7\n}\n",
+    )
+    .expect("program should be writable");
+    let executable = dir.join("program");
+
+    let build = Command::new(loi())
+        .arg("build")
+        .arg(&input)
+        .arg("-o")
+        .arg(&executable)
+        .arg("--cc-flag")
+        .arg(format!("-L{}", dir.display()))
+        .arg("--cc-flag")
+        .arg("-lfoo")
+        .output()
+        .expect("loi should run");
+    assert!(
+        build.status.success(),
+        "loi build with -l through --cc-flag failed: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let run = Command::new(&executable)
+        .output()
+        .expect("built executable should run");
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(run.status.code(), Some(0));
+}
+
+#[test]
 fn build_produces_a_runnable_executable() {
     if !has_c_compiler() {
         eprintln!("skipping build_produces_a_runnable_executable: no C compiler found");
@@ -1450,4 +1521,103 @@ fn build_multi_file_supports_cross_file_calls_and_globals() {
     let _ = fs::remove_dir_all(&dir);
 
     assert_eq!(run.status.code(), Some(9));
+}
+
+#[test]
+fn build_links_a_c_source_for_extern_flows() {
+    if !has_c_compiler() {
+        eprintln!("skipping build_links_a_c_source_for_extern_flows: cc not found");
+        return;
+    }
+
+    let dir = test_dir("build-c-source");
+    let input = dir.join("program.loi");
+    fs::write(
+        &input,
+        "opaque Handle\n\n\
+         extern flow shim_make\n\
+             <- x: i32\n\
+             => Handle\n\n\
+         extern flow shim_value\n\
+             <- h: Handle\n\
+             => i32\n\n\
+         extern flow shim_text_len\n\
+             <- text: cstr\n\
+             => i32\n\n\
+         flow main\n\
+             => i32\n\
+         {\n\
+             mut h: Handle\n\
+             h = shim_make(41)\n\
+             mut value: i32 <- shim_value(h)\n\
+             if shim_text_len(\"loi\") != 3 {\n\
+                 => 2\n\
+             }\n\
+             => value - 41\n\
+         }\n",
+    )
+    .expect("program should be writable");
+
+    let shim = dir.join("shim.c");
+    fs::write(
+        &shim,
+        "#include <stddef.h>\n\
+         #include <string.h>\n\
+         \n\
+         typedef struct { int value; } HandleImpl;\n\
+         static HandleImpl handle;\n\
+         \n\
+         void *shim_make(int x) { handle.value = x; return &handle; }\n\
+         int shim_value(void *raw) { return ((HandleImpl *)raw)->value; }\n\
+         int shim_text_len(const char *text) { return (int)strlen(text); }\n",
+    )
+    .expect("shim should be writable");
+
+    let executable = dir.join("program");
+    let build = Command::new(loi())
+        .arg("build")
+        .arg(&input)
+        .arg("-o")
+        .arg(&executable)
+        .arg("--c-source")
+        .arg(&shim)
+        .output()
+        .expect("loi should run");
+    assert!(
+        build.status.success(),
+        "extern build failed: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let run = Command::new(&executable)
+        .output()
+        .expect("built executable should run");
+    let _ = fs::remove_dir_all(&dir);
+
+    assert_eq!(run.status.code(), Some(0));
+}
+
+#[test]
+fn emit_asm_is_rejected_with_a_clear_message() {
+    let dir = test_dir("emit-asm-disabled");
+    let input = dir.join("program.loi");
+    let asm = dir.join("program.s");
+    fs::write(&input, "flow main\n    => i32\n{\n    => 0\n}\n").expect("input should be writable");
+
+    let output = Command::new(loi())
+        .arg("gen")
+        .arg(&input)
+        .arg("--emit-asm")
+        .arg(&asm)
+        .output()
+        .expect("loi should run");
+    let _ = fs::remove_dir_all(&dir);
+
+    assert_eq!(output.status.code(), Some(2), "expected usage error");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--emit-asm") && stderr.contains("unfinished draft"),
+        "unexpected stderr: {stderr}"
+    );
+    assert!(!asm.exists(), "no assembly file should be written");
 }

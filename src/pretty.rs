@@ -72,6 +72,7 @@ impl PrettyPrinter {
                 self.line(format!("import \"{}\"", escape_string(&import.path)))
             }
             Item::Interface(interface) => self.interface(interface),
+            Item::Opaque(opaque) => self.opaque(opaque),
             Item::Global(global) => self.global(global),
             Item::Function(function) => self.function(function),
         }
@@ -91,6 +92,14 @@ impl PrettyPrinter {
             global.name,
             ty,
             format_expr(&global.value)
+        ));
+    }
+
+    fn opaque(&mut self, opaque: &OpaqueDecl) {
+        self.line(format!(
+            "{}opaque {}",
+            visibility_prefix(opaque.visibility),
+            opaque.name
         ));
     }
 
@@ -123,11 +132,23 @@ impl PrettyPrinter {
     }
 
     fn function(&mut self, function: &FunctionDecl) {
+        let prefix = if function.external { "extern " } else { "" };
+        let link_name = function
+            .link_name
+            .as_ref()
+            .map(|symbol| format!(" as {symbol}"))
+            .unwrap_or_default();
         let header = format!(
-            "{}flow {}",
+            "{}{}flow {}{link_name}",
             visibility_prefix(function.visibility),
+            prefix,
             function.name
         );
+
+        if function.external {
+            self.extern_function(&header, function);
+            return;
+        }
 
         if function.params.is_empty() && function.return_type.is_none() {
             self.line(format!("{header} {{"));
@@ -157,6 +178,28 @@ impl PrettyPrinter {
         self.statements(&function.body);
         self.indent -= 1;
         self.line("}");
+    }
+
+    fn extern_function(&mut self, header: &str, function: &FunctionDecl) {
+        if function.params.is_empty() && function.return_type.is_none() {
+            self.line(header);
+            return;
+        }
+
+        self.line(header);
+        self.indent += 1;
+        for param in &function.params {
+            self.line(format!(
+                "{} {}: {}",
+                direction_glyph(param.direction),
+                param.name,
+                format_type(&param.ty)
+            ));
+        }
+        if let Some(return_type) = &function.return_type {
+            self.line(format!("=> {}", format_type(return_type)));
+        }
+        self.indent -= 1;
     }
 
     fn statements(&mut self, block: &Block) {

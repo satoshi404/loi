@@ -45,6 +45,7 @@
           <a href="#language">Language tour</a>
           <a href="#ownership">Ownership &amp; memory</a>
           <a href="#stdlib">Standard library</a>
+          <a href="#c-interop">C interop</a>
         </nav>
         <h3>Tools</h3>
         <nav class="docs-nav" aria-label="Tools">
@@ -270,6 +271,15 @@ count &lt;- total as i32         // numeric cast with `as`</code></pre>
             and <code>[u8]</code>. Byte slices compare structurally. Other shapes and slices must be
             compared field by field.
           </p>
+          <p>
+            <strong>Integer arithmetic is checked.</strong> Signed <code>+</code>, <code>-</code>,
+            <code>*</code> and unary <code>-</code> trap on overflow; unsigned arithmetic wraps at
+            its declared width. <code>/</code> and <code>%</code> trap on a zero divisor,
+            <code>MIN / -1</code> traps, and <code>MIN % -1</code> is <code>0</code>. A trap prints
+            <code>loi: &lt;message&gt; at &lt;line&gt;:&lt;column&gt;</code> and exits with status 1.
+            Literal-only expressions are folded, so a constant overflow or zero divisor is reported
+            at compile time. <code>as</code> remains an unchecked truncating cast.
+          </p>
 
           <h3>Number and string literals</h3>
           <div class="doc-code">
@@ -351,8 +361,10 @@ for i in 0..len(explicit) {
 
           <div class="doc-callout warn">
             <strong>Literal lifetime.</strong> A slice literal's backing array has automatic storage
-            in the enclosing block. Do not return it from a flow. If the data must outlive the block,
-            allocate it inside a <code>protect</code> region with <code>alloc</code>.
+            in the enclosing lexical block. It must not escape that block: the checker rejects
+            returning it, assigning it to a variable declared outside the block, or embedding it in a
+            shape that then escapes. If the data must outlive the block, allocate it inside a
+            <code>protect</code> region with <code>alloc</code>.
           </div>
 
           <h3>Globals and imports</h3>
@@ -472,6 +484,10 @@ print(other.x)</code></pre>
             <li>An allocation made by a called flow belongs to the nearest enclosing
               <code>protect</code> of the caller.</li>
             <li>Region taint is checked: allocated data cannot be returned or stored past the block.</li>
+            <li>The arena grows in chunks. <code>--arena-size BYTES</code> sets the first chunk
+              (default 64 MiB), not a hard limit; later chunks grow geometrically, and a single
+              oversized allocation gets a dedicated chunk. Existing slices stay valid because chunks
+              are never moved.</li>
           </ul>
 
           <h3>No pointers</h3>
@@ -575,6 +591,80 @@ open flow main
           </p>
         </section>
 
+        <section id="c-interop">
+          <h2>C interop</h2>
+          <p>
+            Foreign APIs are declared in vendored binding files with <code>opaque</code>,
+            <code>cstr</code> and <code>extern flow</code>. Application code imports the binding file;
+            it never needs a pointer type.
+          </p>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>sdl2_min.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code>opaque SDL_Window
+
+extern flow SDL_Init
+    &lt;- flags: u32
+    =&gt; i32
+
+extern flow SDL_CreateWindow
+    &lt;- title: cstr
+    &lt;- x: i32
+    &lt;- y: i32
+    &lt;- w: i32
+    &lt;- h: i32
+    &lt;- flags: u32
+    =&gt; SDL_Window
+
+extern flow SDL_DestroyWindow
+    &lt;- window: SDL_Window</code></pre>
+          </div>
+
+          <table class="doc-table">
+            <thead>
+              <tr><th>Form</th><th>Meaning</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>opaque Name</code></td><td>A copyable foreign handle represented as <code>void *</code>; no fields or dereference.</td></tr>
+              <tr><td><code>cstr</code></td><td>A <code>const char *</code> handle. A string literal may be passed or bound to it; arbitrary <code>[u8]</code> may not.</td></tr>
+              <tr><td><code>extern flow f ...</code></td><td>A bodyless declaration resolved to a C symbol at link time.</td></tr>
+              <tr><td><code>extern flow f as c_f ...</code></td><td>Calls a different symbol, such as a generated shim.</td></tr>
+            </tbody>
+          </table>
+
+          <p>
+            <code>loi build ... --c-source shim.c --cc-flag -Ipath --cc-flag -lname</code>
+            compiles and links vendored C shims. Link flags are placed after the objects, so
+            <code>-l</code> libraries resolve normally.
+          </p>
+
+          <p>
+            Generate bindings from a C header with the conservative binding generator:
+          </p>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
+            <pre><code>python3 tools/bindgen/bindgen.py \
+    --header vendor/sdl2/include/SDL2/SDL.h \
+    --include vendor/sdl2/include \
+    --include vendor/sdl2/include/SDL2 \
+    --output vendor/sdl2/sdl2.loi \
+    --shim vendor/sdl2/sdl2_shim.c \
+    --skipped vendor/sdl2/skipped.txt \
+    --module sdl2 --prefix SDL_</code></pre>
+          </div>
+
+          <p>
+            Complete pointer-free records become <code>shape</code>s; incomplete or unsafe records
+            become <code>opaque</code> handles. Struct and out-parameter conversions go through a
+            generated <code>memcpy</code> shim with <code>_Static_assert</code> layout checks.
+            Callbacks, variadics, unions, bitfields, inline arrays, pointer-to-pointer, mutable
+            <code>char *</code> buffers, wide strings and pointers to unsafe records are skipped and
+            reported in <code>skipped.txt</code>. <code>vendor/sdl2/</code> is a complete worked
+            example.
+          </p>
+        </section>
+
         <section id="cli">
           <h2>CLI reference</h2>
           <p>
@@ -610,10 +700,11 @@ open flow main
               <tr><td><code>--emit-c FILE</code></td><td>Retains the generated C alongside the output.</td></tr>
               <tr><td><code>--emit-h FILE</code></td><td>Writes a C header for exported declarations.</td></tr>
               <tr><td><code>--emit-ir FILE</code></td><td>Writes the draft three-address IR.</td></tr>
-              <tr><td><code>--emit-asm FILE</code></td><td>Writes the draft x86-64 assembly lowering.</td></tr>
+              <tr><td><code>--emit-asm FILE</code></td><td>Disabled: the assembly backend is an unfinished draft. The CLI rejects the flag with exit 2; use generated C or <code>--emit-c</code>.</td></tr>
               <tr><td><code>--source-map FILE</code></td><td>Writes source-map JSON Lines.</td></tr>
-              <tr><td><code>--arena-size BYTES</code></td><td>Sets the <code>protect</code> arena size (default 64 MiB).</td></tr>
-              <tr><td><code>--cc-flag FLAG</code></td><td>Passes an extra flag to <code>cc</code>; repeatable.</td></tr>
+              <tr><td><code>--arena-size BYTES</code></td><td>Sets the initial <code>protect</code> arena chunk size (default 64 MiB); the arena still grows as needed.</td></tr>
+              <tr><td><code>--cc-flag FLAG</code></td><td>Passes an extra flag to <code>cc</code>; repeatable. Link flags follow the objects.</td></tr>
+              <tr><td><code>--c-source FILE</code></td><td>Compiles and links an extra C file, such as a vendored FFI shim; repeatable.</td></tr>
             </tbody>
           </table>
 
@@ -761,13 +852,15 @@ sealed flow winning_line
         <section id="reference">
           <h2>Syntax reference</h2>
           <p>
-            This is a compact reference for the accepted surface. The full specification lives in
+            This is a compact reference for the accepted surface. The canonical surface file is
+            <code>SINTAXE.md</code> at the repository root; the full language specification lives in
             <code>development/LOI_SPEC.md</code>.
           </p>
 
           <h3>Keywords</h3>
           <p>
             <code>shape</code>, <code>flow</code>, <code>open</code>, <code>sealed</code>,
+            <code>extern</code>, <code>opaque</code>,
             <code>mut</code>, <code>give</code>, <code>clone</code>, <code>protect</code>,
             <code>alloc</code>, <code>import</code>, <code>comptime</code>, <code>if</code>,
             <code>else</code>, <code>while</code>, <code>for</code>, <code>in</code>,
@@ -790,7 +883,8 @@ sealed flow winning_line
               <tr><td><code>f32</code>, <code>f64</code></td><td>Floating point. Unsuffixed float literals default to <code>f64</code>.</td></tr>
               <tr><td><code>bool</code></td><td><code>true</code> / <code>false</code>.</td></tr>
               <tr><td><code>[T]</code></td><td>A slice of <code>T</code>.</td></tr>
-              <tr><td><code>Name</code></td><td>A declared <code>shape</code>.</td></tr>
+              <tr><td><code>Name</code></td><td>A declared <code>shape</code> or <code>opaque</code> handle.</td></tr>
+              <tr><td><code>cstr</code></td><td>An FFI-only NUL-terminated C string handle.</td></tr>
             </tbody>
           </table>
 
@@ -812,6 +906,8 @@ sealed flow winning_line
               <tr><td>Region</td><td><code>protect { alloc(-&gt; xs, T, n) }</code></td></tr>
               <tr><td>Return</td><td><code>=&gt; value</code> or <code>=&gt;</code></td></tr>
               <tr><td>Import</td><td><code>import "lib/std.loi"</code></td></tr>
+              <tr><td>Opaque handle</td><td><code>opaque SDL_Window</code></td></tr>
+              <tr><td>Extern flow</td><td><code>extern flow SDL_Init &lt;- flags: u32 =&gt; i32</code></td></tr>
             </tbody>
           </table>
 
@@ -865,7 +961,8 @@ sealed flow winning_line
               <tr><td>Type checker</td><td>Working, including literal ranges, intrinsic signatures, shape cycle detection and canonical diagnostics.</td></tr>
               <tr><td>Ownership analysis</td><td>Working: give liveness, definite assignment, exclusive <code>&lt;-&gt;</code>, region escape checks.</td></tr>
               <tr><td>C backend</td><td>Working: one C11 translation unit, bounds checks, regions, source maps, headers, multi-file objects.</td></tr>
-              <tr><td>IR and assembly</td><td>Draft: emitted on request, not used for production builds yet.</td></tr>
+              <tr><td>C interop</td><td>Working: <code>opaque</code>, <code>cstr</code>, <code>extern flow</code>, <code>--c-source</code>, and a header-to-Loi binding generator.</td></tr>
+              <tr><td>IR and assembly</td><td>Draft: <code>--emit-ir</code> emits IR text; <code>--emit-asm</code> is rejected because the assembly backend cannot generate runnable code yet. The C backend is the production path.</td></tr>
               <tr><td><code>comptime</code></td><td>Specified but not implemented: no constant evaluator or parser support yet.</td></tr>
               <tr><td>Resources (<code>guard</code>)</td><td>Specified, not implemented.</td></tr>
             </tbody>
@@ -876,9 +973,11 @@ sealed flow winning_line
             <li>No stdin, file, socket or process API. Programs are deterministic unless they use time-like external inputs; Loi has none yet.</li>
             <li>Imports are textual and cross-file visibility is not enforced. Multi-file builds give sealed flows external linkage so cross-file calls link.</li>
             <li>Globals are limited to scalars, <code>bool</code> and <code>[u8]</code> initialized from a string literal. Composite globals await a runtime constructor.</li>
-            <li>A slice literal cannot be returned from a flow; allocate long-lived data in a <code>protect</code> region.</li>
-            <li><code>&lt;-</code> composite parameters are passed to C by value. The checker forbids storing or returning the borrowed value, so single-threaded semantics are preserved, but the spec's "by address" wording is not literally implemented.</li>
+            <li>A slice literal cannot escape the block that created it, including being returned or stored into an outer variable; allocate long-lived data in a <code>protect</code> region.</li>
+            <li><code>&lt;-</code> composite parameters are passed to C by value (slice headers still point at the caller's data). The checker forbids storing or returning the borrowed value, so the parameter stays observationally read-only.</li>
             <li>The pretty-printer discards comments and prints shape literals on one line.</li>
+            <li>Binding generation is conservative: callbacks, variadics, unions, bitfields, inline arrays, pointer-to-pointer, mutable <code>char *</code> buffers, wide strings and pointers to unsafe records need a hand-written shim.</li>
+            <li>The SDL2 and raylib 5.5 bindings and their shims are syntax-verified, but full link/run tests need a machine with those runtimes installed.</li>
             <li>The playground executes code on the machine running the server. Run it locally and do not expose it as a public service.</li>
           </ul>
 
@@ -892,7 +991,9 @@ cargo test --all-targets</code></pre>
           </div>
           <p>
             The suite covers the lexer, parser, formatter, checker, ownership rules, CLI, code
-            generation, the reference programs and the tic-tac-toe example.
+            generation, C interop/bindgen, the reference programs and the tic-tac-toe example.
+            Generated SDL2 bindings are checked with <code>loi check vendor/sdl2/sdl2.loi</code>,
+            and the generated shim with <code>clang -fsyntax-only</code>.
           </p>
         </section>
 

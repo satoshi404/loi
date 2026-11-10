@@ -157,6 +157,12 @@ impl Parser {
 
         if self.at(TokenKind::Shape) {
             Ok(Item::Interface(self.parse_interface(visibility, span)?))
+        } else if self.at(TokenKind::Opaque) {
+            Ok(Item::Opaque(self.parse_opaque(visibility, span)?))
+        } else if self.at(TokenKind::Extern) {
+            Ok(Item::Function(
+                self.parse_extern_function(visibility, span)?,
+            ))
         } else if self.at(TokenKind::Flow) {
             Ok(Item::Function(self.parse_function(visibility, span)?))
         } else if self.at(TokenKind::Mut)
@@ -166,7 +172,7 @@ impl Parser {
             Ok(Item::Global(self.parse_flow_global(visibility, span)?))
         } else {
             Err(self.error_current(format!(
-                "expected 'import', 'shape', 'flow' or a global binding, found {}",
+                "expected 'import', 'shape', 'opaque', 'extern flow', 'flow' or a global binding, found {}",
                 self.describe_current()
             )))
         }
@@ -272,6 +278,17 @@ impl Parser {
         })
     }
 
+    /// `opaque Name` declares a foreign handle type.
+    fn parse_opaque(&mut self, visibility: Visibility, span: Span) -> ParseResult<OpaqueDecl> {
+        self.expect(TokenKind::Opaque, "'opaque'")?;
+        let name = self.parse_identifier("opaque type name")?;
+        Ok(OpaqueDecl {
+            span,
+            visibility,
+            name,
+        })
+    }
+
     fn parse_function(&mut self, visibility: Visibility, span: Span) -> ParseResult<FunctionDecl> {
         if !self.matches(TokenKind::Flow) {
             self.expect(TokenKind::Flow, "'flow'")?;
@@ -279,11 +296,7 @@ impl Parser {
         let name = self.parse_identifier("function name")?;
         self.skip_newlines();
 
-        let (params, return_type) = if self.at(TokenKind::LParen) {
-            self.parse_inline_signature()?
-        } else {
-            self.parse_flow_signature()?
-        };
+        let (params, return_type) = self.parse_signature(false)?;
 
         self.skip_newlines();
         let body = self.parse_block()?;
@@ -295,7 +308,55 @@ impl Parser {
             params,
             return_type,
             body,
+            external: false,
+            link_name: None,
         })
+    }
+
+    /// `extern flow name [as c_symbol]` declares a C function. It has a
+    /// signature but no Loi body.
+    fn parse_extern_function(
+        &mut self,
+        visibility: Visibility,
+        span: Span,
+    ) -> ParseResult<FunctionDecl> {
+        self.expect(TokenKind::Extern, "'extern'")?;
+        self.expect(TokenKind::Flow, "'flow' after 'extern'")?;
+        let name = self.parse_identifier("extern function name")?;
+        let link_name = if self.matches(TokenKind::As) {
+            Some(self.parse_identifier("C symbol name")?)
+        } else {
+            None
+        };
+        self.skip_newlines();
+
+        let (params, return_type) = self.parse_signature(true)?;
+
+        self.skip_newlines();
+        if self.at(TokenKind::LBrace) {
+            return Err(self.error_current("an extern flow declares no body"));
+        }
+
+        Ok(FunctionDecl {
+            span,
+            visibility,
+            name,
+            params,
+            return_type,
+            body: Block {
+                statements: Vec::new(),
+            },
+            external: true,
+            link_name,
+        })
+    }
+
+    fn parse_signature(&mut self, external: bool) -> ParseResult<(Vec<Param>, Option<Type>)> {
+        if self.at(TokenKind::LParen) {
+            self.parse_inline_signature()
+        } else {
+            self.parse_flow_signature(external)
+        }
     }
 
     /// Inline signature: `flow f(<- x: T) => R`.
@@ -346,7 +407,7 @@ impl Parser {
     ///     => i32
     /// { ... }
     /// ```
-    fn parse_flow_signature(&mut self) -> ParseResult<(Vec<Param>, Option<Type>)> {
+    fn parse_flow_signature(&mut self, external: bool) -> ParseResult<(Vec<Param>, Option<Type>)> {
         let mut params = Vec::new();
         let mut return_type = None;
 
@@ -366,6 +427,7 @@ impl Parser {
                     self.advance();
                     return_type = Some(self.parse_type()?);
                 }
+                _ if external => break,
                 _ => {
                     return Err(self.error_current(format!(
                         "expected a parameter clause, '=> Type' or '{{', found {}",

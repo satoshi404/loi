@@ -39,10 +39,10 @@ fn has_c_compiler() -> bool {
 /// The harness `#include`s the generated translation unit so it can reach the
 /// otherwise `static` functions. The test is skipped when no C compiler is
 /// available.
-fn compile_and_run(name: &str, source: &str, harness: &str) {
+fn compile_and_run_output(name: &str, source: &str, harness: &str) -> Option<std::process::Output> {
     if !has_c_compiler() {
         eprintln!("skipping {name}: no C compiler found");
-        return;
+        return None;
     }
 
     let dir =
@@ -81,12 +81,37 @@ fn compile_and_run(name: &str, source: &str, harness: &str) {
         .output()
         .expect("compiled program should run");
     let _ = fs::remove_dir_all(&dir);
+    Some(run)
+}
+
+fn compile_and_run(name: &str, source: &str, harness: &str) {
+    let Some(run) = compile_and_run_output(name, source, harness) else {
+        return;
+    };
     assert_eq!(
         run.status.code(),
         Some(0),
         "program for {name} failed:\nstdout: {}\nstderr: {}",
         String::from_utf8_lossy(&run.stdout),
         String::from_utf8_lossy(&run.stderr)
+    );
+}
+
+fn assert_runtime_trap(name: &str, source: &str, harness: &str, message: &str) {
+    let Some(run) = compile_and_run_output(name, source, harness) else {
+        return;
+    };
+    assert_eq!(
+        run.status.code(),
+        Some(1),
+        "program for {name} should trap with exit 1:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        stderr.contains(message) && stderr.contains(" at "),
+        "expected {message:?} with a source position, got: {stderr}"
     );
 }
 
@@ -442,8 +467,8 @@ fn generated_strings_slices_len_and_globals() {
     );
 
     assert!(
-        c.contains("static unsigned char loi_str_0[] = { 104, 105 };"),
-        "string literals should become static byte arrays:\n{c}"
+        c.contains("static unsigned char loi_str_0[] = { 104, 105, 0 };"),
+        "string literals should become NUL-terminated static byte arrays:\n{c}"
     );
     assert!(
         c.contains("LoiSlice loi_g_GREETING"),
@@ -495,6 +520,44 @@ int main(void) {
 }
 
 #[test]
+fn extern_flows_use_c_symbols_and_cstr_literals_are_nul_terminated() {
+    let c = generated(
+        "opaque Handle\n\n\
+         extern flow make\n\
+             <- x: i32\n\
+             => Handle\n\n\
+         extern flow release\n\
+             <- h: Handle\n\n\
+         extern flow title as c_title\n\
+             <- text: cstr\n\
+             => i32\n\n\
+         flow main\n\
+             => i32\n\
+         {\n\
+             mut h: Handle\n\
+             h = make(7)\n\
+             release(h)\n\
+             => title(\"loi\")\n\
+         }\n",
+    );
+
+    assert!(c.contains("void * make(int32_t loi_v_x);"), "{c}");
+    assert!(c.contains("void release(void * loi_v_h);"), "{c}");
+    assert!(
+        c.contains("int32_t c_title(const char * loi_v_text);"),
+        "{c}"
+    );
+    assert!(c.contains("make(7)"), "{c}");
+    assert!(c.contains("release(loi_v_h)"), "{c}");
+    assert!(c.contains("c_title(((const char*)loi_str_0))"), "{c}");
+    assert!(
+        c.contains("static unsigned char loi_str_0[] = { 108, 111, 105, 0 };"),
+        "{c}"
+    );
+    assert!(!c.contains("loi_fn_make"), "{c}");
+}
+
+#[test]
 fn generated_math_intrinsics_and_eprint() {
     let c = generated(
         "flow math\n    <- x: f64\n    => f64\n{\n    => floor(x) + ceil(x) + fabs(x) + pow(x, 2.0) + fmod(x, 3.0)\n}\n\nflow warn\n    <- msg: [u8]\n{\n    eprint(msg)\n}\n",
@@ -507,4 +570,129 @@ fn generated_math_intrinsics_and_eprint() {
         c.contains("fwrite(") && c.contains("stderr"),
         "eprint should write to stderr:\n{c}"
     );
+}
+
+const ARITHMETIC_SOURCE: &str = "flow add_i32\n    <- a: i32\n    <- b: i32\n    => i32\n{\n    => a + b\n}\n\nflow sub_i8\n    <- a: i8\n    <- b: i8\n    => i8\n{\n    => a - b\n}\n\nflow mul_i32\n    <- a: i32\n    <- b: i32\n    => i32\n{\n    => a * b\n}\n\nflow neg_i32\n    <- a: i32\n    => i32\n{\n    => -a\n}\n\nflow div_i32\n    <- a: i32\n    <- b: i32\n    => i32\n{\n    => a / b\n}\n\nflow rem_i32\n    <- a: i32\n    <- b: i32\n    => i32\n{\n    => a % b\n}\n\nflow add_u8\n    <- a: u8\n    <- b: u8\n    => u8\n{\n    => a + b\n}\n\nflow sub_u8\n    <- a: u8\n    <- b: u8\n    => u8\n{\n    => a - b\n}\n\nflow mul_u8\n    <- a: u8\n    <- b: u8\n    => u8\n{\n    => a * b\n}\n\nflow add_u32\n    <- a: u32\n    <- b: u32\n    => u32\n{\n    => a + b\n}\n\nflow sub_u64\n    <- a: u64\n    <- b: u64\n    => u64\n{\n    => a - b\n}\n\nflow div_u64\n    <- a: u64\n    <- b: u64\n    => u64\n{\n    => a / b\n}\n\nflow rem_u64\n    <- a: u64\n    <- b: u64\n    => u64\n{\n    => a % b\n}\n";
+
+#[test]
+fn signed_arithmetic_uses_checked_helpers() {
+    let c = generated(ARITHMETIC_SOURCE);
+    for helper in [
+        "loi_add_i32(",
+        "loi_sub_i8(",
+        "loi_mul_i32(",
+        "loi_neg_i32(",
+        "loi_div_i32(",
+        "loi_rem_i32(",
+    ] {
+        assert!(c.contains(helper), "missing {helper}:\n{c}");
+    }
+    assert!(c.contains("loi_div_u64("), "{c}");
+    assert!(c.contains("loi_rem_u64("), "{c}");
+}
+
+#[test]
+fn signed_arithmetic_traps_on_overflow() {
+    let cases = [
+        (
+            "add-i32",
+            "int main(void) { return (int)loi_fn_add_i32(INT32_MAX, 1); }",
+        ),
+        (
+            "sub-i8",
+            "int main(void) { return (int)loi_fn_sub_i8(INT8_MIN, 1); }",
+        ),
+        (
+            "mul-i32",
+            "int main(void) { return (int)loi_fn_mul_i32(100000, 100000); }",
+        ),
+        (
+            "neg-i32",
+            "int main(void) { return (int)loi_fn_neg_i32(INT32_MIN); }",
+        ),
+    ];
+    for (name, harness) in cases {
+        assert_runtime_trap(
+            name,
+            &generated(ARITHMETIC_SOURCE),
+            harness,
+            "integer overflow",
+        );
+    }
+}
+
+#[test]
+fn division_and_remainder_by_zero_trap_with_a_position() {
+    assert_runtime_trap(
+        "div-zero",
+        &generated(ARITHMETIC_SOURCE),
+        "int main(void) { return (int)loi_fn_div_i32(10, 0); }",
+        "division by zero",
+    );
+    assert_runtime_trap(
+        "rem-zero",
+        &generated(ARITHMETIC_SOURCE),
+        "int main(void) { return (int)loi_fn_rem_i32(10, 0); }",
+        "remainder by zero",
+    );
+}
+
+#[test]
+fn signed_min_divided_by_negative_one_traps_but_remainder_is_zero() {
+    assert_runtime_trap(
+        "min-div-minus-one",
+        &generated(ARITHMETIC_SOURCE),
+        "int main(void) { return (int)loi_fn_div_i32(INT32_MIN, -1); }",
+        "integer overflow",
+    );
+
+    let harness = r#"
+int main(void) {
+    if (loi_fn_rem_i32(INT32_MIN, -1) != 0) return 1;
+    if (loi_fn_div_i32(INT32_MIN, 1) != INT32_MIN) return 2;
+    if (loi_fn_div_i32(-7, 2) != -3) return 3;
+    if (loi_fn_rem_i32(-7, 2) != -1) return 4;
+    return 0;
+}
+"#;
+    compile_and_run("min-rem-minus-one", &generated(ARITHMETIC_SOURCE), harness);
+}
+
+#[test]
+fn unsigned_arithmetic_wraps_at_its_declared_width() {
+    let harness = r#"
+int main(void) {
+    if (loi_fn_add_u8(255, 1) != 0) return 1;
+    if (loi_fn_sub_u8(0, 1) != 255) return 2;
+    if (loi_fn_mul_u8(200, 2) != 144) return 3;
+    if (loi_fn_add_u32(UINT32_MAX, 1) != 0) return 4;
+    if (loi_fn_sub_u64(0, 1) != UINT64_MAX) return 5;
+    if (loi_fn_div_u64(100, 3) != 33) return 6;
+    if (loi_fn_rem_u64(100, 3) != 1) return 7;
+    return 0;
+}
+"#;
+    compile_and_run("unsigned-wrap", &generated(ARITHMETIC_SOURCE), harness);
+}
+
+#[test]
+fn arena_grows_in_chunks_and_reuses_space_after_reset() {
+    let source = "flow fill\n    <- n: u32\n    => u64\n{\n    protect {\n        mut total: u64 <- 0\n        for i in 0..n {\n            mut items: [i64]\n            alloc(-> items, i64, 64)\n            items[0] = i as i64\n            total += items[0] as u64\n        }\n        => total\n    }\n}\n\nflow one_big\n    => i64\n{\n    protect {\n        mut items: [i64]\n        alloc(-> items, i64, 10000)\n        items[9999] = 7\n        => items[9999]\n    }\n}\n";
+    // Keep the first chunk tiny so the test does not need to allocate 64 MiB.
+    let c = format!("#define LOI_ARENA_SIZE 1024\n{}", generated(source));
+    let harness = r#"
+int main(void) {
+    size_t save = loi_arena_top;
+    if (loi_fn_fill(10) != 45) return 1;
+    if (loi_arena_capacity <= 1024) return 2;
+    if (loi_arena_top != save) return 3;
+    if (loi_fn_fill(10) != 45) return 4;
+    if (loi_fn_one_big() != 7) return 5;
+    if (loi_arena_capacity <= 80000) return 6;
+    loi_arena_top = save;
+    if (loi_fn_fill(1) != 0) return 7;
+    return 0;
+}
+"#;
+    compile_and_run("arena-grow", &c, harness);
 }

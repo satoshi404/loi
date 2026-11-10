@@ -73,6 +73,22 @@ fn formats_alloc_give_clone_and_argument_directions() {
 }
 
 #[test]
+fn formats_opaque_and_extern_flows_stably() {
+    let source = r#"opaque Handle
+
+extern flow make
+    <- x: i32
+    => Handle
+
+extern flow renamed as c_renamed
+    <- text: cstr
+    => i32
+"#;
+    let formatted = assert_format_stable(source);
+    assert_eq!(formatted, source);
+}
+
+#[test]
 fn formats_imports_globals_strings_and_slice_literals() {
     let formatted = assert_format_stable(
         "import \"lib/std.loi\"\n\

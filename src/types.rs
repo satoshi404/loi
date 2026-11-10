@@ -25,6 +25,11 @@ pub enum Ty {
     Bool,
     /// A user-declared `shape`.
     Named(String),
+    /// A foreign handle declared with `opaque Name`.
+    Opaque(String),
+    /// A NUL-terminated C string handle. Constructed from a string literal or
+    /// returned by an `extern flow`; never inspected in Loi.
+    CStr,
     /// A slice type, written `[T]`.
     Slice(Box<Ty>),
     /// The type of an unsuffixed integer literal before coercion.
@@ -123,6 +128,8 @@ impl fmt::Display for Ty {
             Ty::F64 => write!(f, "f64"),
             Ty::Bool => write!(f, "bool"),
             Ty::Named(name) => write!(f, "{name}"),
+            Ty::Opaque(name) => write!(f, "{name}"),
+            Ty::CStr => write!(f, "cstr"),
             Ty::Slice(element) => write!(f, "[{element}]"),
             Ty::IntLiteral => write!(f, "integer literal"),
             Ty::FloatLiteral => write!(f, "float literal"),

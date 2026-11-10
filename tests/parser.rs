@@ -46,6 +46,7 @@ fn parses_the_reference_program() {
         .iter()
         .filter_map(|item| match item {
             Item::Interface(interface) => Some(interface.name.as_str()),
+            Item::Opaque(opaque) => Some(opaque.name.as_str()),
             Item::Function(function) => Some(function.name.as_str()),
             Item::Global(global) => Some(global.name.as_str()),
             Item::Import(_) => None,
@@ -65,6 +66,50 @@ fn parses_the_reference_program() {
             "total_mass",
             "main",
         ]
+    );
+}
+
+#[test]
+fn parses_opaque_and_extern_flow_declarations() {
+    let program = parse_source(
+        "opaque Handle\n\
+         \n\
+         extern flow make\n\
+             <- x: i32\n\
+             => Handle\n\
+         \n\
+         extern flow release\n\
+             <- h: Handle\n\
+         \n\
+         extern flow renamed as c_renamed\n\
+             <- text: cstr\n\
+             => i32\n",
+    );
+
+    let opaque = program
+        .items
+        .iter()
+        .find_map(|item| match item {
+            Item::Opaque(opaque) => Some(opaque),
+            _ => None,
+        })
+        .expect("opaque declaration should parse");
+    assert_eq!(opaque.name, "Handle");
+
+    let make = function(&program, "make");
+    assert!(make.external);
+    assert_eq!(make.link_name, None);
+    assert_eq!(make.params.len(), 1);
+    assert_eq!(make.return_type, Some(Type::Named("Handle".to_string())));
+
+    let renamed = function(&program, "renamed");
+    assert!(renamed.external);
+    assert_eq!(renamed.link_name.as_deref(), Some("c_renamed"));
+
+    let tokens = tokenize("extern flow bad {\n}\n", "<test>").expect("source should lex");
+    assert!(
+        parse(tokens).is_err(),
+        "an extern flow must not have a body"
     );
 }
 

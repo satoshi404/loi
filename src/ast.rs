@@ -51,6 +51,7 @@ pub struct Program {
 pub enum Item {
     Import(ImportDecl),
     Interface(InterfaceDecl),
+    Opaque(OpaqueDecl),
     Global(GlobalDecl),
     Function(FunctionDecl),
 }
@@ -64,6 +65,7 @@ impl Item {
         match self {
             Item::Import(_) => None,
             Item::Interface(decl) => Some(&decl.name),
+            Item::Opaque(decl) => Some(&decl.name),
             Item::Global(decl) => Some(&decl.name),
             Item::Function(decl) => Some(&decl.name),
         }
@@ -105,6 +107,16 @@ pub struct FieldDecl {
     pub default: Option<Expr>,
 }
 
+/// A foreign handle. `opaque Name` is a distinct, copyable scalar that the
+/// backend represents as an opaque pointer (`void *`). It cannot be
+/// dereferenced, indexed or inspected; it only moves across the FFI boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpaqueDecl {
+    pub span: Span,
+    pub visibility: Visibility,
+    pub name: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionDecl {
     pub span: Span,
@@ -113,6 +125,12 @@ pub struct FunctionDecl {
     pub params: Vec<Param>,
     pub return_type: Option<Type>,
     pub body: Block,
+    /// True for `extern flow`: the declaration has no Loi body and resolves to
+    /// a C symbol at link time.
+    pub external: bool,
+    /// Optional C symbol for an `extern flow ... as <symbol>` declaration.
+    /// `None` means the Loi name is the C symbol.
+    pub link_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

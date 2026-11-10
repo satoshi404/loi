@@ -1,0 +1,3297 @@
+Declarations skipped by tools/bindgen/bindgen.py
+Header: /root/loi/vendor/sdl2/include/SDL2/SDL.h
+Functions bound: 635
+Constants bound: 1145
+Shapes bound: 9
+Opaque handles bound: 24
+
+SDL_AddEventWatch: parameter 'filter' is an unsafe record by value ('struct SDL_Event')
+SDL_AddHintCallback: parameter 'callback' has unsupported type 'SDL_HintCallback'
+SDL_AddTimer: parameter 'callback' has unsupported type 'SDL_TimerCallback'
+SDL_AtomicCASPtr: parameter 'a' is a pointer-to-pointer
+SDL_AtomicGetPtr: parameter 'a' is a pointer-to-pointer
+SDL_AtomicSetPtr: parameter 'a' is a pointer-to-pointer
+SDL_BuildAudioCVT: parameter 'cvt' points to unsafe record 'struct SDL_AudioCVT'
+SDL_ConvertAudio: parameter 'cvt' points to unsafe record 'struct SDL_AudioCVT'
+SDL_ConvertSurface: parameter 'src' points to unsafe record 'struct SDL_Surface'
+SDL_ConvertSurfaceFormat: parameter 'src' points to unsafe record 'struct SDL_Surface'
+SDL_CreateColorCursor: parameter 'surface' points to unsafe record 'struct SDL_Surface'
+SDL_CreateCursor: parameter 'data' is a const pointer to a scalar
+SDL_CreateSoftwareRenderer: parameter 'surface' points to unsafe record 'struct SDL_Surface'
+SDL_CreateTextureFromSurface: parameter 'surface' points to unsafe record 'struct SDL_Surface'
+SDL_CreateThread: parameter 'fn' has unsupported type 'SDL_ThreadFunction'
+SDL_CreateThreadWithStackSize: parameter 'fn' has unsupported type 'SDL_ThreadFunction'
+SDL_CreateWindowAndRenderer: parameter 'window' is a pointer-to-pointer
+SDL_DelEventWatch: parameter 'filter' is an unsafe record by value ('struct SDL_Event')
+SDL_DelHintCallback: parameter 'callback' has unsupported type 'SDL_HintCallback'
+SDL_DuplicateSurface: parameter 'surface' points to unsafe record 'struct SDL_Surface'
+SDL_FRectEmpty: static or inline function
+SDL_FRectEquals: static or inline function
+SDL_FRectEqualsEpsilon: static or inline function
+SDL_FillRect: parameter 'dst' points to unsafe record 'struct SDL_Surface'
+SDL_FillRects: parameter 'dst' points to unsafe record 'struct SDL_Surface'
+SDL_FilterEvents: parameter 'filter' is an unsafe record by value ('struct SDL_Event')
+SDL_FreeFormat: parameter 'format' points to unsafe record 'struct SDL_PixelFormat'
+SDL_FreePalette: parameter 'palette' points to unsafe record 'struct SDL_Palette'
+SDL_FreeRW: parameter 'area' points to unsafe record 'struct SDL_RWops'
+SDL_FreeSurface: parameter 'surface' points to unsafe record 'struct SDL_Surface'
+SDL_GUIDFromString: returns unsafe record 'struct SDL_GUID' by value
+SDL_GUIDToString: parameter 'guid' is an unsafe record by value ('struct SDL_GUID')
+SDL_GameControllerAddMappingsFromRW: parameter 'rw' points to unsafe record 'struct SDL_RWops'
+SDL_GameControllerGetBindForAxis: returns unsafe record 'struct SDL_GameControllerButtonBind' by value
+SDL_GameControllerGetBindForButton: returns unsafe record 'struct SDL_GameControllerButtonBind' by value
+SDL_GameControllerMapping: returns unsupported pointer type 'char *'
+SDL_GameControllerMappingForDeviceIndex: returns unsupported pointer type 'char *'
+SDL_GameControllerMappingForGUID: returns unsupported pointer type 'char *'
+SDL_GameControllerMappingForIndex: returns unsupported pointer type 'char *'
+SDL_GetAssertionHandler: returns unsafe record 'struct SDL_AssertData' by value
+SDL_GetAudioDeviceSpec: parameter 'spec' points to unsafe record 'struct SDL_AudioSpec'
+SDL_GetBasePath: returns unsupported pointer type 'char *'
+SDL_GetClipRect: parameter 'surface' points to unsafe record 'struct SDL_Surface'
+SDL_GetClipboardText: returns unsupported pointer type 'char *'
+SDL_GetClosestDisplayMode: returns a pointer to record 'struct SDL_DisplayMode'
+SDL_GetColorKey: parameter 'surface' points to unsafe record 'struct SDL_Surface'
+SDL_GetDefaultAssertionHandler: returns unsafe record 'struct SDL_AssertData' by value
+SDL_GetDefaultAudioInfo: parameter 'name' is a pointer-to-pointer
+SDL_GetErrorMsg: returns unsupported pointer type 'char *'
+SDL_GetEventFilter: parameter 'filter' points to unsafe record 'struct SDL_Event'
+SDL_GetJoystickGUIDInfo: parameter 'guid' is an unsafe record by value ('struct SDL_GUID')
+SDL_GetKeyboardState: returns unsupported pointer type 'const Uint8 *'
+SDL_GetMemoryFunctions: parameter 'malloc_func' has unsupported pointer type 'SDL_malloc_func *'
+SDL_GetOriginalMemoryFunctions: parameter 'malloc_func' has unsupported pointer type 'SDL_malloc_func *'
+SDL_GetPrefPath: returns unsupported pointer type 'char *'
+SDL_GetPreferredLocales: returns a pointer to record 'struct SDL_Locale'
+SDL_GetPrimarySelectionText: returns unsupported pointer type 'char *'
+SDL_GetRGB: parameter 'format' points to unsafe record 'struct SDL_PixelFormat'
+SDL_GetRGBA: parameter 'format' points to unsafe record 'struct SDL_PixelFormat'
+SDL_GetRenderDriverInfo: parameter 'info' points to unsafe record 'struct SDL_RendererInfo'
+SDL_GetRendererInfo: parameter 'info' points to unsafe record 'struct SDL_RendererInfo'
+SDL_GetShapedWindowMode: parameter 'shape_mode' points to unsafe record 'struct SDL_WindowShapeMode'
+SDL_GetSurfaceAlphaMod: parameter 'surface' points to unsafe record 'struct SDL_Surface'
+SDL_GetSurfaceBlendMode: parameter 'surface' points to unsafe record 'struct SDL_Surface'
+SDL_GetSurfaceColorMod: parameter 'surface' points to unsafe record 'struct SDL_Surface'
+SDL_GetTouchFinger: returns a pointer to record 'struct SDL_Finger'
+SDL_GetWindowMouseRect: returns a pointer to record 'struct SDL_Rect'
+SDL_HapticEffectSupported: parameter 'effect' points to unsafe record 'struct SDL_HapticEffect'
+SDL_HapticNewEffect: parameter 'effect' points to unsafe record 'struct SDL_HapticEffect'
+SDL_HapticUpdateEffect: parameter 'data' points to unsafe record 'struct SDL_HapticEffect'
+SDL_HasColorKey: parameter 'surface' points to unsafe record 'struct SDL_Surface'
+SDL_HasSurfaceRLE: parameter 'surface' points to unsafe record 'struct SDL_Surface'
+SDL_JoystickAttachVirtualEx: parameter 'desc' points to unsafe record 'struct SDL_VirtualJoystickDesc'
+SDL_JoystickGetDeviceGUID: returns unsafe record 'struct SDL_GUID' by value
+SDL_JoystickGetGUID: returns unsafe record 'struct SDL_GUID' by value
+SDL_JoystickGetGUIDFromString: returns unsafe record 'struct SDL_GUID' by value
+SDL_JoystickGetGUIDString: parameter 'guid' is an unsafe record by value ('struct SDL_GUID')
+SDL_LoadBMP_RW: parameter 'src' points to unsafe record 'struct SDL_RWops'
+SDL_LoadDollarTemplates: parameter 'src' points to unsafe record 'struct SDL_RWops'
+SDL_LoadFile_RW: parameter 'src' points to unsafe record 'struct SDL_RWops'
+SDL_LoadWAV_RW: parameter 'src' points to unsafe record 'struct SDL_RWops'
+SDL_LockSurface: parameter 'surface' points to unsafe record 'struct SDL_Surface'
+SDL_LockTexture: parameter 'pixels' is a pointer-to-pointer
+SDL_LockTextureToSurface: parameter 'surface' is a pointer-to-pointer
+SDL_Log: variadic function
+SDL_LogCritical: variadic function
+SDL_LogDebug: variadic function
+SDL_LogError: variadic function
+SDL_LogGetOutputFunction: parameter 'userdata' is a pointer-to-pointer
+SDL_LogInfo: variadic function
+SDL_LogMessage: variadic function
+SDL_LogMessageV: parameter 'ap' has unsupported type 'va_list'
+SDL_LogVerbose: variadic function
+SDL_LogWarn: variadic function
+SDL_LowerBlit: parameter 'src' points to unsafe record 'struct SDL_Surface'
+SDL_LowerBlitScaled: parameter 'src' points to unsafe record 'struct SDL_Surface'
+SDL_MapRGB: parameter 'format' points to unsafe record 'struct SDL_PixelFormat'
+SDL_MapRGBA: parameter 'format' points to unsafe record 'struct SDL_PixelFormat'
+SDL_MixAudio: parameter 'src' is a const pointer to a scalar
+SDL_MixAudioFormat: parameter 'src' is a const pointer to a scalar
+SDL_OpenAudio: parameter 'desired' points to unsafe record 'struct SDL_AudioSpec'
+SDL_OpenAudioDevice: parameter 'desired' points to unsafe record 'struct SDL_AudioSpec'
+SDL_PeepEvents: parameter 'events' points to unsafe record 'struct SDL_Event'
+SDL_PointInFRect: static or inline function
+SDL_PointInRect: static or inline function
+SDL_PollEvent: parameter 'event' points to unsafe record 'struct SDL_Event'
+SDL_PushEvent: parameter 'event' points to unsafe record 'struct SDL_Event'
+SDL_RWclose: parameter 'context' points to unsafe record 'struct SDL_RWops'
+SDL_RWread: parameter 'context' points to unsafe record 'struct SDL_RWops'
+SDL_RWseek: parameter 'context' points to unsafe record 'struct SDL_RWops'
+SDL_RWsize: parameter 'context' points to unsafe record 'struct SDL_RWops'
+SDL_RWtell: parameter 'context' points to unsafe record 'struct SDL_RWops'
+SDL_RWwrite: parameter 'context' points to unsafe record 'struct SDL_RWops'
+SDL_ReadBE16: parameter 'src' points to unsafe record 'struct SDL_RWops'
+SDL_ReadBE32: parameter 'src' points to unsafe record 'struct SDL_RWops'
+SDL_ReadBE64: parameter 'src' points to unsafe record 'struct SDL_RWops'
+SDL_ReadLE16: parameter 'src' points to unsafe record 'struct SDL_RWops'
+SDL_ReadLE32: parameter 'src' points to unsafe record 'struct SDL_RWops'
+SDL_ReadLE64: parameter 'src' points to unsafe record 'struct SDL_RWops'
+SDL_ReadU8: parameter 'src' points to unsafe record 'struct SDL_RWops'
+SDL_RectEmpty: static or inline function
+SDL_RectEquals: static or inline function
+SDL_RenderGeometry: parameter 'indices' is a const pointer to a scalar
+SDL_RenderGeometryRaw: parameter 'xy' is a const pointer to a scalar
+SDL_ReportAssertion: parameter 'arg0' points to unsafe record 'struct SDL_AssertData'
+SDL_SaveAllDollarTemplates: parameter 'dst' points to unsafe record 'struct SDL_RWops'
+SDL_SaveBMP_RW: parameter 'surface' points to unsafe record 'struct SDL_Surface'
+SDL_SaveDollarTemplate: parameter 'dst' points to unsafe record 'struct SDL_RWops'
+SDL_SetAssertionHandler: parameter 'handler' is an unsafe record by value ('struct SDL_AssertData')
+SDL_SetClipRect: parameter 'surface' points to unsafe record 'struct SDL_Surface'
+SDL_SetColorKey: parameter 'surface' points to unsafe record 'struct SDL_Surface'
+SDL_SetError: variadic function
+SDL_SetEventFilter: parameter 'filter' is an unsafe record by value ('struct SDL_Event')
+SDL_SetMemoryFunctions: parameter 'malloc_func' has unsupported type 'SDL_malloc_func'
+SDL_SetPaletteColors: parameter 'palette' points to unsafe record 'struct SDL_Palette'
+SDL_SetPixelFormatPalette: parameter 'format' points to unsafe record 'struct SDL_PixelFormat'
+SDL_SetSurfaceAlphaMod: parameter 'surface' points to unsafe record 'struct SDL_Surface'
+SDL_SetSurfaceBlendMode: parameter 'surface' points to unsafe record 'struct SDL_Surface'
+SDL_SetSurfaceColorMod: parameter 'surface' points to unsafe record 'struct SDL_Surface'
+SDL_SetSurfacePalette: parameter 'surface' points to unsafe record 'struct SDL_Surface'
+SDL_SetSurfaceRLE: parameter 'surface' points to unsafe record 'struct SDL_Surface'
+SDL_SetWindowGammaRamp: parameter 'red' is a const pointer to a scalar
+SDL_SetWindowHitTest: parameter 'callback' is an unsafe record by value ('struct SDL_Window')
+SDL_SetWindowIcon: parameter 'icon' points to unsafe record 'struct SDL_Surface'
+SDL_SetWindowShape: parameter 'shape' points to unsafe record 'struct SDL_Surface'
+SDL_ShowMessageBox: parameter 'messageboxdata' points to unsafe record 'struct SDL_MessageBoxData'
+SDL_SoftStretch: parameter 'src' points to unsafe record 'struct SDL_Surface'
+SDL_SoftStretchLinear: parameter 'src' points to unsafe record 'struct SDL_Surface'
+SDL_SwapFloat: static or inline function
+SDL_TLSSet: parameter 'destructor' has unsupported type 'SDL_TLSDestructorCallback'
+SDL_UnlockSurface: parameter 'surface' points to unsafe record 'struct SDL_Surface'
+SDL_UpdateNVTexture: parameter 'Yplane' is a const pointer to a scalar
+SDL_UpdateYUVTexture: parameter 'Yplane' is a const pointer to a scalar
+SDL_UpperBlit: parameter 'src' points to unsafe record 'struct SDL_Surface'
+SDL_UpperBlitScaled: parameter 'src' points to unsafe record 'struct SDL_Surface'
+SDL_WaitEvent: parameter 'event' points to unsafe record 'struct SDL_Event'
+SDL_WaitEventTimeout: parameter 'event' points to unsafe record 'struct SDL_Event'
+SDL_WriteBE16: parameter 'dst' points to unsafe record 'struct SDL_RWops'
+SDL_WriteBE32: parameter 'dst' points to unsafe record 'struct SDL_RWops'
+SDL_WriteBE64: parameter 'dst' points to unsafe record 'struct SDL_RWops'
+SDL_WriteLE16: parameter 'dst' points to unsafe record 'struct SDL_RWops'
+SDL_WriteLE32: parameter 'dst' points to unsafe record 'struct SDL_RWops'
+SDL_WriteLE64: parameter 'dst' points to unsafe record 'struct SDL_RWops'
+SDL_WriteU8: parameter 'dst' points to unsafe record 'struct SDL_RWops'
+SDL_asprintf: variadic function
+SDL_bsearch: parameter 'compare' has unsupported type 'SDL_CompareCallback'
+SDL_getenv: returns unsupported pointer type 'char *'
+SDL_hid_free_enumeration: parameter 'devs' points to unsafe record 'struct SDL_hid_device_info'
+SDL_hid_get_indexed_string: parameter 'string' has unsupported pointer type 'wchar_t *'
+SDL_hid_get_manufacturer_string: parameter 'string' has unsupported pointer type 'wchar_t *'
+SDL_hid_get_product_string: parameter 'string' has unsupported pointer type 'wchar_t *'
+SDL_hid_get_serial_number_string: parameter 'string' has unsupported pointer type 'wchar_t *'
+SDL_hid_open: parameter 'serial_number' has unsupported pointer type 'const wchar_t *'
+SDL_hid_send_feature_report: parameter 'data' is a const pointer to a scalar
+SDL_hid_write: parameter 'data' is a const pointer to a scalar
+SDL_iconv: parameter 'inbuf' is a pointer-to-pointer
+SDL_iconv_string: returns unsupported pointer type 'char *'
+SDL_itoa: returns unsupported pointer type 'char *'
+SDL_lltoa: returns unsupported pointer type 'char *'
+SDL_ltoa: returns unsupported pointer type 'char *'
+SDL_main: entry point
+SDL_memcpy4: static or inline function
+SDL_memset4: static or inline function
+SDL_qsort: parameter 'compare' has unsupported type 'SDL_CompareCallback'
+SDL_size_add_overflow: static or inline function
+SDL_size_mul_overflow: static or inline function
+SDL_snprintf: variadic function
+SDL_sscanf: variadic function
+SDL_strcasestr: returns unsupported pointer type 'char *'
+SDL_strchr: returns unsupported pointer type 'char *'
+SDL_strdup: returns unsupported pointer type 'char *'
+SDL_strlcat: parameter 'dst' is a mutable char buffer; use a vendored shim
+SDL_strlcpy: parameter 'dst' is a mutable char buffer; use a vendored shim
+SDL_strlwr: returns unsupported pointer type 'char *'
+SDL_strrchr: returns unsupported pointer type 'char *'
+SDL_strrev: returns unsupported pointer type 'char *'
+SDL_strstr: returns unsupported pointer type 'char *'
+SDL_strtod: parameter 'endp' is a pointer-to-pointer
+SDL_strtokr: returns unsupported pointer type 'char *'
+SDL_strtol: parameter 'endp' is a pointer-to-pointer
+SDL_strtoll: parameter 'endp' is a pointer-to-pointer
+SDL_strtoul: parameter 'endp' is a pointer-to-pointer
+SDL_strtoull: parameter 'endp' is a pointer-to-pointer
+SDL_strupr: returns unsupported pointer type 'char *'
+SDL_uitoa: returns unsupported pointer type 'char *'
+SDL_ulltoa: returns unsupported pointer type 'char *'
+SDL_ultoa: returns unsupported pointer type 'char *'
+SDL_utf8strlcpy: parameter 'dst' is a mutable char buffer; use a vendored shim
+SDL_vasprintf: parameter 'strp' is a pointer-to-pointer
+SDL_vsnprintf: parameter 'text' is a mutable char buffer; use a vendored shim
+SDL_vsscanf: parameter 'ap' has unsupported type 'va_list'
+SDL_wcscasecmp: parameter 'str1' has unsupported pointer type 'const wchar_t *'
+SDL_wcscmp: parameter 'str1' has unsupported pointer type 'const wchar_t *'
+SDL_wcsdup: returns unsupported pointer type 'wchar_t *'
+SDL_wcslcat: parameter 'dst' has unsupported pointer type 'wchar_t *'
+SDL_wcslcpy: parameter 'dst' has unsupported pointer type 'wchar_t *'
+SDL_wcslen: parameter 'wstr' has unsupported pointer type 'const wchar_t *'
+SDL_wcsncasecmp: parameter 'str1' has unsupported pointer type 'const wchar_t *'
+SDL_wcsncmp: parameter 'str1' has unsupported pointer type 'const wchar_t *'
+SDL_wcsstr: returns unsupported pointer type 'wchar_t *'
+_SDL_size_add_overflow_builtin: static or inline function
+_SDL_size_mul_overflow_builtin: static or inline function
+__bionic_bzero: static or inline function
+__bionic_ctype_in_range: static or inline function
+_tolower: static or inline function
+_toupper: static or inline function
+ctermid: static or inline function
+ffs: static or inline function
+ffsl: static or inline function
+ffsll: static or inline function
+isalnum: static or inline function
+isalnum_l: static or inline function
+isalpha: static or inline function
+isalpha_l: static or inline function
+isascii: static or inline function
+isblank: static or inline function
+isblank_l: static or inline function
+iscntrl: static or inline function
+iscntrl_l: static or inline function
+isdigit: static or inline function
+isdigit_l: static or inline function
+isgraph: static or inline function
+isgraph_l: static or inline function
+islower: static or inline function
+islower_l: static or inline function
+isprint: static or inline function
+isprint_l: static or inline function
+ispunct: static or inline function
+ispunct_l: static or inline function
+isspace: static or inline function
+isspace_l: static or inline function
+isupper: static or inline function
+isupper_l: static or inline function
+isxdigit: static or inline function
+isxdigit_l: static or inline function
+macro SDL_AUDIOCVT_PACKED: unsupported token near ''
+macro SDL_AUDIO_DRIVER_PIPEWIRE_DYNAMIC: unsupported token near '"libpipewire-0.3.so.'
+macro SDL_AUDIO_DRIVER_SNDIO_DYNAMIC: unsupported token near '"libsndio.so.7"'
+macro SDL_BUTTON_LMASK: function-like macro 'SDL_BUTTON' is not supported
+macro SDL_BUTTON_MMASK: function-like macro 'SDL_BUTTON' is not supported
+macro SDL_BUTTON_RMASK: function-like macro 'SDL_BUTTON' is not supported
+macro SDL_BUTTON_X1MASK: function-like macro 'SDL_BUTTON' is not supported
+macro SDL_BUTTON_X2MASK: function-like macro 'SDL_BUTTON' is not supported
+macro SDL_BlitScaled: unknown identifier 'SDL_UpperBlitScaled'
+macro SDL_BlitSurface: unknown identifier 'SDL_UpperBlit'
+macro SDL_COMPILEDVERSION: unsupported token near ', SDL_MINOR_VERSION,'
+macro SDL_Colour: unknown identifier 'SDL_Color'
+macro SDL_DEPRECATED: unsupported token near ''
+macro SDL_FALLTHROUGH: unsupported token near ''
+macro SDL_FILE: unknown identifier '__FILE__'
+macro SDL_FLT_EPSILON: unknown identifier '__FLT_EPSILON__'
+macro SDL_FORCE_INLINE: unknown identifier 'static'
+macro SDL_FUNCTION: unknown identifier '__func__'
+macro SDL_HINT_ACCELEROMETER_AS_JOYSTICK: unsupported token near '"SDL_ACCELEROMETER_A'
+macro SDL_HINT_ALLOW_ALT_TAB_WHILE_GRABBED: unsupported token near '"SDL_ALLOW_ALT_TAB_W'
+macro SDL_HINT_ALLOW_TOPMOST: unsupported token near '"SDL_ALLOW_TOPMOST"'
+macro SDL_HINT_ANDROID_APK_EXPANSION_MAIN_FILE_VERSION: unsupported token near '"SDL_ANDROID_APK_EXP'
+macro SDL_HINT_ANDROID_APK_EXPANSION_PATCH_FILE_VERSION: unsupported token near '"SDL_ANDROID_APK_EXP'
+macro SDL_HINT_ANDROID_BLOCK_ON_PAUSE: unsupported token near '"SDL_ANDROID_BLOCK_O'
+macro SDL_HINT_ANDROID_BLOCK_ON_PAUSE_PAUSEAUDIO: unsupported token near '"SDL_ANDROID_BLOCK_O'
+macro SDL_HINT_ANDROID_TRAP_BACK_BUTTON: unsupported token near '"SDL_ANDROID_TRAP_BA'
+macro SDL_HINT_APPLE_RWFROMFILE_USE_RESOURCES: unsupported token near '"SDL_APPLE_RWFROMFIL'
+macro SDL_HINT_APPLE_TV_CONTROLLER_UI_EVENTS: unsupported token near '"SDL_APPLE_TV_CONTRO'
+macro SDL_HINT_APPLE_TV_REMOTE_ALLOW_ROTATION: unsupported token near '"SDL_APPLE_TV_REMOTE'
+macro SDL_HINT_APP_NAME: unsupported token near '"SDL_APP_NAME"'
+macro SDL_HINT_AUDIODRIVER: unsupported token near '"SDL_AUDIODRIVER"'
+macro SDL_HINT_AUDIO_CATEGORY: unsupported token near '"SDL_AUDIO_CATEGORY"'
+macro SDL_HINT_AUDIO_DEVICE_APP_NAME: unsupported token near '"SDL_AUDIO_DEVICE_AP'
+macro SDL_HINT_AUDIO_DEVICE_STREAM_NAME: unsupported token near '"SDL_AUDIO_DEVICE_ST'
+macro SDL_HINT_AUDIO_DEVICE_STREAM_ROLE: unsupported token near '"SDL_AUDIO_DEVICE_ST'
+macro SDL_HINT_AUDIO_INCLUDE_MONITORS: unsupported token near '"SDL_AUDIO_INCLUDE_M'
+macro SDL_HINT_AUDIO_RESAMPLING_MODE: unsupported token near '"SDL_AUDIO_RESAMPLIN'
+macro SDL_HINT_AUTO_UPDATE_JOYSTICKS: unsupported token near '"SDL_AUTO_UPDATE_JOY'
+macro SDL_HINT_AUTO_UPDATE_SENSORS: unsupported token near '"SDL_AUTO_UPDATE_SEN'
+macro SDL_HINT_BMP_SAVE_LEGACY_FORMAT: unsupported token near '"SDL_BMP_SAVE_LEGACY'
+macro SDL_HINT_DIRECTINPUT_ENABLED: unsupported token near '"SDL_DIRECTINPUT_ENA'
+macro SDL_HINT_DISPLAY_USABLE_BOUNDS: unsupported token near '"SDL_DISPLAY_USABLE_'
+macro SDL_HINT_EMSCRIPTEN_ASYNCIFY: unsupported token near '"SDL_EMSCRIPTEN_ASYN'
+macro SDL_HINT_EMSCRIPTEN_KEYBOARD_ELEMENT: unsupported token near '"SDL_EMSCRIPTEN_KEYB'
+macro SDL_HINT_ENABLE_SCREEN_KEYBOARD: unsupported token near '"SDL_ENABLE_SCREEN_K'
+macro SDL_HINT_EVENT_LOGGING: unsupported token near '"SDL_EVENT_LOGGING"'
+macro SDL_HINT_FORCE_RAISEWINDOW: unsupported token near '"SDL_HINT_FORCE_RAIS'
+macro SDL_HINT_FRAMEBUFFER_ACCELERATION: unsupported token near '"SDL_FRAMEBUFFER_ACC'
+macro SDL_HINT_GAMECONTROLLERCONFIG: unsupported token near '"SDL_GAMECONTROLLERC'
+macro SDL_HINT_GAMECONTROLLERCONFIG_FILE: unsupported token near '"SDL_GAMECONTROLLERC'
+macro SDL_HINT_GAMECONTROLLERTYPE: unsupported token near '"SDL_GAMECONTROLLERT'
+macro SDL_HINT_GAMECONTROLLER_IGNORE_DEVICES: unsupported token near '"SDL_GAMECONTROLLER_'
+macro SDL_HINT_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT: unsupported token near '"SDL_GAMECONTROLLER_'
+macro SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS: unsupported token near '"SDL_GAMECONTROLLER_'
+macro SDL_HINT_GRAB_KEYBOARD: unsupported token near '"SDL_GRAB_KEYBOARD"'
+macro SDL_HINT_HIDAPI_IGNORE_DEVICES: unsupported token near '"SDL_HIDAPI_IGNORE_D'
+macro SDL_HINT_IDLE_TIMER_DISABLED: unsupported token near '"SDL_IOS_IDLE_TIMER_'
+macro SDL_HINT_IME_INTERNAL_EDITING: unsupported token near '"SDL_IME_INTERNAL_ED'
+macro SDL_HINT_IME_SHOW_UI: unsupported token near '"SDL_IME_SHOW_UI"'
+macro SDL_HINT_IME_SUPPORT_EXTENDED_TEXT: unsupported token near '"SDL_IME_SUPPORT_EXT'
+macro SDL_HINT_IOS_HIDE_HOME_INDICATOR: unsupported token near '"SDL_IOS_HIDE_HOME_I'
+macro SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS: unsupported token near '"SDL_JOYSTICK_ALLOW_'
+macro SDL_HINT_JOYSTICK_ARCADESTICK_DEVICES: unsupported token near '"SDL_JOYSTICK_ARCADE'
+macro SDL_HINT_JOYSTICK_ARCADESTICK_DEVICES_EXCLUDED: unsupported token near '"SDL_JOYSTICK_ARCADE'
+macro SDL_HINT_JOYSTICK_BLACKLIST_DEVICES: unsupported token near '"SDL_JOYSTICK_BLACKL'
+macro SDL_HINT_JOYSTICK_BLACKLIST_DEVICES_EXCLUDED: unsupported token near '"SDL_JOYSTICK_BLACKL'
+macro SDL_HINT_JOYSTICK_DEVICE: unsupported token near '"SDL_JOYSTICK_DEVICE'
+macro SDL_HINT_JOYSTICK_FLIGHTSTICK_DEVICES: unsupported token near '"SDL_JOYSTICK_FLIGHT'
+macro SDL_HINT_JOYSTICK_FLIGHTSTICK_DEVICES_EXCLUDED: unsupported token near '"SDL_JOYSTICK_FLIGHT'
+macro SDL_HINT_JOYSTICK_GAMECUBE_DEVICES: unsupported token near '"SDL_JOYSTICK_GAMECU'
+macro SDL_HINT_JOYSTICK_GAMECUBE_DEVICES_EXCLUDED: unsupported token near '"SDL_JOYSTICK_GAMECU'
+macro SDL_HINT_JOYSTICK_GAMECUBE_RUMBLE_BRAKE: unsupported token near '"SDL_JOYSTICK_GAMECU'
+macro SDL_HINT_JOYSTICK_HAPTIC_AXES: unsupported token near '"SDL_JOYSTICK_HAPTIC'
+macro SDL_HINT_JOYSTICK_HIDAPI: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_COMBINE_JOY_CONS: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_GAMECUBE: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_JOYCON_HOME_LED: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_JOY_CONS: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_LUNA: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_NINTENDO_CLASSIC: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_PS3: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_PS4: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_PS4_RUMBLE: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_PS5: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_PS5_PLAYER_LED: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_PS5_RUMBLE: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_SHIELD: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_STADIA: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_STEAM: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_STEAMDECK: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_SWITCH: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_SWITCH_HOME_LED: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_SWITCH_PLAYER_LED: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_VERTICAL_JOY_CONS: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_WII: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_WII_PLAYER_LED: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_XBOX: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_XBOX_360: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_XBOX_360_PLAYER_LED: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_XBOX_360_WIRELESS: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_XBOX_ONE: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_HIDAPI_XBOX_ONE_HOME_LED: unsupported token near '"SDL_JOYSTICK_HIDAPI'
+macro SDL_HINT_JOYSTICK_IOKIT: unsupported token near '"SDL_JOYSTICK_IOKIT"'
+macro SDL_HINT_JOYSTICK_MFI: unsupported token near '"SDL_JOYSTICK_MFI"'
+macro SDL_HINT_JOYSTICK_RAWINPUT: unsupported token near '"SDL_JOYSTICK_RAWINP'
+macro SDL_HINT_JOYSTICK_RAWINPUT_CORRELATE_XINPUT: unsupported token near '"SDL_JOYSTICK_RAWINP'
+macro SDL_HINT_JOYSTICK_ROG_CHAKRAM: unsupported token near '"SDL_JOYSTICK_ROG_CH'
+macro SDL_HINT_JOYSTICK_THREAD: unsupported token near '"SDL_JOYSTICK_THREAD'
+macro SDL_HINT_JOYSTICK_THROTTLE_DEVICES: unsupported token near '"SDL_JOYSTICK_THROTT'
+macro SDL_HINT_JOYSTICK_THROTTLE_DEVICES_EXCLUDED: unsupported token near '"SDL_JOYSTICK_THROTT'
+macro SDL_HINT_JOYSTICK_WGI: unsupported token near '"SDL_JOYSTICK_WGI"'
+macro SDL_HINT_JOYSTICK_WHEEL_DEVICES: unsupported token near '"SDL_JOYSTICK_WHEEL_'
+macro SDL_HINT_JOYSTICK_WHEEL_DEVICES_EXCLUDED: unsupported token near '"SDL_JOYSTICK_WHEEL_'
+macro SDL_HINT_JOYSTICK_ZERO_CENTERED_DEVICES: unsupported token near '"SDL_JOYSTICK_ZERO_C'
+macro SDL_HINT_KMSDRM_DEVICE_INDEX: unsupported token near '"SDL_KMSDRM_DEVICE_I'
+macro SDL_HINT_KMSDRM_REQUIRE_DRM_MASTER: unsupported token near '"SDL_KMSDRM_REQUIRE_'
+macro SDL_HINT_LINUX_DIGITAL_HATS: unsupported token near '"SDL_LINUX_DIGITAL_H'
+macro SDL_HINT_LINUX_HAT_DEADZONES: unsupported token near '"SDL_LINUX_HAT_DEADZ'
+macro SDL_HINT_LINUX_JOYSTICK_CLASSIC: unsupported token near '"SDL_LINUX_JOYSTICK_'
+macro SDL_HINT_LINUX_JOYSTICK_DEADZONES: unsupported token near '"SDL_LINUX_JOYSTICK_'
+macro SDL_HINT_LOGGING: unsupported token near '"SDL_LOGGING"'
+macro SDL_HINT_MAC_BACKGROUND_APP: unsupported token near '"SDL_MAC_BACKGROUND_'
+macro SDL_HINT_MAC_CTRL_CLICK_EMULATE_RIGHT_CLICK: unsupported token near '"SDL_MAC_CTRL_CLICK_'
+macro SDL_HINT_MAC_OPENGL_ASYNC_DISPATCH: unsupported token near '"SDL_MAC_OPENGL_ASYN'
+macro SDL_HINT_MOUSE_AUTO_CAPTURE: unsupported token near '"SDL_MOUSE_AUTO_CAPT'
+macro SDL_HINT_MOUSE_DOUBLE_CLICK_RADIUS: unsupported token near '"SDL_MOUSE_DOUBLE_CL'
+macro SDL_HINT_MOUSE_DOUBLE_CLICK_TIME: unsupported token near '"SDL_MOUSE_DOUBLE_CL'
+macro SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH: unsupported token near '"SDL_MOUSE_FOCUS_CLI'
+macro SDL_HINT_MOUSE_NORMAL_SPEED_SCALE: unsupported token near '"SDL_MOUSE_NORMAL_SP'
+macro SDL_HINT_MOUSE_RELATIVE_CURSOR_VISIBLE: unsupported token near '"SDL_MOUSE_RELATIVE_'
+macro SDL_HINT_MOUSE_RELATIVE_MODE_CENTER: unsupported token near '"SDL_MOUSE_RELATIVE_'
+macro SDL_HINT_MOUSE_RELATIVE_MODE_WARP: unsupported token near '"SDL_MOUSE_RELATIVE_'
+macro SDL_HINT_MOUSE_RELATIVE_SCALING: unsupported token near '"SDL_MOUSE_RELATIVE_'
+macro SDL_HINT_MOUSE_RELATIVE_SPEED_SCALE: unsupported token near '"SDL_MOUSE_RELATIVE_'
+macro SDL_HINT_MOUSE_RELATIVE_SYSTEM_SCALE: unsupported token near '"SDL_MOUSE_RELATIVE_'
+macro SDL_HINT_MOUSE_RELATIVE_WARP_MOTION: unsupported token near '"SDL_MOUSE_RELATIVE_'
+macro SDL_HINT_MOUSE_TOUCH_EVENTS: unsupported token near '"SDL_MOUSE_TOUCH_EVE'
+macro SDL_HINT_NO_SIGNAL_HANDLERS: unsupported token near '"SDL_NO_SIGNAL_HANDL'
+macro SDL_HINT_OPENGL_ES_DRIVER: unsupported token near '"SDL_OPENGL_ES_DRIVE'
+macro SDL_HINT_ORIENTATIONS: unsupported token near '"SDL_IOS_ORIENTATION'
+macro SDL_HINT_POLL_SENTINEL: unsupported token near '"SDL_POLL_SENTINEL"'
+macro SDL_HINT_PREFERRED_LOCALES: unsupported token near '"SDL_PREFERRED_LOCAL'
+macro SDL_HINT_PS2_DYNAMIC_VSYNC: unsupported token near '"SDL_PS2_DYNAMIC_VSY'
+macro SDL_HINT_QTWAYLAND_CONTENT_ORIENTATION: unsupported token near '"SDL_QTWAYLAND_CONTE'
+macro SDL_HINT_QTWAYLAND_WINDOW_FLAGS: unsupported token near '"SDL_QTWAYLAND_WINDO'
+macro SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE: unsupported token near '"SDL_QUIT_ON_LAST_WI'
+macro SDL_HINT_RENDER_BATCHING: unsupported token near '"SDL_RENDER_BATCHING'
+macro SDL_HINT_RENDER_DIRECT3D11_DEBUG: unsupported token near '"SDL_RENDER_DIRECT3D'
+macro SDL_HINT_RENDER_DIRECT3D_THREADSAFE: unsupported token near '"SDL_RENDER_DIRECT3D'
+macro SDL_HINT_RENDER_DRIVER: unsupported token near '"SDL_RENDER_DRIVER"'
+macro SDL_HINT_RENDER_LINE_METHOD: unsupported token near '"SDL_RENDER_LINE_MET'
+macro SDL_HINT_RENDER_LOGICAL_SIZE_MODE: unsupported token near '"SDL_RENDER_LOGICAL_'
+macro SDL_HINT_RENDER_METAL_PREFER_LOW_POWER_DEVICE: unsupported token near '"SDL_RENDER_METAL_PR'
+macro SDL_HINT_RENDER_OPENGL_SHADERS: unsupported token near '"SDL_RENDER_OPENGL_S'
+macro SDL_HINT_RENDER_SCALE_QUALITY: unsupported token near '"SDL_RENDER_SCALE_QU'
+macro SDL_HINT_RENDER_VSYNC: unsupported token near '"SDL_RENDER_VSYNC"'
+macro SDL_HINT_RETURN_KEY_HIDES_IME: unsupported token near '"SDL_RETURN_KEY_HIDE'
+macro SDL_HINT_ROG_GAMEPAD_MICE: unsupported token near '"SDL_ROG_GAMEPAD_MIC'
+macro SDL_HINT_ROG_GAMEPAD_MICE_EXCLUDED: unsupported token near '"SDL_ROG_GAMEPAD_MIC'
+macro SDL_HINT_RPI_VIDEO_LAYER: unsupported token near '"SDL_RPI_VIDEO_LAYER'
+macro SDL_HINT_SCREENSAVER_INHIBIT_ACTIVITY_NAME: unsupported token near '"SDL_SCREENSAVER_INH'
+macro SDL_HINT_SHUTDOWN_DBUS_ON_QUIT: unsupported token near '"SDL_SHUTDOWN_DBUS_O'
+macro SDL_HINT_THREAD_FORCE_REALTIME_TIME_CRITICAL: unsupported token near '"SDL_THREAD_FORCE_RE'
+macro SDL_HINT_THREAD_PRIORITY_POLICY: unsupported token near '"SDL_THREAD_PRIORITY'
+macro SDL_HINT_THREAD_STACK_SIZE: unsupported token near '"SDL_THREAD_STACK_SI'
+macro SDL_HINT_TIMER_RESOLUTION: unsupported token near '"SDL_TIMER_RESOLUTIO'
+macro SDL_HINT_TOUCH_MOUSE_EVENTS: unsupported token near '"SDL_TOUCH_MOUSE_EVE'
+macro SDL_HINT_TRACKPAD_IS_TOUCH_ONLY: unsupported token near '"SDL_TRACKPAD_IS_TOU'
+macro SDL_HINT_TV_REMOTE_AS_JOYSTICK: unsupported token near '"SDL_TV_REMOTE_AS_JO'
+macro SDL_HINT_VIDEODRIVER: unsupported token near '"SDL_VIDEODRIVER"'
+macro SDL_HINT_VIDEO_ALLOW_SCREENSAVER: unsupported token near '"SDL_VIDEO_ALLOW_SCR'
+macro SDL_HINT_VIDEO_DOUBLE_BUFFER: unsupported token near '"SDL_VIDEO_DOUBLE_BU'
+macro SDL_HINT_VIDEO_EGL_ALLOW_TRANSPARENCY: unsupported token near '"SDL_VIDEO_EGL_ALLOW'
+macro SDL_HINT_VIDEO_EXTERNAL_CONTEXT: unsupported token near '"SDL_VIDEO_EXTERNAL_'
+macro SDL_HINT_VIDEO_FOREIGN_WINDOW_OPENGL: unsupported token near '"SDL_VIDEO_FOREIGN_W'
+macro SDL_HINT_VIDEO_FOREIGN_WINDOW_VULKAN: unsupported token near '"SDL_VIDEO_FOREIGN_W'
+macro SDL_HINT_VIDEO_HIGHDPI_DISABLED: unsupported token near '"SDL_VIDEO_HIGHDPI_D'
+macro SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES: unsupported token near '"SDL_VIDEO_MAC_FULLS'
+macro SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS: unsupported token near '"SDL_VIDEO_MINIMIZE_'
+macro SDL_HINT_VIDEO_WAYLAND_ALLOW_LIBDECOR: unsupported token near '"SDL_VIDEO_WAYLAND_A'
+macro SDL_HINT_VIDEO_WAYLAND_EMULATE_MOUSE_WARP: unsupported token near '"SDL_VIDEO_WAYLAND_E'
+macro SDL_HINT_VIDEO_WAYLAND_MODE_EMULATION: unsupported token near '"SDL_VIDEO_WAYLAND_M'
+macro SDL_HINT_VIDEO_WAYLAND_PREFER_LIBDECOR: unsupported token near '"SDL_VIDEO_WAYLAND_P'
+macro SDL_HINT_VIDEO_WINDOW_SHARE_PIXEL_FORMAT: unsupported token near '"SDL_VIDEO_WINDOW_SH'
+macro SDL_HINT_VIDEO_WIN_D3DCOMPILER: unsupported token near '"SDL_VIDEO_WIN_D3DCO'
+macro SDL_HINT_VIDEO_X11_FORCE_EGL: unsupported token near '"SDL_VIDEO_X11_FORCE'
+macro SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR: unsupported token near '"SDL_VIDEO_X11_NET_W'
+macro SDL_HINT_VIDEO_X11_NET_WM_PING: unsupported token near '"SDL_VIDEO_X11_NET_W'
+macro SDL_HINT_VIDEO_X11_WINDOW_VISUALID: unsupported token near '"SDL_VIDEO_X11_WINDO'
+macro SDL_HINT_VIDEO_X11_XINERAMA: unsupported token near '"SDL_VIDEO_X11_XINER'
+macro SDL_HINT_VIDEO_X11_XRANDR: unsupported token near '"SDL_VIDEO_X11_XRAND'
+macro SDL_HINT_VIDEO_X11_XVIDMODE: unsupported token near '"SDL_VIDEO_X11_XVIDM'
+macro SDL_HINT_VITA_TOUCH_MOUSE_DEVICE: unsupported token near '"SDL_HINT_VITA_TOUCH'
+macro SDL_HINT_WAVE_FACT_CHUNK: unsupported token near '"SDL_WAVE_FACT_CHUNK'
+macro SDL_HINT_WAVE_RIFF_CHUNK_SIZE: unsupported token near '"SDL_WAVE_RIFF_CHUNK'
+macro SDL_HINT_WAVE_TRUNCATION: unsupported token near '"SDL_WAVE_TRUNCATION'
+macro SDL_HINT_WINDOWS_DISABLE_THREAD_NAMING: unsupported token near '"SDL_WINDOWS_DISABLE'
+macro SDL_HINT_WINDOWS_DPI_AWARENESS: unsupported token near '"SDL_WINDOWS_DPI_AWA'
+macro SDL_HINT_WINDOWS_DPI_SCALING: unsupported token near '"SDL_WINDOWS_DPI_SCA'
+macro SDL_HINT_WINDOWS_ENABLE_MENU_MNEMONICS: unsupported token near '"SDL_WINDOWS_ENABLE_'
+macro SDL_HINT_WINDOWS_ENABLE_MESSAGELOOP: unsupported token near '"SDL_WINDOWS_ENABLE_'
+macro SDL_HINT_WINDOWS_FORCE_MUTEX_CRITICAL_SECTIONS: unsupported token near '"SDL_WINDOWS_FORCE_M'
+macro SDL_HINT_WINDOWS_FORCE_SEMAPHORE_KERNEL: unsupported token near '"SDL_WINDOWS_FORCE_S'
+macro SDL_HINT_WINDOWS_INTRESOURCE_ICON: unsupported token near '"SDL_WINDOWS_INTRESO'
+macro SDL_HINT_WINDOWS_INTRESOURCE_ICON_SMALL: unsupported token near '"SDL_WINDOWS_INTRESO'
+macro SDL_HINT_WINDOWS_NO_CLOSE_ON_ALT_F4: unsupported token near '"SDL_WINDOWS_NO_CLOS'
+macro SDL_HINT_WINDOWS_USE_D3D9EX: unsupported token near '"SDL_WINDOWS_USE_D3D'
+macro SDL_HINT_WINDOW_FRAME_USABLE_WHILE_CURSOR_HIDDEN: unsupported token near '"SDL_WINDOW_FRAME_US'
+macro SDL_HINT_WINDOW_NO_ACTIVATION_WHEN_SHOWN: unsupported token near '"SDL_WINDOW_NO_ACTIV'
+macro SDL_HINT_WINRT_HANDLE_BACK_BUTTON: unsupported token near '"SDL_WINRT_HANDLE_BA'
+macro SDL_HINT_WINRT_PRIVACY_POLICY_LABEL: unsupported token near '"SDL_WINRT_PRIVACY_P'
+macro SDL_HINT_WINRT_PRIVACY_POLICY_URL: unsupported token near '"SDL_WINRT_PRIVACY_P'
+macro SDL_HINT_X11_FORCE_OVERRIDE_REDIRECT: unsupported token near '"SDL_X11_FORCE_OVERR'
+macro SDL_HINT_X11_WINDOW_TYPE: unsupported token near '"SDL_X11_WINDOW_TYPE'
+macro SDL_HINT_XINPUT_ENABLED: unsupported token near '"SDL_XINPUT_ENABLED"'
+macro SDL_HINT_XINPUT_USE_OLD_JOYSTICK_MAPPING: unsupported token near '"SDL_XINPUT_USE_OLD_'
+macro SDL_ICONV_E2BIG: unknown identifier 'size_t'
+macro SDL_ICONV_EILSEQ: unknown identifier 'size_t'
+macro SDL_ICONV_EINVAL: unknown identifier 'size_t'
+macro SDL_ICONV_ERROR: unknown identifier 'size_t'
+macro SDL_INLINE: unknown identifier '__inline__'
+macro SDL_IPHONE_MAX_GFORCE: unsupported token near '.0'
+macro SDL_LINE: unknown identifier '__LINE__'
+macro SDL_MAIN_NEEDED: empty macro
+macro SDL_MOUSE_TOUCHID: unknown identifier 'Sint64'
+macro SDL_NORETURN: unsupported token near ''
+macro SDL_NO_THREAD_SAFETY_ANALYSIS: function-like macro 'SDL_THREAD_ANNOTATION_ATTRIBUTE__' is not supported
+macro SDL_PRINTF_FORMAT_STRING: empty macro
+macro SDL_PRIX32: unsupported token near '"X"'
+macro SDL_PRIX64: unsupported token near '"X"'
+macro SDL_PRIs32: unsupported token near '"d"'
+macro SDL_PRIs64: unsupported token near '"d"'
+macro SDL_PRIu32: unsupported token near '"u"'
+macro SDL_PRIu64: unsupported token near '"u"'
+macro SDL_PRIx32: unsupported token near '"x"'
+macro SDL_PRIx64: unsupported token near '"x"'
+macro SDL_SCANF_FORMAT_STRING: empty macro
+macro SDL_SCOPED_CAPABILITY: function-like macro 'SDL_THREAD_ANNOTATION_ATTRIBUTE__' is not supported
+macro SDL_SIZE_MAX: unknown identifier '__SIZE_MAX__'
+macro SDL_STANDARD_GRAVITY: unsupported token near '.80665f'
+macro SDL_TOUCH_MOUSEID: unknown identifier 'Uint32'
+macro SDL_UDEV_DYNAMIC: unsupported token near '"libudev.so.1"'
+macro SDL_UNUSED: unsupported token near ''
+macro SDL_WINDOWPOS_CENTERED: function-like macro 'SDL_WINDOWPOS_CENTERED_DISPLAY' is not supported
+macro SDL_WINDOWPOS_UNDEFINED: function-like macro 'SDL_WINDOWPOS_UNDEFINED_DISPLAY' is not supported
+macro SDL_assert_data: unknown identifier 'SDL_AssertData'
+macro SDL_assert_h_: empty macro
+macro SDL_assert_state: unknown identifier 'SDL_AssertState'
+macro SDL_atomic_h_: empty macro
+macro SDL_audio_h_: empty macro
+macro SDL_blendmode_h_: empty macro
+macro SDL_clipboard_h_: empty macro
+macro SDL_config_h_: empty macro
+macro SDL_cpuinfo_h_: empty macro
+macro SDL_endian_h_: empty macro
+macro SDL_error_h_: empty macro
+macro SDL_events_h_: empty macro
+macro SDL_filesystem_h_: empty macro
+macro SDL_gamecontroller_h_: empty macro
+macro SDL_gesture_h_: empty macro
+macro SDL_guid_h_: empty macro
+macro SDL_h_: empty macro
+macro SDL_haptic_h_: empty macro
+macro SDL_hidapi_h_: empty macro
+macro SDL_hints_h_: empty macro
+macro SDL_joystick_h_: empty macro
+macro SDL_keyboard_h_: empty macro
+macro SDL_keycode_h_: empty macro
+macro SDL_loadso_h_: empty macro
+macro SDL_log_h_: empty macro
+macro SDL_main_h_: empty macro
+macro SDL_messagebox_h_: empty macro
+macro SDL_metal_h_: empty macro
+macro SDL_misc_h_: empty macro
+macro SDL_mouse_h_: empty macro
+macro SDL_mutex_h_: empty macro
+macro SDL_pixels_h_: empty macro
+macro SDL_platform_h_: empty macro
+macro SDL_power_h_: empty macro
+macro SDL_quit_h_: empty macro
+macro SDL_rect_h_: empty macro
+macro SDL_render_h_: empty macro
+macro SDL_rwops_h_: empty macro
+macro SDL_scancode_h_: empty macro
+macro SDL_sensor_h_: empty macro
+macro SDL_shape_h_: empty macro
+macro SDL_stdinc_h_: empty macro
+macro SDL_surface_h_: empty macro
+macro SDL_system_h_: empty macro
+macro SDL_thread_h_: empty macro
+macro SDL_timer_h_: empty macro
+macro SDL_touch_h_: empty macro
+macro SDL_version_h_: empty macro
+macro SDL_video_h_: empty macro
+tmpfile: static or inline function
+toascii: static or inline function
+tolower: static or inline function
+tolower_l: static or inline function
+toupper: static or inline function
+toupper_l: static or inline function
+vaba_s16: static or inline function
+vaba_s32: static or inline function
+vaba_s8: static or inline function
+vaba_u16: static or inline function
+vaba_u32: static or inline function
+vaba_u8: static or inline function
+vabal_high_s16: static or inline function
+vabal_high_s32: static or inline function
+vabal_high_s8: static or inline function
+vabal_high_u16: static or inline function
+vabal_high_u32: static or inline function
+vabal_high_u8: static or inline function
+vabal_s16: static or inline function
+vabal_s32: static or inline function
+vabal_s8: static or inline function
+vabal_u16: static or inline function
+vabal_u32: static or inline function
+vabal_u8: static or inline function
+vabaq_s16: static or inline function
+vabaq_s32: static or inline function
+vabaq_s8: static or inline function
+vabaq_u16: static or inline function
+vabaq_u32: static or inline function
+vabaq_u8: static or inline function
+vabd_f16: static or inline function
+vabd_f32: static or inline function
+vabd_f64: static or inline function
+vabd_s16: static or inline function
+vabd_s32: static or inline function
+vabd_s8: static or inline function
+vabd_u16: static or inline function
+vabd_u32: static or inline function
+vabd_u8: static or inline function
+vabdd_f64: static or inline function
+vabdl_high_s16: static or inline function
+vabdl_high_s32: static or inline function
+vabdl_high_s8: static or inline function
+vabdl_high_u16: static or inline function
+vabdl_high_u32: static or inline function
+vabdl_high_u8: static or inline function
+vabdl_s16: static or inline function
+vabdl_s32: static or inline function
+vabdl_s8: static or inline function
+vabdl_u16: static or inline function
+vabdl_u32: static or inline function
+vabdl_u8: static or inline function
+vabdq_f16: static or inline function
+vabdq_f32: static or inline function
+vabdq_f64: static or inline function
+vabdq_s16: static or inline function
+vabdq_s32: static or inline function
+vabdq_s8: static or inline function
+vabdq_u16: static or inline function
+vabdq_u32: static or inline function
+vabdq_u8: static or inline function
+vabds_f32: static or inline function
+vabs_f16: static or inline function
+vabs_f32: static or inline function
+vabs_f64: static or inline function
+vabs_s16: static or inline function
+vabs_s32: static or inline function
+vabs_s64: static or inline function
+vabs_s8: static or inline function
+vabsd_s64: static or inline function
+vabsq_f16: static or inline function
+vabsq_f32: static or inline function
+vabsq_f64: static or inline function
+vabsq_s16: static or inline function
+vabsq_s32: static or inline function
+vabsq_s64: static or inline function
+vabsq_s8: static or inline function
+vadd_f16: static or inline function
+vadd_f32: static or inline function
+vadd_f64: static or inline function
+vadd_p16: static or inline function
+vadd_p64: static or inline function
+vadd_p8: static or inline function
+vadd_s16: static or inline function
+vadd_s32: static or inline function
+vadd_s64: static or inline function
+vadd_s8: static or inline function
+vadd_u16: static or inline function
+vadd_u32: static or inline function
+vadd_u64: static or inline function
+vadd_u8: static or inline function
+vaddd_s64: static or inline function
+vaddd_u64: static or inline function
+vaddhn_high_s16: static or inline function
+vaddhn_high_s32: static or inline function
+vaddhn_high_s64: static or inline function
+vaddhn_high_u16: static or inline function
+vaddhn_high_u32: static or inline function
+vaddhn_high_u64: static or inline function
+vaddhn_s16: static or inline function
+vaddhn_s32: static or inline function
+vaddhn_s64: static or inline function
+vaddhn_u16: static or inline function
+vaddhn_u32: static or inline function
+vaddhn_u64: static or inline function
+vaddl_high_s16: static or inline function
+vaddl_high_s32: static or inline function
+vaddl_high_s8: static or inline function
+vaddl_high_u16: static or inline function
+vaddl_high_u32: static or inline function
+vaddl_high_u8: static or inline function
+vaddl_s16: static or inline function
+vaddl_s32: static or inline function
+vaddl_s8: static or inline function
+vaddl_u16: static or inline function
+vaddl_u32: static or inline function
+vaddl_u8: static or inline function
+vaddlv_s16: static or inline function
+vaddlv_s32: static or inline function
+vaddlv_s8: static or inline function
+vaddlv_u16: static or inline function
+vaddlv_u32: static or inline function
+vaddlv_u8: static or inline function
+vaddlvq_s16: static or inline function
+vaddlvq_s32: static or inline function
+vaddlvq_s8: static or inline function
+vaddlvq_u16: static or inline function
+vaddlvq_u32: static or inline function
+vaddlvq_u8: static or inline function
+vaddq_f16: static or inline function
+vaddq_f32: static or inline function
+vaddq_f64: static or inline function
+vaddq_p128: static or inline function
+vaddq_p16: static or inline function
+vaddq_p64: static or inline function
+vaddq_p8: static or inline function
+vaddq_s16: static or inline function
+vaddq_s32: static or inline function
+vaddq_s64: static or inline function
+vaddq_s8: static or inline function
+vaddq_u16: static or inline function
+vaddq_u32: static or inline function
+vaddq_u64: static or inline function
+vaddq_u8: static or inline function
+vaddv_f32: static or inline function
+vaddv_s16: static or inline function
+vaddv_s32: static or inline function
+vaddv_s8: static or inline function
+vaddv_u16: static or inline function
+vaddv_u32: static or inline function
+vaddv_u8: static or inline function
+vaddvq_f32: static or inline function
+vaddvq_f64: static or inline function
+vaddvq_s16: static or inline function
+vaddvq_s32: static or inline function
+vaddvq_s64: static or inline function
+vaddvq_s8: static or inline function
+vaddvq_u16: static or inline function
+vaddvq_u32: static or inline function
+vaddvq_u64: static or inline function
+vaddvq_u8: static or inline function
+vaddw_high_s16: static or inline function
+vaddw_high_s32: static or inline function
+vaddw_high_s8: static or inline function
+vaddw_high_u16: static or inline function
+vaddw_high_u32: static or inline function
+vaddw_high_u8: static or inline function
+vaddw_s16: static or inline function
+vaddw_s32: static or inline function
+vaddw_s8: static or inline function
+vaddw_u16: static or inline function
+vaddw_u32: static or inline function
+vaddw_u8: static or inline function
+vaesdq_u8: static or inline function
+vaeseq_u8: static or inline function
+vaesimcq_u8: static or inline function
+vaesmcq_u8: static or inline function
+vamax_f16: static or inline function
+vamax_f32: static or inline function
+vamaxq_f16: static or inline function
+vamaxq_f32: static or inline function
+vamaxq_f64: static or inline function
+vamin_f16: static or inline function
+vamin_f32: static or inline function
+vaminq_f16: static or inline function
+vaminq_f32: static or inline function
+vaminq_f64: static or inline function
+vand_s16: static or inline function
+vand_s32: static or inline function
+vand_s64: static or inline function
+vand_s8: static or inline function
+vand_u16: static or inline function
+vand_u32: static or inline function
+vand_u64: static or inline function
+vand_u8: static or inline function
+vandq_s16: static or inline function
+vandq_s32: static or inline function
+vandq_s64: static or inline function
+vandq_s8: static or inline function
+vandq_u16: static or inline function
+vandq_u32: static or inline function
+vandq_u64: static or inline function
+vandq_u8: static or inline function
+vbcaxq_s16: static or inline function
+vbcaxq_s32: static or inline function
+vbcaxq_s64: static or inline function
+vbcaxq_s8: static or inline function
+vbcaxq_u16: static or inline function
+vbcaxq_u32: static or inline function
+vbcaxq_u64: static or inline function
+vbcaxq_u8: static or inline function
+vbfdot_f32: static or inline function
+vbfdotq_f32: static or inline function
+vbfmlalbq_f32: static or inline function
+vbfmlaltq_f32: static or inline function
+vbfmmlaq_f32: static or inline function
+vbic_s16: static or inline function
+vbic_s32: static or inline function
+vbic_s64: static or inline function
+vbic_s8: static or inline function
+vbic_u16: static or inline function
+vbic_u32: static or inline function
+vbic_u64: static or inline function
+vbic_u8: static or inline function
+vbicq_s16: static or inline function
+vbicq_s32: static or inline function
+vbicq_s64: static or inline function
+vbicq_s8: static or inline function
+vbicq_u16: static or inline function
+vbicq_u32: static or inline function
+vbicq_u64: static or inline function
+vbicq_u8: static or inline function
+vbsl_f16: static or inline function
+vbsl_f32: static or inline function
+vbsl_f64: static or inline function
+vbsl_mf8: static or inline function
+vbsl_p16: static or inline function
+vbsl_p64: static or inline function
+vbsl_p8: static or inline function
+vbsl_s16: static or inline function
+vbsl_s32: static or inline function
+vbsl_s64: static or inline function
+vbsl_s8: static or inline function
+vbsl_u16: static or inline function
+vbsl_u32: static or inline function
+vbsl_u64: static or inline function
+vbsl_u8: static or inline function
+vbslq_f16: static or inline function
+vbslq_f32: static or inline function
+vbslq_f64: static or inline function
+vbslq_mf8: static or inline function
+vbslq_p16: static or inline function
+vbslq_p64: static or inline function
+vbslq_p8: static or inline function
+vbslq_s16: static or inline function
+vbslq_s32: static or inline function
+vbslq_s64: static or inline function
+vbslq_s8: static or inline function
+vbslq_u16: static or inline function
+vbslq_u32: static or inline function
+vbslq_u64: static or inline function
+vbslq_u8: static or inline function
+vcadd_rot270_f16: static or inline function
+vcadd_rot270_f32: static or inline function
+vcadd_rot90_f16: static or inline function
+vcadd_rot90_f32: static or inline function
+vcaddq_rot270_f16: static or inline function
+vcaddq_rot270_f32: static or inline function
+vcaddq_rot270_f64: static or inline function
+vcaddq_rot90_f16: static or inline function
+vcaddq_rot90_f32: static or inline function
+vcaddq_rot90_f64: static or inline function
+vcage_f16: static or inline function
+vcage_f32: static or inline function
+vcage_f64: static or inline function
+vcaged_f64: static or inline function
+vcageq_f16: static or inline function
+vcageq_f32: static or inline function
+vcageq_f64: static or inline function
+vcages_f32: static or inline function
+vcagt_f16: static or inline function
+vcagt_f32: static or inline function
+vcagt_f64: static or inline function
+vcagtd_f64: static or inline function
+vcagtq_f16: static or inline function
+vcagtq_f32: static or inline function
+vcagtq_f64: static or inline function
+vcagts_f32: static or inline function
+vcale_f16: static or inline function
+vcale_f32: static or inline function
+vcale_f64: static or inline function
+vcaled_f64: static or inline function
+vcaleq_f16: static or inline function
+vcaleq_f32: static or inline function
+vcaleq_f64: static or inline function
+vcales_f32: static or inline function
+vcalt_f16: static or inline function
+vcalt_f32: static or inline function
+vcalt_f64: static or inline function
+vcaltd_f64: static or inline function
+vcaltq_f16: static or inline function
+vcaltq_f32: static or inline function
+vcaltq_f64: static or inline function
+vcalts_f32: static or inline function
+vceq_f16: static or inline function
+vceq_f32: static or inline function
+vceq_f64: static or inline function
+vceq_p64: static or inline function
+vceq_p8: static or inline function
+vceq_s16: static or inline function
+vceq_s32: static or inline function
+vceq_s64: static or inline function
+vceq_s8: static or inline function
+vceq_u16: static or inline function
+vceq_u32: static or inline function
+vceq_u64: static or inline function
+vceq_u8: static or inline function
+vceqd_f64: static or inline function
+vceqd_s64: static or inline function
+vceqd_u64: static or inline function
+vceqq_f16: static or inline function
+vceqq_f32: static or inline function
+vceqq_f64: static or inline function
+vceqq_p64: static or inline function
+vceqq_p8: static or inline function
+vceqq_s16: static or inline function
+vceqq_s32: static or inline function
+vceqq_s64: static or inline function
+vceqq_s8: static or inline function
+vceqq_u16: static or inline function
+vceqq_u32: static or inline function
+vceqq_u64: static or inline function
+vceqq_u8: static or inline function
+vceqs_f32: static or inline function
+vceqz_f16: static or inline function
+vceqz_f32: static or inline function
+vceqz_f64: static or inline function
+vceqz_p64: static or inline function
+vceqz_p8: static or inline function
+vceqz_s16: static or inline function
+vceqz_s32: static or inline function
+vceqz_s64: static or inline function
+vceqz_s8: static or inline function
+vceqz_u16: static or inline function
+vceqz_u32: static or inline function
+vceqz_u64: static or inline function
+vceqz_u8: static or inline function
+vceqzd_f64: static or inline function
+vceqzd_s64: static or inline function
+vceqzd_u64: static or inline function
+vceqzq_f16: static or inline function
+vceqzq_f32: static or inline function
+vceqzq_f64: static or inline function
+vceqzq_p64: static or inline function
+vceqzq_p8: static or inline function
+vceqzq_s16: static or inline function
+vceqzq_s32: static or inline function
+vceqzq_s64: static or inline function
+vceqzq_s8: static or inline function
+vceqzq_u16: static or inline function
+vceqzq_u32: static or inline function
+vceqzq_u64: static or inline function
+vceqzq_u8: static or inline function
+vceqzs_f32: static or inline function
+vcge_f16: static or inline function
+vcge_f32: static or inline function
+vcge_f64: static or inline function
+vcge_s16: static or inline function
+vcge_s32: static or inline function
+vcge_s64: static or inline function
+vcge_s8: static or inline function
+vcge_u16: static or inline function
+vcge_u32: static or inline function
+vcge_u64: static or inline function
+vcge_u8: static or inline function
+vcged_f64: static or inline function
+vcged_s64: static or inline function
+vcged_u64: static or inline function
+vcgeq_f16: static or inline function
+vcgeq_f32: static or inline function
+vcgeq_f64: static or inline function
+vcgeq_s16: static or inline function
+vcgeq_s32: static or inline function
+vcgeq_s64: static or inline function
+vcgeq_s8: static or inline function
+vcgeq_u16: static or inline function
+vcgeq_u32: static or inline function
+vcgeq_u64: static or inline function
+vcgeq_u8: static or inline function
+vcges_f32: static or inline function
+vcgez_f16: static or inline function
+vcgez_f32: static or inline function
+vcgez_f64: static or inline function
+vcgez_s16: static or inline function
+vcgez_s32: static or inline function
+vcgez_s64: static or inline function
+vcgez_s8: static or inline function
+vcgezd_f64: static or inline function
+vcgezd_s64: static or inline function
+vcgezq_f16: static or inline function
+vcgezq_f32: static or inline function
+vcgezq_f64: static or inline function
+vcgezq_s16: static or inline function
+vcgezq_s32: static or inline function
+vcgezq_s64: static or inline function
+vcgezq_s8: static or inline function
+vcgezs_f32: static or inline function
+vcgt_f16: static or inline function
+vcgt_f32: static or inline function
+vcgt_f64: static or inline function
+vcgt_s16: static or inline function
+vcgt_s32: static or inline function
+vcgt_s64: static or inline function
+vcgt_s8: static or inline function
+vcgt_u16: static or inline function
+vcgt_u32: static or inline function
+vcgt_u64: static or inline function
+vcgt_u8: static or inline function
+vcgtd_f64: static or inline function
+vcgtd_s64: static or inline function
+vcgtd_u64: static or inline function
+vcgtq_f16: static or inline function
+vcgtq_f32: static or inline function
+vcgtq_f64: static or inline function
+vcgtq_s16: static or inline function
+vcgtq_s32: static or inline function
+vcgtq_s64: static or inline function
+vcgtq_s8: static or inline function
+vcgtq_u16: static or inline function
+vcgtq_u32: static or inline function
+vcgtq_u64: static or inline function
+vcgtq_u8: static or inline function
+vcgts_f32: static or inline function
+vcgtz_f16: static or inline function
+vcgtz_f32: static or inline function
+vcgtz_f64: static or inline function
+vcgtz_s16: static or inline function
+vcgtz_s32: static or inline function
+vcgtz_s64: static or inline function
+vcgtz_s8: static or inline function
+vcgtzd_f64: static or inline function
+vcgtzd_s64: static or inline function
+vcgtzq_f16: static or inline function
+vcgtzq_f32: static or inline function
+vcgtzq_f64: static or inline function
+vcgtzq_s16: static or inline function
+vcgtzq_s32: static or inline function
+vcgtzq_s64: static or inline function
+vcgtzq_s8: static or inline function
+vcgtzs_f32: static or inline function
+vcle_f16: static or inline function
+vcle_f32: static or inline function
+vcle_f64: static or inline function
+vcle_s16: static or inline function
+vcle_s32: static or inline function
+vcle_s64: static or inline function
+vcle_s8: static or inline function
+vcle_u16: static or inline function
+vcle_u32: static or inline function
+vcle_u64: static or inline function
+vcle_u8: static or inline function
+vcled_f64: static or inline function
+vcled_s64: static or inline function
+vcled_u64: static or inline function
+vcleq_f16: static or inline function
+vcleq_f32: static or inline function
+vcleq_f64: static or inline function
+vcleq_s16: static or inline function
+vcleq_s32: static or inline function
+vcleq_s64: static or inline function
+vcleq_s8: static or inline function
+vcleq_u16: static or inline function
+vcleq_u32: static or inline function
+vcleq_u64: static or inline function
+vcleq_u8: static or inline function
+vcles_f32: static or inline function
+vclez_f16: static or inline function
+vclez_f32: static or inline function
+vclez_f64: static or inline function
+vclez_s16: static or inline function
+vclez_s32: static or inline function
+vclez_s64: static or inline function
+vclez_s8: static or inline function
+vclezd_f64: static or inline function
+vclezd_s64: static or inline function
+vclezq_f16: static or inline function
+vclezq_f32: static or inline function
+vclezq_f64: static or inline function
+vclezq_s16: static or inline function
+vclezq_s32: static or inline function
+vclezq_s64: static or inline function
+vclezq_s8: static or inline function
+vclezs_f32: static or inline function
+vcls_s16: static or inline function
+vcls_s32: static or inline function
+vcls_s8: static or inline function
+vcls_u16: static or inline function
+vcls_u32: static or inline function
+vcls_u8: static or inline function
+vclsq_s16: static or inline function
+vclsq_s32: static or inline function
+vclsq_s8: static or inline function
+vclsq_u16: static or inline function
+vclsq_u32: static or inline function
+vclsq_u8: static or inline function
+vclt_f16: static or inline function
+vclt_f32: static or inline function
+vclt_f64: static or inline function
+vclt_s16: static or inline function
+vclt_s32: static or inline function
+vclt_s64: static or inline function
+vclt_s8: static or inline function
+vclt_u16: static or inline function
+vclt_u32: static or inline function
+vclt_u64: static or inline function
+vclt_u8: static or inline function
+vcltd_f64: static or inline function
+vcltd_s64: static or inline function
+vcltd_u64: static or inline function
+vcltq_f16: static or inline function
+vcltq_f32: static or inline function
+vcltq_f64: static or inline function
+vcltq_s16: static or inline function
+vcltq_s32: static or inline function
+vcltq_s64: static or inline function
+vcltq_s8: static or inline function
+vcltq_u16: static or inline function
+vcltq_u32: static or inline function
+vcltq_u64: static or inline function
+vcltq_u8: static or inline function
+vclts_f32: static or inline function
+vcltz_f16: static or inline function
+vcltz_f32: static or inline function
+vcltz_f64: static or inline function
+vcltz_s16: static or inline function
+vcltz_s32: static or inline function
+vcltz_s64: static or inline function
+vcltz_s8: static or inline function
+vcltzd_f64: static or inline function
+vcltzd_s64: static or inline function
+vcltzq_f16: static or inline function
+vcltzq_f32: static or inline function
+vcltzq_f64: static or inline function
+vcltzq_s16: static or inline function
+vcltzq_s32: static or inline function
+vcltzq_s64: static or inline function
+vcltzq_s8: static or inline function
+vcltzs_f32: static or inline function
+vclz_s16: static or inline function
+vclz_s32: static or inline function
+vclz_s8: static or inline function
+vclz_u16: static or inline function
+vclz_u32: static or inline function
+vclz_u8: static or inline function
+vclzq_s16: static or inline function
+vclzq_s32: static or inline function
+vclzq_s8: static or inline function
+vclzq_u16: static or inline function
+vclzq_u32: static or inline function
+vclzq_u8: static or inline function
+vcmla_f16: static or inline function
+vcmla_f32: static or inline function
+vcmla_rot180_f16: static or inline function
+vcmla_rot180_f32: static or inline function
+vcmla_rot270_f16: static or inline function
+vcmla_rot270_f32: static or inline function
+vcmla_rot90_f16: static or inline function
+vcmla_rot90_f32: static or inline function
+vcmlaq_f16: static or inline function
+vcmlaq_f32: static or inline function
+vcmlaq_f64: static or inline function
+vcmlaq_rot180_f16: static or inline function
+vcmlaq_rot180_f32: static or inline function
+vcmlaq_rot180_f64: static or inline function
+vcmlaq_rot270_f16: static or inline function
+vcmlaq_rot270_f32: static or inline function
+vcmlaq_rot270_f64: static or inline function
+vcmlaq_rot90_f16: static or inline function
+vcmlaq_rot90_f32: static or inline function
+vcmlaq_rot90_f64: static or inline function
+vcnt_p8: static or inline function
+vcnt_s8: static or inline function
+vcnt_u8: static or inline function
+vcntq_p8: static or inline function
+vcntq_s8: static or inline function
+vcntq_u8: static or inline function
+vcombine_bf16: static or inline function
+vcombine_f16: static or inline function
+vcombine_f32: static or inline function
+vcombine_f64: static or inline function
+vcombine_mf8: static or inline function
+vcombine_p16: static or inline function
+vcombine_p64: static or inline function
+vcombine_p8: static or inline function
+vcombine_s16: static or inline function
+vcombine_s32: static or inline function
+vcombine_s64: static or inline function
+vcombine_s8: static or inline function
+vcombine_u16: static or inline function
+vcombine_u32: static or inline function
+vcombine_u64: static or inline function
+vcombine_u8: static or inline function
+vcvt1_bf16_mf8_fpm: static or inline function
+vcvt1_f16_mf8_fpm: static or inline function
+vcvt1_high_bf16_mf8_fpm: static or inline function
+vcvt1_high_f16_mf8_fpm: static or inline function
+vcvt1_low_bf16_mf8_fpm: static or inline function
+vcvt1_low_f16_mf8_fpm: static or inline function
+vcvt2_bf16_mf8_fpm: static or inline function
+vcvt2_f16_mf8_fpm: static or inline function
+vcvt2_high_bf16_mf8_fpm: static or inline function
+vcvt2_high_f16_mf8_fpm: static or inline function
+vcvt2_low_bf16_mf8_fpm: static or inline function
+vcvt2_low_f16_mf8_fpm: static or inline function
+vcvt_bf16_f32: static or inline function
+vcvt_f16_f32: static or inline function
+vcvt_f16_s16: static or inline function
+vcvt_f16_u16: static or inline function
+vcvt_f32_bf16: static or inline function
+vcvt_f32_f16: static or inline function
+vcvt_f32_f64: static or inline function
+vcvt_f32_s32: static or inline function
+vcvt_f32_u32: static or inline function
+vcvt_f64_f32: static or inline function
+vcvt_f64_s64: static or inline function
+vcvt_f64_u64: static or inline function
+vcvt_high_f16_f32: static or inline function
+vcvt_high_f32_f16: static or inline function
+vcvt_high_f32_f64: static or inline function
+vcvt_high_f64_f32: static or inline function
+vcvt_high_mf8_f32_fpm: static or inline function
+vcvt_mf8_f16_fpm: static or inline function
+vcvt_mf8_f32_fpm: static or inline function
+vcvt_s16_f16: static or inline function
+vcvt_s32_f32: static or inline function
+vcvt_s64_f64: static or inline function
+vcvt_u16_f16: static or inline function
+vcvt_u32_f32: static or inline function
+vcvt_u64_f64: static or inline function
+vcvta_s16_f16: static or inline function
+vcvta_s32_f32: static or inline function
+vcvta_s64_f64: static or inline function
+vcvta_u16_f16: static or inline function
+vcvta_u32_f32: static or inline function
+vcvta_u64_f64: static or inline function
+vcvtad_s64_f64: static or inline function
+vcvtad_u64_f64: static or inline function
+vcvtah_f32_bf16: static or inline function
+vcvtaq_s16_f16: static or inline function
+vcvtaq_s32_f32: static or inline function
+vcvtaq_s64_f64: static or inline function
+vcvtaq_u16_f16: static or inline function
+vcvtaq_u32_f32: static or inline function
+vcvtaq_u64_f64: static or inline function
+vcvtas_s32_f32: static or inline function
+vcvtas_u32_f32: static or inline function
+vcvtd_f64_s64: static or inline function
+vcvtd_f64_u64: static or inline function
+vcvtd_s64_f64: static or inline function
+vcvtd_u64_f64: static or inline function
+vcvth_bf16_f32: static or inline function
+vcvtm_s16_f16: static or inline function
+vcvtm_s32_f32: static or inline function
+vcvtm_s64_f64: static or inline function
+vcvtm_u16_f16: static or inline function
+vcvtm_u32_f32: static or inline function
+vcvtm_u64_f64: static or inline function
+vcvtmd_s64_f64: static or inline function
+vcvtmd_u64_f64: static or inline function
+vcvtmq_s16_f16: static or inline function
+vcvtmq_s32_f32: static or inline function
+vcvtmq_s64_f64: static or inline function
+vcvtmq_u16_f16: static or inline function
+vcvtmq_u32_f32: static or inline function
+vcvtmq_u64_f64: static or inline function
+vcvtms_s32_f32: static or inline function
+vcvtms_u32_f32: static or inline function
+vcvtn_s16_f16: static or inline function
+vcvtn_s32_f32: static or inline function
+vcvtn_s64_f64: static or inline function
+vcvtn_u16_f16: static or inline function
+vcvtn_u32_f32: static or inline function
+vcvtn_u64_f64: static or inline function
+vcvtnd_s64_f64: static or inline function
+vcvtnd_u64_f64: static or inline function
+vcvtnq_s16_f16: static or inline function
+vcvtnq_s32_f32: static or inline function
+vcvtnq_s64_f64: static or inline function
+vcvtnq_u16_f16: static or inline function
+vcvtnq_u32_f32: static or inline function
+vcvtnq_u64_f64: static or inline function
+vcvtns_s32_f32: static or inline function
+vcvtns_u32_f32: static or inline function
+vcvtp_s16_f16: static or inline function
+vcvtp_s32_f32: static or inline function
+vcvtp_s64_f64: static or inline function
+vcvtp_u16_f16: static or inline function
+vcvtp_u32_f32: static or inline function
+vcvtp_u64_f64: static or inline function
+vcvtpd_s64_f64: static or inline function
+vcvtpd_u64_f64: static or inline function
+vcvtpq_s16_f16: static or inline function
+vcvtpq_s32_f32: static or inline function
+vcvtpq_s64_f64: static or inline function
+vcvtpq_u16_f16: static or inline function
+vcvtpq_u32_f32: static or inline function
+vcvtpq_u64_f64: static or inline function
+vcvtps_s32_f32: static or inline function
+vcvtps_u32_f32: static or inline function
+vcvtq_f16_s16: static or inline function
+vcvtq_f16_u16: static or inline function
+vcvtq_f32_s32: static or inline function
+vcvtq_f32_u32: static or inline function
+vcvtq_f64_s64: static or inline function
+vcvtq_f64_u64: static or inline function
+vcvtq_high_bf16_f32: static or inline function
+vcvtq_high_f32_bf16: static or inline function
+vcvtq_low_bf16_f32: static or inline function
+vcvtq_low_f32_bf16: static or inline function
+vcvtq_mf8_f16_fpm: static or inline function
+vcvtq_s16_f16: static or inline function
+vcvtq_s32_f32: static or inline function
+vcvtq_s64_f64: static or inline function
+vcvtq_u16_f16: static or inline function
+vcvtq_u32_f32: static or inline function
+vcvtq_u64_f64: static or inline function
+vcvts_f32_s32: static or inline function
+vcvts_f32_u32: static or inline function
+vcvts_s32_f32: static or inline function
+vcvts_u32_f32: static or inline function
+vcvtx_f32_f64: static or inline function
+vcvtx_high_f32_f64: static or inline function
+vcvtxd_f32_f64: static or inline function
+vdiv_f16: static or inline function
+vdiv_f32: static or inline function
+vdiv_f64: static or inline function
+vdivq_f16: static or inline function
+vdivq_f32: static or inline function
+vdivq_f64: static or inline function
+vdot_f16_mf8_fpm: static or inline function
+vdot_f32_mf8_fpm: static or inline function
+vdot_s32: static or inline function
+vdot_u32: static or inline function
+vdotq_f16_mf8_fpm: static or inline function
+vdotq_f32_mf8_fpm: static or inline function
+vdotq_s32: static or inline function
+vdotq_u32: static or inline function
+vdup_n_bf16: static or inline function
+vdup_n_f32: static or inline function
+vdup_n_f64: static or inline function
+vdup_n_mf8: static or inline function
+vdup_n_p16: static or inline function
+vdup_n_p64: static or inline function
+vdup_n_p8: static or inline function
+vdup_n_s16: static or inline function
+vdup_n_s32: static or inline function
+vdup_n_s64: static or inline function
+vdup_n_s8: static or inline function
+vdup_n_u16: static or inline function
+vdup_n_u32: static or inline function
+vdup_n_u64: static or inline function
+vdup_n_u8: static or inline function
+vdupq_n_bf16: static or inline function
+vdupq_n_f32: static or inline function
+vdupq_n_f64: static or inline function
+vdupq_n_mf8: static or inline function
+vdupq_n_p16: static or inline function
+vdupq_n_p64: static or inline function
+vdupq_n_p8: static or inline function
+vdupq_n_s16: static or inline function
+vdupq_n_s32: static or inline function
+vdupq_n_s64: static or inline function
+vdupq_n_s8: static or inline function
+vdupq_n_u16: static or inline function
+vdupq_n_u32: static or inline function
+vdupq_n_u64: static or inline function
+vdupq_n_u8: static or inline function
+veor3q_s16: static or inline function
+veor3q_s32: static or inline function
+veor3q_s64: static or inline function
+veor3q_s8: static or inline function
+veor3q_u16: static or inline function
+veor3q_u32: static or inline function
+veor3q_u64: static or inline function
+veor3q_u8: static or inline function
+veor_s16: static or inline function
+veor_s32: static or inline function
+veor_s64: static or inline function
+veor_s8: static or inline function
+veor_u16: static or inline function
+veor_u32: static or inline function
+veor_u64: static or inline function
+veor_u8: static or inline function
+veorq_s16: static or inline function
+veorq_s32: static or inline function
+veorq_s64: static or inline function
+veorq_s8: static or inline function
+veorq_u16: static or inline function
+veorq_u32: static or inline function
+veorq_u64: static or inline function
+veorq_u8: static or inline function
+vfma_f16: static or inline function
+vfma_f32: static or inline function
+vfma_f64: static or inline function
+vfma_n_f32: static or inline function
+vfma_n_f64: static or inline function
+vfmaq_f16: static or inline function
+vfmaq_f32: static or inline function
+vfmaq_f64: static or inline function
+vfmaq_n_f32: static or inline function
+vfmaq_n_f64: static or inline function
+vfmlal_high_f16: static or inline function
+vfmlal_low_f16: static or inline function
+vfmlalq_high_f16: static or inline function
+vfmlalq_low_f16: static or inline function
+vfmlsl_high_f16: static or inline function
+vfmlsl_low_f16: static or inline function
+vfmlslq_high_f16: static or inline function
+vfmlslq_low_f16: static or inline function
+vfms_f16: static or inline function
+vfms_f32: static or inline function
+vfms_f64: static or inline function
+vfms_n_f32: static or inline function
+vfms_n_f64: static or inline function
+vfmsq_f16: static or inline function
+vfmsq_f32: static or inline function
+vfmsq_f64: static or inline function
+vfmsq_n_f32: static or inline function
+vfmsq_n_f64: static or inline function
+vget_high_bf16: static or inline function
+vget_high_f16: static or inline function
+vget_high_f32: static or inline function
+vget_high_f64: static or inline function
+vget_high_mf8: static or inline function
+vget_high_p16: static or inline function
+vget_high_p64: static or inline function
+vget_high_p8: static or inline function
+vget_high_s16: static or inline function
+vget_high_s32: static or inline function
+vget_high_s64: static or inline function
+vget_high_s8: static or inline function
+vget_high_u16: static or inline function
+vget_high_u32: static or inline function
+vget_high_u64: static or inline function
+vget_high_u8: static or inline function
+vget_low_bf16: static or inline function
+vget_low_f16: static or inline function
+vget_low_f32: static or inline function
+vget_low_f64: static or inline function
+vget_low_mf8: static or inline function
+vget_low_p16: static or inline function
+vget_low_p64: static or inline function
+vget_low_p8: static or inline function
+vget_low_s16: static or inline function
+vget_low_s32: static or inline function
+vget_low_s64: static or inline function
+vget_low_s8: static or inline function
+vget_low_u16: static or inline function
+vget_low_u32: static or inline function
+vget_low_u64: static or inline function
+vget_low_u8: static or inline function
+vhadd_s16: static or inline function
+vhadd_s32: static or inline function
+vhadd_s8: static or inline function
+vhadd_u16: static or inline function
+vhadd_u32: static or inline function
+vhadd_u8: static or inline function
+vhaddq_s16: static or inline function
+vhaddq_s32: static or inline function
+vhaddq_s8: static or inline function
+vhaddq_u16: static or inline function
+vhaddq_u32: static or inline function
+vhaddq_u8: static or inline function
+vhsub_s16: static or inline function
+vhsub_s32: static or inline function
+vhsub_s8: static or inline function
+vhsub_u16: static or inline function
+vhsub_u32: static or inline function
+vhsub_u8: static or inline function
+vhsubq_s16: static or inline function
+vhsubq_s32: static or inline function
+vhsubq_s8: static or inline function
+vhsubq_u16: static or inline function
+vhsubq_u32: static or inline function
+vhsubq_u8: static or inline function
+vmax_f16: static or inline function
+vmax_f32: static or inline function
+vmax_f64: static or inline function
+vmax_s16: static or inline function
+vmax_s32: static or inline function
+vmax_s8: static or inline function
+vmax_u16: static or inline function
+vmax_u32: static or inline function
+vmax_u8: static or inline function
+vmaxnm_f16: static or inline function
+vmaxnm_f32: static or inline function
+vmaxnm_f64: static or inline function
+vmaxnmq_f16: static or inline function
+vmaxnmq_f32: static or inline function
+vmaxnmq_f64: static or inline function
+vmaxnmv_f32: static or inline function
+vmaxnmvq_f32: static or inline function
+vmaxnmvq_f64: static or inline function
+vmaxq_f16: static or inline function
+vmaxq_f32: static or inline function
+vmaxq_f64: static or inline function
+vmaxq_s16: static or inline function
+vmaxq_s32: static or inline function
+vmaxq_s8: static or inline function
+vmaxq_u16: static or inline function
+vmaxq_u32: static or inline function
+vmaxq_u8: static or inline function
+vmaxv_f32: static or inline function
+vmaxv_s16: static or inline function
+vmaxv_s32: static or inline function
+vmaxv_s8: static or inline function
+vmaxv_u16: static or inline function
+vmaxv_u32: static or inline function
+vmaxv_u8: static or inline function
+vmaxvq_f32: static or inline function
+vmaxvq_f64: static or inline function
+vmaxvq_s16: static or inline function
+vmaxvq_s32: static or inline function
+vmaxvq_s8: static or inline function
+vmaxvq_u16: static or inline function
+vmaxvq_u32: static or inline function
+vmaxvq_u8: static or inline function
+vmin_f16: static or inline function
+vmin_f32: static or inline function
+vmin_f64: static or inline function
+vmin_s16: static or inline function
+vmin_s32: static or inline function
+vmin_s8: static or inline function
+vmin_u16: static or inline function
+vmin_u32: static or inline function
+vmin_u8: static or inline function
+vminnm_f16: static or inline function
+vminnm_f32: static or inline function
+vminnm_f64: static or inline function
+vminnmq_f16: static or inline function
+vminnmq_f32: static or inline function
+vminnmq_f64: static or inline function
+vminnmv_f32: static or inline function
+vminnmvq_f32: static or inline function
+vminnmvq_f64: static or inline function
+vminq_f16: static or inline function
+vminq_f32: static or inline function
+vminq_f64: static or inline function
+vminq_s16: static or inline function
+vminq_s32: static or inline function
+vminq_s8: static or inline function
+vminq_u16: static or inline function
+vminq_u32: static or inline function
+vminq_u8: static or inline function
+vminv_f32: static or inline function
+vminv_s16: static or inline function
+vminv_s32: static or inline function
+vminv_s8: static or inline function
+vminv_u16: static or inline function
+vminv_u32: static or inline function
+vminv_u8: static or inline function
+vminvq_f32: static or inline function
+vminvq_f64: static or inline function
+vminvq_s16: static or inline function
+vminvq_s32: static or inline function
+vminvq_s8: static or inline function
+vminvq_u16: static or inline function
+vminvq_u32: static or inline function
+vminvq_u8: static or inline function
+vmla_f32: static or inline function
+vmla_f64: static or inline function
+vmla_n_f32: static or inline function
+vmla_n_s16: static or inline function
+vmla_n_s32: static or inline function
+vmla_n_u16: static or inline function
+vmla_n_u32: static or inline function
+vmla_s16: static or inline function
+vmla_s32: static or inline function
+vmla_s8: static or inline function
+vmla_u16: static or inline function
+vmla_u32: static or inline function
+vmla_u8: static or inline function
+vmlal_high_n_s16: static or inline function
+vmlal_high_n_s32: static or inline function
+vmlal_high_n_u16: static or inline function
+vmlal_high_n_u32: static or inline function
+vmlal_high_s16: static or inline function
+vmlal_high_s32: static or inline function
+vmlal_high_s8: static or inline function
+vmlal_high_u16: static or inline function
+vmlal_high_u32: static or inline function
+vmlal_high_u8: static or inline function
+vmlal_n_s16: static or inline function
+vmlal_n_s32: static or inline function
+vmlal_n_u16: static or inline function
+vmlal_n_u32: static or inline function
+vmlal_s16: static or inline function
+vmlal_s32: static or inline function
+vmlal_s8: static or inline function
+vmlal_u16: static or inline function
+vmlal_u32: static or inline function
+vmlal_u8: static or inline function
+vmlalbq_f16_mf8_fpm: static or inline function
+vmlallbbq_f32_mf8_fpm: static or inline function
+vmlallbtq_f32_mf8_fpm: static or inline function
+vmlalltbq_f32_mf8_fpm: static or inline function
+vmlallttq_f32_mf8_fpm: static or inline function
+vmlaltq_f16_mf8_fpm: static or inline function
+vmlaq_f32: static or inline function
+vmlaq_f64: static or inline function
+vmlaq_n_f32: static or inline function
+vmlaq_n_s16: static or inline function
+vmlaq_n_s32: static or inline function
+vmlaq_n_u16: static or inline function
+vmlaq_n_u32: static or inline function
+vmlaq_s16: static or inline function
+vmlaq_s32: static or inline function
+vmlaq_s8: static or inline function
+vmlaq_u16: static or inline function
+vmlaq_u32: static or inline function
+vmlaq_u8: static or inline function
+vmls_f32: static or inline function
+vmls_f64: static or inline function
+vmls_n_f32: static or inline function
+vmls_n_s16: static or inline function
+vmls_n_s32: static or inline function
+vmls_n_u16: static or inline function
+vmls_n_u32: static or inline function
+vmls_s16: static or inline function
+vmls_s32: static or inline function
+vmls_s8: static or inline function
+vmls_u16: static or inline function
+vmls_u32: static or inline function
+vmls_u8: static or inline function
+vmlsl_high_n_s16: static or inline function
+vmlsl_high_n_s32: static or inline function
+vmlsl_high_n_u16: static or inline function
+vmlsl_high_n_u32: static or inline function
+vmlsl_high_s16: static or inline function
+vmlsl_high_s32: static or inline function
+vmlsl_high_s8: static or inline function
+vmlsl_high_u16: static or inline function
+vmlsl_high_u32: static or inline function
+vmlsl_high_u8: static or inline function
+vmlsl_n_s16: static or inline function
+vmlsl_n_s32: static or inline function
+vmlsl_n_u16: static or inline function
+vmlsl_n_u32: static or inline function
+vmlsl_s16: static or inline function
+vmlsl_s32: static or inline function
+vmlsl_s8: static or inline function
+vmlsl_u16: static or inline function
+vmlsl_u32: static or inline function
+vmlsl_u8: static or inline function
+vmlsq_f32: static or inline function
+vmlsq_f64: static or inline function
+vmlsq_n_f32: static or inline function
+vmlsq_n_s16: static or inline function
+vmlsq_n_s32: static or inline function
+vmlsq_n_u16: static or inline function
+vmlsq_n_u32: static or inline function
+vmlsq_s16: static or inline function
+vmlsq_s32: static or inline function
+vmlsq_s8: static or inline function
+vmlsq_u16: static or inline function
+vmlsq_u32: static or inline function
+vmlsq_u8: static or inline function
+vmmlaq_s32: static or inline function
+vmmlaq_u32: static or inline function
+vmov_n_f32: static or inline function
+vmov_n_f64: static or inline function
+vmov_n_mf8: static or inline function
+vmov_n_p16: static or inline function
+vmov_n_p64: static or inline function
+vmov_n_p8: static or inline function
+vmov_n_s16: static or inline function
+vmov_n_s32: static or inline function
+vmov_n_s64: static or inline function
+vmov_n_s8: static or inline function
+vmov_n_u16: static or inline function
+vmov_n_u32: static or inline function
+vmov_n_u64: static or inline function
+vmov_n_u8: static or inline function
+vmovl_high_s16: static or inline function
+vmovl_high_s32: static or inline function
+vmovl_high_s8: static or inline function
+vmovl_high_u16: static or inline function
+vmovl_high_u32: static or inline function
+vmovl_high_u8: static or inline function
+vmovl_s16: static or inline function
+vmovl_s32: static or inline function
+vmovl_s8: static or inline function
+vmovl_u16: static or inline function
+vmovl_u32: static or inline function
+vmovl_u8: static or inline function
+vmovn_high_s16: static or inline function
+vmovn_high_s32: static or inline function
+vmovn_high_s64: static or inline function
+vmovn_high_u16: static or inline function
+vmovn_high_u32: static or inline function
+vmovn_high_u64: static or inline function
+vmovn_s16: static or inline function
+vmovn_s32: static or inline function
+vmovn_s64: static or inline function
+vmovn_u16: static or inline function
+vmovn_u32: static or inline function
+vmovn_u64: static or inline function
+vmovq_n_f32: static or inline function
+vmovq_n_f64: static or inline function
+vmovq_n_mf8: static or inline function
+vmovq_n_p16: static or inline function
+vmovq_n_p64: static or inline function
+vmovq_n_p8: static or inline function
+vmovq_n_s16: static or inline function
+vmovq_n_s32: static or inline function
+vmovq_n_s64: static or inline function
+vmovq_n_s8: static or inline function
+vmovq_n_u16: static or inline function
+vmovq_n_u32: static or inline function
+vmovq_n_u64: static or inline function
+vmovq_n_u8: static or inline function
+vmul_f16: static or inline function
+vmul_f32: static or inline function
+vmul_f64: static or inline function
+vmul_n_f32: static or inline function
+vmul_n_f64: static or inline function
+vmul_n_s16: static or inline function
+vmul_n_s32: static or inline function
+vmul_n_u16: static or inline function
+vmul_n_u32: static or inline function
+vmul_p8: static or inline function
+vmul_s16: static or inline function
+vmul_s32: static or inline function
+vmul_s8: static or inline function
+vmul_u16: static or inline function
+vmul_u32: static or inline function
+vmul_u8: static or inline function
+vmull_high_n_s16: static or inline function
+vmull_high_n_s32: static or inline function
+vmull_high_n_u16: static or inline function
+vmull_high_n_u32: static or inline function
+vmull_high_p64: static or inline function
+vmull_high_p8: static or inline function
+vmull_high_s16: static or inline function
+vmull_high_s32: static or inline function
+vmull_high_s8: static or inline function
+vmull_high_u16: static or inline function
+vmull_high_u32: static or inline function
+vmull_high_u8: static or inline function
+vmull_n_s16: static or inline function
+vmull_n_s32: static or inline function
+vmull_n_u16: static or inline function
+vmull_n_u32: static or inline function
+vmull_p64: static or inline function
+vmull_p8: static or inline function
+vmull_s16: static or inline function
+vmull_s32: static or inline function
+vmull_s8: static or inline function
+vmull_u16: static or inline function
+vmull_u32: static or inline function
+vmull_u8: static or inline function
+vmulq_f16: static or inline function
+vmulq_f32: static or inline function
+vmulq_f64: static or inline function
+vmulq_n_f32: static or inline function
+vmulq_n_f64: static or inline function
+vmulq_n_s16: static or inline function
+vmulq_n_s32: static or inline function
+vmulq_n_u16: static or inline function
+vmulq_n_u32: static or inline function
+vmulq_p8: static or inline function
+vmulq_s16: static or inline function
+vmulq_s32: static or inline function
+vmulq_s8: static or inline function
+vmulq_u16: static or inline function
+vmulq_u32: static or inline function
+vmulq_u8: static or inline function
+vmulx_f16: static or inline function
+vmulx_f32: static or inline function
+vmulx_f64: static or inline function
+vmulxd_f64: static or inline function
+vmulxq_f16: static or inline function
+vmulxq_f32: static or inline function
+vmulxq_f64: static or inline function
+vmulxs_f32: static or inline function
+vmvn_p8: static or inline function
+vmvn_s16: static or inline function
+vmvn_s32: static or inline function
+vmvn_s8: static or inline function
+vmvn_u16: static or inline function
+vmvn_u32: static or inline function
+vmvn_u8: static or inline function
+vmvnq_p8: static or inline function
+vmvnq_s16: static or inline function
+vmvnq_s32: static or inline function
+vmvnq_s8: static or inline function
+vmvnq_u16: static or inline function
+vmvnq_u32: static or inline function
+vmvnq_u8: static or inline function
+vneg_f16: static or inline function
+vneg_f32: static or inline function
+vneg_f64: static or inline function
+vneg_s16: static or inline function
+vneg_s32: static or inline function
+vneg_s64: static or inline function
+vneg_s8: static or inline function
+vnegd_s64: static or inline function
+vnegq_f16: static or inline function
+vnegq_f32: static or inline function
+vnegq_f64: static or inline function
+vnegq_s16: static or inline function
+vnegq_s32: static or inline function
+vnegq_s64: static or inline function
+vnegq_s8: static or inline function
+vorn_s16: static or inline function
+vorn_s32: static or inline function
+vorn_s64: static or inline function
+vorn_s8: static or inline function
+vorn_u16: static or inline function
+vorn_u32: static or inline function
+vorn_u64: static or inline function
+vorn_u8: static or inline function
+vornq_s16: static or inline function
+vornq_s32: static or inline function
+vornq_s64: static or inline function
+vornq_s8: static or inline function
+vornq_u16: static or inline function
+vornq_u32: static or inline function
+vornq_u64: static or inline function
+vornq_u8: static or inline function
+vorr_s16: static or inline function
+vorr_s32: static or inline function
+vorr_s64: static or inline function
+vorr_s8: static or inline function
+vorr_u16: static or inline function
+vorr_u32: static or inline function
+vorr_u64: static or inline function
+vorr_u8: static or inline function
+vorrq_s16: static or inline function
+vorrq_s32: static or inline function
+vorrq_s64: static or inline function
+vorrq_s8: static or inline function
+vorrq_u16: static or inline function
+vorrq_u32: static or inline function
+vorrq_u64: static or inline function
+vorrq_u8: static or inline function
+vpadal_s16: static or inline function
+vpadal_s32: static or inline function
+vpadal_s8: static or inline function
+vpadal_u16: static or inline function
+vpadal_u32: static or inline function
+vpadal_u8: static or inline function
+vpadalq_s16: static or inline function
+vpadalq_s32: static or inline function
+vpadalq_s8: static or inline function
+vpadalq_u16: static or inline function
+vpadalq_u32: static or inline function
+vpadalq_u8: static or inline function
+vpadd_f16: static or inline function
+vpadd_f32: static or inline function
+vpadd_s16: static or inline function
+vpadd_s32: static or inline function
+vpadd_s8: static or inline function
+vpadd_u16: static or inline function
+vpadd_u32: static or inline function
+vpadd_u8: static or inline function
+vpaddd_f64: static or inline function
+vpaddd_s64: static or inline function
+vpaddd_u64: static or inline function
+vpaddl_s16: static or inline function
+vpaddl_s32: static or inline function
+vpaddl_s8: static or inline function
+vpaddl_u16: static or inline function
+vpaddl_u32: static or inline function
+vpaddl_u8: static or inline function
+vpaddlq_s16: static or inline function
+vpaddlq_s32: static or inline function
+vpaddlq_s8: static or inline function
+vpaddlq_u16: static or inline function
+vpaddlq_u32: static or inline function
+vpaddlq_u8: static or inline function
+vpaddq_f16: static or inline function
+vpaddq_f32: static or inline function
+vpaddq_f64: static or inline function
+vpaddq_s16: static or inline function
+vpaddq_s32: static or inline function
+vpaddq_s64: static or inline function
+vpaddq_s8: static or inline function
+vpaddq_u16: static or inline function
+vpaddq_u32: static or inline function
+vpaddq_u64: static or inline function
+vpaddq_u8: static or inline function
+vpadds_f32: static or inline function
+vpmax_f16: static or inline function
+vpmax_f32: static or inline function
+vpmax_s16: static or inline function
+vpmax_s32: static or inline function
+vpmax_s8: static or inline function
+vpmax_u16: static or inline function
+vpmax_u32: static or inline function
+vpmax_u8: static or inline function
+vpmaxnm_f16: static or inline function
+vpmaxnm_f32: static or inline function
+vpmaxnmq_f16: static or inline function
+vpmaxnmq_f32: static or inline function
+vpmaxnmq_f64: static or inline function
+vpmaxnmqd_f64: static or inline function
+vpmaxnms_f32: static or inline function
+vpmaxq_f16: static or inline function
+vpmaxq_f32: static or inline function
+vpmaxq_f64: static or inline function
+vpmaxq_s16: static or inline function
+vpmaxq_s32: static or inline function
+vpmaxq_s8: static or inline function
+vpmaxq_u16: static or inline function
+vpmaxq_u32: static or inline function
+vpmaxq_u8: static or inline function
+vpmaxqd_f64: static or inline function
+vpmaxs_f32: static or inline function
+vpmin_f16: static or inline function
+vpmin_f32: static or inline function
+vpmin_s16: static or inline function
+vpmin_s32: static or inline function
+vpmin_s8: static or inline function
+vpmin_u16: static or inline function
+vpmin_u32: static or inline function
+vpmin_u8: static or inline function
+vpminnm_f16: static or inline function
+vpminnm_f32: static or inline function
+vpminnmq_f16: static or inline function
+vpminnmq_f32: static or inline function
+vpminnmq_f64: static or inline function
+vpminnmqd_f64: static or inline function
+vpminnms_f32: static or inline function
+vpminq_f16: static or inline function
+vpminq_f32: static or inline function
+vpminq_f64: static or inline function
+vpminq_s16: static or inline function
+vpminq_s32: static or inline function
+vpminq_s8: static or inline function
+vpminq_u16: static or inline function
+vpminq_u32: static or inline function
+vpminq_u8: static or inline function
+vpminqd_f64: static or inline function
+vpmins_f32: static or inline function
+vqabs_s16: static or inline function
+vqabs_s32: static or inline function
+vqabs_s64: static or inline function
+vqabs_s8: static or inline function
+vqabsb_s8: static or inline function
+vqabsd_s64: static or inline function
+vqabsh_s16: static or inline function
+vqabsq_s16: static or inline function
+vqabsq_s32: static or inline function
+vqabsq_s64: static or inline function
+vqabsq_s8: static or inline function
+vqabss_s32: static or inline function
+vqadd_s16: static or inline function
+vqadd_s32: static or inline function
+vqadd_s64: static or inline function
+vqadd_s8: static or inline function
+vqadd_u16: static or inline function
+vqadd_u32: static or inline function
+vqadd_u64: static or inline function
+vqadd_u8: static or inline function
+vqaddb_s8: static or inline function
+vqaddb_u8: static or inline function
+vqaddd_s64: static or inline function
+vqaddd_u64: static or inline function
+vqaddh_s16: static or inline function
+vqaddh_u16: static or inline function
+vqaddq_s16: static or inline function
+vqaddq_s32: static or inline function
+vqaddq_s64: static or inline function
+vqaddq_s8: static or inline function
+vqaddq_u16: static or inline function
+vqaddq_u32: static or inline function
+vqaddq_u64: static or inline function
+vqaddq_u8: static or inline function
+vqadds_s32: static or inline function
+vqadds_u32: static or inline function
+vqdmlal_high_n_s16: static or inline function
+vqdmlal_high_n_s32: static or inline function
+vqdmlal_high_s16: static or inline function
+vqdmlal_high_s32: static or inline function
+vqdmlal_n_s16: static or inline function
+vqdmlal_n_s32: static or inline function
+vqdmlal_s16: static or inline function
+vqdmlal_s32: static or inline function
+vqdmlalh_s16: static or inline function
+vqdmlals_s32: static or inline function
+vqdmlsl_high_n_s16: static or inline function
+vqdmlsl_high_n_s32: static or inline function
+vqdmlsl_high_s16: static or inline function
+vqdmlsl_high_s32: static or inline function
+vqdmlsl_n_s16: static or inline function
+vqdmlsl_n_s32: static or inline function
+vqdmlsl_s16: static or inline function
+vqdmlsl_s32: static or inline function
+vqdmlslh_s16: static or inline function
+vqdmlsls_s32: static or inline function
+vqdmulh_n_s16: static or inline function
+vqdmulh_n_s32: static or inline function
+vqdmulh_s16: static or inline function
+vqdmulh_s32: static or inline function
+vqdmulhh_s16: static or inline function
+vqdmulhq_n_s16: static or inline function
+vqdmulhq_n_s32: static or inline function
+vqdmulhq_s16: static or inline function
+vqdmulhq_s32: static or inline function
+vqdmulhs_s32: static or inline function
+vqdmull_high_n_s16: static or inline function
+vqdmull_high_n_s32: static or inline function
+vqdmull_high_s16: static or inline function
+vqdmull_high_s32: static or inline function
+vqdmull_n_s16: static or inline function
+vqdmull_n_s32: static or inline function
+vqdmull_s16: static or inline function
+vqdmull_s32: static or inline function
+vqdmullh_s16: static or inline function
+vqdmulls_s32: static or inline function
+vqmovn_high_s16: static or inline function
+vqmovn_high_s32: static or inline function
+vqmovn_high_s64: static or inline function
+vqmovn_high_u16: static or inline function
+vqmovn_high_u32: static or inline function
+vqmovn_high_u64: static or inline function
+vqmovn_s16: static or inline function
+vqmovn_s32: static or inline function
+vqmovn_s64: static or inline function
+vqmovn_u16: static or inline function
+vqmovn_u32: static or inline function
+vqmovn_u64: static or inline function
+vqmovnd_s64: static or inline function
+vqmovnd_u64: static or inline function
+vqmovnh_s16: static or inline function
+vqmovnh_u16: static or inline function
+vqmovns_s32: static or inline function
+vqmovns_u32: static or inline function
+vqmovun_high_s16: static or inline function
+vqmovun_high_s32: static or inline function
+vqmovun_high_s64: static or inline function
+vqmovun_s16: static or inline function
+vqmovun_s32: static or inline function
+vqmovun_s64: static or inline function
+vqmovund_s64: static or inline function
+vqmovunh_s16: static or inline function
+vqmovuns_s32: static or inline function
+vqneg_s16: static or inline function
+vqneg_s32: static or inline function
+vqneg_s64: static or inline function
+vqneg_s8: static or inline function
+vqnegb_s8: static or inline function
+vqnegd_s64: static or inline function
+vqnegh_s16: static or inline function
+vqnegq_s16: static or inline function
+vqnegq_s32: static or inline function
+vqnegq_s64: static or inline function
+vqnegq_s8: static or inline function
+vqnegs_s32: static or inline function
+vqrdmlah_s16: static or inline function
+vqrdmlah_s32: static or inline function
+vqrdmlahh_s16: static or inline function
+vqrdmlahq_s16: static or inline function
+vqrdmlahq_s32: static or inline function
+vqrdmlahs_s32: static or inline function
+vqrdmlsh_s16: static or inline function
+vqrdmlsh_s32: static or inline function
+vqrdmlshh_s16: static or inline function
+vqrdmlshq_s16: static or inline function
+vqrdmlshq_s32: static or inline function
+vqrdmlshs_s32: static or inline function
+vqrdmulh_n_s16: static or inline function
+vqrdmulh_n_s32: static or inline function
+vqrdmulh_s16: static or inline function
+vqrdmulh_s32: static or inline function
+vqrdmulhh_s16: static or inline function
+vqrdmulhq_n_s16: static or inline function
+vqrdmulhq_n_s32: static or inline function
+vqrdmulhq_s16: static or inline function
+vqrdmulhq_s32: static or inline function
+vqrdmulhs_s32: static or inline function
+vqrshl_s16: static or inline function
+vqrshl_s32: static or inline function
+vqrshl_s64: static or inline function
+vqrshl_s8: static or inline function
+vqrshl_u16: static or inline function
+vqrshl_u32: static or inline function
+vqrshl_u64: static or inline function
+vqrshl_u8: static or inline function
+vqrshlb_s8: static or inline function
+vqrshlb_u8: static or inline function
+vqrshld_s64: static or inline function
+vqrshld_u64: static or inline function
+vqrshlh_s16: static or inline function
+vqrshlh_u16: static or inline function
+vqrshlq_s16: static or inline function
+vqrshlq_s32: static or inline function
+vqrshlq_s64: static or inline function
+vqrshlq_s8: static or inline function
+vqrshlq_u16: static or inline function
+vqrshlq_u32: static or inline function
+vqrshlq_u64: static or inline function
+vqrshlq_u8: static or inline function
+vqrshls_s32: static or inline function
+vqrshls_u32: static or inline function
+vqshl_s16: static or inline function
+vqshl_s32: static or inline function
+vqshl_s64: static or inline function
+vqshl_s8: static or inline function
+vqshl_u16: static or inline function
+vqshl_u32: static or inline function
+vqshl_u64: static or inline function
+vqshl_u8: static or inline function
+vqshlb_s8: static or inline function
+vqshlb_u8: static or inline function
+vqshld_s64: static or inline function
+vqshld_u64: static or inline function
+vqshlh_s16: static or inline function
+vqshlh_u16: static or inline function
+vqshlq_s16: static or inline function
+vqshlq_s32: static or inline function
+vqshlq_s64: static or inline function
+vqshlq_s8: static or inline function
+vqshlq_u16: static or inline function
+vqshlq_u32: static or inline function
+vqshlq_u64: static or inline function
+vqshlq_u8: static or inline function
+vqshls_s32: static or inline function
+vqshls_u32: static or inline function
+vqsub_s16: static or inline function
+vqsub_s32: static or inline function
+vqsub_s64: static or inline function
+vqsub_s8: static or inline function
+vqsub_u16: static or inline function
+vqsub_u32: static or inline function
+vqsub_u64: static or inline function
+vqsub_u8: static or inline function
+vqsubb_s8: static or inline function
+vqsubb_u8: static or inline function
+vqsubd_s64: static or inline function
+vqsubd_u64: static or inline function
+vqsubh_s16: static or inline function
+vqsubh_u16: static or inline function
+vqsubq_s16: static or inline function
+vqsubq_s32: static or inline function
+vqsubq_s64: static or inline function
+vqsubq_s8: static or inline function
+vqsubq_u16: static or inline function
+vqsubq_u32: static or inline function
+vqsubq_u64: static or inline function
+vqsubq_u8: static or inline function
+vqsubs_s32: static or inline function
+vqsubs_u32: static or inline function
+vqtbl1_mf8: static or inline function
+vqtbl1_p8: static or inline function
+vqtbl1_s8: static or inline function
+vqtbl1_u8: static or inline function
+vqtbl1q_mf8: static or inline function
+vqtbl1q_p8: static or inline function
+vqtbl1q_s8: static or inline function
+vqtbl1q_u8: static or inline function
+vqtbl2_mf8: static or inline function
+vqtbl2_p8: static or inline function
+vqtbl2_s8: static or inline function
+vqtbl2_u8: static or inline function
+vqtbl2q_mf8: static or inline function
+vqtbl2q_p8: static or inline function
+vqtbl2q_s8: static or inline function
+vqtbl2q_u8: static or inline function
+vqtbl3_mf8: static or inline function
+vqtbl3_p8: static or inline function
+vqtbl3_s8: static or inline function
+vqtbl3_u8: static or inline function
+vqtbl3q_mf8: static or inline function
+vqtbl3q_p8: static or inline function
+vqtbl3q_s8: static or inline function
+vqtbl3q_u8: static or inline function
+vqtbl4_mf8: static or inline function
+vqtbl4_p8: static or inline function
+vqtbl4_s8: static or inline function
+vqtbl4_u8: static or inline function
+vqtbl4q_mf8: static or inline function
+vqtbl4q_p8: static or inline function
+vqtbl4q_s8: static or inline function
+vqtbl4q_u8: static or inline function
+vqtbx1_mf8: static or inline function
+vqtbx1_p8: static or inline function
+vqtbx1_s8: static or inline function
+vqtbx1_u8: static or inline function
+vqtbx1q_mf8: static or inline function
+vqtbx1q_p8: static or inline function
+vqtbx1q_s8: static or inline function
+vqtbx1q_u8: static or inline function
+vqtbx2_mf8: static or inline function
+vqtbx2_p8: static or inline function
+vqtbx2_s8: static or inline function
+vqtbx2_u8: static or inline function
+vqtbx2q_mf8: static or inline function
+vqtbx2q_p8: static or inline function
+vqtbx2q_s8: static or inline function
+vqtbx2q_u8: static or inline function
+vqtbx3_mf8: static or inline function
+vqtbx3_p8: static or inline function
+vqtbx3_s8: static or inline function
+vqtbx3_u8: static or inline function
+vqtbx3q_mf8: static or inline function
+vqtbx3q_p8: static or inline function
+vqtbx3q_s8: static or inline function
+vqtbx3q_u8: static or inline function
+vqtbx4_mf8: static or inline function
+vqtbx4_p8: static or inline function
+vqtbx4_s8: static or inline function
+vqtbx4_u8: static or inline function
+vqtbx4q_mf8: static or inline function
+vqtbx4q_p8: static or inline function
+vqtbx4q_s8: static or inline function
+vqtbx4q_u8: static or inline function
+vraddhn_high_s16: static or inline function
+vraddhn_high_s32: static or inline function
+vraddhn_high_s64: static or inline function
+vraddhn_high_u16: static or inline function
+vraddhn_high_u32: static or inline function
+vraddhn_high_u64: static or inline function
+vraddhn_s16: static or inline function
+vraddhn_s32: static or inline function
+vraddhn_s64: static or inline function
+vraddhn_u16: static or inline function
+vraddhn_u32: static or inline function
+vraddhn_u64: static or inline function
+vrax1q_u64: static or inline function
+vrbit_p8: static or inline function
+vrbit_s8: static or inline function
+vrbit_u8: static or inline function
+vrbitq_p8: static or inline function
+vrbitq_s8: static or inline function
+vrbitq_u8: static or inline function
+vrecpe_f16: static or inline function
+vrecpe_f32: static or inline function
+vrecpe_f64: static or inline function
+vrecpe_u32: static or inline function
+vrecped_f64: static or inline function
+vrecpeq_f16: static or inline function
+vrecpeq_f32: static or inline function
+vrecpeq_f64: static or inline function
+vrecpeq_u32: static or inline function
+vrecpes_f32: static or inline function
+vrecps_f16: static or inline function
+vrecps_f32: static or inline function
+vrecps_f64: static or inline function
+vrecpsd_f64: static or inline function
+vrecpsq_f16: static or inline function
+vrecpsq_f32: static or inline function
+vrecpsq_f64: static or inline function
+vrecpss_f32: static or inline function
+vrecpxd_f64: static or inline function
+vrecpxs_f32: static or inline function
+vreinterpret_bf16_f16: static or inline function
+vreinterpret_bf16_f32: static or inline function
+vreinterpret_bf16_f64: static or inline function
+vreinterpret_bf16_p16: static or inline function
+vreinterpret_bf16_p64: static or inline function
+vreinterpret_bf16_p8: static or inline function
+vreinterpret_bf16_s16: static or inline function
+vreinterpret_bf16_s32: static or inline function
+vreinterpret_bf16_s64: static or inline function
+vreinterpret_bf16_s8: static or inline function
+vreinterpret_bf16_u16: static or inline function
+vreinterpret_bf16_u32: static or inline function
+vreinterpret_bf16_u64: static or inline function
+vreinterpret_bf16_u8: static or inline function
+vreinterpret_f16_bf16: static or inline function
+vreinterpret_f16_f32: static or inline function
+vreinterpret_f16_f64: static or inline function
+vreinterpret_f16_mf8: static or inline function
+vreinterpret_f16_p16: static or inline function
+vreinterpret_f16_p64: static or inline function
+vreinterpret_f16_p8: static or inline function
+vreinterpret_f16_s16: static or inline function
+vreinterpret_f16_s32: static or inline function
+vreinterpret_f16_s64: static or inline function
+vreinterpret_f16_s8: static or inline function
+vreinterpret_f16_u16: static or inline function
+vreinterpret_f16_u32: static or inline function
+vreinterpret_f16_u64: static or inline function
+vreinterpret_f16_u8: static or inline function
+vreinterpret_f32_bf16: static or inline function
+vreinterpret_f32_f16: static or inline function
+vreinterpret_f32_f64: static or inline function
+vreinterpret_f32_mf8: static or inline function
+vreinterpret_f32_p16: static or inline function
+vreinterpret_f32_p64: static or inline function
+vreinterpret_f32_p8: static or inline function
+vreinterpret_f32_s16: static or inline function
+vreinterpret_f32_s32: static or inline function
+vreinterpret_f32_s64: static or inline function
+vreinterpret_f32_s8: static or inline function
+vreinterpret_f32_u16: static or inline function
+vreinterpret_f32_u32: static or inline function
+vreinterpret_f32_u64: static or inline function
+vreinterpret_f32_u8: static or inline function
+vreinterpret_f64_bf16: static or inline function
+vreinterpret_f64_f16: static or inline function
+vreinterpret_f64_f32: static or inline function
+vreinterpret_f64_mf8: static or inline function
+vreinterpret_f64_p16: static or inline function
+vreinterpret_f64_p64: static or inline function
+vreinterpret_f64_p8: static or inline function
+vreinterpret_f64_s16: static or inline function
+vreinterpret_f64_s32: static or inline function
+vreinterpret_f64_s64: static or inline function
+vreinterpret_f64_s8: static or inline function
+vreinterpret_f64_u16: static or inline function
+vreinterpret_f64_u32: static or inline function
+vreinterpret_f64_u64: static or inline function
+vreinterpret_f64_u8: static or inline function
+vreinterpret_mf8_f16: static or inline function
+vreinterpret_mf8_f32: static or inline function
+vreinterpret_mf8_f64: static or inline function
+vreinterpret_mf8_p16: static or inline function
+vreinterpret_mf8_p64: static or inline function
+vreinterpret_mf8_p8: static or inline function
+vreinterpret_mf8_s16: static or inline function
+vreinterpret_mf8_s32: static or inline function
+vreinterpret_mf8_s64: static or inline function
+vreinterpret_mf8_s8: static or inline function
+vreinterpret_mf8_u16: static or inline function
+vreinterpret_mf8_u32: static or inline function
+vreinterpret_mf8_u64: static or inline function
+vreinterpret_mf8_u8: static or inline function
+vreinterpret_p16_bf16: static or inline function
+vreinterpret_p16_f16: static or inline function
+vreinterpret_p16_f32: static or inline function
+vreinterpret_p16_f64: static or inline function
+vreinterpret_p16_mf8: static or inline function
+vreinterpret_p16_p64: static or inline function
+vreinterpret_p16_p8: static or inline function
+vreinterpret_p16_s16: static or inline function
+vreinterpret_p16_s32: static or inline function
+vreinterpret_p16_s64: static or inline function
+vreinterpret_p16_s8: static or inline function
+vreinterpret_p16_u16: static or inline function
+vreinterpret_p16_u32: static or inline function
+vreinterpret_p16_u64: static or inline function
+vreinterpret_p16_u8: static or inline function
+vreinterpret_p64_bf16: static or inline function
+vreinterpret_p64_f16: static or inline function
+vreinterpret_p64_f32: static or inline function
+vreinterpret_p64_f64: static or inline function
+vreinterpret_p64_mf8: static or inline function
+vreinterpret_p64_p16: static or inline function
+vreinterpret_p64_p8: static or inline function
+vreinterpret_p64_s16: static or inline function
+vreinterpret_p64_s32: static or inline function
+vreinterpret_p64_s64: static or inline function
+vreinterpret_p64_s8: static or inline function
+vreinterpret_p64_u16: static or inline function
+vreinterpret_p64_u32: static or inline function
+vreinterpret_p64_u64: static or inline function
+vreinterpret_p64_u8: static or inline function
+vreinterpret_p8_bf16: static or inline function
+vreinterpret_p8_f16: static or inline function
+vreinterpret_p8_f32: static or inline function
+vreinterpret_p8_f64: static or inline function
+vreinterpret_p8_mf8: static or inline function
+vreinterpret_p8_p16: static or inline function
+vreinterpret_p8_p64: static or inline function
+vreinterpret_p8_s16: static or inline function
+vreinterpret_p8_s32: static or inline function
+vreinterpret_p8_s64: static or inline function
+vreinterpret_p8_s8: static or inline function
+vreinterpret_p8_u16: static or inline function
+vreinterpret_p8_u32: static or inline function
+vreinterpret_p8_u64: static or inline function
+vreinterpret_p8_u8: static or inline function
+vreinterpret_s16_bf16: static or inline function
+vreinterpret_s16_f16: static or inline function
+vreinterpret_s16_f32: static or inline function
+vreinterpret_s16_f64: static or inline function
+vreinterpret_s16_mf8: static or inline function
+vreinterpret_s16_p16: static or inline function
+vreinterpret_s16_p64: static or inline function
+vreinterpret_s16_p8: static or inline function
+vreinterpret_s16_s32: static or inline function
+vreinterpret_s16_s64: static or inline function
+vreinterpret_s16_s8: static or inline function
+vreinterpret_s16_u16: static or inline function
+vreinterpret_s16_u32: static or inline function
+vreinterpret_s16_u64: static or inline function
+vreinterpret_s16_u8: static or inline function
+vreinterpret_s32_bf16: static or inline function
+vreinterpret_s32_f16: static or inline function
+vreinterpret_s32_f32: static or inline function
+vreinterpret_s32_f64: static or inline function
+vreinterpret_s32_mf8: static or inline function
+vreinterpret_s32_p16: static or inline function
+vreinterpret_s32_p64: static or inline function
+vreinterpret_s32_p8: static or inline function
+vreinterpret_s32_s16: static or inline function
+vreinterpret_s32_s64: static or inline function
+vreinterpret_s32_s8: static or inline function
+vreinterpret_s32_u16: static or inline function
+vreinterpret_s32_u32: static or inline function
+vreinterpret_s32_u64: static or inline function
+vreinterpret_s32_u8: static or inline function
+vreinterpret_s64_bf16: static or inline function
+vreinterpret_s64_f16: static or inline function
+vreinterpret_s64_f32: static or inline function
+vreinterpret_s64_f64: static or inline function
+vreinterpret_s64_mf8: static or inline function
+vreinterpret_s64_p16: static or inline function
+vreinterpret_s64_p64: static or inline function
+vreinterpret_s64_p8: static or inline function
+vreinterpret_s64_s16: static or inline function
+vreinterpret_s64_s32: static or inline function
+vreinterpret_s64_s8: static or inline function
+vreinterpret_s64_u16: static or inline function
+vreinterpret_s64_u32: static or inline function
+vreinterpret_s64_u64: static or inline function
+vreinterpret_s64_u8: static or inline function
+vreinterpret_s8_bf16: static or inline function
+vreinterpret_s8_f16: static or inline function
+vreinterpret_s8_f32: static or inline function
+vreinterpret_s8_f64: static or inline function
+vreinterpret_s8_mf8: static or inline function
+vreinterpret_s8_p16: static or inline function
+vreinterpret_s8_p64: static or inline function
+vreinterpret_s8_p8: static or inline function
+vreinterpret_s8_s16: static or inline function
+vreinterpret_s8_s32: static or inline function
+vreinterpret_s8_s64: static or inline function
+vreinterpret_s8_u16: static or inline function
+vreinterpret_s8_u32: static or inline function
+vreinterpret_s8_u64: static or inline function
+vreinterpret_s8_u8: static or inline function
+vreinterpret_u16_bf16: static or inline function
+vreinterpret_u16_f16: static or inline function
+vreinterpret_u16_f32: static or inline function
+vreinterpret_u16_f64: static or inline function
+vreinterpret_u16_mf8: static or inline function
+vreinterpret_u16_p16: static or inline function
+vreinterpret_u16_p64: static or inline function
+vreinterpret_u16_p8: static or inline function
+vreinterpret_u16_s16: static or inline function
+vreinterpret_u16_s32: static or inline function
+vreinterpret_u16_s64: static or inline function
+vreinterpret_u16_s8: static or inline function
+vreinterpret_u16_u32: static or inline function
+vreinterpret_u16_u64: static or inline function
+vreinterpret_u16_u8: static or inline function
+vreinterpret_u32_bf16: static or inline function
+vreinterpret_u32_f16: static or inline function
+vreinterpret_u32_f32: static or inline function
+vreinterpret_u32_f64: static or inline function
+vreinterpret_u32_mf8: static or inline function
+vreinterpret_u32_p16: static or inline function
+vreinterpret_u32_p64: static or inline function
+vreinterpret_u32_p8: static or inline function
+vreinterpret_u32_s16: static or inline function
+vreinterpret_u32_s32: static or inline function
+vreinterpret_u32_s64: static or inline function
+vreinterpret_u32_s8: static or inline function
+vreinterpret_u32_u16: static or inline function
+vreinterpret_u32_u64: static or inline function
+vreinterpret_u32_u8: static or inline function
+vreinterpret_u64_bf16: static or inline function
+vreinterpret_u64_f16: static or inline function
+vreinterpret_u64_f32: static or inline function
+vreinterpret_u64_f64: static or inline function
+vreinterpret_u64_mf8: static or inline function
+vreinterpret_u64_p16: static or inline function
+vreinterpret_u64_p64: static or inline function
+vreinterpret_u64_p8: static or inline function
+vreinterpret_u64_s16: static or inline function
+vreinterpret_u64_s32: static or inline function
+vreinterpret_u64_s64: static or inline function
+vreinterpret_u64_s8: static or inline function
+vreinterpret_u64_u16: static or inline function
+vreinterpret_u64_u32: static or inline function
+vreinterpret_u64_u8: static or inline function
+vreinterpret_u8_bf16: static or inline function
+vreinterpret_u8_f16: static or inline function
+vreinterpret_u8_f32: static or inline function
+vreinterpret_u8_f64: static or inline function
+vreinterpret_u8_mf8: static or inline function
+vreinterpret_u8_p16: static or inline function
+vreinterpret_u8_p64: static or inline function
+vreinterpret_u8_p8: static or inline function
+vreinterpret_u8_s16: static or inline function
+vreinterpret_u8_s32: static or inline function
+vreinterpret_u8_s64: static or inline function
+vreinterpret_u8_s8: static or inline function
+vreinterpret_u8_u16: static or inline function
+vreinterpret_u8_u32: static or inline function
+vreinterpret_u8_u64: static or inline function
+vreinterpretq_bf16_f16: static or inline function
+vreinterpretq_bf16_f32: static or inline function
+vreinterpretq_bf16_f64: static or inline function
+vreinterpretq_bf16_p128: static or inline function
+vreinterpretq_bf16_p16: static or inline function
+vreinterpretq_bf16_p64: static or inline function
+vreinterpretq_bf16_p8: static or inline function
+vreinterpretq_bf16_s16: static or inline function
+vreinterpretq_bf16_s32: static or inline function
+vreinterpretq_bf16_s64: static or inline function
+vreinterpretq_bf16_s8: static or inline function
+vreinterpretq_bf16_u16: static or inline function
+vreinterpretq_bf16_u32: static or inline function
+vreinterpretq_bf16_u64: static or inline function
+vreinterpretq_bf16_u8: static or inline function
+vreinterpretq_f16_bf16: static or inline function
+vreinterpretq_f16_f32: static or inline function
+vreinterpretq_f16_f64: static or inline function
+vreinterpretq_f16_mf8: static or inline function
+vreinterpretq_f16_p128: static or inline function
+vreinterpretq_f16_p16: static or inline function
+vreinterpretq_f16_p64: static or inline function
+vreinterpretq_f16_p8: static or inline function
+vreinterpretq_f16_s16: static or inline function
+vreinterpretq_f16_s32: static or inline function
+vreinterpretq_f16_s64: static or inline function
+vreinterpretq_f16_s8: static or inline function
+vreinterpretq_f16_u16: static or inline function
+vreinterpretq_f16_u32: static or inline function
+vreinterpretq_f16_u64: static or inline function
+vreinterpretq_f16_u8: static or inline function
+vreinterpretq_f32_bf16: static or inline function
+vreinterpretq_f32_f16: static or inline function
+vreinterpretq_f32_f64: static or inline function
+vreinterpretq_f32_mf8: static or inline function
+vreinterpretq_f32_p128: static or inline function
+vreinterpretq_f32_p16: static or inline function
+vreinterpretq_f32_p64: static or inline function
+vreinterpretq_f32_p8: static or inline function
+vreinterpretq_f32_s16: static or inline function
+vreinterpretq_f32_s32: static or inline function
+vreinterpretq_f32_s64: static or inline function
+vreinterpretq_f32_s8: static or inline function
+vreinterpretq_f32_u16: static or inline function
+vreinterpretq_f32_u32: static or inline function
+vreinterpretq_f32_u64: static or inline function
+vreinterpretq_f32_u8: static or inline function
+vreinterpretq_f64_bf16: static or inline function
+vreinterpretq_f64_f16: static or inline function
+vreinterpretq_f64_f32: static or inline function
+vreinterpretq_f64_mf8: static or inline function
+vreinterpretq_f64_p128: static or inline function
+vreinterpretq_f64_p16: static or inline function
+vreinterpretq_f64_p64: static or inline function
+vreinterpretq_f64_p8: static or inline function
+vreinterpretq_f64_s16: static or inline function
+vreinterpretq_f64_s32: static or inline function
+vreinterpretq_f64_s64: static or inline function
+vreinterpretq_f64_s8: static or inline function
+vreinterpretq_f64_u16: static or inline function
+vreinterpretq_f64_u32: static or inline function
+vreinterpretq_f64_u64: static or inline function
+vreinterpretq_f64_u8: static or inline function
+vreinterpretq_mf8_f16: static or inline function
+vreinterpretq_mf8_f32: static or inline function
+vreinterpretq_mf8_f64: static or inline function
+vreinterpretq_mf8_p128: static or inline function
+vreinterpretq_mf8_p16: static or inline function
+vreinterpretq_mf8_p64: static or inline function
+vreinterpretq_mf8_p8: static or inline function
+vreinterpretq_mf8_s16: static or inline function
+vreinterpretq_mf8_s32: static or inline function
+vreinterpretq_mf8_s64: static or inline function
+vreinterpretq_mf8_s8: static or inline function
+vreinterpretq_mf8_u16: static or inline function
+vreinterpretq_mf8_u32: static or inline function
+vreinterpretq_mf8_u64: static or inline function
+vreinterpretq_mf8_u8: static or inline function
+vreinterpretq_p128_bf16: static or inline function
+vreinterpretq_p128_f16: static or inline function
+vreinterpretq_p128_f32: static or inline function
+vreinterpretq_p128_f64: static or inline function
+vreinterpretq_p128_mf8: static or inline function
+vreinterpretq_p128_p16: static or inline function
+vreinterpretq_p128_p64: static or inline function
+vreinterpretq_p128_p8: static or inline function
+vreinterpretq_p128_s16: static or inline function
+vreinterpretq_p128_s32: static or inline function
+vreinterpretq_p128_s64: static or inline function
+vreinterpretq_p128_s8: static or inline function
+vreinterpretq_p128_u16: static or inline function
+vreinterpretq_p128_u32: static or inline function
+vreinterpretq_p128_u64: static or inline function
+vreinterpretq_p128_u8: static or inline function
+vreinterpretq_p16_bf16: static or inline function
+vreinterpretq_p16_f16: static or inline function
+vreinterpretq_p16_f32: static or inline function
+vreinterpretq_p16_f64: static or inline function
+vreinterpretq_p16_mf8: static or inline function
+vreinterpretq_p16_p128: static or inline function
+vreinterpretq_p16_p64: static or inline function
+vreinterpretq_p16_p8: static or inline function
+vreinterpretq_p16_s16: static or inline function
+vreinterpretq_p16_s32: static or inline function
+vreinterpretq_p16_s64: static or inline function
+vreinterpretq_p16_s8: static or inline function
+vreinterpretq_p16_u16: static or inline function
+vreinterpretq_p16_u32: static or inline function
+vreinterpretq_p16_u64: static or inline function
+vreinterpretq_p16_u8: static or inline function
+vreinterpretq_p64_bf16: static or inline function
+vreinterpretq_p64_f16: static or inline function
+vreinterpretq_p64_f32: static or inline function
+vreinterpretq_p64_f64: static or inline function
+vreinterpretq_p64_mf8: static or inline function
+vreinterpretq_p64_p128: static or inline function
+vreinterpretq_p64_p16: static or inline function
+vreinterpretq_p64_p8: static or inline function
+vreinterpretq_p64_s16: static or inline function
+vreinterpretq_p64_s32: static or inline function
+vreinterpretq_p64_s64: static or inline function
+vreinterpretq_p64_s8: static or inline function
+vreinterpretq_p64_u16: static or inline function
+vreinterpretq_p64_u32: static or inline function
+vreinterpretq_p64_u64: static or inline function
+vreinterpretq_p64_u8: static or inline function
+vreinterpretq_p8_bf16: static or inline function
+vreinterpretq_p8_f16: static or inline function
+vreinterpretq_p8_f32: static or inline function
+vreinterpretq_p8_f64: static or inline function
+vreinterpretq_p8_mf8: static or inline function
+vreinterpretq_p8_p128: static or inline function
+vreinterpretq_p8_p16: static or inline function
+vreinterpretq_p8_p64: static or inline function
+vreinterpretq_p8_s16: static or inline function
+vreinterpretq_p8_s32: static or inline function
+vreinterpretq_p8_s64: static or inline function
+vreinterpretq_p8_s8: static or inline function
+vreinterpretq_p8_u16: static or inline function
+vreinterpretq_p8_u32: static or inline function
+vreinterpretq_p8_u64: static or inline function
+vreinterpretq_p8_u8: static or inline function
+vreinterpretq_s16_bf16: static or inline function
+vreinterpretq_s16_f16: static or inline function
+vreinterpretq_s16_f32: static or inline function
+vreinterpretq_s16_f64: static or inline function
+vreinterpretq_s16_mf8: static or inline function
+vreinterpretq_s16_p128: static or inline function
+vreinterpretq_s16_p16: static or inline function
+vreinterpretq_s16_p64: static or inline function
+vreinterpretq_s16_p8: static or inline function
+vreinterpretq_s16_s32: static or inline function
+vreinterpretq_s16_s64: static or inline function
+vreinterpretq_s16_s8: static or inline function
+vreinterpretq_s16_u16: static or inline function
+vreinterpretq_s16_u32: static or inline function
+vreinterpretq_s16_u64: static or inline function
+vreinterpretq_s16_u8: static or inline function
+vreinterpretq_s32_bf16: static or inline function
+vreinterpretq_s32_f16: static or inline function
+vreinterpretq_s32_f32: static or inline function
+vreinterpretq_s32_f64: static or inline function
+vreinterpretq_s32_mf8: static or inline function
+vreinterpretq_s32_p128: static or inline function
+vreinterpretq_s32_p16: static or inline function
+vreinterpretq_s32_p64: static or inline function
+vreinterpretq_s32_p8: static or inline function
+vreinterpretq_s32_s16: static or inline function
+vreinterpretq_s32_s64: static or inline function
+vreinterpretq_s32_s8: static or inline function
+vreinterpretq_s32_u16: static or inline function
+vreinterpretq_s32_u32: static or inline function
+vreinterpretq_s32_u64: static or inline function
+vreinterpretq_s32_u8: static or inline function
+vreinterpretq_s64_bf16: static or inline function
+vreinterpretq_s64_f16: static or inline function
+vreinterpretq_s64_f32: static or inline function
+vreinterpretq_s64_f64: static or inline function
+vreinterpretq_s64_mf8: static or inline function
+vreinterpretq_s64_p128: static or inline function
+vreinterpretq_s64_p16: static or inline function
+vreinterpretq_s64_p64: static or inline function
+vreinterpretq_s64_p8: static or inline function
+vreinterpretq_s64_s16: static or inline function
+vreinterpretq_s64_s32: static or inline function
+vreinterpretq_s64_s8: static or inline function
+vreinterpretq_s64_u16: static or inline function
+vreinterpretq_s64_u32: static or inline function
+vreinterpretq_s64_u64: static or inline function
+vreinterpretq_s64_u8: static or inline function
+vreinterpretq_s8_bf16: static or inline function
+vreinterpretq_s8_f16: static or inline function
+vreinterpretq_s8_f32: static or inline function
+vreinterpretq_s8_f64: static or inline function
+vreinterpretq_s8_mf8: static or inline function
+vreinterpretq_s8_p128: static or inline function
+vreinterpretq_s8_p16: static or inline function
+vreinterpretq_s8_p64: static or inline function
+vreinterpretq_s8_p8: static or inline function
+vreinterpretq_s8_s16: static or inline function
+vreinterpretq_s8_s32: static or inline function
+vreinterpretq_s8_s64: static or inline function
+vreinterpretq_s8_u16: static or inline function
+vreinterpretq_s8_u32: static or inline function
+vreinterpretq_s8_u64: static or inline function
+vreinterpretq_s8_u8: static or inline function
+vreinterpretq_u16_bf16: static or inline function
+vreinterpretq_u16_f16: static or inline function
+vreinterpretq_u16_f32: static or inline function
+vreinterpretq_u16_f64: static or inline function
+vreinterpretq_u16_mf8: static or inline function
+vreinterpretq_u16_p128: static or inline function
+vreinterpretq_u16_p16: static or inline function
+vreinterpretq_u16_p64: static or inline function
+vreinterpretq_u16_p8: static or inline function
+vreinterpretq_u16_s16: static or inline function
+vreinterpretq_u16_s32: static or inline function
+vreinterpretq_u16_s64: static or inline function
+vreinterpretq_u16_s8: static or inline function
+vreinterpretq_u16_u32: static or inline function
+vreinterpretq_u16_u64: static or inline function
+vreinterpretq_u16_u8: static or inline function
+vreinterpretq_u32_bf16: static or inline function
+vreinterpretq_u32_f16: static or inline function
+vreinterpretq_u32_f32: static or inline function
+vreinterpretq_u32_f64: static or inline function
+vreinterpretq_u32_mf8: static or inline function
+vreinterpretq_u32_p128: static or inline function
+vreinterpretq_u32_p16: static or inline function
+vreinterpretq_u32_p64: static or inline function
+vreinterpretq_u32_p8: static or inline function
+vreinterpretq_u32_s16: static or inline function
+vreinterpretq_u32_s32: static or inline function
+vreinterpretq_u32_s64: static or inline function
+vreinterpretq_u32_s8: static or inline function
+vreinterpretq_u32_u16: static or inline function
+vreinterpretq_u32_u64: static or inline function
+vreinterpretq_u32_u8: static or inline function
+vreinterpretq_u64_bf16: static or inline function
+vreinterpretq_u64_f16: static or inline function
+vreinterpretq_u64_f32: static or inline function
+vreinterpretq_u64_f64: static or inline function
+vreinterpretq_u64_mf8: static or inline function
+vreinterpretq_u64_p128: static or inline function
+vreinterpretq_u64_p16: static or inline function
+vreinterpretq_u64_p64: static or inline function
+vreinterpretq_u64_p8: static or inline function
+vreinterpretq_u64_s16: static or inline function
+vreinterpretq_u64_s32: static or inline function
+vreinterpretq_u64_s64: static or inline function
+vreinterpretq_u64_s8: static or inline function
+vreinterpretq_u64_u16: static or inline function
+vreinterpretq_u64_u32: static or inline function
+vreinterpretq_u64_u8: static or inline function
+vreinterpretq_u8_bf16: static or inline function
+vreinterpretq_u8_f16: static or inline function
+vreinterpretq_u8_f32: static or inline function
+vreinterpretq_u8_f64: static or inline function
+vreinterpretq_u8_mf8: static or inline function
+vreinterpretq_u8_p128: static or inline function
+vreinterpretq_u8_p16: static or inline function
+vreinterpretq_u8_p64: static or inline function
+vreinterpretq_u8_p8: static or inline function
+vreinterpretq_u8_s16: static or inline function
+vreinterpretq_u8_s32: static or inline function
+vreinterpretq_u8_s64: static or inline function
+vreinterpretq_u8_s8: static or inline function
+vreinterpretq_u8_u16: static or inline function
+vreinterpretq_u8_u32: static or inline function
+vreinterpretq_u8_u64: static or inline function
+vrev16_mf8: static or inline function
+vrev16_p8: static or inline function
+vrev16_s8: static or inline function
+vrev16_u8: static or inline function
+vrev16q_mf8: static or inline function
+vrev16q_p8: static or inline function
+vrev16q_s8: static or inline function
+vrev16q_u8: static or inline function
+vrev32_mf8: static or inline function
+vrev32_p16: static or inline function
+vrev32_p8: static or inline function
+vrev32_s16: static or inline function
+vrev32_s8: static or inline function
+vrev32_u16: static or inline function
+vrev32_u8: static or inline function
+vrev32q_mf8: static or inline function
+vrev32q_p16: static or inline function
+vrev32q_p8: static or inline function
+vrev32q_s16: static or inline function
+vrev32q_s8: static or inline function
+vrev32q_u16: static or inline function
+vrev32q_u8: static or inline function
+vrev64_f16: static or inline function
+vrev64_f32: static or inline function
+vrev64_mf8: static or inline function
+vrev64_p16: static or inline function
+vrev64_p8: static or inline function
+vrev64_s16: static or inline function
+vrev64_s32: static or inline function
+vrev64_s8: static or inline function
+vrev64_u16: static or inline function
+vrev64_u32: static or inline function
+vrev64_u8: static or inline function
+vrev64q_f16: static or inline function
+vrev64q_f32: static or inline function
+vrev64q_mf8: static or inline function
+vrev64q_p16: static or inline function
+vrev64q_p8: static or inline function
+vrev64q_s16: static or inline function
+vrev64q_s32: static or inline function
+vrev64q_s8: static or inline function
+vrev64q_u16: static or inline function
+vrev64q_u32: static or inline function
+vrev64q_u8: static or inline function
+vrhadd_s16: static or inline function
+vrhadd_s32: static or inline function
+vrhadd_s8: static or inline function
+vrhadd_u16: static or inline function
+vrhadd_u32: static or inline function
+vrhadd_u8: static or inline function
+vrhaddq_s16: static or inline function
+vrhaddq_s32: static or inline function
+vrhaddq_s8: static or inline function
+vrhaddq_u16: static or inline function
+vrhaddq_u32: static or inline function
+vrhaddq_u8: static or inline function
+vrnd32x_f32: static or inline function
+vrnd32x_f64: static or inline function
+vrnd32xq_f32: static or inline function
+vrnd32xq_f64: static or inline function
+vrnd32z_f32: static or inline function
+vrnd32z_f64: static or inline function
+vrnd32zq_f32: static or inline function
+vrnd32zq_f64: static or inline function
+vrnd64x_f32: static or inline function
+vrnd64x_f64: static or inline function
+vrnd64xq_f32: static or inline function
+vrnd64xq_f64: static or inline function
+vrnd64z_f32: static or inline function
+vrnd64z_f64: static or inline function
+vrnd64zq_f32: static or inline function
+vrnd64zq_f64: static or inline function
+vrnd_f16: static or inline function
+vrnd_f32: static or inline function
+vrnd_f64: static or inline function
+vrnda_f16: static or inline function
+vrnda_f32: static or inline function
+vrnda_f64: static or inline function
+vrndaq_f16: static or inline function
+vrndaq_f32: static or inline function
+vrndaq_f64: static or inline function
+vrndi_f16: static or inline function
+vrndi_f32: static or inline function
+vrndi_f64: static or inline function
+vrndiq_f16: static or inline function
+vrndiq_f32: static or inline function
+vrndiq_f64: static or inline function
+vrndm_f16: static or inline function
+vrndm_f32: static or inline function
+vrndm_f64: static or inline function
+vrndmq_f16: static or inline function
+vrndmq_f32: static or inline function
+vrndmq_f64: static or inline function
+vrndn_f16: static or inline function
+vrndn_f32: static or inline function
+vrndn_f64: static or inline function
+vrndnq_f16: static or inline function
+vrndnq_f32: static or inline function
+vrndnq_f64: static or inline function
+vrndns_f32: static or inline function
+vrndp_f16: static or inline function
+vrndp_f32: static or inline function
+vrndp_f64: static or inline function
+vrndpq_f16: static or inline function
+vrndpq_f32: static or inline function
+vrndpq_f64: static or inline function
+vrndq_f16: static or inline function
+vrndq_f32: static or inline function
+vrndq_f64: static or inline function
+vrndx_f16: static or inline function
+vrndx_f32: static or inline function
+vrndx_f64: static or inline function
+vrndxq_f16: static or inline function
+vrndxq_f32: static or inline function
+vrndxq_f64: static or inline function
+vrshl_s16: static or inline function
+vrshl_s32: static or inline function
+vrshl_s64: static or inline function
+vrshl_s8: static or inline function
+vrshl_u16: static or inline function
+vrshl_u32: static or inline function
+vrshl_u64: static or inline function
+vrshl_u8: static or inline function
+vrshld_s64: static or inline function
+vrshld_u64: static or inline function
+vrshlq_s16: static or inline function
+vrshlq_s32: static or inline function
+vrshlq_s64: static or inline function
+vrshlq_s8: static or inline function
+vrshlq_u16: static or inline function
+vrshlq_u32: static or inline function
+vrshlq_u64: static or inline function
+vrshlq_u8: static or inline function
+vrsqrte_f16: static or inline function
+vrsqrte_f32: static or inline function
+vrsqrte_f64: static or inline function
+vrsqrte_u32: static or inline function
+vrsqrted_f64: static or inline function
+vrsqrteq_f16: static or inline function
+vrsqrteq_f32: static or inline function
+vrsqrteq_f64: static or inline function
+vrsqrteq_u32: static or inline function
+vrsqrtes_f32: static or inline function
+vrsqrts_f16: static or inline function
+vrsqrts_f32: static or inline function
+vrsqrts_f64: static or inline function
+vrsqrtsd_f64: static or inline function
+vrsqrtsq_f16: static or inline function
+vrsqrtsq_f32: static or inline function
+vrsqrtsq_f64: static or inline function
+vrsqrtss_f32: static or inline function
+vrsubhn_high_s16: static or inline function
+vrsubhn_high_s32: static or inline function
+vrsubhn_high_s64: static or inline function
+vrsubhn_high_u16: static or inline function
+vrsubhn_high_u32: static or inline function
+vrsubhn_high_u64: static or inline function
+vrsubhn_s16: static or inline function
+vrsubhn_s32: static or inline function
+vrsubhn_s64: static or inline function
+vrsubhn_u16: static or inline function
+vrsubhn_u32: static or inline function
+vrsubhn_u64: static or inline function
+vscale_f16: static or inline function
+vscale_f32: static or inline function
+vscaleq_f16: static or inline function
+vscaleq_f32: static or inline function
+vscaleq_f64: static or inline function
+vsha1cq_u32: static or inline function
+vsha1h_u32: static or inline function
+vsha1mq_u32: static or inline function
+vsha1pq_u32: static or inline function
+vsha1su0q_u32: static or inline function
+vsha1su1q_u32: static or inline function
+vsha256h2q_u32: static or inline function
+vsha256hq_u32: static or inline function
+vsha256su0q_u32: static or inline function
+vsha256su1q_u32: static or inline function
+vsha512h2q_u64: static or inline function
+vsha512hq_u64: static or inline function
+vsha512su0q_u64: static or inline function
+vsha512su1q_u64: static or inline function
+vshl_s16: static or inline function
+vshl_s32: static or inline function
+vshl_s64: static or inline function
+vshl_s8: static or inline function
+vshl_u16: static or inline function
+vshl_u32: static or inline function
+vshl_u64: static or inline function
+vshl_u8: static or inline function
+vshld_s64: static or inline function
+vshld_u64: static or inline function
+vshlq_s16: static or inline function
+vshlq_s32: static or inline function
+vshlq_s64: static or inline function
+vshlq_s8: static or inline function
+vshlq_u16: static or inline function
+vshlq_u32: static or inline function
+vshlq_u64: static or inline function
+vshlq_u8: static or inline function
+vsm3partw1q_u32: static or inline function
+vsm3partw2q_u32: static or inline function
+vsm3ss1q_u32: static or inline function
+vsm4ekeyq_u32: static or inline function
+vsm4eq_u32: static or inline function
+vsqadd_u16: static or inline function
+vsqadd_u32: static or inline function
+vsqadd_u64: static or inline function
+vsqadd_u8: static or inline function
+vsqaddb_u8: static or inline function
+vsqaddd_u64: static or inline function
+vsqaddh_u16: static or inline function
+vsqaddq_u16: static or inline function
+vsqaddq_u32: static or inline function
+vsqaddq_u64: static or inline function
+vsqaddq_u8: static or inline function
+vsqadds_u32: static or inline function
+vsqrt_f16: static or inline function
+vsqrt_f32: static or inline function
+vsqrt_f64: static or inline function
+vsqrtq_f16: static or inline function
+vsqrtq_f32: static or inline function
+vsqrtq_f64: static or inline function
+vsub_f16: static or inline function
+vsub_f32: static or inline function
+vsub_f64: static or inline function
+vsub_s16: static or inline function
+vsub_s32: static or inline function
+vsub_s64: static or inline function
+vsub_s8: static or inline function
+vsub_u16: static or inline function
+vsub_u32: static or inline function
+vsub_u64: static or inline function
+vsub_u8: static or inline function
+vsubd_s64: static or inline function
+vsubd_u64: static or inline function
+vsubhn_high_s16: static or inline function
+vsubhn_high_s32: static or inline function
+vsubhn_high_s64: static or inline function
+vsubhn_high_u16: static or inline function
+vsubhn_high_u32: static or inline function
+vsubhn_high_u64: static or inline function
+vsubhn_s16: static or inline function
+vsubhn_s32: static or inline function
+vsubhn_s64: static or inline function
+vsubhn_u16: static or inline function
+vsubhn_u32: static or inline function
+vsubhn_u64: static or inline function
+vsubl_high_s16: static or inline function
+vsubl_high_s32: static or inline function
+vsubl_high_s8: static or inline function
+vsubl_high_u16: static or inline function
+vsubl_high_u32: static or inline function
+vsubl_high_u8: static or inline function
+vsubl_s16: static or inline function
+vsubl_s32: static or inline function
+vsubl_s8: static or inline function
+vsubl_u16: static or inline function
+vsubl_u32: static or inline function
+vsubl_u8: static or inline function
+vsubq_f16: static or inline function
+vsubq_f32: static or inline function
+vsubq_f64: static or inline function
+vsubq_s16: static or inline function
+vsubq_s32: static or inline function
+vsubq_s64: static or inline function
+vsubq_s8: static or inline function
+vsubq_u16: static or inline function
+vsubq_u32: static or inline function
+vsubq_u64: static or inline function
+vsubq_u8: static or inline function
+vsubw_high_s16: static or inline function
+vsubw_high_s32: static or inline function
+vsubw_high_s8: static or inline function
+vsubw_high_u16: static or inline function
+vsubw_high_u32: static or inline function
+vsubw_high_u8: static or inline function
+vsubw_s16: static or inline function
+vsubw_s32: static or inline function
+vsubw_s8: static or inline function
+vsubw_u16: static or inline function
+vsubw_u32: static or inline function
+vsubw_u8: static or inline function
+vtbl1_mf8: static or inline function
+vtbl1_p8: static or inline function
+vtbl1_s8: static or inline function
+vtbl1_u8: static or inline function
+vtbl2_mf8: static or inline function
+vtbl2_p8: static or inline function
+vtbl2_s8: static or inline function
+vtbl2_u8: static or inline function
+vtbl3_mf8: static or inline function
+vtbl3_p8: static or inline function
+vtbl3_s8: static or inline function
+vtbl3_u8: static or inline function
+vtbl4_mf8: static or inline function
+vtbl4_p8: static or inline function
+vtbl4_s8: static or inline function
+vtbl4_u8: static or inline function
+vtbx1_mf8: static or inline function
+vtbx1_p8: static or inline function
+vtbx1_s8: static or inline function
+vtbx1_u8: static or inline function
+vtbx2_mf8: static or inline function
+vtbx2_p8: static or inline function
+vtbx2_s8: static or inline function
+vtbx2_u8: static or inline function
+vtbx3_mf8: static or inline function
+vtbx3_p8: static or inline function
+vtbx3_s8: static or inline function
+vtbx3_u8: static or inline function
+vtbx4_mf8: static or inline function
+vtbx4_p8: static or inline function
+vtbx4_s8: static or inline function
+vtbx4_u8: static or inline function
+vtrn1_f16: static or inline function
+vtrn1_f32: static or inline function
+vtrn1_mf8: static or inline function
+vtrn1_p16: static or inline function
+vtrn1_p8: static or inline function
+vtrn1_s16: static or inline function
+vtrn1_s32: static or inline function
+vtrn1_s8: static or inline function
+vtrn1_u16: static or inline function
+vtrn1_u32: static or inline function
+vtrn1_u8: static or inline function
+vtrn1q_f16: static or inline function
+vtrn1q_f32: static or inline function
+vtrn1q_f64: static or inline function
+vtrn1q_mf8: static or inline function
+vtrn1q_p16: static or inline function
+vtrn1q_p64: static or inline function
+vtrn1q_p8: static or inline function
+vtrn1q_s16: static or inline function
+vtrn1q_s32: static or inline function
+vtrn1q_s64: static or inline function
+vtrn1q_s8: static or inline function
+vtrn1q_u16: static or inline function
+vtrn1q_u32: static or inline function
+vtrn1q_u64: static or inline function
+vtrn1q_u8: static or inline function
+vtrn2_f16: static or inline function
+vtrn2_f32: static or inline function
+vtrn2_mf8: static or inline function
+vtrn2_p16: static or inline function
+vtrn2_p8: static or inline function
+vtrn2_s16: static or inline function
+vtrn2_s32: static or inline function
+vtrn2_s8: static or inline function
+vtrn2_u16: static or inline function
+vtrn2_u32: static or inline function
+vtrn2_u8: static or inline function
+vtrn2q_f16: static or inline function
+vtrn2q_f32: static or inline function
+vtrn2q_f64: static or inline function
+vtrn2q_mf8: static or inline function
+vtrn2q_p16: static or inline function
+vtrn2q_p64: static or inline function
+vtrn2q_p8: static or inline function
+vtrn2q_s16: static or inline function
+vtrn2q_s32: static or inline function
+vtrn2q_s64: static or inline function
+vtrn2q_s8: static or inline function
+vtrn2q_u16: static or inline function
+vtrn2q_u32: static or inline function
+vtrn2q_u64: static or inline function
+vtrn2q_u8: static or inline function
+vtrn_f16: static or inline function
+vtrn_f32: static or inline function
+vtrn_mf8: static or inline function
+vtrn_p16: static or inline function
+vtrn_p8: static or inline function
+vtrn_s16: static or inline function
+vtrn_s32: static or inline function
+vtrn_s8: static or inline function
+vtrn_u16: static or inline function
+vtrn_u32: static or inline function
+vtrn_u8: static or inline function
+vtrnq_f16: static or inline function
+vtrnq_f32: static or inline function
+vtrnq_mf8: static or inline function
+vtrnq_p16: static or inline function
+vtrnq_p8: static or inline function
+vtrnq_s16: static or inline function
+vtrnq_s32: static or inline function
+vtrnq_s8: static or inline function
+vtrnq_u16: static or inline function
+vtrnq_u32: static or inline function
+vtrnq_u8: static or inline function
+vtst_p16: static or inline function
+vtst_p64: static or inline function
+vtst_p8: static or inline function
+vtst_s16: static or inline function
+vtst_s32: static or inline function
+vtst_s64: static or inline function
+vtst_s8: static or inline function
+vtst_u16: static or inline function
+vtst_u32: static or inline function
+vtst_u64: static or inline function
+vtst_u8: static or inline function
+vtstd_s64: static or inline function
+vtstd_u64: static or inline function
+vtstq_p16: static or inline function
+vtstq_p64: static or inline function
+vtstq_p8: static or inline function
+vtstq_s16: static or inline function
+vtstq_s32: static or inline function
+vtstq_s64: static or inline function
+vtstq_s8: static or inline function
+vtstq_u16: static or inline function
+vtstq_u32: static or inline function
+vtstq_u64: static or inline function
+vtstq_u8: static or inline function
+vuqadd_s16: static or inline function
+vuqadd_s32: static or inline function
+vuqadd_s64: static or inline function
+vuqadd_s8: static or inline function
+vuqaddb_s8: static or inline function
+vuqaddd_s64: static or inline function
+vuqaddh_s16: static or inline function
+vuqaddq_s16: static or inline function
+vuqaddq_s32: static or inline function
+vuqaddq_s64: static or inline function
+vuqaddq_s8: static or inline function
+vuqadds_s32: static or inline function
+vusdot_s32: static or inline function
+vusdotq_s32: static or inline function
+vusmmlaq_s32: static or inline function
+vuzp1_f16: static or inline function
+vuzp1_f32: static or inline function
+vuzp1_mf8: static or inline function
+vuzp1_p16: static or inline function
+vuzp1_p8: static or inline function
+vuzp1_s16: static or inline function
+vuzp1_s32: static or inline function
+vuzp1_s8: static or inline function
+vuzp1_u16: static or inline function
+vuzp1_u32: static or inline function
+vuzp1_u8: static or inline function
+vuzp1q_f16: static or inline function
+vuzp1q_f32: static or inline function
+vuzp1q_f64: static or inline function
+vuzp1q_mf8: static or inline function
+vuzp1q_p16: static or inline function
+vuzp1q_p64: static or inline function
+vuzp1q_p8: static or inline function
+vuzp1q_s16: static or inline function
+vuzp1q_s32: static or inline function
+vuzp1q_s64: static or inline function
+vuzp1q_s8: static or inline function
+vuzp1q_u16: static or inline function
+vuzp1q_u32: static or inline function
+vuzp1q_u64: static or inline function
+vuzp1q_u8: static or inline function
+vuzp2_f16: static or inline function
+vuzp2_f32: static or inline function
+vuzp2_mf8: static or inline function
+vuzp2_p16: static or inline function
+vuzp2_p8: static or inline function
+vuzp2_s16: static or inline function
+vuzp2_s32: static or inline function
+vuzp2_s8: static or inline function
+vuzp2_u16: static or inline function
+vuzp2_u32: static or inline function
+vuzp2_u8: static or inline function
+vuzp2q_f16: static or inline function
+vuzp2q_f32: static or inline function
+vuzp2q_f64: static or inline function
+vuzp2q_mf8: static or inline function
+vuzp2q_p16: static or inline function
+vuzp2q_p64: static or inline function
+vuzp2q_p8: static or inline function
+vuzp2q_s16: static or inline function
+vuzp2q_s32: static or inline function
+vuzp2q_s64: static or inline function
+vuzp2q_s8: static or inline function
+vuzp2q_u16: static or inline function
+vuzp2q_u32: static or inline function
+vuzp2q_u64: static or inline function
+vuzp2q_u8: static or inline function
+vuzp_f16: static or inline function
+vuzp_f32: static or inline function
+vuzp_mf8: static or inline function
+vuzp_p16: static or inline function
+vuzp_p8: static or inline function
+vuzp_s16: static or inline function
+vuzp_s32: static or inline function
+vuzp_s8: static or inline function
+vuzp_u16: static or inline function
+vuzp_u32: static or inline function
+vuzp_u8: static or inline function
+vuzpq_f16: static or inline function
+vuzpq_f32: static or inline function
+vuzpq_mf8: static or inline function
+vuzpq_p16: static or inline function
+vuzpq_p8: static or inline function
+vuzpq_s16: static or inline function
+vuzpq_s32: static or inline function
+vuzpq_s8: static or inline function
+vuzpq_u16: static or inline function
+vuzpq_u32: static or inline function
+vuzpq_u8: static or inline function
+vzip1_f16: static or inline function
+vzip1_f32: static or inline function
+vzip1_mf8: static or inline function
+vzip1_p16: static or inline function
+vzip1_p8: static or inline function
+vzip1_s16: static or inline function
+vzip1_s32: static or inline function
+vzip1_s8: static or inline function
+vzip1_u16: static or inline function
+vzip1_u32: static or inline function
+vzip1_u8: static or inline function
+vzip1q_f16: static or inline function
+vzip1q_f32: static or inline function
+vzip1q_f64: static or inline function
+vzip1q_mf8: static or inline function
+vzip1q_p16: static or inline function
+vzip1q_p64: static or inline function
+vzip1q_p8: static or inline function
+vzip1q_s16: static or inline function
+vzip1q_s32: static or inline function
+vzip1q_s64: static or inline function
+vzip1q_s8: static or inline function
+vzip1q_u16: static or inline function
+vzip1q_u32: static or inline function
+vzip1q_u64: static or inline function
+vzip1q_u8: static or inline function
+vzip2_f16: static or inline function
+vzip2_f32: static or inline function
+vzip2_mf8: static or inline function
+vzip2_p16: static or inline function
+vzip2_p8: static or inline function
+vzip2_s16: static or inline function
+vzip2_s32: static or inline function
+vzip2_s8: static or inline function
+vzip2_u16: static or inline function
+vzip2_u32: static or inline function
+vzip2_u8: static or inline function
+vzip2q_f16: static or inline function
+vzip2q_f32: static or inline function
+vzip2q_f64: static or inline function
+vzip2q_mf8: static or inline function
+vzip2q_p16: static or inline function
+vzip2q_p64: static or inline function
+vzip2q_p8: static or inline function
+vzip2q_s16: static or inline function
+vzip2q_s32: static or inline function
+vzip2q_s64: static or inline function
+vzip2q_s8: static or inline function
+vzip2q_u16: static or inline function
+vzip2q_u32: static or inline function
+vzip2q_u64: static or inline function
+vzip2q_u8: static or inline function
+vzip_f16: static or inline function
+vzip_f32: static or inline function
+vzip_mf8: static or inline function
+vzip_p16: static or inline function
+vzip_p8: static or inline function
+vzip_s16: static or inline function
+vzip_s32: static or inline function
+vzip_s8: static or inline function
+vzip_u16: static or inline function
+vzip_u32: static or inline function
+vzip_u8: static or inline function
+vzipq_f16: static or inline function
+vzipq_f32: static or inline function
+vzipq_mf8: static or inline function
+vzipq_p16: static or inline function
+vzipq_p8: static or inline function
+vzipq_s16: static or inline function
+vzipq_s32: static or inline function
+vzipq_s8: static or inline function
+vzipq_u16: static or inline function
+vzipq_u32: static or inline function
+vzipq_u8: static or inline function

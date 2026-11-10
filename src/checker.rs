@@ -86,10 +86,11 @@ struct VarInfo {
     span: Span,
     /// Paths moved out of this variable. `""` means the whole variable.
     moved: HashSet<String>,
-    /// Protect region where this variable's storage lives; `None` means the
-    /// function scope, a parameter, or the caller.
+    /// Lexical block or `protect` region where this variable's storage lives;
+    /// `None` means a parameter or the caller.
     home_region: Option<usize>,
-    /// Allocations from a `protect` region reachable through this variable.
+    /// `protect` allocations or block-local slice literals reachable through
+    /// this variable.
     taints: Vec<RegionTaint>,
 }
 
@@ -97,6 +98,15 @@ struct VarInfo {
 struct RegionTaint {
     path: String,
     region: usize,
+}
+
+/// Why a region exists. Lexical blocks own slice-literal storage; `protect`
+/// blocks own `alloc` storage. Both are checked for escape, but the diagnostic
+/// names the kind so the fix is clear.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RegionKind {
+    Block,
+    Protect,
 }
 
 /// Effects collected from one function body before body checking.
@@ -137,6 +147,8 @@ struct ControlState {
 
 struct Checker {
     interfaces: HashMap<String, InterfaceInfo>,
+    /// Foreign handle names declared with `opaque`.
+    opaques: HashSet<String>,
     functions: HashMap<String, FunctionSig>,
     scopes: Vec<HashMap<String, VarInfo>>,
     diagnostics: Vec<Diagnostic>,
@@ -154,9 +166,11 @@ struct Checker {
     param_consumption: HashMap<String, Vec<bool>>,
     /// Names declared by top-level `let`/`var`, for duplicate diagnostics.
     global_names: HashSet<String>,
-    /// Parent region for each allocated `protect` region.
+    /// Parent region for each lexical block or `protect` region.
     region_parents: Vec<Option<usize>>,
-    /// `protect` regions currently active, innermost last.
+    /// Kind of each region, indexed by region id.
+    region_kinds: Vec<RegionKind>,
+    /// Regions currently active, innermost last.
     region_stack: Vec<usize>,
 }
 
@@ -164,6 +178,7 @@ impl Checker {
     fn new() -> Self {
         Self {
             interfaces: HashMap::new(),
+            opaques: HashSet::new(),
             functions: HashMap::new(),
             // Index 0 is the global scope; function bodies push on top of it.
             scopes: vec![HashMap::new()],
@@ -176,6 +191,7 @@ impl Checker {
             param_consumption: HashMap::new(),
             global_names: HashSet::new(),
             region_parents: Vec::new(),
+            region_kinds: Vec::new(),
             region_stack: Vec::new(),
         }
     }
@@ -233,6 +249,22 @@ impl Checker {
         for item in &program.items {
             match item {
                 Item::Import(_) => {}
+                Item::Opaque(decl) => {
+                    if is_intrinsic_name(&decl.name) {
+                        self.error(
+                            decl.span,
+                            format!("intrinsic '{}' cannot be redeclared", decl.name),
+                        );
+                    } else if self.opaques.contains(&decl.name)
+                        || self.interfaces.contains_key(&decl.name)
+                        || self.functions.contains_key(&decl.name)
+                        || self.global_names.contains(&decl.name)
+                    {
+                        self.error(decl.span, format!("duplicate type '{}'", decl.name));
+                    } else {
+                        self.opaques.insert(decl.name.clone());
+                    }
+                }
                 Item::Global(decl) => {
                     if is_intrinsic_name(&decl.name) {
                         self.error(
@@ -240,6 +272,15 @@ impl Checker {
                             format!("intrinsic '{}' cannot be redeclared", decl.name),
                         );
                         continue;
+                    }
+                    if self.opaques.contains(&decl.name) {
+                        self.error(
+                            decl.span,
+                            format!(
+                                "global '{}' conflicts with an opaque type of the same name",
+                                decl.name
+                            ),
+                        );
                     }
                     if !self.global_names.insert(decl.name.clone()) {
                         self.error(decl.span, format!("duplicate global '{}'", decl.name));
@@ -257,6 +298,11 @@ impl Checker {
                 Item::Interface(decl) => {
                     if self.interfaces.contains_key(&decl.name) {
                         self.error(decl.span, format!("duplicate shape '{}'", decl.name));
+                    } else if self.opaques.contains(&decl.name)
+                        || self.functions.contains_key(&decl.name)
+                        || self.global_names.contains(&decl.name)
+                    {
+                        self.error(decl.span, format!("duplicate type '{}'", decl.name));
                     } else {
                         self.interfaces.insert(
                             decl.name.clone(),
@@ -273,6 +319,14 @@ impl Checker {
                         self.error(
                             decl.span,
                             format!("intrinsic '{}' cannot be redeclared", decl.name),
+                        );
+                    } else if self.opaques.contains(&decl.name) {
+                        self.error(
+                            decl.span,
+                            format!(
+                                "function '{}' conflicts with an opaque type of the same name",
+                                decl.name
+                            ),
                         );
                     } else if self.functions.contains_key(&decl.name) {
                         self.error(decl.span, format!("duplicate function '{}'", decl.name));
@@ -523,7 +577,7 @@ impl Checker {
 
             let resolved = match (declared, value_ty) {
                 (Some(declared), value_ty) => {
-                    if !types::assignable(&declared, &value_ty) {
+                    if !self.assignable_expr(&declared, &value_ty, &decl.value) {
                         self.error(
                             decl.value.span,
                             format!(
@@ -554,6 +608,7 @@ impl Checker {
                     | Ty::F32
                     | Ty::F64
                     | Ty::Bool
+                    | Ty::CStr
                     | Ty::Error
             ) || (matches!(&resolved, Ty::Slice(element) if **element == Ty::U8)
                 && matches!(&decl.value.kind, ExprKind::String(_)));
@@ -588,8 +643,12 @@ impl Checker {
             Type::Named(name) => {
                 if let Some(primitive) = Ty::from_name(name) {
                     primitive
+                } else if name == "cstr" {
+                    Ty::CStr
                 } else if self.interfaces.contains_key(name) {
                     Ty::Named(name.clone())
+                } else if self.opaques.contains(name) {
+                    Ty::Opaque(name.clone())
                 } else {
                     self.error(span, format!("unknown type '{name}'"));
                     Ty::Error
@@ -597,6 +656,22 @@ impl Checker {
             }
             Type::Slice(element) => Ty::Slice(Box::new(self.resolve_type(element, span))),
         }
+    }
+
+    /// Like [`types::assignable`], with the single literal coercion the FFI
+    /// boundary needs: a string literal may initialize a `cstr`. Arbitrary
+    /// `[u8]` values are not NUL-terminated, so they are rejected.
+    fn assignable_expr(&self, expected: &Ty, actual: &Ty, expr: &Expr) -> bool {
+        if matches!(expected, Ty::CStr) {
+            return match actual {
+                Ty::CStr => true,
+                Ty::Slice(element) => {
+                    **element == Ty::U8 && matches!(&expr.kind, ExprKind::String(_))
+                }
+                _ => false,
+            };
+        }
+        types::assignable(expected, actual)
     }
 
     // ------------------------------------------------------------------
@@ -772,7 +847,7 @@ impl Checker {
                 }
 
                 let value_ty = self.check_expr(default);
-                if !types::assignable(&info.ty, &value_ty) {
+                if !self.assignable_expr(&info.ty, &value_ty, default) {
                     self.error(
                         default.span,
                         format!(
@@ -807,6 +882,9 @@ impl Checker {
     }
 
     fn check_function(&mut self, decl: &FunctionDecl) {
+        if decl.external {
+            return;
+        }
         let Some(signature) = self.functions.get(&decl.name).cloned() else {
             return;
         };
@@ -814,6 +892,7 @@ impl Checker {
         self.current_return = signature.return_type.clone();
         self.current_function = decl.name.clone();
         self.scopes.push(HashMap::new());
+        let body_region = self.begin_region(RegionKind::Block);
 
         for (param, signature) in decl.params.iter().zip(signature.params.iter()) {
             let info = VarInfo {
@@ -845,6 +924,7 @@ impl Checker {
             );
         }
 
+        self.end_region(body_region);
         self.scopes.pop();
         self.reachable = true;
         self.current_return = Ty::Void;
@@ -859,8 +939,10 @@ impl Checker {
         let outer = self.reachable;
         self.reachable = true;
         self.scopes.push(HashMap::new());
+        let region = self.begin_region(RegionKind::Block);
         self.check_statements(&block.statements);
         let reachable = self.reachable;
+        self.end_region(region);
         self.scopes.pop();
         self.reachable = outer;
         reachable
@@ -893,9 +975,10 @@ impl Checker {
 
                 let (resolved, initialized) = match (declared, value_ty) {
                     (Some(declared), Some(value_ty)) => {
-                        if !types::assignable(&declared, &value_ty) {
+                        let actual_expr = value.as_ref().expect("value type");
+                        if !self.assignable_expr(&declared, &value_ty, actual_expr) {
                             self.error(
-                                value.as_ref().expect("value type").span,
+                                actual_expr.span,
                                 format!(
                                     "cannot initialize '{}' of type {} with {}",
                                     name, declared, value_ty
@@ -918,14 +1001,17 @@ impl Checker {
                     (None, None) => (Ty::Error, false),
                 };
 
-                self.check_region_escape(
-                    self.current_region(),
-                    &value_regions,
-                    value
-                        .as_ref()
-                        .map(|value| value.span)
-                        .unwrap_or(statement.span),
-                );
+                let carries_storage = self.type_contains_slice(&resolved);
+                if carries_storage {
+                    self.check_region_escape(
+                        self.current_region(),
+                        &value_regions,
+                        value
+                            .as_ref()
+                            .map(|value| value.span)
+                            .unwrap_or(statement.span),
+                    );
+                }
                 self.declare_variable(
                     name,
                     VarInfo {
@@ -939,7 +1025,9 @@ impl Checker {
                         taints: Vec::new(),
                     },
                 );
-                self.set_variable_regions(name, &value_regions);
+                if carries_storage {
+                    self.set_variable_regions(name, &value_regions);
+                }
             }
             StmtKind::Assign { target, op, value } => {
                 self.check_assignment(target, *op, value);
@@ -1020,6 +1108,7 @@ impl Checker {
                 self.loop_depth += 1;
                 let before = self.snapshot();
                 self.scopes.push(HashMap::new());
+                let body_region = self.begin_region(RegionKind::Block);
                 if variable != "_" {
                     self.declare_variable(
                         variable,
@@ -1036,6 +1125,7 @@ impl Checker {
                     );
                 }
                 self.check_statements(&body.statements);
+                self.end_region(body_region);
                 self.scopes.pop();
                 self.loop_depth -= 1;
                 let after = self.snapshot();
@@ -1072,6 +1162,7 @@ impl Checker {
                 self.loop_depth += 1;
                 let before = self.snapshot();
                 self.scopes.push(HashMap::new());
+                let body_region = self.begin_region(RegionKind::Block);
                 if variable != "_" {
                     self.declare_variable(
                         variable,
@@ -1088,6 +1179,7 @@ impl Checker {
                     );
                 }
                 self.check_statements(&body.statements);
+                self.end_region(body_region);
                 self.scopes.pop();
                 self.loop_depth -= 1;
                 let after = self.snapshot();
@@ -1222,7 +1314,7 @@ impl Checker {
             }
             (Some(value), _) => {
                 let actual = self.check_expr(value);
-                if !types::assignable(&expected, &actual) {
+                if !self.assignable_expr(&expected, &actual, value) {
                     self.error(
                         value.span,
                         format!(
@@ -1232,14 +1324,20 @@ impl Checker {
                     );
                 }
                 self.check_literal_range(value, &expected);
-                if contains_slice_literal(value) {
-                    self.error(
-                        value.span,
-                        "cannot return a slice literal: its storage ends with the current block; bind it to a local slice first",
-                    );
+                if self.type_contains_slice(&actual) {
+                    let regions = self.value_regions(value);
+                    let has_block_storage = regions
+                        .iter()
+                        .any(|region| self.region_kinds.get(*region) == Some(&RegionKind::Block));
+                    if has_block_storage {
+                        self.error(
+                            value.span,
+                            "cannot return a slice literal: its storage ends with the current block; bind it to a local slice first",
+                        );
+                    } else {
+                        self.check_region_escape(None, &regions, value.span);
+                    }
                 }
-                let regions = self.value_regions(value);
-                self.check_region_escape(None, &regions, value.span);
                 if is_composite(&actual)
                     && is_place(value)
                     && let (Some(root), Some(path)) = (place_root(value), place_path(value))
@@ -1273,16 +1371,18 @@ impl Checker {
                 self.reject_implicit_copy(value, &value_ty);
                 let value_regions = self.value_regions(value);
                 self.check_write(&info, true, target.span);
-                if !types::assignable(&info.ty, &value_ty) {
+                if !self.assignable_expr(&info.ty, &value_ty, value) {
                     self.error(
                         value.span,
                         format!("cannot assign {} to {}", value_ty, info.ty),
                     );
                 }
                 self.check_literal_range(value, &info.ty);
-                let destination = self.home_region_of(&info);
-                self.check_region_escape(destination, &value_regions, value.span);
-                self.set_place_regions(&info, &value_regions);
+                if self.type_contains_slice(&info.ty) {
+                    let destination = self.home_region_of(&info);
+                    self.check_region_escape(destination, &value_regions, value.span);
+                    self.set_place_regions(&info, &value_regions);
+                }
             }
             AssignOp::Add | AssignOp::Sub | AssignOp::Mul | AssignOp::Div => {
                 self.check_mutable_access(&info, target.span);
@@ -1449,7 +1549,7 @@ impl Checker {
             let element_ty = self.resolve_type(element_type, span);
             for element in elements {
                 let actual = self.check_expr(element);
-                if !types::assignable(&element_ty, &actual) {
+                if !self.assignable_expr(&element_ty, &actual, element) {
                     self.error(
                         element.span,
                         format!("slice literal element has type {actual}, expected {element_ty}"),
@@ -1553,7 +1653,7 @@ impl Checker {
             let duplicate = !seen.insert(field.name.clone());
             match self.interface_field(name, &field.name) {
                 Some(info) => {
-                    if !types::assignable(&info.ty, &value_ty) {
+                    if !self.assignable_expr(&info.ty, &value_ty, &field.value) {
                         self.error(
                             field.value.span,
                             format!(
@@ -1912,7 +2012,7 @@ impl Checker {
         match param.direction {
             Direction::In => {
                 let actual = self.check_expr(&arg.value);
-                if !types::assignable(&param.ty, &actual) {
+                if !self.assignable_expr(&param.ty, &actual, &arg.value) {
                     self.error(
                         arg.value.span,
                         format!(
@@ -1938,7 +2038,7 @@ impl Checker {
                 }
                 if may_allocate
                     && self.type_contains_slice(&info.ty)
-                    && let Some(region) = self.current_region()
+                    && let Some(region) = self.current_protect_region()
                 {
                     let destination = self.home_region_of(&info);
                     self.check_region_escape(destination, &[region], arg.value.span);
@@ -1996,7 +2096,7 @@ impl Checker {
         }
 
         if self.type_contains_slice(&info.ty)
-            && let Some(region) = self.current_region()
+            && let Some(region) = self.current_protect_region()
         {
             let destination = self.home_region_of(&info);
             self.check_region_escape(destination, &[region], target.span);
@@ -2289,15 +2389,39 @@ impl Checker {
         self.region_stack.last().copied()
     }
 
-    fn begin_region(&mut self) -> usize {
+    /// Innermost active `protect` region, ignoring lexical blocks nested inside
+    /// it. `alloc` outside every `protect` is not tracked as arena storage: it
+    /// is either rejected by the unguarded-allocator analysis or belongs to the
+    /// caller's arena.
+    fn current_protect_region(&self) -> Option<usize> {
+        self.region_stack
+            .iter()
+            .rev()
+            .copied()
+            .find(|region| self.region_kinds.get(*region) == Some(&RegionKind::Protect))
+    }
+
+    fn begin_region(&mut self, kind: RegionKind) -> usize {
         let id = self.region_parents.len();
         self.region_parents.push(self.current_region());
+        self.region_kinds.push(kind);
         self.region_stack.push(id);
         id
     }
 
-    fn end_region(&mut self) {
+    /// Close `region`, asserting that it is the innermost active region.
+    ///
+    /// Taints that point into this region are dropped: any value that could
+    /// still be reached after the block ends was already rejected as an escape
+    /// at the assignment that created it.
+    fn end_region(&mut self, region: usize) {
+        debug_assert_eq!(self.current_region(), Some(region));
         self.region_stack.pop();
+        for scope in self.scopes.iter_mut().rev() {
+            for info in scope.values_mut() {
+                info.taints.retain(|taint| taint.region != region);
+            }
+        }
     }
 
     /// True when `home` is `ancestor` or a nested region inside it.
@@ -2319,32 +2443,30 @@ impl Checker {
         }
     }
 
-    /// Reject storing data allocated in a `protect` region outside that region.
+    /// Reject storing block- or `protect`-local storage outside the region
+    /// that owns it.
     fn check_region_escape(&mut self, destination: Option<usize>, regions: &[usize], span: Span) {
         for region in regions {
             if !self.region_within(destination, *region) {
-                self.error(
-                    span,
-                    "value allocated inside 'protect' escapes the block".to_string(),
-                );
+                let message = match self.region_kinds.get(*region) {
+                    Some(RegionKind::Protect) => {
+                        "value allocated inside 'protect' escapes the block".to_string()
+                    }
+                    _ => "slice literal storage escapes the block that created it; keep it in a variable declared in the same block".to_string(),
+                };
+                self.error(span, message);
                 return;
             }
         }
     }
 
-    /// Allocate a fresh protect region for a `protect` body and discard taints
-    /// that refer to the region once the block ends.
+    /// Allocate a fresh protect region for a `protect` body.
     fn enter_protect(&mut self) -> usize {
-        self.begin_region()
+        self.begin_region(RegionKind::Protect)
     }
 
     fn leave_protect(&mut self, region: usize) {
-        self.end_region();
-        for scope in self.scopes.iter_mut().rev() {
-            for info in scope.values_mut() {
-                info.taints.retain(|taint| taint.region != region);
-            }
-        }
+        self.end_region(region);
     }
 
     /// Regions of protect-local allocations reachable through an expression.
@@ -2424,6 +2546,12 @@ impl Checker {
             }
             ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::String(_) => {}
             ExprKind::SliceLiteral { elements, .. } => {
+                // The backing array has automatic storage in the enclosing
+                // lexical block. String literals are static and deliberately
+                // do not reach this branch.
+                if let Some(region) = self.current_region() {
+                    regions.push(region);
+                }
                 for element in elements {
                     self.collect_value_regions(element, regions);
                 }
@@ -2910,40 +3038,6 @@ fn is_constant_expr(expr: &Expr) -> bool {
         }
         ExprKind::SliceLiteral { elements, .. } => elements.iter().all(is_constant_expr),
         _ => false,
-    }
-}
-
-/// Whether an expression builds a slice literal whose backing array has
-/// automatic storage (and therefore cannot outlive the current block).
-fn contains_slice_literal(expr: &Expr) -> bool {
-    match &expr.kind {
-        ExprKind::SliceLiteral { .. } => true,
-        ExprKind::Unary { operand, .. }
-        | ExprKind::Cast { expr: operand, .. }
-        | ExprKind::Move(operand)
-        | ExprKind::Copy(operand) => contains_slice_literal(operand),
-        ExprKind::Binary { left, right, .. } => {
-            contains_slice_literal(left) || contains_slice_literal(right)
-        }
-        ExprKind::InterfaceLiteral { fields, .. } => fields
-            .iter()
-            .any(|field| contains_slice_literal(&field.value)),
-        ExprKind::Call { callee, args } => {
-            contains_slice_literal(callee)
-                || args.iter().any(|arg| contains_slice_literal(&arg.value))
-        }
-        ExprKind::Alloc { target, count, .. } => {
-            contains_slice_literal(target) || contains_slice_literal(count)
-        }
-        ExprKind::Member { base, .. } => contains_slice_literal(base),
-        ExprKind::Index { base, index } => {
-            contains_slice_literal(base) || contains_slice_literal(index)
-        }
-        ExprKind::Ident(_)
-        | ExprKind::Int(_)
-        | ExprKind::Float(_)
-        | ExprKind::Bool(_)
-        | ExprKind::String(_) => false,
     }
 }
 
