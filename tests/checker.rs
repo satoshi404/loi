@@ -40,6 +40,11 @@ fn tictactoe_example_type_checks() {
 }
 
 #[test]
+fn systems_example_type_checks() {
+    assert_clean(include_str!("../examples/systems.loi"));
+}
+
+#[test]
 fn unsuffixed_literals_coerce_to_numeric_types() {
     assert_clean(
         "flow whole\n    => f64\n{\n    => 1\n}\n\nflow add\n    <- x: u32\n    => u32\n{\n    => x + 1\n}\n\nflow div\n    => f64\n{\n    => 1.0 / 60\n}\n",
@@ -996,5 +1001,73 @@ fn slice_literals_are_safe_within_their_block() {
 
     assert_clean(
         "flow take\n    <- xs: [i32]\n    => i32\n{\n    => xs[0]\n}\n\nflow main\n    => i32\n{\n    => take([1, 2, 3])\n}\n",
+    );
+}
+
+#[test]
+fn bitwise_and_shift_operators_type_check() {
+    assert_clean(
+        "flow hash\n    <- x: u32\n    => u32\n{\n    => ((x << 5) ^ (x >> 3)) & 0xFFFF | 1\n}\n\nflow flags\n    <- a: u8\n    => u8\n{\n    => ~a & 0x0F\n}\n\nflow main {\n    mut x: i32 <- 3\n    x <<= 2\n    x |= 1\n    x &= 7\n    x ^= 2\n    x %= 5\n}\n",
+    );
+
+    assert_message(
+        "flow f\n    <- x: f64\n    => i32\n{\n    => x & 1\n}\n",
+        "bitwise operator requires integer operands",
+    );
+    assert_message(
+        "flow f\n    => f64\n{\n    => 1.0 << 2\n}\n",
+        "shift requires integer operands",
+    );
+    assert_message(
+        "flow f\n    <- x: i32\n    => i32\n{\n    => x << 32\n}\n",
+        "shift count 32 is out of range for i32",
+    );
+    assert_message(
+        "flow f\n    <- x: i32\n    => i32\n{\n    => x >> -1\n}\n",
+        "shift count -1 is out of range for i32",
+    );
+    assert_message(
+        "flow f\n    <- x: f64\n    => f64\n{\n    => ~x\n}\n",
+        "'~' requires an integer operand",
+    );
+    assert_message(
+        "flow f {\n    mut x: f64 <- 1.0\n    x %= 2.0\n}\n",
+        "compound assignment requires an integer target",
+    );
+}
+
+#[test]
+fn file_and_stdin_intrinsics_have_checked_signatures() {
+    assert_clean(
+        "flow load\n    <- path: [u8]\n    => i32\n{\n    protect {\n        mut data: [u8] <- read_file(<- path)\n        => data.len as i32\n    }\n}\n\nflow save\n    <- path: [u8]\n    <- data: [u8]\n    => bool\n{\n    => write_file(<- path, <- data)\n}\n\nflow main {\n    protect {\n        mut input: [u8] <- read_stdin()\n        mut line: [u8] <- read_line()\n        if line.len > 0 {\n            input = give(line)\n        }\n        let_saved: bool <- save(<- \"out.bin\", <- input)\n    }\n    print_int(255 as u64)\n    print_float(1.5)\n}\n",
+    );
+
+    assert_message(
+        "flow main {\n    mut data: [u8] <- read_file(<- \"x\")\n}\n",
+        "function 'main' can allocate outside a 'protect' block",
+    );
+    assert_message(
+        "flow main {\n    mut data: [u8]\n    protect {\n        data = read_file(<- \"x\")\n    }\n}\n",
+        "value allocated inside 'protect' escapes the block",
+    );
+    assert_message(
+        "flow main {\n    mut line: [u8]\n    protect {\n        line = read_line()\n    }\n}\n",
+        "value allocated inside 'protect' escapes the block",
+    );
+    assert_message(
+        "flow main {\n    print_int(1.0)\n}\n",
+        "print_int expects an integer",
+    );
+    assert_message(
+        "flow main {\n    print_float(1)\n}\n",
+        "print_float expects a float",
+    );
+    assert_message(
+        "flow main {\n    mut ok: i32 <- write_file(<- \"x\", <- \"y\")\n}\n",
+        "cannot initialize 'ok' of type i32 with bool",
+    );
+    assert_message(
+        "flow main {\n    mut input: [u8]\n    protect {\n        input = read_stdin()\n    }\n}\n",
+        "value allocated inside 'protect' escapes the block",
     );
 }

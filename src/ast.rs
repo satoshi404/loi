@@ -94,6 +94,8 @@ pub struct GlobalDecl {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InterfaceDecl {
     pub span: Span,
+    /// Source line of the closing `]`, used to place trailing comments.
+    pub close_line: usize,
     pub visibility: Visibility,
     pub name: String,
     pub fields: Vec<FieldDecl>,
@@ -144,6 +146,10 @@ pub struct Param {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Block {
     pub statements: Vec<Stmt>,
+    /// Source line of the opening `{`, used to anchor comments.
+    pub open_line: usize,
+    /// Source line of the closing `}`, used to anchor comments.
+    pub close_line: usize,
 }
 
 /// A statement together with its starting source position.
@@ -213,6 +219,12 @@ pub enum AssignOp {
     Sub,
     Mul,
     Div,
+    Mod,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
 }
 
 /// An expression together with its starting source position.
@@ -296,6 +308,7 @@ pub struct CallArg {
 pub enum UnaryOp {
     Neg,
     Not,
+    BitNot,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -308,6 +321,11 @@ pub enum BinaryOp {
     Lte,
     Gt,
     Gte,
+    BitOr,
+    BitXor,
+    BitAnd,
+    Shl,
+    Shr,
     Add,
     Sub,
     Mul,

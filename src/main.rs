@@ -520,8 +520,22 @@ fn parse_source(source: &str, path: &Path) {
 }
 
 fn format_source(source: &str, path: &Path) {
-    let program = load_program(source, path);
-    print!("{}", loi::format_program(&program));
+    let filename = path.display().to_string();
+    let (tokens, comments) = match loi::tokenize_with_comments(source, &filename) {
+        Ok(parts) => parts,
+        Err(error) => {
+            eprintln!("loi: {}:{error}", path.display());
+            process::exit(1);
+        }
+    };
+    let program = match loi::parse(tokens) {
+        Ok(program) => program,
+        Err(error) => {
+            eprintln!("loi: {}:{error}", path.display());
+            process::exit(1);
+        }
+    };
+    print!("{}", loi::format_program_with_comments(&program, &comments));
 }
 
 fn check_source(source: &str, path: &Path) {

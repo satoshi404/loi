@@ -77,6 +77,12 @@ cargo test --all-targets
 - Signed integer arithmetic traps on overflow; unsigned arithmetic wraps at
   its declared width; division and remainder by zero trap with a source
   position. See `SINTAXE.md` for the full rules.
+- Bitwise and shift operators (`&`, `|`, `^`, `~`, `<<`, `>>`) and compound
+  forms are available for masks, flags and hashing; shift counts are checked.
+- `read_file`, `write_file`, `read_stdin` and `read_line` cover whole-file and
+  stdin I/O, while `print_int` and `print_float` print numbers without
+  building text by hand. Reads allocate in the current `protect` region.
+- `loi fmt` preserves `//` comments and is idempotent.
 - Foreign C is available through `opaque` handles, `cstr`, `extern flow` and
   vendored shims.
 
@@ -90,7 +96,7 @@ Start with [`SINTAXE.md`](SINTAXE.md) for the canonical surface and
 | `src/` | Lexer, parser, type/ownership checker, C backend, draft IR/assembly |
 | `tests/` | Lexer/parser/checker/codegen/CLI/bindgen integration tests |
 | `lib/std.loi` | Minimal standard library written in Loi |
-| `examples/` | Reference programs, including `flow_syntax.loi` and `tictactoe.loi` |
+| `examples/` | Reference programs, including `flow_syntax.loi`, `systems.loi` and `tictactoe.loi` |
 | `vendor/` | Generated Loi bindings for SDL2 and raylib 5.5, with shims and skip reports |
 | `tools/bindgen/` | Header-to-Loi binding generator |
 | `website/` | Static site, documentation and local playground |

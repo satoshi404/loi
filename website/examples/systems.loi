@@ -1,0 +1,105 @@
+// Systems-programming tour: bit masks, shifts, hashing and file I/O.
+//
+// Build and run with:
+//     loi build examples/systems.loi -o systems
+//     ./systems
+open flow pack_rgb
+    <- r: u8
+    <- g: u8
+    <- b: u8
+    => u32
+{
+    => r as u32 << 16 | g as u32 << 8 | b as u32
+}
+
+open flow unpack_rgb
+    <- packed: u32
+    -> r: u8
+    -> g: u8
+    -> b: u8
+{
+    r = (packed >> 16) as u8
+    g = (packed >> 8) as u8
+    b = packed as u8
+}
+
+// FNV-1a over bytes. Unsigned multiply wraps at u32 width by definition.
+open flow hash_bytes
+    <- data: [u8]
+    => u32
+{
+    mut hash: u32 <- 2166136261
+    for <- byte in data {
+        hash ^= byte as u32
+        hash *= 16777619
+    }
+    => hash
+}
+
+open flow clear_low_byte
+    <- value: u32
+    => u32
+{
+    => value & ~(0xFF as u32)
+}
+
+open flow copy_file
+    <- from: [u8]
+    <- to: [u8]
+    => bool
+{
+    protect {
+        mut data: [u8] <- read_file(from)
+        => write_file(to, data)
+    }
+}
+
+// Call this from a program that receives stdin when you want interactive input.
+open flow print_line {
+    protect {
+        mut line: [u8] <- read_line()
+        print(line)
+        print("\n")
+    }
+}
+
+open flow main
+    => i32
+{
+    mut packed: u32 <- pack_rgb(0x12, 0x34, 0x56)
+    if packed != 0x123456 {
+        => 1
+    }
+    mut r: u8
+    mut g: u8
+    mut b: u8
+    unpack_rgb(packed, -> r, -> g, -> b)
+    if r != 0x12 or g != 0x34 or b != 0x56 {
+        => 2
+    }
+    if clear_low_byte(packed) != 0x123400 {
+        => 3
+    }
+    protect {
+        mut input: [u8] <- "/tmp/loi_systems_input.bin"
+        mut output: [u8] <- "/tmp/loi_systems_copy.bin"
+        mut data: [u8] <- "loi systems example\n"
+        if not write_file(input, data) {
+            => 4
+        }
+        if not copy_file(input, output) {
+            => 5
+        }
+        mut copy: [u8] <- read_file(output)
+        if copy != data {
+            => 6
+        }
+        print_int(hash_bytes(copy))
+        print(" ")
+    }
+    print_int(packed as i64)
+    print(" ")
+    print_float(1.5)
+    print("\n")
+    => 0
+}

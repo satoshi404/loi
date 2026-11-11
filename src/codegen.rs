@@ -189,6 +189,47 @@ LOI_UNSIGNED_OPS(u64, uint64_t)
 #undef LOI_SIGNED_OPS
 #undef LOI_UNSIGNED_OPS
 
+/* Shifts are defined for every bit pattern: the count must be in
+ * [0, width), left shifts wrap modulo the width, unsigned right shifts are
+ * logical, and signed right shifts are arithmetic. */
+#define LOI_SIGNED_SHIFTS(suffix, type, unsigned_type, bits) \
+    static inline type loi_shl_##suffix(type a, uint64_t b, size_t line, size_t column) { \
+        if (b >= (bits)) \
+            loi_runtime_fail("shift count out of range", line, column); \
+        return (type)((unsigned_type)a << b); \
+    } \
+    static inline type loi_shr_##suffix(type a, uint64_t b, size_t line, size_t column) { \
+        if (b >= (bits)) \
+            loi_runtime_fail("shift count out of range", line, column); \
+        if (a >= 0) \
+            return (type)((unsigned_type)a >> b); \
+        return (type)~((unsigned_type)(~(unsigned_type)a) >> b); \
+    }
+
+#define LOI_UNSIGNED_SHIFTS(suffix, type, bits) \
+    static inline type loi_shl_##suffix(type a, uint64_t b, size_t line, size_t column) { \
+        if (b >= (bits)) \
+            loi_runtime_fail("shift count out of range", line, column); \
+        return (type)(a << b); \
+    } \
+    static inline type loi_shr_##suffix(type a, uint64_t b, size_t line, size_t column) { \
+        if (b >= (bits)) \
+            loi_runtime_fail("shift count out of range", line, column); \
+        return (type)(a >> b); \
+    }
+
+LOI_SIGNED_SHIFTS(i8, int8_t, uint8_t, 8)
+LOI_SIGNED_SHIFTS(i16, int16_t, uint16_t, 16)
+LOI_SIGNED_SHIFTS(i32, int32_t, uint32_t, 32)
+LOI_SIGNED_SHIFTS(i64, int64_t, uint64_t, 64)
+LOI_UNSIGNED_SHIFTS(u8, uint8_t, 8)
+LOI_UNSIGNED_SHIFTS(u16, uint16_t, 16)
+LOI_UNSIGNED_SHIFTS(u32, uint32_t, 32)
+LOI_UNSIGNED_SHIFTS(u64, uint64_t, 64)
+
+#undef LOI_SIGNED_SHIFTS
+#undef LOI_UNSIGNED_SHIFTS
+
 static LoiArenaChunk* loi_arena_chunk_at(size_t offset) {
     for (LoiArenaChunk* chunk = loi_arena_chunks; chunk != NULL; chunk = chunk->next) {
         if (offset >= chunk->base && offset < chunk->base + chunk->size) {
@@ -307,6 +348,171 @@ static inline bool loi_slice_eq(LoiSlice left, LoiSlice right) {
         && (left.len == 0 || memcmp(left.data, right.data, left.len) == 0);
 }
 
+/* File, standard-input and numeric-printing helpers. Paths are byte slices,
+ * not C strings, so they are copied into a temporary NUL-terminated buffer.
+ * Returned file/stdin data lives in the current arena and must be used inside
+ * a `protect` block. */
+
+static inline char* loi_temp_path(LoiSlice path, size_t line, size_t column) {
+    if (path.len == SIZE_MAX) {
+        loi_runtime_fail("file path is too long", line, column);
+    }
+    char* name = (char*)malloc(path.len + 1);
+    if (name == NULL) {
+        loi_runtime_fail("out of memory reading file path", line, column);
+    }
+    if (path.len != 0) {
+        memcpy(name, path.data, path.len);
+    }
+    name[path.len] = '\0';
+    return name;
+}
+
+static inline LoiSlice loi_read_file(LoiSlice path, size_t line, size_t column) {
+    char* name = loi_temp_path(path, line, column);
+    FILE* file = fopen(name, "rb");
+    free(name);
+    if (file == NULL) {
+        loi_runtime_fail("could not open file", line, column);
+    }
+    if (fseek(file, 0, SEEK_END) != 0) {
+        fclose(file);
+        loi_runtime_fail("could not read file", line, column);
+    }
+    long end = ftell(file);
+    if (end < 0 || fseek(file, 0, SEEK_SET) != 0) {
+        fclose(file);
+        loi_runtime_fail("could not read file", line, column);
+    }
+    LoiSlice out;
+    out.len = (size_t)end;
+    out.data = loi_alloc(out.len, line, column);
+    if (out.len != 0 && fread(out.data, 1, out.len, file) != out.len) {
+        fclose(file);
+        loi_runtime_fail("could not read file", line, column);
+    }
+    if (fclose(file) != 0) {
+        loi_runtime_fail("could not read file", line, column);
+    }
+    return out;
+}
+
+static inline bool loi_write_file(LoiSlice path, LoiSlice data, size_t line, size_t column) {
+    char* name = loi_temp_path(path, line, column);
+    FILE* file = fopen(name, "wb");
+    free(name);
+    if (file == NULL) {
+        return false;
+    }
+    bool ok = data.len == 0 || fwrite(data.data, 1, data.len, file) == data.len;
+    if (fclose(file) != 0) {
+        ok = false;
+    }
+    return ok;
+}
+
+static inline LoiSlice loi_read_stdin(size_t line, size_t column) {
+    size_t capacity = 4096;
+    size_t length = 0;
+    unsigned char* buffer = (unsigned char*)malloc(capacity);
+    if (buffer == NULL) {
+        loi_runtime_fail("out of memory reading stdin", line, column);
+    }
+    for (;;) {
+        if (length == capacity) {
+            if (capacity > SIZE_MAX / 2) {
+                free(buffer);
+                loi_runtime_fail("stdin input is too large", line, column);
+            }
+            capacity *= 2;
+            unsigned char* grown = (unsigned char*)realloc(buffer, capacity);
+            if (grown == NULL) {
+                free(buffer);
+                loi_runtime_fail("out of memory reading stdin", line, column);
+            }
+            buffer = grown;
+        }
+        size_t count = fread(buffer + length, 1, capacity - length, stdin);
+        length += count;
+        if (count == 0) {
+            break;
+        }
+    }
+    if (ferror(stdin)) {
+        free(buffer);
+        loi_runtime_fail("could not read stdin", line, column);
+    }
+    LoiSlice out;
+    out.len = length;
+    out.data = loi_alloc(length, line, column);
+    if (length != 0) {
+        memcpy(out.data, buffer, length);
+    }
+    free(buffer);
+    return out;
+}
+
+static inline LoiSlice loi_read_line(size_t line, size_t column) {
+    size_t capacity = 128;
+    size_t length = 0;
+    unsigned char* buffer = (unsigned char*)malloc(capacity);
+    if (buffer == NULL) {
+        loi_runtime_fail("out of memory reading stdin", line, column);
+    }
+    int ch;
+    while ((ch = getchar()) != EOF && ch != '\n') {
+        if (length == capacity) {
+            if (capacity > SIZE_MAX / 2) {
+                free(buffer);
+                loi_runtime_fail("stdin input is too large", line, column);
+            }
+            capacity *= 2;
+            unsigned char* grown = (unsigned char*)realloc(buffer, capacity);
+            if (grown == NULL) {
+                free(buffer);
+                loi_runtime_fail("out of memory reading stdin", line, column);
+            }
+            buffer = grown;
+        }
+        buffer[length++] = (unsigned char)ch;
+    }
+    if (ch == EOF && ferror(stdin)) {
+        free(buffer);
+        loi_runtime_fail("could not read stdin", line, column);
+    }
+    if (length != 0 && buffer[length - 1] == '\r') {
+        length--;
+    }
+    LoiSlice out;
+    out.len = length;
+    out.data = loi_alloc(length, line, column);
+    if (length != 0) {
+        memcpy(out.data, buffer, length);
+    }
+    free(buffer);
+    return out;
+}
+
+static inline void loi_print_int(int64_t value) {
+    printf("%lld", (long long)value);
+}
+
+static inline void loi_print_uint(uint64_t value) {
+    printf("%llu", (unsigned long long)value);
+}
+
+static inline void loi_print_float(double value) {
+    char buffer[32];
+    int precision;
+    for (precision = 1; precision <= 17; precision++) {
+        snprintf(buffer, sizeof buffer, "%.*g", precision, value);
+        if (strtod(buffer, NULL) == value) {
+            break;
+        }
+    }
+    fputs(buffer, stdout);
+}
+
 static inline void* loi_index(LoiSlice slice, size_t index, size_t element_size, size_t line, size_t column) {
     if (index >= slice.len) {
         loi_runtime_fail("slice index out of bounds", line, column);
@@ -393,6 +599,12 @@ impl<'a> Generator<'a> {
         intrinsic_return_ty.insert("fabs".to_string(), Ty::F64);
         intrinsic_return_ty.insert("fmod".to_string(), Ty::F64);
         intrinsic_return_ty.insert("len".to_string(), Ty::U64);
+        intrinsic_return_ty.insert("read_file".to_string(), Ty::Slice(Box::new(Ty::U8)));
+        intrinsic_return_ty.insert("read_stdin".to_string(), Ty::Slice(Box::new(Ty::U8)));
+        intrinsic_return_ty.insert("read_line".to_string(), Ty::Slice(Box::new(Ty::U8)));
+        intrinsic_return_ty.insert("write_file".to_string(), Ty::Bool);
+        intrinsic_return_ty.insert("print_int".to_string(), Ty::Void);
+        intrinsic_return_ty.insert("print_float".to_string(), Ty::Void);
 
         for item in &program.items {
             match item {
@@ -1128,28 +1340,63 @@ impl<'a> Generator<'a> {
                 if matches!(op, AssignOp::Assign) {
                     self.emit(format!("{target} = {value};"));
                 } else {
-                    let (helper, operator) = match op {
-                        AssignOp::Add => ("add", "+"),
-                        AssignOp::Sub => ("sub", "-"),
-                        AssignOp::Mul => ("mul", "*"),
-                        AssignOp::Div => ("div", "/"),
-                        AssignOp::Assign => unreachable!(),
-                    };
                     let result_ty = target_ty.concretize();
-                    let call = match integer_suffix(&result_ty) {
-                        Some(suffix)
-                            if matches!(op, AssignOp::Div) || is_signed_integer(&result_ty) =>
-                        {
-                            format!(
-                                "loi_{helper}_{suffix}({target}, {value}, {}, {})",
-                                statement.span.line, statement.span.column
-                            )
+                    let call = match op {
+                        AssignOp::Add
+                        | AssignOp::Sub
+                        | AssignOp::Mul
+                        | AssignOp::Div
+                        | AssignOp::Mod => {
+                            let (helper, operator) = match op {
+                                AssignOp::Add => ("add", "+"),
+                                AssignOp::Sub => ("sub", "-"),
+                                AssignOp::Mul => ("mul", "*"),
+                                AssignOp::Div => ("div", "/"),
+                                AssignOp::Mod => ("rem", "%"),
+                                _ => unreachable!(),
+                            };
+                            match integer_suffix(&result_ty) {
+                                Some(suffix)
+                                    if matches!(op, AssignOp::Div | AssignOp::Mod)
+                                        || is_signed_integer(&result_ty) =>
+                                {
+                                    format!(
+                                        "loi_{helper}_{suffix}({target}, {value}, {}, {})",
+                                        statement.span.line, statement.span.column
+                                    )
+                                }
+                                Some(_) => {
+                                    let c_type = self.c_type(&result_ty);
+                                    format!("(({c_type})(({target}) {operator} ({value})))")
+                                }
+                                None => format!("({target} {operator} {value})"),
+                            }
                         }
-                        Some(_) => {
+                        AssignOp::Shl | AssignOp::Shr => {
+                            let helper = if matches!(op, AssignOp::Shl) {
+                                "shl"
+                            } else {
+                                "shr"
+                            };
+                            match integer_suffix(&result_ty) {
+                                Some(suffix) => format!(
+                                    "loi_{helper}_{suffix}({target}, {value}, {}, {})",
+                                    statement.span.line, statement.span.column
+                                ),
+                                None => format!("({target} {helper} {value})"),
+                            }
+                        }
+                        AssignOp::BitAnd | AssignOp::BitOr | AssignOp::BitXor => {
+                            let operator = match op {
+                                AssignOp::BitAnd => "&",
+                                AssignOp::BitOr => "|",
+                                AssignOp::BitXor => "^",
+                                _ => unreachable!(),
+                            };
                             let c_type = self.c_type(&result_ty);
                             format!("(({c_type})(({target}) {operator} ({value})))")
                         }
-                        None => format!("({target} {operator} {value})"),
+                        AssignOp::Assign => unreachable!(),
                     };
                     self.emit(format!("{target} = {call};"));
                 }
@@ -1421,6 +1668,7 @@ impl<'a> Generator<'a> {
             ExprKind::Unary { op, operand } => match op {
                 UnaryOp::Neg => self.ty_of(operand),
                 UnaryOp::Not => Ty::Bool,
+                UnaryOp::BitNot => self.ty_of(operand),
             },
             ExprKind::Binary { op, left, right } => match op {
                 BinaryOp::Or
@@ -1435,6 +1683,11 @@ impl<'a> Generator<'a> {
                     types::common_numeric(&self.ty_of(left), &self.ty_of(right))
                         .unwrap_or(Ty::Error)
                 }
+                BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::BitAnd => {
+                    types::common_numeric(&self.ty_of(left), &self.ty_of(right))
+                        .unwrap_or(Ty::Error)
+                }
+                BinaryOp::Shl | BinaryOp::Shr => self.ty_of(left),
             },
             ExprKind::Cast { ty, .. } => self.resolve_type(ty),
             ExprKind::Call { callee, .. } => {
@@ -1517,6 +1770,10 @@ impl<'a> Generator<'a> {
                         }
                     }
                     UnaryOp::Not => format!("(!{operand})"),
+                    UnaryOp::BitNot => {
+                        let c_type = self.c_type(&operand_ty);
+                        format!("(({c_type})(~({operand})))")
+                    }
                 }
             }
             ExprKind::Binary { op, left, right } => {
@@ -1546,10 +1803,28 @@ impl<'a> Generator<'a> {
                     BinaryOp::Mul => "*",
                     BinaryOp::Div => "/",
                     BinaryOp::Mod => "%",
+                    BinaryOp::BitOr => "|",
+                    BinaryOp::BitXor => "^",
+                    BinaryOp::BitAnd => "&",
+                    BinaryOp::Shl => "<<",
+                    BinaryOp::Shr => ">>",
                 };
-                let result_ty = types::common_numeric(&left_ty, &right_ty)
-                    .unwrap_or(Ty::Error)
-                    .concretize();
+                let result_ty = if matches!(op, BinaryOp::Shl | BinaryOp::Shr) {
+                    left_ty.concretize()
+                } else {
+                    types::common_numeric(&left_ty, &right_ty)
+                        .unwrap_or(Ty::Error)
+                        .concretize()
+                };
+                if matches!(op, BinaryOp::Shl | BinaryOp::Shr)
+                    && let Some(suffix) = integer_suffix(&result_ty)
+                {
+                    let helper = if *op == BinaryOp::Shl { "shl" } else { "shr" };
+                    return format!(
+                        "loi_{helper}_{suffix}({left}, {right}, {}, {})",
+                        expr.span.line, expr.span.column
+                    );
+                }
                 let helper = match op {
                     BinaryOp::Add => Some("add"),
                     BinaryOp::Sub => Some("sub"),
@@ -1563,7 +1838,12 @@ impl<'a> Generator<'a> {
                     | BinaryOp::Lt
                     | BinaryOp::Lte
                     | BinaryOp::Gt
-                    | BinaryOp::Gte => None,
+                    | BinaryOp::Gte
+                    | BinaryOp::BitOr
+                    | BinaryOp::BitXor
+                    | BinaryOp::BitAnd
+                    | BinaryOp::Shl
+                    | BinaryOp::Shr => None,
                 };
                 if let Some(helper) = helper
                     && let Some(suffix) = integer_suffix(&result_ty)
@@ -1576,6 +1856,10 @@ impl<'a> Generator<'a> {
                             expr.span.line, expr.span.column
                         );
                     }
+                    let c_type = self.c_type(&result_ty);
+                    return format!("(({c_type})(({left}) {operator} ({right})))");
+                }
+                if matches!(op, BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::BitAnd) {
                     let c_type = self.c_type(&result_ty);
                     return format!("(({c_type})(({left}) {operator} ({right})))");
                 }
@@ -1721,6 +2005,37 @@ impl<'a> Generator<'a> {
                 let left = self.gen_expr(&args.first()?.value);
                 let right = self.gen_expr(&args.get(1)?.value);
                 Some(format!("{name}({left}, {right})"))
+            }
+            "read_file" => {
+                let path = self.gen_expr(&args.first()?.value);
+                Some(format!(
+                    "loi_read_file({path}, {}, {})",
+                    _span.line, _span.column
+                ))
+            }
+            "write_file" => {
+                let path = self.gen_expr(&args.first()?.value);
+                let data = self.gen_expr(&args.get(1)?.value);
+                Some(format!(
+                    "loi_write_file({path}, {data}, {}, {})",
+                    _span.line, _span.column
+                ))
+            }
+            "read_stdin" => Some(format!("loi_read_stdin({}, {})", _span.line, _span.column)),
+            "read_line" => Some(format!("loi_read_line({}, {})", _span.line, _span.column)),
+            "print_int" => {
+                let arg = args.first()?;
+                let ty = self.ty_of(&arg.value).concretize();
+                let value = self.gen_expr(&arg.value);
+                if matches!(ty, Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64) {
+                    Some(format!("loi_print_uint((uint64_t)({value}))"))
+                } else {
+                    Some(format!("loi_print_int((int64_t)({value}))"))
+                }
+            }
+            "print_float" => {
+                let value = self.gen_expr(&args.first()?.value);
+                Some(format!("loi_print_float((double)({value}))"))
             }
             _ => None,
         }
@@ -2217,6 +2532,11 @@ fn gen_expr(builder: &mut IrBuilder, expr: &Expr) -> Result<Reg, CodegenError> {
                 BinaryOp::Mul => BinOp::Mul,
                 BinaryOp::Div => BinOp::SDiv,
                 BinaryOp::Mod => BinOp::SRem,
+                BinaryOp::BitAnd => BinOp::And,
+                BinaryOp::BitOr => BinOp::Or,
+                BinaryOp::BitXor => BinOp::Xor,
+                BinaryOp::Shl => BinOp::Shl,
+                BinaryOp::Shr => BinOp::AShr,
                 _ => BinOp::Add,
             };
             builder.emit_inst(IrInst::BinOp(bin_op, IrType::Int(32), result, lhs, rhs));
@@ -2228,6 +2548,7 @@ fn gen_expr(builder: &mut IrBuilder, expr: &Expr) -> Result<Reg, CodegenError> {
             let un_op = match op {
                 UnaryOp::Neg => UnOp::Neg,
                 UnaryOp::Not => UnOp::Not,
+                UnaryOp::BitNot => UnOp::BitNot,
             };
             builder.emit_inst(IrInst::UnOp(un_op, IrType::Int(32), result, operand_reg));
             Ok(result)

@@ -4,32 +4,34 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Last completed task (2026-11-10):** worked through
-  `development/fix_problems.md` items 1–6:
-  1. slice literals are now block-scoped and cannot escape their lexical
-     region;
-  2. signed integer overflow traps with a source position;
-  3. division/remainder by zero and `MIN / -1` trap (`MIN % -1` is `0`);
-  4. `--emit-asm` is rejected as an unfinished draft;
-  5. the `protect` arena grows in chunks instead of hitting a fixed cap;
-  6. the root README, spec, syntax guide, website docs, `AGENTS.md`, progress
-     notes and example mirror were refreshed.
-  Also vendored **raylib 5.5** bindings alongside the existing SDL2 bindings.
+- **Last completed task (2026-11-11):** made Loi comfortable for systems
+  programs:
+  1. added bitwise/shift operators (`&`, `|`, `^`, `~`, `<<`, `>>`), compound
+     forms (`%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`) and checked shift semantics;
+  2. added file/stdin I/O (`read_file`, `write_file`, `read_stdin`,
+     `read_line`) and numeric output (`print_int`, `print_float`) as
+     intrinsics, with the reading intrinsics participating in `protect`
+     escape analysis;
+  3. made `loi fmt` preserve `//` comments and stay idempotent.
+  Growable collections (`Vec<T>`, maps) remain deferred pending the
+  generics/comptime decision.
 - **Overall health:** good; the full test suite, `cargo fmt --check` and
   `cargo clippy --all-targets -- -D warnings` pass.
 - **Not done:** `comptime`, resources/`guard`, real module namespaces,
-  composite globals, the IR/ASM backends and browser integration tests.
+  composite globals, growable collections (`Vec<T>`/maps, deferred pending the
+  generics/comptime decision), the IR/ASM backends and browser integration
+  tests.
 
 ## Component Status
 
 | Component | Status | Notes |
 |---|---|---|
-| Lexer | Working | Canonical Flow Syntax only; strings with decoded escapes; decimal/hex/binary integers; floats; `<-`/`->`/`<->`/`=>` glyphs |
-| AST / parser | Working | Shapes, flows, `extern flow ... as`, `opaque`, imports, globals, slice/shape literals, `give`/`clone`/`alloc`, `protect`, loops |
-| Pretty-printer | Working | Emits canonical Flow Syntax; idempotent on all canonical files; comments are discarded |
-| Type checker | Working | Types, literals, directions, calls, globals, intrinsics, `opaque`/`cstr`, constant folding, shape-cycle detection |
-| Ownership | Working | Give liveness, definite assignment/return, exclusive `->`/`<->`, cross-flow consumption, `protect` taints and lexical-block escape analysis for slice literals |
-| C backend | Working | One C11 translation unit, ordered shape layouts, checked arithmetic, growable arena, bounds checks, defaults, headers, source maps, multi-file objects, statics |
+| Lexer | Working | Canonical Flow Syntax only; strings with decoded escapes; decimal/hex/binary integers; floats; `<-`/`->`/`<->`/`=>` glyphs; bitwise/shift/compound tokens; `//` comments collected for `fmt` |
+| AST / parser | Working | Shapes, flows, `extern flow ... as`, `opaque`, imports, globals, slice/shape literals, `give`/`clone`/`alloc`, `protect`, loops, bitwise/shift precedence |
+| Pretty-printer | Working | Emits canonical Flow Syntax; idempotent on all canonical files; `loi fmt` preserves `//` comments (`format_program` remains comment-free) |
+| Type checker | Working | Types, literals, directions, calls, globals, intrinsics, `opaque`/`cstr`, constant folding, shape-cycle detection, bitwise/shift rules, I/O intrinsic signatures and allocation effects |
+| Ownership | Working | Give liveness, definite assignment/return, exclusive `->`/`<->`, cross-flow consumption, `protect` taints and lexical-block escape analysis for slice literals, `read_file`/`read_stdin`/`read_line` |
+| C backend | Working | One C11 translation unit, ordered shape layouts, checked arithmetic, bitwise/shift helpers, growable arena, bounds checks, defaults, headers, source maps, multi-file objects, statics, file/stdin I/O and numeric printing |
 | C interop | Working | `opaque` → `void *`, `cstr` → `const char *`, bodyless `extern flow`, `--c-source`, `--cc-flag`; string literals coerce to `cstr` |
 | Binding generator | Working | `tools/bindgen/bindgen.py` emits `opaque` handles, safe `shape`s, typed constants, `extern flow`s, a `memcpy` shim with `_Static_assert` checks and a skip report |
 | Vendored bindings | Working (syntax-verified) | `vendor/sdl2/` (SDL2 2.32.10) and `vendor/raylib/` (raylib 5.5), each with generated `.loi`, shim, skip report and README |
@@ -40,7 +42,7 @@
 
 ## Verification
 
-Last verified 2026-11-10 with:
+Last verified 2026-11-11 with:
 
 ```sh
 export PATH=/root/.cargo/bin:$PATH
@@ -50,11 +52,14 @@ cargo clippy --all-targets -- -D warnings
 cargo test --all-targets
 ```
 
-- `cargo test --all-targets`: **184 passed, 0 failed** (suite breakdown is
+- `cargo test --all-targets`: **196 passed, 0 failed** (suite breakdown is
   printed by Cargo; compile-and-run tests skip when `cc` is unavailable).
-- New coverage: slice-literal escape (checker), checked signed arithmetic,
-  zero divisors, `MIN / -1`, unsigned wrap, growable arena, and the disabled
-  `--emit-asm` CLI path.
+- New coverage: bitwise/shift/compound operators, the shift-count trap at the
+  count's full width, file round-trips, stdin/`read_line`, numeric printing,
+  comment preservation and idempotence in `loi fmt`, comment positions in the
+  lexer, and I/O intrinsic signatures/allocation escape in the checker.
+- `examples/systems.loi` builds and runs (`2215315943 1193046 1.5`), and
+  `loi check` passes on `examples/raylib_window.loi`.
 - `loi check vendor/sdl2/sdl2.loi` and `loi check vendor/raylib/raylib.loi`:
   exit 0.
 - `clang -std=c11 -fsyntax-only` on both generated shims: exit 0.
@@ -108,10 +113,12 @@ cargo test --all-targets
 - Signed `+`, `-`, `*` and unary `-` trap on overflow; unsigned `+`, `-`, `*`
   wrap at the declared width; `/` and `%` trap on zero; `MIN / -1` traps and
   `MIN % -1` is `0`. Compound assignments follow the binary rules.
+- `&`, `|`, `^` and `~` require integer operands. `<<` and `>>` require an
+  integer count in `[0, width)`; out-of-range counts trap. Left shifts wrap at
+  the declared width, unsigned right shifts are logical and signed right shifts
+  are arithmetic. `as` remains the explicit unchecked truncating cast.
 - Runtime traps print `loi: <message> at <line>:<column>` and exit 1. There is
   no recovery or unwinding.
-- There is no shift, bitwise operator or `%=` yet. `as` is the only way to
-  request wrapping explicitly.
 
 ### Values, memory and the runtime
 
@@ -131,13 +138,18 @@ cargo test --all-targets
 - Imports are textual inclusion without namespaces or cross-file visibility
   enforcement. Multi-file builds give sealed flows external linkage so
   cross-file calls link.
-- The language has no stdin, file, socket or process API yet. `print`,
-  `eprint` and `panic` are the only I/O; resources (`guard`) are specified but
-  not implemented.
+- I/O is limited to `print`, `eprint`, `panic`, numeric printing and whole-file
+  / whole-stdin reads and writes. There is no socket, directory, seek,
+  environment or process API. `read_file`, `read_stdin` and `read_line`
+  allocate in the current `protect` region and cannot escape it. Resources
+  (`guard`) are specified but not implemented.
 - `comptime` is lexed but not parsed. Freshness, spatial tiers and ordering
   blocks are not implemented.
-- The pretty-printer drops comments and prints shape literals on one line.
-  Newlines are statement separators, not free whitespace inside expressions.
+- The pretty-printer prints shape literals on one line. `loi fmt` reattaches
+  `//` comments to source-line anchors, so comments inside multi-line
+  expressions can move to the next statement boundary; output becomes stable
+  after that first normalization. Newlines are statement separators, not free
+  whitespace inside expressions.
 
 ### Backends and tooling
 

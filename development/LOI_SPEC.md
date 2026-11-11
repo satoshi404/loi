@@ -65,7 +65,7 @@ The goal is that any new model can open `development/PROGRESS.md` and immediatel
 | Slice literals       | `[a, b]` (inferred) or `[T: a, b]` (explicit)                           |
 | Length               | `len(xs)` and `xs.len`, both `u64`                                       |
 | Imports              | `import "path.loi"` textual inclusion, resolved by the driver (provisional) |
-| Operators            | `and`, `or`, `not`, `as`, `+=` and friends                               |
+| Operators            | `and`, `or`, `not`, `as`, bitwise `&` `\|` `^` `~`, shifts `<<` `>>`, compound `+=` and friends |
 
 ---
 
@@ -369,8 +369,15 @@ each failure prints `loi: <message> at <line>:<column>` and exits with status 1.
 - **`/` and `%`** trap when the divisor is zero. `MIN / -1` traps as signed
   overflow; `MIN % -1` evaluates to `0`. Integer `/` truncates toward zero and
   `%` takes the sign of the dividend.
-- **Compound assignments** (`+=`, `-=`, `*=`, `/=`) follow the same rules as the
-  corresponding binary operator. Shift, bitwise and `%=` forms do not exist yet.
+- **Compound assignments** (`+=`, `-=`, `*=`, `/=`, `%=`) follow the same rules as
+  the corresponding binary operator. The bitwise (`&=`, `|=`, `^=`) and shift
+  (`<<=`, `>>=`) forms follow their binary operators too.
+- **Bitwise `&`, `|`, `^` and `~`** require integer operands and produce the
+  checked common integer type. They do not accept `bool`.
+- **Shifts `<<` and `>>`** require integer operands. The count must be in
+  `[0, width)`; an out-of-range count traps with `shift count out of range`.
+  Left shifts wrap at the declared width. Right shifts are logical for
+  unsigned operands and arithmetic for signed ones.
 - **`as`** remains an unchecked truncating cast; it is the explicit escape hatch
   for modular conversion.
 - **Literal-only constant expressions** are folded by the checker and rejected
@@ -400,7 +407,7 @@ All nine questions from the 0.2 draft are decided. Each entry states the rule, t
 
 ### 5.2 Pointers — none (question 2)
 
-**Decision:** Loi has no general-purpose pointers, no `&expr`, no `*T` and no `nil`.
+**Decision:** Loi has no general-purpose pointers, no address-of (`&expr`), no dereference (`*p`), no `*T` and no `nil`. `&` exists only as the bitwise AND operator.
 
 - The core invariant is one owner and one live name; an address-of operator creates a second name for the same address and would either violate that invariant or require a lifetime system the language does not have.
 - Read-only access is already expressed by `<-`, by a slice `[T]`, or by reading a local. These are checked, scoped views, not storable addresses.
@@ -487,7 +494,9 @@ guard file <- file_open("data.bin") {
 
 **Why:** explicit linear ownership fits the existing move rules and needs no garbage collector, no unwinding and no methods. `guard` is sugar over the same rule, not a second mechanism.
 
-**Status:** not implemented; there is no file/socket API yet. `print`/`eprint`/`panic` are the only I/O until this lands.
+**Status:** not implemented. Whole-file and stdin access exists through the
+`read_file`, `write_file`, `read_stdin` and `read_line` intrinsics, but there
+is no long-lived file/socket handle API or `guard` yet.
 
 ### 5.7 Scalar and composite copy — confirmed (question 7)
 
@@ -518,11 +527,13 @@ guard file <- file_open("data.bin") {
 **Decision:** two tiers, closed.
 
 1. **Intrinsics** are compiler-known, reserved names with fixed signatures and a direct backend mapping:
-   - I/O: `print`, `eprint`, `panic`
+   - I/O: `print`, `eprint`, `panic`, `print_int`, `print_float`, `read_file`, `write_file`, `read_stdin`, `read_line`
    - math: `sqrt`, `floor`, `ceil`, `fabs`, `pow`, `fmod`
    - `len`
 
    They cannot be redeclared by user code and are always available (no import).
+   `read_file`, `read_stdin` and `read_line` allocate in the current `protect`
+   region and follow the same escape rules as `alloc`.
 2. **The standard library** is ordinary Loi in `lib/std.loi`, explicitly imported. It has no implicit prelude. Names are prefixed (`min_i32`, `str_eq`, ...) until a module/namespace design exists.
 
 New functionality goes into the library by default; an intrinsic is added only when the operation must be implemented by the backend or the OS.
@@ -704,7 +715,7 @@ The full Flow Syntax was chosen because it makes the three distinctive ideas —
 - `in` is a keyword only as the separator in `for i in a..b` and `for <- p in xs`; it is not a direction.
 - String literals are double-quoted; see 4.8 for escapes and type.
 - Numeric literals: decimal integers and floats, `_` separators, exponents, and `0x`/`0b` integer prefixes.
-- Multi-character tokens use **longest match first**: `<->`, `<-`, `=>`, `..`, `->`, `+=`, `-=`, `*=`, `/=`, `==`, `!=`, `<=`, `>=`.
+- Multi-character tokens use **longest match first**: `<->`, `<-`, `=>`, `..`, `->`, `<<=`, `>>=`, `<<`, `>>`, `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `==`, `!=`, `<=`, `>=`.
 - Comments start with `//` and run to the end of the line.
 - Fields in a `shape` body and arguments in a call are separated by commas or newlines.
 - A top-level `:` inside `[...]` marks a shape literal (`Vec2[ x: i32 ]`) or a typed slice literal (`[i32: 1, 2]`); without one, `[...]` is an index or an inferred slice literal.

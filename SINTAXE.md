@@ -30,7 +30,9 @@ lives in [`development/PROGRESS.md`](development/PROGRESS.md).
 - Multi-character tokens use longest match first:
 
   ```text
-  <->   <-   =>   ..   ->   +=   -=   *=   /=   ==   !=   <=   >=
+  <->   <-   =>   ..   ->   <<=   >>=   <<   >>
+  +=    -=   *=   /=   %=    &=    |=    ^=
+  ==    !=   <=   >=   &     |     ^     ~
   ```
 
 - Identifiers start with a letter or `_`. The single name `_` is a discard.
@@ -112,7 +114,8 @@ name: Vec2 <- Vec2[ x: 1, y: 2 ]
 - `name: Type` and `mut name: Type` declare without an initializer. An
   uninitialized binding can only be passed to an `->` parameter; reading it
   first is a compile error.
-- Assignment requires `mut`: `total = 5`, `total += 1`, `-=`, `*=`, `/=`.
+- Assignment requires `mut`: `total = 5`, `total += 1`, `-=`, `*=`, `/=`, `%=`,
+  `&=`, `|=`, `^=`, `<<=`, `>>=`.
 - Shadowing in the same scope is a duplicate-declaration error.
 - Scalars copy implicitly. Composite values move by ownership.
 
@@ -286,6 +289,8 @@ a + b   a - b   a * b   a / b   a % b
 -a      not flag
 a < b   a <= b   a > b   a >= b   a == b   a != b
 a and b   a or b
+a & b   a | b   a ^ b   ~a
+a << n  a >> n
 value as i64
 xs[i]          // bounds checked
 shape.field
@@ -298,14 +303,24 @@ xs.len         // u64
   - `/` and `%` trap on a zero divisor;
   - `MIN / -1` traps, while `MIN % -1` is `0`;
   - `/` truncates toward zero and `%` takes the sign of the dividend.
+- `&`, `|`, `^` and `~` require integer operands and produce the checked
+  common integer type. `~` is bitwise complement.
+- `<<` and `>>` require integer operands. The shift count must be in
+  `[0, width)`; an out-of-range count traps with `shift count out of range`.
+  `<<` wraps at the declared width, `>>` is logical for unsigned operands and
+  arithmetic for signed ones.
 - A trap prints `loi: <message> at <line>:<column>` and exits with status 1.
-  Literal-only expressions that overflow or divide by a constant zero are
-  rejected at compile time instead.
-- Compound assignments follow the binary rules; `as` remains an unchecked
-  truncating cast and is the explicit way to wrap a value.
+  Literal-only expressions that overflow, divide by a constant zero or shift by
+  an out-of-range constant are rejected at compile time instead.
+- Compound assignments follow the binary rules, including `%=`, `&=`, `|=`,
+  `^=`, `<<=` and `>>=`; `as` remains an unchecked truncating cast and is the
+  explicit way to wrap a value.
 - `as` is the only cast form. No `(T)x`.
-- Operator precedence follows the usual C-like order. When in doubt, use
-  parentheses; the formatter preserves them.
+- Precedence, from lowest to highest:
+  `or` → `and` → comparisons → `|` → `^` → `&` → shifts → `+` `-` →
+  `*` `/` `%` → `as` → unary `-` `~` `not`. When in doubt, use parentheses;
+  the formatter preserves them. Bitwise and shift operators do not accept
+  `bool`; use an integer type.
 - Slice indexing is bounds checked at runtime and panics on failure.
 
 ---
@@ -400,12 +415,48 @@ Compiler intrinsics (always available, cannot be redeclared):
 | `print` | `(<- [u8])` |
 | `eprint` | `(<- [u8])` |
 | `panic` | `(<- [u8])` |
+| `print_int` | `(<- i8 \| i16 \| i32 \| i64 \| u8 \| u16 \| u32 \| u64)` |
+| `print_float` | `(<- f32 \| f64)` |
+| `read_file` | `(<- [u8]) => [u8]` |
+| `write_file` | `(<- [u8], <- [u8]) => bool` |
+| `read_stdin` | `() => [u8]` |
+| `read_line` | `() => [u8]` |
 | `sqrt` `floor` `ceil` `fabs` | `(<- f64) => f64` |
 | `pow` `fmod` | `(<- f64, <- f64) => f64` |
 | `len` | `([T]) => u64` |
 | `give` | ownership transfer |
 | `clone` | explicit duplicate |
 | `alloc` | `(-> [T], T, u64)` inside `protect` |
+
+### File, stdin and numeric output
+
+- `read_file(<- path)` reads the whole file into arena memory. Paths and
+  contents are byte slices, not C strings. A missing or unreadable file traps.
+- `write_file(<- path, <- data)` writes the exact bytes and returns whether the
+  write and close succeeded. It does not trap on ordinary I/O failure.
+- `read_stdin()` reads the rest of standard input, including newlines.
+- `read_line()` reads one line without the terminating `\n` (and without a
+  trailing `\r`).
+- `read_file`, `read_stdin` and `read_line` allocate. Call them inside a
+  `protect` block, and do not let their result escape that block.
+- `print_int` writes only the digits: no newline and no padding. It accepts any
+  integer width and prints unsigned widths unsigned.
+- `print_float` writes the shortest decimal that round-trips to the same
+  value (`0.1`, `1`, `1.5`). To separate values, print a literal:
+  `print_int(n) print(" ")`.
+
+```loi
+protect {
+    mut data: [u8] <- read_file("input.bin")
+    if not write_file("copy.bin", data) {
+        panic("write failed\n")
+    }
+}
+print_int(42)
+print(" ")
+print_float(0.1)
+print("\n")
+```
 
 `lib/std.loi` provides ordinary Loi helpers with prefixed names:
 `min_i32`, `max_i32`, `abs_i32`, `clamp_i32`, `min_f64`, `max_f64`, `abs_f64`,
@@ -550,6 +601,12 @@ build instructions.
 - Shape literals keep their single-line form when written that way.
 - The formatter emits Flow Syntax only. Running `loi fmt` twice must be
   byte-identical (idempotent).
+- `loi fmt` preserves `//` comments: standalone comments stay above the next
+  declaration/statement, and trailing comments stay on their line. Comments
+  inside multi-line expressions may move to the next statement boundary.
+  Formatting is idempotent after that first normalization.
+- `format_program` in the Rust API still drops comments; the CLI uses the
+  comment-aware path.
 - Do not hand-align fields with spaces; alignment is cosmetic and may change.
 
 ---
@@ -582,7 +639,7 @@ examples, docs or generated bindings:
 | `alloc(out xs, ...)` | `alloc(-> xs, ...)` |
 | `&&`, `\|\|`, `!` | `and`, `or`, `not` |
 | `(T)x` | `x as T` |
-| `&x`, `*p`, `nil` | no pointers in Loi |
+| `&x` (address-of), `*p` (dereference), `nil` | no pointers in Loi; `&` is bitwise AND only |
 | `.lum` files | `.loi` files |
 
 ---
@@ -644,4 +701,5 @@ Reference programs:
 - `examples/particles.loi` — same program, canonical output of `loi fmt`.
 - `examples/tictactoe.loi` — deterministic self-play.
 - `examples/language_basics.loi` — imports, globals, strings and slices.
+- `examples/systems.loi` — bitwise flags, shifts and file/stdin I/O.
 - `lib/std.loi` — standard library written in canonical Loi.

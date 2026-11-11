@@ -1,0 +1,29 @@
+// Janela simples com raylib.
+// Build: veja o comando no fim do arquivo.
+import "../vendor/raylib/raylib.loi"
+
+open flow main
+    => i32
+{
+    title: cstr <- "Loi + raylib"
+    InitWindow(800, 450, title)
+    SetTargetFPS(60)
+    // RAYWHITE e companhia sao macros C, o bindgen pulou: monte a cor.
+    background: Color <- Color[ r: 245, g: 245, b: 245, a: 255 ]
+    ink: Color <- Color[ r: 40, g: 40, b: 40, a: 255 ]
+    message: cstr <- "Ola da loi!"
+    while not WindowShouldClose() {
+        BeginDrawing()
+        ClearBackground(background)
+        DrawRectangle(350, 150, 160, 100, Color[ r: 0, g: 255, b: 0, a: 255 ])
+        DrawText(message, 280, 200, 32, ink)
+        DrawFPS(10, 10)
+        EndDrawing()
+    }
+    CloseWindow()
+    => 0
+}
+// loi build examples/raylib_window.loi -o janela \
+//     --c-source vendor/raylib/raylib_shim.c \
+//     --cc-flag -Ivendor/raylib/include \
+//     --cc-flag -lraylib --cc-flag -lm

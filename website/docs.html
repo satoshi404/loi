@@ -261,10 +261,22 @@ count &lt;- total as i32         // numeric cast with `as`</code></pre>
           <h3>Expression rules</h3>
           <p>
             Expressions support arithmetic (<code>+</code>, <code>-</code>, <code>*</code>,
-            <code>/</code>, <code>%</code>), comparisons, the boolean operators
+            <code>/</code>, <code>%</code>), bitwise operators (<code>&amp;</code>,
+            <code>|</code>, <code>^</code>, <code>~</code>), shifts (<code>&lt;&lt;</code>,
+            <code>&gt;&gt;</code>), comparisons, the boolean operators
             <code>and</code>, <code>or</code> and <code>not</code>, unary negation and
             <code>as</code> casts. There is no assignment inside an expression and no
-            <code>++</code>/<code>--</code>.
+            <code>++</code>/<code>--</code>. Compound assignment includes <code>%=</code>,
+            <code>&amp;=</code>, <code>|=</code>, <code>^=</code>, <code>&lt;&lt;=</code>
+            and <code>&gt;&gt;=</code>.
+          </p>
+          <p>
+            Bitwise operators require integer operands; they do not accept <code>bool</code>.
+            Shift counts must be in <code>[0, width)</code> and an out-of-range count traps.
+            Left shifts wrap at the declared width; unsigned right shifts are logical and
+            signed right shifts are arithmetic. Precedence, from lowest to highest, is
+            <code>or</code>, <code>and</code>, comparisons, <code>|</code>, <code>^</code>,
+            <code>&amp;</code>, shifts, additive, multiplicative, casts, unary.
           </p>
           <p>
             <code>==</code> and <code>!=</code> are defined for scalar numeric types, <code>bool</code>
@@ -492,17 +504,22 @@ print(other.x)</code></pre>
 
           <h3>No pointers</h3>
           <p>
-            Loi has no general pointers, no <code>&amp;</code>/<code>*</code> operators and no
-            <code>nil</code>. Graphs use integer handles into an owning array; absent values use an
-            explicit flag or a sentinel; foreign pointers stay opaque at the FFI boundary. This avoids
-            a second memory model and the lifetime rules that address-of would require.
+            Loi has no general-purpose pointers, no address-of (<code>&amp;expr</code>) or
+            dereference (<code>*p</code>) operators and no <code>nil</code>. <code>&amp;</code>
+            is only the bitwise AND operator. Graphs use integer handles into an owning array;
+            absent values use an explicit flag or a sentinel; foreign pointers stay opaque at the
+            FFI boundary. This avoids a second memory model and the lifetime rules that address-of
+            would require.
           </p>
 
           <h3>Resources</h3>
           <p>
-            A linear-resource design for files and sockets is specified (<code>guard</code> plus a
-            compiler-known <code>&lt;Shape&gt;_release</code>) but not implemented yet. Until it is,
-            the closed intrinsic set intentionally has no file or network I/O.
+            Whole-file and whole-stdin I/O is available through the <code>read_file</code>,
+            <code>write_file</code>, <code>read_stdin</code> and <code>read_line</code>
+            intrinsics. A linear-resource design for long-lived files, sockets and other
+            handles (<code>guard</code> plus a compiler-known
+            <code>&lt;Shape&gt;_release</code>) is specified but not implemented yet.
+            There is no network, directory, seek, environment or process API.
           </p>
         </section>
 
@@ -523,6 +540,12 @@ print(other.x)</code></pre>
               <tr><td><code>print</code></td><td><code>&lt;- [u8]</code></td><td>Writes bytes to standard output.</td></tr>
               <tr><td><code>eprint</code></td><td><code>&lt;- [u8]</code></td><td>Writes bytes to standard error.</td></tr>
               <tr><td><code>panic</code></td><td><code>&lt;- [u8]</code></td><td>Reports and aborts the program.</td></tr>
+              <tr><td><code>print_int</code></td><td><code>&lt;- integer</code></td><td>Writes an integer's digits; no newline. Any width.</td></tr>
+              <tr><td><code>print_float</code></td><td><code>&lt;- f32 | f64</code></td><td>Writes the shortest round-tripping decimal; no newline.</td></tr>
+              <tr><td><code>read_file</code></td><td><code>&lt;- [u8] =&gt; [u8]</code></td><td>Reads a whole file into the current <code>protect</code> region; traps on failure.</td></tr>
+              <tr><td><code>write_file</code></td><td><code>&lt;- [u8], &lt;- [u8] =&gt; bool</code></td><td>Writes exact bytes; returns whether write and close succeeded.</td></tr>
+              <tr><td><code>read_stdin</code></td><td><code>=> [u8]</code></td><td>Reads the rest of standard input into the current <code>protect</code> region.</td></tr>
+              <tr><td><code>read_line</code></td><td><code>=> [u8]</code></td><td>Reads one line without the terminating newline; allocates in the current region.</td></tr>
               <tr><td><code>sqrt</code></td><td><code>&lt;- f64 =&gt; f64</code></td><td>Square root.</td></tr>
               <tr><td><code>floor</code></td><td><code>&lt;- f64 =&gt; f64</code></td><td>Round toward negative infinity.</td></tr>
               <tr><td><code>ceil</code></td><td><code>&lt;- f64 =&gt; f64</code></td><td>Round toward positive infinity.</td></tr>
@@ -535,6 +558,8 @@ print(other.x)</code></pre>
           <p>
             Intrinsic names are reserved. User code may not redeclare them. <code>len</code> and the
             math intrinsics are checked against the same signatures as an ordinary flow.
+            <code>read_file</code>, <code>read_stdin</code> and <code>read_line</code> allocate,
+            so call them inside a <code>protect</code> block and do not let their result escape it.
           </p>
 
           <h3><code>lib/std.loi</code></h3>
@@ -792,14 +817,18 @@ node website/server.mjs
               <h3>Math and buffers</h3>
               <p>The math intrinsics plus a byte buffer allocated in a region.</p>
             </a>
+            <a class="feature-card" href="examples/systems.loi">
+              <h3>Systems I/O</h3>
+              <p>Bit masks, shifts, file round-trips, stdin lines and numeric printing.</p>
+            </a>
           </div>
 
           <h3>Tic-tac-toe</h3>
           <p>
-            Loi has no stdin or file API yet, so the tic-tac-toe example is a deterministic
-            demonstration rather than an interactive game. Two heuristic players share the same
-            turn logic; after the self-play game the program also runs a fixed scripted game in
-            which X completes the top row.
+            The tic-tac-toe example is a deterministic demonstration rather than an interactive
+            game: two heuristic players share the same turn logic, and after the self-play game
+            the program also runs a fixed scripted game in which X completes the top row. Keeping
+            the input fixed makes the output reproducible in tests and on the site.
           </p>
 
           <div class="doc-code">
@@ -946,7 +975,8 @@ sealed flow winning_line
             <li>No <code>fun</code>, <code>interface</code>, <code>let</code>, <code>var</code>,
               <code>return</code>, <code>move</code>, <code>copy</code>, <code>visible</code> or
               <code>hidden</code>.</li>
-            <li>No <code>&amp;</code> or pointer operators.</li>
+            <li>No address-of (<code>&amp;x</code>) or dereference (<code>*p</code>) operators and no
+              pointers. <code>&amp;</code> is only bitwise AND.</li>
             <li>No brace shape literals (<code>Vec2{ ... }</code>) and no <code>[]T{ ... }</code>
               slice literals.</li>
             <li>No classes, methods, inheritance, exceptions, macros or implicit prelude.</li>
@@ -966,10 +996,10 @@ sealed flow winning_line
               <tr><th>Component</th><th>State</th></tr>
             </thead>
             <tbody>
-              <tr><td>Lexer, parser, pretty-printer</td><td>Working; canonical Flow Syntax only.</td></tr>
-              <tr><td>Type checker</td><td>Working, including literal ranges, intrinsic signatures, shape cycle detection and canonical diagnostics.</td></tr>
-              <tr><td>Ownership analysis</td><td>Working: give liveness, definite assignment, exclusive <code>&lt;-&gt;</code>, region escape checks.</td></tr>
-              <tr><td>C backend</td><td>Working: one C11 translation unit, bounds checks, regions, source maps, headers, multi-file objects.</td></tr>
+              <tr><td>Lexer, parser, pretty-printer</td><td>Working; canonical Flow Syntax only. <code>loi fmt</code> preserves comments.</td></tr>
+              <tr><td>Type checker</td><td>Working, including literal ranges, intrinsic signatures, bitwise/shift rules, shape cycle detection and canonical diagnostics.</td></tr>
+              <tr><td>Ownership analysis</td><td>Working: give liveness, definite assignment, exclusive <code>&lt;-&gt;</code>, region escape checks, and allocating read intrinsics.</td></tr>
+              <tr><td>C backend</td><td>Working: one C11 translation unit, bounds checks, regions, checked arithmetic, bitwise/shift helpers, file/stdin I/O, numeric printing, source maps, headers, multi-file objects.</td></tr>
               <tr><td>C interop</td><td>Working: <code>opaque</code>, <code>cstr</code>, <code>extern flow</code>, <code>--c-source</code>, and a header-to-Loi binding generator.</td></tr>
               <tr><td>IR and assembly</td><td>Draft: <code>--emit-ir</code> emits IR text; <code>--emit-asm</code> is rejected because the assembly backend cannot generate runnable code yet. The C backend is the production path.</td></tr>
               <tr><td><code>comptime</code></td><td>Specified but not implemented: no constant evaluator or parser support yet.</td></tr>
@@ -979,12 +1009,12 @@ sealed flow winning_line
 
           <h3>Known limitations</h3>
           <ul>
-            <li>No stdin, file, socket or process API. Programs are deterministic unless they use time-like external inputs; Loi has none yet.</li>
+            <li>I/O is limited to whole-file and whole-stdin reads/writes plus numeric printing. There is no socket, directory, seek, environment or process API. <code>read_file</code>, <code>read_stdin</code> and <code>read_line</code> allocate in the current <code>protect</code> region and cannot escape it.</li>
             <li>Imports are textual and cross-file visibility is not enforced. Multi-file builds give sealed flows external linkage so cross-file calls link.</li>
             <li>Globals are limited to scalars, <code>bool</code> and <code>[u8]</code> initialized from a string literal. Composite globals await a runtime constructor.</li>
             <li>A slice literal cannot escape the block that created it, including being returned or stored into an outer variable; allocate long-lived data in a <code>protect</code> region.</li>
             <li><code>&lt;-</code> composite parameters are passed to C by value (slice headers still point at the caller's data). The checker forbids storing or returning the borrowed value, so the parameter stays observationally read-only.</li>
-            <li>The pretty-printer discards comments and prints shape literals on one line.</li>
+            <li><code>loi fmt</code> preserves <code>//</code> comments and is idempotent; comments inside multi-line expressions may move to the next statement boundary. Shape literals stay on one line.</li>
             <li>Binding generation is conservative: callbacks, variadics, unions, bitfields, inline arrays, pointer-to-pointer, mutable <code>char *</code> buffers, wide strings and pointers to unsafe records need a hand-written shim.</li>
             <li>The SDL2 and raylib 5.5 bindings and their shims are syntax-verified, but full link/run tests need a machine with those runtimes installed.</li>
             <li>The playground executes code on the machine running the server. Run it locally and do not expose it as a public service.</li>
@@ -1055,7 +1085,7 @@ cargo test --all-targets</code></pre>
               </tr>
               <tr>
                 <td>Deterministic tic-tac-toe.</td>
-                <td>Without stdin or file I/O, a self-play demo is the honest showcase. The rules and heuristics are real; only the input source is fixed.</td>
+                <td>Reproducible output makes the example testable and safe for the playground. Real programs can use the file and stdin intrinsics when they need external input.</td>
               </tr>
             </tbody>
           </table>
@@ -1070,6 +1100,7 @@ cargo test --all-targets</code></pre>
             <li>Ownership checks, definite assignment, exclusive directions and region escape analysis.</li>
             <li>C11 code generation, runtime bounds checks, <code>protect</code> arenas, headers and source maps.</li>
             <li>Multi-file builds, incremental stamps and the <code>clean</code> command.</li>
+            <li>Bitwise/shift operators, file/stdin I/O, numeric printing and comment-preserving <code>fmt</code>.</li>
             <li>Canonical Flow Syntax migration and legacy cleanup.</li>
           </ul>
 
@@ -1085,8 +1116,8 @@ cargo test --all-targets</code></pre>
           <ul>
             <li><code>comptime</code>: parser support, a step-limited constant evaluator, and constant contexts for globals, defaults and extents.</li>
             <li>The linear-resource design for <code>guard</code> and <code>&lt;Shape&gt;_release</code>.</li>
-            <li>Richer I/O once the resource model exists.</li>
-            <li>Examples that exercise interactive input after stdin support.</li>
+            <li>Richer I/O once the resource model exists: directory, seek, socket and process APIs.</li>
+            <li>An interactive example that reads stdin; the deterministic tic-tac-toe example stays for reproducible tests.</li>
           </ul>
         </section>
 

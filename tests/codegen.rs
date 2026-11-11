@@ -696,3 +696,122 @@ int main(void) {
 "#;
     compile_and_run("arena-grow", &c, harness);
 }
+
+#[test]
+fn compiled_bitwise_shifts_and_compound_operators() {
+    let source = "flow combine\n    <- a: u32\n    <- b: u32\n    => u32\n{\n    => (a | b) ^ (a & b)\n}\n\nflow left\n    <- x: i32\n    <- n: i32\n    => i32\n{\n    => x << n\n}\n\nflow arithmetic\n    <- x: i32\n    => i32\n{\n    => x >> 1\n}\n\nflow invert\n    <- x: u8\n    => u8\n{\n    => ~x\n}\n\nflow compound\n    => i32\n{\n    mut x: i32 <- 0x0F\n    x <<= 4\n    x |= 3\n    x &= 0xF3\n    x ^= 1\n    x %= 7\n    => x\n}\n";
+    let harness = r#"
+int main(void) {
+    if (loi_fn_combine(0xF0, 0x0F) != 0xFF) return 1;
+    if (loi_fn_combine(0xAA, 0xAA) != 0) return 2;
+    if (loi_fn_left(1, 4) != 16) return 3;
+    if (loi_fn_left(0x8000, 1) != 0x10000) return 4;
+    if (loi_fn_arithmetic(-8) != -4) return 5;
+    if (loi_fn_arithmetic(7) != 3) return 6;
+    if (loi_fn_invert(0) != 0xFF) return 7;
+    if (loi_fn_compound() != 4) return 8;
+    return 0;
+}
+"#;
+    compile_and_run("bitwise", &generated(source), harness);
+}
+
+#[test]
+fn compiled_bitwise_shift_count_traps_with_a_position() {
+    let source = "flow shift\n    <- x: i32\n    <- n: i32\n    => i32\n{\n    => x << n\n}\n";
+    let harness = r#"
+int main(void) {
+    return loi_fn_shift(1, 32);
+}
+"#;
+    assert_runtime_trap(
+        "shift-count",
+        &generated(source),
+        harness,
+        "shift count out of range",
+    );
+}
+
+#[test]
+fn compiled_shift_count_is_checked_at_its_own_width() {
+    // The count is i64 while the shifted value is i32. Narrowing the count
+    // before the range check would turn 2^32 into 0 and silently shift by 0.
+    let source = "flow shift_wide\n    <- x: i32\n    <- n: i64\n    => i32\n{\n    => x << n\n}\n";
+    let harness = r#"
+int main(void) {
+    return loi_fn_shift_wide(1, 4294967296LL);
+}
+"#;
+    assert_runtime_trap(
+        "shift-count-width",
+        &generated(source),
+        harness,
+        "shift count out of range",
+    );
+}
+
+#[test]
+fn compiled_reads_and_writes_files() {
+    let path = format!("/tmp/opencode/loi-codegen-io-{}.dat", std::process::id());
+    let source = "flow roundtrip\n    <- path: [u8]\n    => i32\n{\n    protect {\n        mut data: [u8] <- \"hello\"\n        if not write_file(<- path, <- data) {\n            => 1\n        }\n        mut read_back: [u8] <- read_file(<- path)\n        if read_back.len != 5 {\n            => 2\n        }\n        if read_back[0] != 104 {\n            => 3\n        }\n        if read_back[4] != 111 {\n            => 4\n        }\n        => 0\n    }\n}\n";
+    let harness = format!(
+        r#"
+int main(void) {{
+    const char* name = "{path}";
+    LoiSlice path = {{ (void*)name, strlen(name) }};
+    int code = loi_fn_roundtrip(path);
+    remove(name);
+    return code;
+}}
+"#
+    );
+    compile_and_run("file-io", &generated(source), &harness);
+}
+
+#[test]
+fn compiled_reads_stdin_lines_and_the_remainder() {
+    let input_path = format!("/tmp/opencode/loi-codegen-stdin-{}.txt", std::process::id());
+    fs::write(&input_path, "hello\nrest\n").expect("stdin fixture should be writable");
+
+    let source = "flow line_len\n    => i32\n{\n    protect {\n        mut line: [u8] <- read_line()\n        => line.len as i32\n    }\n}\n\nflow rest_len\n    => i32\n{\n    protect {\n        mut rest: [u8] <- read_stdin()\n        => rest.len as i32\n    }\n}\n";
+    let harness = format!(
+        r#"
+int main(void) {{
+    if (!freopen("{input_path}", "r", stdin)) return 1;
+    if (loi_fn_line_len() != 5) return 2;
+    if (loi_fn_rest_len() != 5) return 3;
+    return 0;
+}}
+"#
+    );
+    let result = compile_and_run_output("stdin-io", &generated(source), &harness);
+    let _ = fs::remove_file(&input_path);
+    let Some(run) = result else {
+        return;
+    };
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "stdin test failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+}
+
+#[test]
+fn compiled_numeric_printing_handles_widths_and_floats() {
+    let source = "flow show {\n    print_int(255 as u8)\n    print(<- \" \")\n    print_int(-7 as i16)\n    print(<- \" \")\n    print_int(4294967295 as u32)\n    print(<- \" \")\n    print_float(0.1)\n    print(<- \" \")\n    print_float(1.0)\n    print(<- \"\\n\")\n}\n";
+    let harness = r#"
+int main(void) {
+    loi_fn_show();
+    return 0;
+}
+"#;
+    let Some(run) = compile_and_run_output("numeric-print", &generated(source), harness) else {
+        return;
+    };
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "255 -7 4294967295 0.1 1\n"
+    );
+}

@@ -1,4 +1,4 @@
-use loi::{format_program, parse, tokenize};
+use loi::{format_program, format_program_with_comments, parse, tokenize, tokenize_with_comments};
 
 fn parse_source(source: &str) -> loi::Program {
     let tokens = tokenize(source, "<test>").expect("source should lex");
@@ -107,4 +107,90 @@ fn formats_imports_globals_strings_and_slice_literals() {
     assert!(formatted.contains("mut LIMIT: i32 <- 3"));
     assert!(formatted.contains("inferred <- [1, 2]"));
     assert!(formatted.contains("=> [i32: 3, 4]"));
+}
+
+fn format_with_comments(source: &str) -> String {
+    let (tokens, comments) = tokenize_with_comments(source, "<test>").expect("source should lex");
+    let program = parse(tokens).expect("source should parse");
+    format_program_with_comments(&program, &comments)
+}
+
+#[test]
+fn preserves_comments_and_formatting_is_idempotent() {
+    let source = "\
+// header\n\
+// second line\n\
+\n\
+shape Point [ // shape open\n\
+    // before x\n\
+    x: f64 // x trailing\n\
+    y: f64\n\
+    // before close\n\
+] // shape close\n\
+\n\
+flow main // header trailing\n\
+    => i32\n\
+{\n\
+    // before let\n\
+    mut x: i32 <- 1 // let trailing\n\
+    if x > 0 { // if open\n\
+        x += 1\n\
+    } else { // else open\n\
+        x = 0\n\
+    } // if close\n\
+    while x < 3 {\n\
+        x += 1\n\
+    }\n\
+    protect {\n\
+        mut items: [i32]\n\
+        alloc(-> items, i32, 1)\n\
+        // before protect close\n\
+    }\n\
+    // before return\n\
+    => 0 // return trailing\n\
+}\n\
+// end\n";
+
+    let formatted = format_with_comments(source);
+    for comment in [
+        "// header",
+        "// second line",
+        "// shape open",
+        "// before x",
+        "// x trailing",
+        "// before close",
+        "// shape close",
+        "// header trailing",
+        "// before let",
+        "// let trailing",
+        "// if open",
+        "// else open",
+        "// if close",
+        "// before protect close",
+        "// before return",
+        "// return trailing",
+        "// end",
+    ] {
+        assert!(
+            formatted.contains(comment),
+            "missing {comment:?} in:\n{formatted}"
+        );
+    }
+
+    // Trailing comments stay on their statement lines.
+    assert!(formatted.contains("x: f64 // x trailing"));
+    assert!(formatted.contains("mut x: i32 <- 1 // let trailing"));
+    assert!(formatted.contains("=> 0 // return trailing"));
+
+    let reformatted = format_with_comments(&formatted);
+    assert_eq!(
+        formatted, reformatted,
+        "comment formatting must be idempotent"
+    );
+}
+
+#[test]
+fn formatting_without_comments_still_discards_them() {
+    let formatted = format_program(&parse_source("// gone\nflow main {\n    => 0\n}\n"));
+    assert!(!formatted.contains("// gone"));
 }

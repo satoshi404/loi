@@ -226,6 +226,31 @@ impl Checker {
             vec![("msg", Direction::In, Ty::Slice(Box::new(Ty::U8)))],
             Ty::Void,
         );
+        self.register_intrinsic(
+            "read_file",
+            vec![("path", Direction::In, Ty::Slice(Box::new(Ty::U8)))],
+            Ty::Slice(Box::new(Ty::U8)),
+        );
+        self.register_intrinsic(
+            "write_file",
+            vec![
+                ("path", Direction::In, Ty::Slice(Box::new(Ty::U8))),
+                ("data", Direction::In, Ty::Slice(Box::new(Ty::U8))),
+            ],
+            Ty::Bool,
+        );
+        self.register_intrinsic("read_stdin", Vec::new(), Ty::Slice(Box::new(Ty::U8)));
+        self.register_intrinsic("read_line", Vec::new(), Ty::Slice(Box::new(Ty::U8)));
+        self.register_intrinsic(
+            "print_int",
+            vec![("value", Direction::In, Ty::I64)],
+            Ty::Void,
+        );
+        self.register_intrinsic(
+            "print_float",
+            vec![("value", Direction::In, Ty::F64)],
+            Ty::Void,
+        );
         self.register_intrinsic("floor", vec![("x", Direction::In, Ty::F64)], Ty::F64);
         self.register_intrinsic("ceil", vec![("x", Direction::In, Ty::F64)], Ty::F64);
         self.register_intrinsic("fabs", vec![("x", Direction::In, Ty::F64)], Ty::F64);
@@ -1384,24 +1409,66 @@ impl Checker {
                     self.set_place_regions(&info, &value_regions);
                 }
             }
-            AssignOp::Add | AssignOp::Sub | AssignOp::Mul | AssignOp::Div => {
+            AssignOp::Add
+            | AssignOp::Sub
+            | AssignOp::Mul
+            | AssignOp::Div
+            | AssignOp::Mod
+            | AssignOp::BitAnd
+            | AssignOp::BitOr
+            | AssignOp::BitXor
+            | AssignOp::Shl
+            | AssignOp::Shr => {
                 self.check_mutable_access(&info, target.span);
-                if !info.ty.is_numeric() && !info.ty.is_error() {
-                    self.error(
-                        target.span,
-                        format!(
-                            "compound assignment requires a numeric target, found {}",
-                            info.ty
-                        ),
-                    );
-                    return;
-                }
-                if !value_ty.is_numeric() && !value_ty.is_error() {
-                    self.error(
-                        value.span,
-                        format!("compound assignment requires a numeric value, found {value_ty}"),
-                    );
-                    return;
+                let integer_only = matches!(
+                    op,
+                    AssignOp::Mod
+                        | AssignOp::BitAnd
+                        | AssignOp::BitOr
+                        | AssignOp::BitXor
+                        | AssignOp::Shl
+                        | AssignOp::Shr
+                );
+                if integer_only {
+                    if !info.ty.is_integer() && !info.ty.is_error() {
+                        self.error(
+                            target.span,
+                            format!(
+                                "compound assignment requires an integer target, found {}",
+                                info.ty
+                            ),
+                        );
+                        return;
+                    }
+                    if !value_ty.is_integer() && !value_ty.is_error() {
+                        self.error(
+                            value.span,
+                            format!(
+                                "compound assignment requires an integer value, found {value_ty}"
+                            ),
+                        );
+                        return;
+                    }
+                } else {
+                    if !info.ty.is_numeric() && !info.ty.is_error() {
+                        self.error(
+                            target.span,
+                            format!(
+                                "compound assignment requires a numeric target, found {}",
+                                info.ty
+                            ),
+                        );
+                        return;
+                    }
+                    if !value_ty.is_numeric() && !value_ty.is_error() {
+                        self.error(
+                            value.span,
+                            format!(
+                                "compound assignment requires a numeric value, found {value_ty}"
+                            ),
+                        );
+                        return;
+                    }
                 }
                 if !info.ty.is_error() && !value_ty.is_error() {
                     match types::common_numeric(&info.ty, &value_ty) {
@@ -1413,6 +1480,9 @@ impl Checker {
                                 );
                             }
                             self.check_literal_range(value, &info.ty);
+                            if matches!(op, AssignOp::Shl | AssignOp::Shr) {
+                                self.check_shift_count(value, &info.ty);
+                            }
                         }
                         None => self.error(
                             value.span,
@@ -1478,6 +1548,16 @@ impl Checker {
                     }
                     Ty::Bool
                 }
+                UnaryOp::BitNot => {
+                    let ty = self.check_expr(operand);
+                    if !ty.is_integer() && !ty.is_error() {
+                        self.error(
+                            expr.span,
+                            format!("'~' requires an integer operand, found {ty}"),
+                        );
+                    }
+                    ty
+                }
             },
             ExprKind::Binary { op, left, right } => {
                 let left_ty = self.check_expr(left);
@@ -1497,6 +1577,9 @@ impl Checker {
                 }
                 if is_concrete_integer(&left_ty) {
                     self.check_literal_range(right, &left_ty);
+                }
+                if matches!(op, BinaryOp::Shl | BinaryOp::Shr) {
+                    self.check_shift_count(right, &left_ty);
                 }
                 self.check_binary(*op, &left_ty, &right_ty, expr.span)
             }
@@ -1691,6 +1774,19 @@ impl Checker {
         Ty::Named(name.to_string())
     }
 
+    fn check_shift_count(&mut self, value: &Expr, ty: &Ty) {
+        let Some(count) = const_int(value) else {
+            return;
+        };
+        let bits = integer_bits(ty).unwrap_or(32);
+        if count < 0 || count as u128 >= bits {
+            self.error(
+                value.span,
+                format!("shift count {count} is out of range for {ty} (0..{bits})"),
+            );
+        }
+    }
+
     fn check_binary(&mut self, op: BinaryOp, left: &Ty, right: &Ty, span: Span) -> Ty {
         match op {
             BinaryOp::Or | BinaryOp::And => {
@@ -1759,6 +1855,34 @@ impl Checker {
                     }
                 }
             }
+            BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor => {
+                if left.is_error() || right.is_error() {
+                    return Ty::Error;
+                }
+                if !left.is_integer() || !right.is_integer() {
+                    self.error(
+                        span,
+                        format!(
+                            "bitwise operator requires integer operands, found {left} and {right}"
+                        ),
+                    );
+                    return Ty::Error;
+                }
+                types::common_numeric(left, right).unwrap_or(Ty::Error)
+            }
+            BinaryOp::Shl | BinaryOp::Shr => {
+                if left.is_error() || right.is_error() {
+                    return Ty::Error;
+                }
+                if !left.is_integer() || !right.is_integer() {
+                    self.error(
+                        span,
+                        format!("shift requires integer operands, found {left} and {right}"),
+                    );
+                    return Ty::Error;
+                }
+                left.clone()
+            }
             BinaryOp::Mod => {
                 if left.is_error() || right.is_error() {
                     return Ty::Error;
@@ -1803,6 +1927,39 @@ impl Checker {
                 self.error(arg.value.span, format!("len expects a slice, found {ty}"));
             }
             return Ty::U64;
+        }
+
+        // `print_int` and `print_float` are generic over the numeric width so
+        // callers do not have to cast every value to i64/f64 by hand.
+        if matches!(name.as_str(), "print_int" | "print_float") {
+            if args.len() != 1 {
+                self.error(
+                    span,
+                    format!("{name} expects 1 argument, found {}", args.len()),
+                );
+                for arg in args {
+                    self.check_unmatched_arg(arg);
+                }
+                return Ty::Void;
+            }
+            let arg = &args[0];
+            if arg.direction != Direction::In {
+                self.error(arg.value.span, format!("{name} expects a '<-' argument"));
+            }
+            let ty = self.check_expr(&arg.value);
+            if name == "print_int" && !ty.is_integer() && !ty.is_error() {
+                self.error(
+                    arg.value.span,
+                    format!("print_int expects an integer, found {ty}"),
+                );
+            }
+            if name == "print_float" && !ty.is_float() && !ty.is_error() {
+                self.error(
+                    arg.value.span,
+                    format!("print_float expects a float, found {ty}"),
+                );
+            }
+            return Ty::Void;
         }
 
         let Some(signature) = self.functions.get(name).cloned() else {
@@ -2509,6 +2666,12 @@ impl Checker {
                 self.collect_value_regions(right, regions);
             }
             ExprKind::Call { callee, args } => {
+                if let ExprKind::Ident(name) = &callee.kind
+                    && matches!(name.as_str(), "read_file" | "read_stdin" | "read_line")
+                    && let Some(region) = self.current_protect_region()
+                {
+                    regions.push(region);
+                }
                 // A callee's allocations belong to the caller's protect region,
                 // not to a lexical protect inside the callee. Escape through a
                 // callee is diagnosed at the callee's `return`/`out`.
@@ -2763,7 +2926,22 @@ impl Checker {
 fn is_intrinsic_name(name: &str) -> bool {
     matches!(
         name,
-        "print" | "eprint" | "panic" | "sqrt" | "floor" | "ceil" | "fabs" | "pow" | "fmod" | "len"
+        "print"
+            | "eprint"
+            | "panic"
+            | "sqrt"
+            | "floor"
+            | "ceil"
+            | "fabs"
+            | "pow"
+            | "fmod"
+            | "len"
+            | "read_file"
+            | "write_file"
+            | "read_stdin"
+            | "read_line"
+            | "print_int"
+            | "print_float"
     )
 }
 
@@ -2869,6 +3047,9 @@ fn scan_expr_effects(expr: &Expr, depth: usize, scan: &mut FunctionScan) {
                 scan.calls.insert(name.clone());
                 if depth == 0 {
                     scan.unguarded_deps.push(name.clone());
+                    if matches!(name.as_str(), "read_file" | "read_stdin" | "read_line") {
+                        scan.direct_alloc = true;
+                    }
                 }
                 scan.call_args.push(CallSiteScan {
                     callee: name.clone(),
@@ -2999,6 +3180,23 @@ fn const_int(expr: &Expr) -> Option<i128> {
                         Some(left.checked_rem(right).unwrap_or(0))
                     }
                 }
+                BinaryOp::BitAnd => Some(left & right),
+                BinaryOp::BitOr => Some(left | right),
+                BinaryOp::BitXor => Some(left ^ right),
+                BinaryOp::Shl => {
+                    if !(0..128).contains(&right) {
+                        None
+                    } else {
+                        Some(left.wrapping_shl(right as u32))
+                    }
+                }
+                BinaryOp::Shr => {
+                    if !(0..128).contains(&right) {
+                        None
+                    } else {
+                        Some(left.wrapping_shr(right as u32))
+                    }
+                }
                 _ => None,
             }
         }
@@ -3023,6 +3221,16 @@ fn parse_integer_literal(text: &str) -> Option<i128> {
 
 fn is_concrete_integer(ty: &Ty) -> bool {
     ty.is_integer() && !matches!(ty, Ty::IntLiteral | Ty::Error)
+}
+
+fn integer_bits(ty: &Ty) -> Option<u128> {
+    match ty {
+        Ty::I8 | Ty::U8 => Some(8),
+        Ty::I16 | Ty::U16 => Some(16),
+        Ty::I32 | Ty::U32 | Ty::IntLiteral => Some(32),
+        Ty::I64 | Ty::U64 => Some(64),
+        _ => None,
+    }
 }
 
 /// Whether an expression can appear in a static global initializer.

@@ -29,6 +29,18 @@ impl fmt::Display for LexError {
 
 impl std::error::Error for LexError {}
 
+/// A `//` comment recovered by [`Lexer::tokenize_with_comments`].
+///
+/// `text` includes the leading `//`. A comment is `trailing` when it follows
+/// code on the same source line; standalone comments keep their own line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Comment {
+    pub line: usize,
+    pub column: usize,
+    pub text: String,
+    pub trailing: bool,
+}
+
 type LexResult<T> = Result<T, LexError>;
 
 /// A single-pass lexer over a string of Loi source code.
@@ -39,6 +51,7 @@ pub struct Lexer {
     line: usize,
     column: usize,
     tokens: Vec<Token>,
+    comments: Vec<Comment>,
 }
 
 impl Lexer {
@@ -50,11 +63,26 @@ impl Lexer {
             line: 1,
             column: 1,
             tokens: Vec::new(),
+            comments: Vec::new(),
         }
     }
 
     /// Return every token in the source, ending with an `Eof` token.
     pub fn tokenize(mut self) -> LexResult<Vec<Token>> {
+        self.run()?;
+        Ok(self.tokens)
+    }
+
+    /// Return every token plus the `//` comments the parser discards.
+    ///
+    /// Comments are collected in source order and carry their original line,
+    /// column and whether they trail code on the same line.
+    pub fn tokenize_with_comments(mut self) -> LexResult<(Vec<Token>, Vec<Comment>)> {
+        self.run()?;
+        Ok((self.tokens, self.comments))
+    }
+
+    fn run(&mut self) -> LexResult<()> {
         while let Some(ch) = self.peek() {
             let (line, column) = (self.line, self.column);
 
@@ -77,7 +105,7 @@ impl Lexer {
         }
 
         self.emit(TokenKind::Eof, String::new(), self.line, self.column);
-        Ok(self.tokens)
+        Ok(())
     }
 
     // ------------------------------------------------------------------
@@ -130,12 +158,26 @@ impl Lexer {
     // Scanners
     // ------------------------------------------------------------------
     fn skip_comment(&mut self) {
+        let start = self.offset;
+        let line = self.line;
+        let column = self.column;
         while let Some(ch) = self.peek() {
             if ch == '\n' {
                 break;
             }
             self.advance();
         }
+        let text: String = self.source[start..self.offset].iter().collect();
+        let trailing = self
+            .tokens
+            .last()
+            .is_some_and(|token| token.kind != TokenKind::Newline && token.line == line);
+        self.comments.push(Comment {
+            line,
+            column,
+            text: text.trim_end().to_string(),
+            trailing,
+        });
     }
 
     fn scan_identifier(&mut self, line: usize, column: usize) {
@@ -331,11 +373,17 @@ impl Lexer {
             (self.peek(), self.peek_at(1), self.peek_at(2))
         {
             let triple = [first, second, third].iter().collect::<String>();
-            if triple == "<->" {
+            let kind = match triple.as_str() {
+                "<->" => Some(TokenKind::ArrowInOut),
+                "<<=" => Some(TokenKind::ShlEq),
+                ">>=" => Some(TokenKind::ShrEq),
+                _ => None,
+            };
+            if let Some(kind) = kind {
                 self.advance();
                 self.advance();
                 self.advance();
-                self.emit(TokenKind::ArrowInOut, triple, line, column);
+                self.emit(kind, triple, line, column);
                 return Ok(());
             }
         }
@@ -351,6 +399,12 @@ impl Lexer {
                 "-=" => Some(TokenKind::MinusEq),
                 "*=" => Some(TokenKind::StarEq),
                 "/=" => Some(TokenKind::SlashEq),
+                "%=" => Some(TokenKind::PercentEq),
+                "&=" => Some(TokenKind::AmpEq),
+                "|=" => Some(TokenKind::PipeEq),
+                "^=" => Some(TokenKind::CaretEq),
+                "<<" => Some(TokenKind::Shl),
+                ">>" => Some(TokenKind::Shr),
                 "==" => Some(TokenKind::EqEq),
                 "!=" => Some(TokenKind::Neq),
                 "<=" => Some(TokenKind::Lte),
@@ -382,6 +436,10 @@ impl Lexer {
             '*' => TokenKind::Star,
             '/' => TokenKind::Slash,
             '%' => TokenKind::Percent,
+            '&' => TokenKind::Amp,
+            '|' => TokenKind::Pipe,
+            '^' => TokenKind::Caret,
+            '~' => TokenKind::Tilde,
             '=' => TokenKind::Assign,
             '<' => TokenKind::Lt,
             '>' => TokenKind::Gt,
@@ -399,6 +457,14 @@ impl Lexer {
 /// Convenience wrapper around [`Lexer`].
 pub fn tokenize(source: &str, filename: &str) -> LexResult<Vec<Token>> {
     Lexer::new(source, filename).tokenize()
+}
+
+/// Convenience wrapper that also returns the source's `//` comments.
+pub fn tokenize_with_comments(
+    source: &str,
+    filename: &str,
+) -> LexResult<(Vec<Token>, Vec<Comment>)> {
+    Lexer::new(source, filename).tokenize_with_comments()
 }
 
 #[cfg(test)]

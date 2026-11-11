@@ -1,5 +1,5 @@
 use loi::TokenKind;
-use loi::tokenize;
+use loi::{tokenize, tokenize_with_comments};
 
 fn reference_source() -> &'static str {
     include_str!("../examples/particles.loi")
@@ -121,4 +121,23 @@ fn rejects_unknown_and_non_ascii_string_escapes() {
 
     let unterminated = tokenize("\"oops", "<test>").unwrap_err();
     assert!(unterminated.message.contains("unterminated string literal"));
+}
+
+#[test]
+fn tokenize_with_comments_keeps_comment_positions() {
+    let source = "// header\nflow main { // trailing\n    => 0\n}\n";
+    let (tokens, comments) = tokenize_with_comments(source, "<test>").expect("source should lex");
+
+    assert_eq!(tokens.last().unwrap().kind, TokenKind::Eof);
+    assert_eq!(comments.len(), 2);
+    assert_eq!(comments[0].text, "// header");
+    assert_eq!((comments[0].line, comments[0].column), (1, 1));
+    assert!(!comments[0].trailing);
+    assert_eq!(comments[1].text, "// trailing");
+    assert_eq!((comments[1].line, comments[1].column), (2, 13));
+    assert!(comments[1].trailing);
+
+    // The ordinary tokenizer still discards comments.
+    let tokens = tokenize(source, "<test>").expect("source should lex");
+    assert!(tokens.iter().all(|token| !token.lexeme.starts_with("//")));
 }
