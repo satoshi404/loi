@@ -155,7 +155,15 @@ impl Parser {
 
         let visibility = self.parse_visibility();
 
-        if self.at(TokenKind::Shape) {
+        if self.at(TokenKind::Comptime) {
+            self.advance();
+            if !self.at(TokenKind::Flow) {
+                return Err(self.error_current("expected 'flow' after 'comptime'"));
+            }
+            let mut decl = self.parse_function(visibility, span)?;
+            decl.comptime = true;
+            Ok(Item::Function(decl))
+        } else if self.at(TokenKind::Shape) {
             Ok(Item::Interface(self.parse_interface(visibility, span)?))
         } else if self.at(TokenKind::Opaque) {
             Ok(Item::Opaque(self.parse_opaque(visibility, span)?))
@@ -231,6 +239,7 @@ impl Parser {
             self.expect(TokenKind::Shape, "'shape'")?;
         }
         let name = self.parse_identifier("shape name")?;
+        let type_params = self.parse_type_params()?;
 
         // Data bodies use brackets in Flow Syntax.
         let close = if self.matches(TokenKind::LBracket) {
@@ -275,6 +284,7 @@ impl Parser {
             close_line: close_token.line,
             visibility,
             name,
+            type_params,
             fields,
         })
     }
@@ -295,6 +305,7 @@ impl Parser {
             self.expect(TokenKind::Flow, "'flow'")?;
         }
         let name = self.parse_identifier("function name")?;
+        let type_params = self.parse_type_params()?;
         self.skip_newlines();
 
         let (params, return_type) = self.parse_signature(false)?;
@@ -306,6 +317,8 @@ impl Parser {
             span,
             visibility,
             name,
+            type_params,
+            comptime: false,
             params,
             return_type,
             body,
@@ -324,6 +337,7 @@ impl Parser {
         self.expect(TokenKind::Extern, "'extern'")?;
         self.expect(TokenKind::Flow, "'flow' after 'extern'")?;
         let name = self.parse_identifier("extern function name")?;
+        let type_params = self.parse_type_params()?;
         let link_name = if self.matches(TokenKind::As) {
             Some(self.parse_identifier("C symbol name")?)
         } else {
@@ -342,6 +356,8 @@ impl Parser {
             span,
             visibility,
             name,
+            type_params,
+            comptime: false,
             params,
             return_type,
             body: Block {
@@ -485,8 +501,90 @@ impl Parser {
             Ok(Type::Slice(Box::new(element)))
         } else {
             let token = self.expect(TokenKind::Identifier, "type name")?;
-            Ok(Type::Named(token.lexeme))
+            if self.at(TokenKind::Lt) {
+                let args = self.parse_type_arguments()?;
+                Ok(Type::Generic(token.lexeme, args))
+            } else {
+                Ok(Type::Named(token.lexeme))
+            }
         }
+    }
+
+    /// Parse a comma-separated type argument list enclosed in `<` and `>`.
+    ///
+    /// The lexer turns `>>` into a single token; [`Parser::expect_type_close`]
+    /// splits it so nested generics such as `Vec<Vec<i32>>` parse correctly.
+    fn parse_type_arguments(&mut self) -> ParseResult<Vec<Type>> {
+        self.expect(TokenKind::Lt, "'<'")?;
+        self.skip_newlines();
+        let mut args = Vec::new();
+        loop {
+            args.push(self.parse_type()?);
+            self.skip_newlines();
+            if self.matches(TokenKind::Comma) {
+                self.skip_newlines();
+                continue;
+            }
+            break;
+        }
+        self.expect_type_close()?;
+        Ok(args)
+    }
+
+    fn expect_type_close(&mut self) -> ParseResult<()> {
+        match self.current().kind {
+            TokenKind::Gt => {
+                self.advance();
+                Ok(())
+            }
+            TokenKind::Shr => {
+                // Consume one `>` from the `>>` token and leave the other in
+                // place for the enclosing generic.
+                let token = &mut self.tokens[self.position];
+                token.kind = TokenKind::Gt;
+                token.lexeme = ">".to_string();
+                Ok(())
+            }
+            _ => Err(self.error_current(format!(
+                "expected '>' to close type arguments, found {}",
+                self.describe_current()
+            ))),
+        }
+    }
+
+    /// Try to parse `<...>` type arguments followed by `after`, backtracking
+    /// when the `<` is really a comparison operator.
+    fn try_parse_type_args(&mut self, after: TokenKind) -> Option<Vec<Type>> {
+        if !self.at(TokenKind::Lt) {
+            return None;
+        }
+        let saved = self.position;
+        match self.parse_type_arguments() {
+            Ok(args) if self.at(after) => Some(args),
+            _ => {
+                self.position = saved;
+                None
+            }
+        }
+    }
+
+    /// Parse `flow f<T, U>` type parameters. Returns an empty list when the
+    /// current token is not `<`.
+    fn parse_type_params(&mut self) -> ParseResult<Vec<String>> {
+        if !self.at(TokenKind::Lt) {
+            return Ok(Vec::new());
+        }
+        self.advance();
+        let mut params = Vec::new();
+        loop {
+            params.push(self.parse_identifier("type parameter name")?);
+            if self.matches(TokenKind::Comma) {
+                continue;
+            }
+            break;
+        }
+        self.expect_type_close()?;
+        Ok(params)
     }
 
     fn parse_identifier(&mut self, expected: &str) -> ParseResult<String> {
@@ -967,12 +1065,28 @@ impl Parser {
         let mut expr = self.parse_primary()?;
 
         loop {
+            if self.at(TokenKind::Lt) {
+                let span = expr.span;
+                if let Some(type_args) = self.try_parse_type_args(TokenKind::LParen) {
+                    let args = self.parse_call_args()?;
+                    expr = Expr::new(
+                        ExprKind::Call {
+                            callee: Box::new(expr),
+                            type_args,
+                            args,
+                        },
+                        span,
+                    );
+                    continue;
+                }
+            }
             if self.at(TokenKind::LParen) {
                 let span = expr.span;
                 let args = self.parse_call_args()?;
                 expr = Expr::new(
                     ExprKind::Call {
                         callee: Box::new(expr),
+                        type_args: Vec::new(),
                         args,
                     },
                     span,
@@ -1033,12 +1147,22 @@ impl Parser {
             }
             TokenKind::Identifier => {
                 self.advance();
+                let type_args = if self.at(TokenKind::Lt) {
+                    self.try_parse_type_args(TokenKind::LBracket)
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
                 let bracket_literal =
                     self.at(TokenKind::LBracket) && self.bracket_looks_like_shape_literal();
                 if bracket_literal {
-                    self.parse_interface_literal(token.lexeme, span)
-                } else {
+                    self.parse_interface_literal(token.lexeme, type_args, span)
+                } else if type_args.is_empty() {
                     Ok(Expr::new(ExprKind::Ident(token.lexeme), span))
+                } else {
+                    Err(self.error_current(
+                        "type arguments are only valid on a function call or shape literal",
+                    ))
                 }
             }
             TokenKind::LParen => {
@@ -1062,6 +1186,13 @@ impl Parser {
                 Ok(Expr::new(ExprKind::Copy(Box::new(value)), span))
             }
             TokenKind::Alloc => self.parse_alloc(span),
+            TokenKind::Comptime => {
+                self.advance();
+                Ok(Expr::new(
+                    ExprKind::Comptime(Box::new(self.parse_unary()?)),
+                    span,
+                ))
+            }
             TokenKind::LBracket => self.parse_slice_literal(span),
             _ => Err(self.error_current(format!(
                 "expected expression, found {}",
@@ -1164,7 +1295,12 @@ impl Parser {
         Ok(elements)
     }
 
-    fn parse_interface_literal(&mut self, name: String, span: Span) -> ParseResult<Expr> {
+    fn parse_interface_literal(
+        &mut self,
+        name: String,
+        type_args: Vec<Type>,
+        span: Span,
+    ) -> ParseResult<Expr> {
         // Data literals use brackets in Flow Syntax.
         let close = if self.matches(TokenKind::LBracket) {
             TokenKind::RBracket
@@ -1194,7 +1330,14 @@ impl Parser {
         }
 
         self.expect(close, "the shape literal terminator")?;
-        Ok(Expr::new(ExprKind::InterfaceLiteral { name, fields }, span))
+        Ok(Expr::new(
+            ExprKind::InterfaceLiteral {
+                name,
+                type_args,
+                fields,
+            },
+            span,
+        ))
     }
 
     fn parse_call_args(&mut self) -> ParseResult<Vec<CallArg>> {

@@ -815,3 +815,72 @@ int main(void) {
         "255 -7 4294967295 0.1 1\n"
     );
 }
+
+#[test]
+fn generated_generic_instantiations_are_mangled() {
+    let c = generated(
+        "shape Vec<T> [\n    data: [T]\n    len: u64\n]\n\nflow sum<T>\n    <- xs: Vec<T>\n    => i32\n{\n    mut total: i32 <- 0\n    for i in 0..xs.len {\n        total += xs.data[i] as i32\n    }\n    => total\n}\n\nflow use\n    => i32\n{\n    xs <- Vec<i32>[ data: [i32: 1, 2, 3], len: 3 ]\n    => sum<i32>(xs)\n}\n",
+    );
+
+    assert!(
+        c.contains("struct loi_t_Vec__i32"),
+        "generic shape should be monomorphized:\n{c}"
+    );
+    assert!(
+        c.contains("loi_fn_sum__i32"),
+        "generic flow should be monomorphized:\n{c}"
+    );
+    assert!(
+        !c.contains("loi_t_Vec<"),
+        "template shapes must not reach C:\n{c}"
+    );
+}
+
+#[test]
+fn compiled_generic_shapes_and_flows_run() {
+    let source = "shape Vec<T> [\n    data: [T]\n    len: u64\n]\n\nflow sum<T>\n    <- xs: Vec<T>\n    => i32\n{\n    mut total: i32 <- 0\n    for i in 0..xs.len {\n        total += xs.data[i] as i32\n    }\n    => total\n}\n\nflow set_at<T>\n    <-> xs: Vec<T>\n    <- index: u64\n    <- value: T\n{\n    xs.data[index] = value\n}\n\nflow use\n    => i32\n{\n    mut v <- Vec<i32>[ data: [i32: 1], len: 1 ]\n    set_at<i32>(<-> v, 0, 2)\n    => sum<i32>(v)\n}\n";
+    let harness = r#"
+int main(void) {
+    int32_t values[] = { 1, 2, 3 };
+    loi_t_Vec__i32 v = { .loi_f_data = { values, 3 }, .loi_f_len = 3 };
+    if (loi_fn_sum__i32(v) != 6) return 40;
+    loi_fn_set_at__i32(&v, 1, 42);
+    if (loi_fn_sum__i32(v) != 46) return 41;
+    return 0;
+}
+"#;
+    compile_and_run("generic-shapes-flows", &generated(source), harness);
+}
+
+#[test]
+fn composite_globals_use_static_initializers() {
+    let c = generated(
+        "shape Color [\n    r: u8\n    g: u8\n    b: u8\n    a: u8\n]\n\nshape Scene [\n    color: Color\n    points: [i32]\n    name: [u8]\n]\n\nGREEN: Color <- Color[ r: 0, g: 255, b: 0, a: 255 ]\n\nSCENE: Scene <- Scene[ color: Color[ r: 1, g: 2, b: 3, a: 4 ], points: [i32: 7, 8], name: \"scene\" ]\n",
+    );
+
+    assert!(
+        c.contains("loi_t_Color loi_g_GREEN = (loi_t_Color){ .loi_f_r = 0, .loi_f_g = 255, .loi_f_b = 0, .loi_f_a = 255 };"),
+        "shape globals should use compound literals:\n{c}"
+    );
+    assert!(
+        c.contains("loi_t_Scene loi_g_SCENE = (loi_t_Scene){ .loi_f_color = (loi_t_Color){ .loi_f_r = 1, .loi_f_g = 2, .loi_f_b = 3, .loi_f_a = 4 }, .loi_f_points = (LoiSlice){ (void*)(int32_t[]){ 7, 8 }, 2 }, .loi_f_name = (LoiSlice){ (void*)loi_str_0, 5 } };"),
+        "nested shape globals should use designated initializers:\n{c}"
+    );
+}
+
+#[test]
+fn compiled_composite_globals_and_comptime_values() {
+    let source = "shape Color [\n    r: u8\n    g: u8\n    b: u8\n    a: u8\n]\n\nGREEN: Color <- Color[ r: 0, g: 255, b: 0, a: 255 ]\n\nPOINTS: [i32] <- [i32: 4, 5, 6]\n\ncomptime flow triple\n    <- x: i32\n    => i32\n{\n    => x * 3\n}\n\nLIMIT: i32 <- comptime triple(7)\n\nflow next\n    => i32\n{\n    => comptime triple(4)\n}\n";
+    let harness = r#"
+int main(void) {
+    if (loi_g_GREEN.loi_f_g != 255) return 50;
+    if (loi_g_GREEN.loi_f_r != 0) return 51;
+    if (loi_g_POINTS.len != 3) return 52;
+    if (((int32_t*)loi_g_POINTS.data)[2] != 6) return 53;
+    if (loi_g_LIMIT != 21) return 54;
+    if (loi_fn_next() != 12) return 55;
+    return 0;
+}
+"#;
+    compile_and_run("composite-globals-comptime", &generated(source), harness);
+}

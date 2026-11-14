@@ -2,7 +2,7 @@
 
 **Version:** 0.3.0-draft  
 **Status:** Active Development  
-**Last Updated:** 2026-11-10
+**Last Updated:** 2026-11-14
 **Author:** Clayton Pedro (Satoshi)
 
 Items marked **(provisional)** are temporary decisions made to close a gap. They can change. The nine former *Open Design Questions* are resolved in section 5. The distinctive surface (Loi Flow Syntax) is the only surface, adopted in 5.10 and fully cleaned up: legacy forms are no longer accepted, and `fmt` emits the canonical Flow Syntax.
@@ -42,7 +42,7 @@ The goal is that any new model can open `development/PROGRESS.md` and immediatel
 - Explicit memory and ownership control, without lifetimes or a borrow checker
 - Every function signature states what comes in and what goes out
 - Simple, regular syntax that is easy to lex and parse
-- Strong metaprogramming (`comptime`) — semantics still open
+- Strong metaprogramming (`comptime`) — implemented as pure, step-limited compile-time evaluation
 
 ### Core Design Decisions
 
@@ -58,9 +58,11 @@ The goal is that any new model can open `development/PROGRESS.md` and immediatel
 | Aliasing             | Two names for the same address are a compile error (double reference)    |
 | Memory scope         | `protect { }` — everything allocated inside lives only there             |
 | Arrays               | Slices `[T]` (pointer + length, bounds checked)                          |
+| Generics             | `shape Vec<T>` / `flow f<T>`; explicit arguments, monomorphized           |
+| Compile-time values  | `comptime flow` (pure) and `comptime expr`; globals require constants     |
 | Cleanup              | No `defer`. `protect` covers memory                                      |
 | Variables            | `name <- value` immutable, `mut name <- value` mutable                   |
-| Globals              | Top-level bindings with constant initializers (provisional)              |
+| Globals              | Top-level bindings with constant initializers of any shape               |
 | Strings              | Double-quoted literals with decoded escapes; runtime type `[u8]`         |
 | Slice literals       | `[a, b]` (inferred) or `[T: a, b]` (explicit)                           |
 | Length               | `len(xs)` and `xs.len`, both `u64`                                       |
@@ -403,7 +405,20 @@ All nine questions from the 0.2 draft are decided. Each entry states the rule, t
 
 **Why:** the first draft was ambiguous because a `comptime` function could receive runtime values. A guarantee gives the compiler something it can rely on, keeps constant contexts honest, and leaves ordinary constant folding free to happen anywhere as an optimization.
 
-**Status:** not implemented. `comptime` is lexed but not parsed; it is Phase 3 work and needs the constant evaluator first.
+**Status:** implemented. The parser accepts `comptime flow` and `comptime expr`; `const_eval.rs` evaluates globals, shape defaults and `comptime` expressions with purity checks, a step budget and a call-depth limit. Global initializers of any shape are emitted as C static initializers.
+
+### 5.1a Generics — explicit instantiation, monomorphized
+
+**Decision:** generic declarations use angle brackets: `shape Vec<T>` and `flow sum<T>`. Every use supplies explicit type arguments: `Vec<i32>`, `sum<i32>(xs)`. There is no inference in the first version.
+
+- Type parameters may be used anywhere a type appears: fields, parameters, results, locals, slice elements and nested instantiations (`Vec<Vec<i32>>`).
+- Monomorphization runs before type checking and code generation. It removes every template and emits a concrete declaration per instantiation, with mangled names such as `Vec__i32` and `sum__Vec__i32`.
+- The wrong number of type arguments, a missing argument list on a generic declaration, or type arguments on a non-generic flow are compile errors.
+- Growable collections remain library work; generics make a future `Vec<T>` implementation possible without changing the language.
+
+**Why:** explicit arguments make monomorphization predictable and keep the first implementation small. Inference can be added later without changing the surface syntax.
+
+**Status:** implemented and tested for shapes, flows, nested instantiations and `>>` token splitting.
 
 ### 5.2 Pointers — none (question 2)
 
@@ -696,7 +711,8 @@ The full Flow Syntax was chosen because it makes the three distinctive ideas —
 
 ### Phase 3 — Advanced Features
 
-- [ ] `comptime` (semantics decided in 5.1; implementation pending)
+- [x] `comptime` (semantics in 5.1; pure evaluator implemented)
+- [x] Generics (`Vec<T>` shapes and flows, explicit arguments, monomorphization)
 - [ ] Freshness, spatial hints and ordering blocks (see 4.7)
 
 ### Phase 4 — Backend

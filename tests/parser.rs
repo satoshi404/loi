@@ -361,7 +361,7 @@ fn parses_for_range_and_foreach() {
                         other => panic!("expected index target, got {other:?}"),
                     }
                     match kind(value) {
-                        ExprKind::InterfaceLiteral { name, fields } => {
+                        ExprKind::InterfaceLiteral { name, fields, .. } => {
                             assert_eq!(name, "Particle");
                             assert_eq!(fields.len(), 3);
                             assert_eq!(fields[0].name, "pos");
@@ -609,7 +609,7 @@ fn parses_flow_syntax_declarations() {
     };
     match &body.statements[0].kind {
         StmtKind::Assign { value, .. } => match kind(value) {
-            ExprKind::InterfaceLiteral { name, fields } => {
+            ExprKind::InterfaceLiteral { name, fields, .. } => {
                 assert_eq!(name, "Particle");
                 assert_eq!(fields.len(), 3);
                 match kind(&fields[0].value) {
@@ -682,6 +682,99 @@ fn parses_typed_slice_literals_in_flow_syntax() {
                 assert_eq!(elements.len(), 3);
             }
             other => panic!("expected typed slice literal, got {other:?}"),
+        },
+        other => panic!("expected return, got {other:?}"),
+    }
+}
+
+#[test]
+fn parses_generic_shapes_flows_and_calls() {
+    let program = parse_source(
+        "shape Vec<T> [\n    data: [T]\n    len: u64\n]\n\nflow push<T>\n    <-> xs: Vec<T>\n    <- value: T\n{\n}\n\nflow main\n    => i32\n{\n    mut v <- Vec<i32>[ data: [i32:], len: 0 ]\n    push<i32>(<-> v, 7)\n    => 0\n}\n",
+    );
+
+    let vec = interface(&program, "Vec");
+    assert_eq!(vec.type_params, vec!["T".to_string()]);
+    assert_eq!(
+        vec.fields[0].ty,
+        Type::Slice(Box::new(Type::Named("T".to_string())))
+    );
+
+    let push = function(&program, "push");
+    assert_eq!(push.type_params, vec!["T".to_string()]);
+    assert_eq!(
+        push.params[0].ty,
+        Type::Generic("Vec".to_string(), vec![Type::Named("T".to_string())])
+    );
+
+    let main = function(&program, "main");
+    match &main.body.statements[0].kind {
+        StmtKind::Let {
+            value: Some(value), ..
+        } => match kind(value) {
+            ExprKind::InterfaceLiteral {
+                name,
+                type_args,
+                fields,
+            } => {
+                assert_eq!(name, "Vec");
+                assert_eq!(type_args, &vec![Type::Named("i32".to_string())]);
+                assert_eq!(fields.len(), 2);
+            }
+            other => panic!("expected generic shape literal, got {other:?}"),
+        },
+        other => panic!("expected let statement, got {other:?}"),
+    }
+
+    match &main.body.statements[1].kind {
+        StmtKind::Expr(expr) => match kind(expr) {
+            ExprKind::Call {
+                type_args, args, ..
+            } => {
+                assert_eq!(type_args, &vec![Type::Named("i32".to_string())]);
+                assert_eq!(args.len(), 2);
+            }
+            other => panic!("expected generic call, got {other:?}"),
+        },
+        other => panic!("expected expression statement, got {other:?}"),
+    }
+}
+
+#[test]
+fn parses_nested_generic_types_with_shift_tokens() {
+    let program = parse_source(
+        "shape Vec<T> [\n    data: [T]\n    len: u64\n]\n\nflow f\n    <- xs: Vec<Vec<i32>>\n{\n}\n",
+    );
+
+    let f = function(&program, "f");
+    assert_eq!(
+        f.params[0].ty,
+        Type::Generic(
+            "Vec".to_string(),
+            vec![Type::Generic(
+                "Vec".to_string(),
+                vec![Type::Named("i32".to_string())]
+            )]
+        )
+    );
+}
+
+#[test]
+fn parses_comptime_flows_and_expressions() {
+    let program = parse_source(
+        "comptime flow twice\n    <- x: i32\n    => i32\n{\n    => x * 2\n}\n\nflow main\n    => i32\n{\n    => comptime twice(21)\n}\n",
+    );
+
+    let twice = function(&program, "twice");
+    assert!(twice.comptime);
+
+    let main = function(&program, "main");
+    match &main.body.statements[0].kind {
+        StmtKind::Return(Some(value)) => match kind(value) {
+            ExprKind::Comptime(inner) => {
+                assert!(matches!(kind(inner), ExprKind::Call { .. }));
+            }
+            other => panic!("expected comptime expression, got {other:?}"),
         },
         other => panic!("expected return, got {other:?}"),
     }

@@ -194,3 +194,21 @@ fn formatting_without_comments_still_discards_them() {
     let formatted = format_program(&parse_source("// gone\nflow main {\n    => 0\n}\n"));
     assert!(!formatted.contains("// gone"));
 }
+
+#[test]
+fn formats_generics_and_comptime_stably() {
+    let source = "comptime flow sum<T>\n    <- xs: Vec<T>\n    => i32\n{\n    => 0\n}\n\nflow main\n    => i32\n{\n    xs <- Vec<i32>[ data: [i32: 1, 2], len: 2 ]\n    => sum<i32>(xs) + comptime 2 * 3\n}\n";
+    let formatted = assert_format_stable(source);
+
+    assert!(formatted.contains("comptime flow sum<T>"));
+    assert!(formatted.contains("<- xs: Vec<T>"));
+    assert!(formatted.contains("Vec<i32>[ data: [i32: 1, 2], len: 2 ]"));
+    assert!(formatted.contains("sum<i32>(xs) + comptime 2 * 3"));
+}
+
+#[test]
+fn formats_nested_generic_types_stably() {
+    let source = "shape Vec<T> [\n    data: [T]\n]\n\nflow f\n    <- xs: Vec<Vec<i32>>\n{\n}\n";
+    let formatted = assert_format_stable(source);
+    assert!(formatted.contains("<- xs: Vec<Vec<i32>>"));
+}

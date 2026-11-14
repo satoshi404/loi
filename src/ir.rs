@@ -496,6 +496,7 @@ fn ast_type_to_ir(ty: &crate::ast::Type) -> Result<IrType, String> {
             let elem_ty = ast_type_to_ir(element)?;
             Ok(IrType::Slice(Box::new(elem_ty)))
         }
+        crate::ast::Type::Generic(name, _) => Ok(IrType::Named(name.clone())),
     }
 }
 

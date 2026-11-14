@@ -53,6 +53,7 @@ lives in [`development/PROGRESS.md`](development/PROGRESS.md).
 | `bool` | `true` / `false` |
 | `[T]` | slice: pointer + length, bounds checked |
 | `Name` | a declared `shape` |
+| `Name<T, ...>` | an instantiation of a generic shape |
 | `Name` | a declared `opaque` foreign handle |
 | `cstr` | NUL-terminated C string handle (FFI only) |
 
@@ -60,6 +61,8 @@ There is no `void`, no pointer type, no array type and no `nil`. A function
 with no `=> T` returns nothing.
 
 - Slices are written **`[T]`**, never `[]T`.
+- Generic instantiations are written **`Vec<T>`**. There is no type inference:
+  every generic call and literal spells its type arguments.
 - Strings are `[u8]` at runtime. A string literal is a `[u8]` value.
 - `cstr` values are constructed only from string literals or returned by
   `extern flow` declarations. They can be passed back to C but not indexed,
@@ -98,6 +101,32 @@ shape Particle [
   default is applied. `-> shaped` out-parameters are initialized from their
   defaults by the backend before the body runs.
 
+### 3.1 Generic shapes
+
+```loi
+shape Vec<T> [
+    data: [T]
+    len:  u64
+]
+
+shape Pair<T, U> [
+    first:  T
+    second: U
+]
+
+numbers <- Vec<i32>[ data: [i32: 1, 2, 3], len: 3 ]
+pair    <- Pair<i32, bool>[ first: 1, second: true ]
+nested  <- Vec<Vec<i32>>[ data: [Vec<i32>:], len: 0 ]
+```
+
+- Type parameters are declared after the shape name: `shape Name<T, U> [...]`.
+- Every instantiation supplies all type arguments explicitly; there is no
+  inference. `Vec[...]` without `<...>` is an error.
+- Generic declarations are templates. The compiler monomorphizes each used
+  instantiation into a concrete shape before type checking and code generation.
+- Type arguments may be primitives, shapes, slices, or other generic
+  instantiations. The lexer's `>>` is split when closing nested arguments.
+
 ---
 
 ## 4. Bindings and mutability
@@ -126,8 +155,10 @@ GREETING: [u8] <- "hello\n"
 open mut LIMIT: i32 <- 3
 ```
 
-Global initializers must be compile-time constants. Only scalar, `bool` and
-`[u8]`-from-string globals are emitted by the C backend today.
+Global initializers must be compile-time constants: literals, constant
+expressions, constant globals, shape/slice literals and `comptime` calls. The C
+backend emits them as static initializers, including nested shapes, slices and
+strings.
 
 ---
 
@@ -183,6 +214,68 @@ sealed flow clamp
       => 0
   }
   ```
+
+### 5.3 Generic flows
+
+```loi
+flow sum<T>
+    <- xs: Vec<T>
+    => i32
+{
+    mut total: i32 <- 0
+    for i in 0..xs.len {
+        total += xs.data[i] as i32
+    }
+    => total
+}
+
+flow main
+    => i32
+{
+    xs <- Vec<i32>[ data: [i32: 1, 2, 3], len: 3 ]
+    => sum<i32>(xs)
+}
+```
+
+- Declare type parameters after the flow name: `flow name<T, U>`.
+- Calls spell their type arguments: `sum<i32>(xs)`. There is no inference, and
+  a generic flow without type arguments is an error.
+- Passing a type argument to a non-generic flow is an error, as is the wrong
+  number of arguments.
+- Generic flows are monomorphized per instantiation, so each concrete type
+  argument produces a separate compiled function.
+
+### 5.4 `comptime`
+
+```loi
+comptime flow double
+    <- x: i32
+    => i32
+{
+    => x * 2
+}
+
+LIMIT: i32 <- comptime double(21)   // 42, computed at compile time
+
+flow next
+    => i32
+{
+    => comptime double(4)           // 8, emitted as a literal
+}
+```
+
+- `comptime flow` declares a pure flow that the compiler can evaluate. Its
+  parameters must be `<-`; it may not use `alloc`, `protect`, I/O, `give`,
+  `clone`, or mutate globals. Calls may only target other `comptime` flows and
+  the pure math intrinsics (`sqrt`, `floor`, `ceil`, `fabs`, `pow`, `fmod`,
+  `len`).
+- `comptime expr` forces compile-time evaluation. It is valid only when the
+  expression is constant: literals, constant globals, pure operators/casts and
+  `comptime` calls.
+- Global initializers and shape defaults are constant contexts. A call to a
+  non-`comptime` flow there is an error.
+- Evaluation is step-limited and call-depth-limited, so a recursive
+  `comptime` flow produces a diagnostic instead of hanging the compiler.
 
 ---
 

@@ -36,16 +36,37 @@ impl Diagnostic {
 
 /// Check a complete program, returning every diagnostic found.
 pub fn check(program: &Program) -> Vec<Diagnostic> {
+    let (program, mono_errors) = crate::monomorphize::monomorphize(program);
+    let mut diagnostics = mono_errors
+        .into_iter()
+        .map(|error| Diagnostic {
+            span: error.span,
+            message: error.message,
+        })
+        .collect::<Vec<_>>();
+    for error in crate::const_eval::validate_comptime_functions(&program) {
+        diagnostics.push(Diagnostic {
+            span: error.span,
+            message: error.message,
+        });
+    }
+    for error in crate::const_eval::check_comptime_expressions(&program) {
+        diagnostics.push(Diagnostic {
+            span: error.span,
+            message: error.message,
+        });
+    }
     let mut checker = Checker::new();
-    checker.collect_names(program);
-    checker.resolve_interfaces(program);
-    checker.check_interface_value_cycles(program);
-    checker.resolve_functions(program);
-    checker.analyze_function_effects(program);
-    checker.check_interface_defaults(program);
-    checker.declare_globals(program);
-    checker.check_functions(program);
-    checker.diagnostics
+    checker.collect_names(&program);
+    checker.resolve_interfaces(&program);
+    checker.check_interface_value_cycles(&program);
+    checker.resolve_functions(&program);
+    checker.analyze_function_effects(&program);
+    checker.check_interface_defaults(&program);
+    checker.declare_globals(&program);
+    checker.check_functions(&program);
+    diagnostics.extend(checker.diagnostics);
+    diagnostics
 }
 
 #[derive(Debug, Clone)]
@@ -582,6 +603,7 @@ impl Checker {
     /// static initializers.
     fn declare_globals(&mut self, program: &Program) {
         self.current_return = Ty::Void;
+        let mut evaluator = crate::const_eval::ConstEvaluator::new(program);
         for item in &program.items {
             let Item::Global(decl) = item else {
                 continue;
@@ -590,12 +612,12 @@ impl Checker {
             let declared = decl.ty.as_ref().map(|ty| self.resolve_type(ty, decl.span));
             let value_ty = self.check_expr(&decl.value);
 
-            if !is_constant_expr(&decl.value) {
+            if let Err(error) = evaluator.eval_global(decl) {
                 self.error(
                     decl.value.span,
                     format!(
-                        "initializer for global '{}' must be a compile-time constant",
-                        decl.name
+                        "initializer for global '{}' must be a compile-time constant: {}",
+                        decl.name, error.message
                     ),
                 );
             }
@@ -616,36 +638,6 @@ impl Checker {
                 }
                 (None, value_ty) => value_ty.concretize(),
             };
-
-            // The C backend can only emit scalars and byte-string globals as
-            // static initializers. Other composite globals need a runtime
-            // constructor, which is not implemented yet.
-            let supported = matches!(
-                resolved,
-                Ty::I8
-                    | Ty::I16
-                    | Ty::I32
-                    | Ty::I64
-                    | Ty::U8
-                    | Ty::U16
-                    | Ty::U32
-                    | Ty::U64
-                    | Ty::F32
-                    | Ty::F64
-                    | Ty::Bool
-                    | Ty::CStr
-                    | Ty::Error
-            ) || (matches!(&resolved, Ty::Slice(element) if **element == Ty::U8)
-                && matches!(&decl.value.kind, ExprKind::String(_)));
-            if !supported {
-                self.error(
-                    decl.span,
-                    format!(
-                        "global '{}' has type {resolved}; only scalar and [u8] globals are supported",
-                        decl.name
-                    ),
-                );
-            }
 
             self.scopes[0].insert(
                 decl.name.clone(),
@@ -680,6 +672,13 @@ impl Checker {
                 }
             }
             Type::Slice(element) => Ty::Slice(Box::new(self.resolve_type(element, span))),
+            Type::Generic(name, _) => {
+                self.error(
+                    span,
+                    format!("generic type '{name}' must be instantiated before checking"),
+                );
+                Ty::Error
+            }
         }
     }
 
@@ -1583,7 +1582,7 @@ impl Checker {
                 }
                 self.check_binary(*op, &left_ty, &right_ty, expr.span)
             }
-            ExprKind::InterfaceLiteral { name, fields } => {
+            ExprKind::InterfaceLiteral { name, fields, .. } => {
                 self.check_interface_literal(name, fields, expr.span)
             }
             ExprKind::Cast { expr: inner, ty } => {
@@ -1597,7 +1596,7 @@ impl Checker {
                 }
                 target
             }
-            ExprKind::Call { callee, args } => self.check_call(callee, args, expr.span),
+            ExprKind::Call { callee, args, .. } => self.check_call(callee, args, expr.span),
             ExprKind::Alloc {
                 target,
                 element_type,
@@ -1605,6 +1604,7 @@ impl Checker {
             } => self.check_alloc(target, element_type, count, expr.span),
             ExprKind::Move(value) => self.check_move(value),
             ExprKind::Copy(value) => self.check_copy(value),
+            ExprKind::Comptime(inner) => self.check_expr(inner),
             ExprKind::Member { base, field } => {
                 let base_ty = self.check_base_type(base);
                 let ty = self.member_type(&base_ty, field, expr.span);
@@ -2665,7 +2665,7 @@ impl Checker {
                 self.collect_value_regions(left, regions);
                 self.collect_value_regions(right, regions);
             }
-            ExprKind::Call { callee, args } => {
+            ExprKind::Call { callee, args, .. } => {
                 if let ExprKind::Ident(name) = &callee.kind
                     && matches!(name.as_str(), "read_file" | "read_stdin" | "read_line")
                     && let Some(region) = self.current_protect_region()
@@ -2719,6 +2719,7 @@ impl Checker {
                     self.collect_value_regions(element, regions);
                 }
             }
+            ExprKind::Comptime(inner) => self.collect_value_regions(inner, regions),
         }
     }
 
@@ -3042,7 +3043,7 @@ fn scan_expr_effects(expr: &Expr, depth: usize, scan: &mut FunctionScan) {
             scan_expr_effects(right, depth, scan);
         }
         ExprKind::Cast { expr, .. } => scan_expr_effects(expr, depth, scan),
-        ExprKind::Call { callee, args } => {
+        ExprKind::Call { callee, args, .. } => {
             if let ExprKind::Ident(name) = &callee.kind {
                 scan.calls.insert(name.clone());
                 if depth == 0 {
@@ -3084,6 +3085,7 @@ fn scan_expr_effects(expr: &Expr, depth: usize, scan: &mut FunctionScan) {
             scan_expr_effects(base, depth, scan);
             scan_expr_effects(index, depth, scan);
         }
+        ExprKind::Comptime(inner) => scan_expr_effects(inner, depth, scan),
     }
 }
 
@@ -3233,22 +3235,6 @@ fn integer_bits(ty: &Ty) -> Option<u128> {
     }
 }
 
-/// Whether an expression can appear in a static global initializer.
-fn is_constant_expr(expr: &Expr) -> bool {
-    match &expr.kind {
-        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::String(_) => true,
-        ExprKind::Unary { operand, .. } => is_constant_expr(operand),
-        ExprKind::Binary { left, right, .. } => is_constant_expr(left) && is_constant_expr(right),
-        ExprKind::Cast { expr, .. } => is_constant_expr(expr),
-        ExprKind::Copy(value) => is_constant_expr(value),
-        ExprKind::InterfaceLiteral { fields, .. } => {
-            fields.iter().all(|field| is_constant_expr(&field.value))
-        }
-        ExprKind::SliceLiteral { elements, .. } => elements.iter().all(is_constant_expr),
-        _ => false,
-    }
-}
-
 fn is_place(expr: &Expr) -> bool {
     match &expr.kind {
         ExprKind::Ident(_) => true,
@@ -3332,6 +3318,7 @@ fn collect_accesses(expr: &Expr, accesses: &mut Vec<(String, String)>) {
                 collect_accesses(element, accesses);
             }
         }
+        ExprKind::Comptime(inner) => collect_accesses(inner, accesses),
         ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::String(_) => {}
     }
 }

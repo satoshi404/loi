@@ -878,14 +878,8 @@ fn globals_are_checked_and_must_be_constant() {
         "flow value\n    => i32\n{\n    => 1\n}\n\nA <- value()\n",
         "must be a compile-time constant",
     );
-    assert_message(
-        "shape Vec2 [\n    x: i32\n    y: i32\n]\n\norigin <- Vec2[ x: 0, y: 0 ]\n",
-        "only scalar and [u8] globals are supported",
-    );
-    assert_message(
-        "xs <- [i32: 1, 2]\n",
-        "only scalar and [u8] globals are supported",
-    );
+    assert_clean("shape Vec2 [\n    x: i32\n    y: i32\n]\n\norigin <- Vec2[ x: 0, y: 0 ]\n");
+    assert_clean("xs <- [i32: 1, 2]\n");
     assert_message(
         "DEFAULT: i32 <- 1\n\nshape I [\n    x: i32 = DEFAULT\n]\n",
         "unknown variable 'DEFAULT'",
@@ -1069,5 +1063,92 @@ fn file_and_stdin_intrinsics_have_checked_signatures() {
     assert_message(
         "flow main {\n    mut input: [u8]\n    protect {\n        input = read_stdin()\n    }\n}\n",
         "value allocated inside 'protect' escapes the block",
+    );
+}
+
+#[test]
+fn generics_are_monomorphized_before_checking() {
+    assert_clean(
+        "shape Vec<T> [\n    data: [T]\n    len: u64\n]\n\nflow set_at<T>\n    <-> xs: Vec<T>\n    <- index: u64\n    <- value: T\n{\n    xs.data[index] = value\n}\n\nflow main\n    => i32\n{\n    mut v <- Vec<i32>[ data: [i32: 1, 2], len: 2 ]\n    set_at<i32>(<-> v, 0, 9)\n    => 0\n}\n",
+    );
+    assert_clean(
+        "shape Pair<T, U> [\n    first: T\n    second: U\n]\n\nflow main\n    => i32\n{\n    p <- Pair<i32, bool>[ first: 1, second: true ]\n    => p.first\n}\n",
+    );
+}
+
+#[test]
+fn generic_instantiation_requires_explicit_type_arguments() {
+    assert_message(
+        "shape Vec<T> [\n    data: [T]\n]\n\nG: Vec <- Vec[]\n",
+        "requires explicit type arguments",
+    );
+    assert_message(
+        "flow identity<T>\n    <- x: T\n    => T\n{\n    => x\n}\n\nflow main\n    => i32\n{\n    => identity(1)\n}\n",
+        "requires explicit type arguments",
+    );
+}
+
+#[test]
+fn generic_type_argument_counts_are_checked() {
+    assert_message(
+        "shape Pair<T, U> [\n    first: T\n    second: U\n]\n\nflow main\n    => i32\n{\n    p <- Pair<i32>[ first: 1, second: 2 ]\n    => p.first\n}\n",
+        "expects 2 type argument(s), found 1",
+    );
+    assert_message(
+        "flow identity<T>\n    <- x: T\n    => T\n{\n    => x\n}\n\nflow main\n    => i32\n{\n    => identity<i32, bool>(1)\n}\n",
+        "expects 1 type argument(s), found 2",
+    );
+}
+
+#[test]
+fn comptime_flows_are_pure() {
+    assert_clean(
+        "comptime flow double\n    <- x: i32\n    => i32\n{\n    => x * 2\n}\n\nflow main\n    => i32\n{\n    => comptime double(21)\n}\n",
+    );
+    assert_message(
+        "comptime flow bad\n    => i32\n{\n    mut xs: [i32]\n    alloc(-> xs, i32, 3)\n    => 0\n}\n",
+        "'alloc' is not allowed in a comptime flow",
+    );
+    assert_message(
+        "comptime flow bad\n    => i32\n{\n    protect {\n        => 1\n    }\n    => 0\n}\n",
+        "'protect' is not allowed in a comptime flow",
+    );
+    assert_message(
+        "flow helper\n    => i32\n{\n    => 1\n}\n\ncomptime flow bad\n    => i32\n{\n    => helper()\n}\n",
+        "flow 'helper' is not declared 'comptime'",
+    );
+    assert_message(
+        "mut G: i32 <- 0\n\ncomptime flow bad\n    => i32\n{\n    G = 1\n    => G\n}\n",
+        "a comptime flow cannot mutate a global",
+    );
+}
+
+#[test]
+fn comptime_expressions_must_be_constant() {
+    assert_message(
+        "G: i32 <- comptime read_file(\"x\")\n",
+        "I/O is not allowed in a comptime expression",
+    );
+    assert_message(
+        "flow main\n    => i32\n{\n    x <- 1\n    => comptime x\n}\n",
+        "not a compile-time constant",
+    );
+}
+
+#[test]
+fn globals_accept_any_constant_shape() {
+    assert_clean(
+        "shape Color [\n    r: u8\n    g: u8\n    b: u8\n    a: u8\n]\n\nshape Vec2 [\n    x: f64\n    y: f64\n]\n\nshape Scene [\n    color: Color\n    points: [Vec2]\n    name: [u8]\n]\n\nGREEN: Color <- Color[ r: 0, g: 255, b: 0, a: 255 ]\n\nORIGIN <- Vec2[ x: 0.0, y: 0.0 ]\n\nSCENE: Scene <- Scene[ color: Color[ r: 0, g: 255, b: 0, a: 255 ], points: [Vec2: Vec2[ x: 0.0, y: 0.0 ]], name: \"scene\" ]\n",
+    );
+}
+
+#[test]
+fn comptime_flows_can_initialize_globals() {
+    assert_clean(
+        "comptime flow triple\n    <- x: i32\n    => i32\n{\n    => x * 3\n}\n\nLIMIT: i32 <- comptime triple(7)\n",
+    );
+    assert_message(
+        "flow triple\n    <- x: i32\n    => i32\n{\n    => x * 3\n}\n\nLIMIT: i32 <- triple(7)\n",
+        "must be a compile-time constant",
     );
 }

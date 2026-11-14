@@ -46,6 +46,29 @@ pub fn format_type(ty: &Type) -> String {
     match ty {
         Type::Named(name) => name.clone(),
         Type::Slice(element) => format!("[{}]", format_type(element)),
+        Type::Generic(name, args) => format!(
+            "{name}<{}>",
+            args.iter().map(format_type).collect::<Vec<_>>().join(", ")
+        ),
+    }
+}
+
+fn format_type_params(params: &[String]) -> String {
+    if params.is_empty() {
+        String::new()
+    } else {
+        format!("<{}>", params.join(", "))
+    }
+}
+
+fn format_type_args(args: &[Type]) -> String {
+    if args.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<{}>",
+            args.iter().map(format_type).collect::<Vec<_>>().join(", ")
+        )
     }
 }
 
@@ -179,13 +202,15 @@ impl PrettyPrinter {
     }
 
     fn interface(&mut self, interface: &InterfaceDecl) {
+        let type_params = format_type_params(&interface.type_params);
         if interface.fields.is_empty() {
             self.line_at(
                 interface.span.line,
                 format!(
-                    "{}shape {} []",
+                    "{}shape {}{} []",
                     visibility_prefix(interface.visibility),
-                    interface.name
+                    interface.name,
+                    type_params
                 ),
             );
             self.flush_comments_before(interface.close_line);
@@ -195,9 +220,10 @@ impl PrettyPrinter {
         self.line_at(
             interface.span.line,
             format!(
-                "{}shape {} [",
+                "{}shape {}{} [",
                 visibility_prefix(interface.visibility),
-                interface.name
+                interface.name,
+                type_params
             ),
         );
         self.indent += 1;
@@ -216,15 +242,16 @@ impl PrettyPrinter {
 
     fn function(&mut self, function: &FunctionDecl) {
         let prefix = if function.external { "extern " } else { "" };
+        let comptime = if function.comptime { "comptime " } else { "" };
+        let type_params = format_type_params(&function.type_params);
         let link_name = function
             .link_name
             .as_ref()
             .map(|symbol| format!(" as {symbol}"))
             .unwrap_or_default();
         let header = format!(
-            "{}{}flow {}{link_name}",
+            "{}{prefix}{comptime}flow {}{type_params}{link_name}",
             visibility_prefix(function.visibility),
-            prefix,
             function.name
         );
 
@@ -575,7 +602,12 @@ fn expr_str(expr: &Expr, parent_precedence: u8) -> String {
                 None => format!("[{elements}]"),
             }
         }
-        ExprKind::InterfaceLiteral { name, fields } => {
+        ExprKind::InterfaceLiteral {
+            name,
+            type_args,
+            fields,
+        } => {
+            let name = format!("{name}{}", format_type_args(type_args));
             if fields.is_empty() {
                 format!("{name}[]")
             } else {
@@ -609,7 +641,11 @@ fn expr_str(expr: &Expr, parent_precedence: u8) -> String {
             let text = format!("{} as {}", expr_str(expr, PREC_CAST + 1), format_type(ty));
             parenthesize(text, PREC_CAST, parent_precedence)
         }
-        ExprKind::Call { callee, args } => {
+        ExprKind::Call {
+            callee,
+            type_args,
+            args,
+        } => {
             let args = args
                 .iter()
                 .map(|arg| {
@@ -622,7 +658,12 @@ fn expr_str(expr: &Expr, parent_precedence: u8) -> String {
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
-            let text = format!("{}({})", expr_str(callee, PREC_POSTFIX), args);
+            let text = format!(
+                "{}{}({})",
+                expr_str(callee, PREC_POSTFIX),
+                format_type_args(type_args),
+                args
+            );
             parenthesize(text, PREC_POSTFIX, parent_precedence)
         }
         ExprKind::Alloc {
@@ -653,6 +694,10 @@ fn expr_str(expr: &Expr, parent_precedence: u8) -> String {
         ExprKind::Index { base, index } => {
             let text = format!("{}[{}]", expr_str(base, PREC_POSTFIX), expr_str(index, 0));
             parenthesize(text, PREC_POSTFIX, parent_precedence)
+        }
+        ExprKind::Comptime(inner) => {
+            let text = format!("comptime {}", expr_str(inner, PREC_UNARY));
+            parenthesize(text, PREC_UNARY, parent_precedence)
         }
     }
 }

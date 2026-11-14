@@ -4,32 +4,29 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Last completed task (2026-11-11):** made Loi comfortable for systems
-  programs:
-  1. added bitwise/shift operators (`&`, `|`, `^`, `~`, `<<`, `>>`), compound
-     forms (`%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`) and checked shift semantics;
-  2. added file/stdin I/O (`read_file`, `write_file`, `read_stdin`,
-     `read_line`) and numeric output (`print_int`, `print_float`) as
-     intrinsics, with the reading intrinsics participating in `protect`
-     escape analysis;
-  3. made `loi fmt` preserve `//` comments and stay idempotent.
-  Growable collections (`Vec<T>`, maps) remain deferred pending the
-  generics/comptime decision.
+- **Last completed task (2026-11-14):** added metaprogramming and generics:
+  1. `comptime flow` and `comptime expr`, backed by a pure, step-limited
+     constant evaluator shared by the checker and codegen;
+  2. generic shapes and flows (`Vec<T>`, `sum<i32>(...)`) with explicit type
+     arguments and monomorphization before checking/codegen;
+  3. globals of any constant shape, including nested shapes, slices and
+     strings, emitted as C static initializers.
+  Growable collections (`Vec<T>`, maps) remain library work; the type-system
+  blocker is resolved.
 - **Overall health:** good; the full test suite, `cargo fmt --check` and
   `cargo clippy --all-targets -- -D warnings` pass.
-- **Not done:** `comptime`, resources/`guard`, real module namespaces,
-  composite globals, growable collections (`Vec<T>`/maps, deferred pending the
-  generics/comptime decision), the IR/ASM backends and browser integration
-  tests.
+- **Not done:** resources/`guard`, real module namespaces, growable collections
+  (`Vec<T>`/maps), the IR/ASM backends and browser integration tests.
 
 ## Component Status
 
 | Component | Status | Notes |
 |---|---|---|
 | Lexer | Working | Canonical Flow Syntax only; strings with decoded escapes; decimal/hex/binary integers; floats; `<-`/`->`/`<->`/`=>` glyphs; bitwise/shift/compound tokens; `//` comments collected for `fmt` |
-| AST / parser | Working | Shapes, flows, `extern flow ... as`, `opaque`, imports, globals, slice/shape literals, `give`/`clone`/`alloc`, `protect`, loops, bitwise/shift precedence |
-| Pretty-printer | Working | Emits canonical Flow Syntax; idempotent on all canonical files; `loi fmt` preserves `//` comments (`format_program` remains comment-free) |
-| Type checker | Working | Types, literals, directions, calls, globals, intrinsics, `opaque`/`cstr`, constant folding, shape-cycle detection, bitwise/shift rules, I/O intrinsic signatures and allocation effects |
+| AST / parser | Working | Shapes and generic shapes, flows and generic flows, `extern flow ... as`, `opaque`, imports, globals, slice/shape literals, `give`/`clone`/`alloc`, `protect`, loops, bitwise/shift precedence, `comptime flow`/`comptime expr`, explicit type arguments |
+| Pretty-printer | Working | Emits canonical Flow Syntax including generics and `comptime`; idempotent on all canonical files; `loi fmt` preserves `//` comments (`format_program` remains comment-free) |
+| Type checker | Working | Types, literals, directions, calls, globals, intrinsics, `opaque`/`cstr`, constant folding, shape-cycle detection, bitwise/shift rules, I/O intrinsic signatures and allocation effects; monomorphization feeds concrete declarations into the checker |
+| Compile-time evaluation | Working | `src/const_eval.rs`: pure `comptime flow` interpreter with step/depth limits, constant globals and shape defaults, `comptime expr`, purity diagnostics |
 | Ownership | Working | Give liveness, definite assignment/return, exclusive `->`/`<->`, cross-flow consumption, `protect` taints and lexical-block escape analysis for slice literals, `read_file`/`read_stdin`/`read_line` |
 | C backend | Working | One C11 translation unit, ordered shape layouts, checked arithmetic, bitwise/shift helpers, growable arena, bounds checks, defaults, headers, source maps, multi-file objects, statics, file/stdin I/O and numeric printing |
 | C interop | Working | `opaque` → `void *`, `cstr` → `const char *`, bodyless `extern flow`, `--c-source`, `--cc-flag`; string literals coerce to `cstr` |
@@ -42,7 +39,7 @@
 
 ## Verification
 
-Last verified 2026-11-11 with:
+Last verified 2026-11-14 with:
 
 ```sh
 export PATH=/root/.cargo/bin:$PATH
@@ -52,12 +49,14 @@ cargo clippy --all-targets -- -D warnings
 cargo test --all-targets
 ```
 
-- `cargo test --all-targets`: **196 passed, 0 failed** (suite breakdown is
+- `cargo test --all-targets`: **212 passed, 0 failed** (suite breakdown is
   printed by Cargo; compile-and-run tests skip when `cc` is unavailable).
-- New coverage: bitwise/shift/compound operators, the shift-count trap at the
-  count's full width, file round-trips, stdin/`read_line`, numeric printing,
-  comment preservation and idempotence in `loi fmt`, comment positions in the
-  lexer, and I/O intrinsic signatures/allocation escape in the checker.
+- New coverage: generic shapes and flows (including nested instantiations and
+  `>>` token splitting), monomorphized C symbols, pure `comptime` flows and
+  expressions, `comptime`-initialized globals, composite globals of any constant
+  shape, and formatter idempotence for generics and `comptime`. The previous
+  bitwise/shift, file/stdin I/O, numeric printing and comment-preserving `fmt`
+  coverage still passes unchanged.
 - `examples/systems.loi` builds and runs (`2215315943 1193046 1.5`), and
   `loi check` passes on `examples/raylib_window.loi`.
 - `loi check vendor/sdl2/sdl2.loi` and `loi check vendor/raylib/raylib.loi`:
@@ -65,8 +64,9 @@ cargo test --all-targets
 - `clang -std=c11 -fsyntax-only` on both generated shims: exit 0.
 - `python3 tools/sync_examples.py --check`: `website/examples` is in sync.
 - `loi check` on the complete program snippets in `website/docs.html` and the
-  README example, plus the build/run of the README example: exit 0. Shorter
-  documentation fragments were reviewed against `SINTAXE.md`.
+  README example, plus the build/run of the README example: exit 0. This
+  includes the new generics and `comptime` snippets. Shorter documentation
+  fragments were reviewed against `SINTAXE.md`.
 - Re-running the raylib generator produces byte-identical `.loi`, shim and skip
   report files.
 - Full SDL2/raylib link-and-run is blocked locally by missing runtime
@@ -132,8 +132,9 @@ cargo test --all-targets
 - `cstr` and `opaque` are FFI-only handles. They can be stored, passed,
   returned and compared by identity but not indexed, measured, printed or
   dereferenced. Byte access requires a hand-written shim.
-- globals are limited to scalars, `bool` and `[u8]` initialized from a string.
-  Composite globals need a runtime constructor.
+- Globals may use any compile-time constant: scalars, strings, slices and
+  nested shapes. The backend folds them once and emits C static initializers
+  with designated/compound literals.
 - `==`/`!=` are defined for scalars, `bool` and `[u8]` only.
 - Imports are textual inclusion without namespaces or cross-file visibility
   enforcement. Multi-file builds give sealed flows external linkage so
@@ -143,8 +144,11 @@ cargo test --all-targets
   environment or process API. `read_file`, `read_stdin` and `read_line`
   allocate in the current `protect` region and cannot escape it. Resources
   (`guard`) are specified but not implemented.
-- `comptime` is lexed but not parsed. Freshness, spatial tiers and ordering
-  blocks are not implemented.
+- `comptime` is implemented for pure flows, expressions, globals and shape
+  defaults. Freshness, spatial tiers and ordering blocks are not implemented.
+- Generic declarations are templates; only instantiations reach checking and
+  code generation. There is no type inference and no user-visible `Type::Generic`
+  after monomorphization.
 - The pretty-printer prints shape literals on one line. `loi fmt` reattaches
   `//` comments to source-line anchors, so comments inside multi-line
   expressions can move to the next statement boundary; output becomes stable
@@ -178,7 +182,6 @@ Remaining implementation or secondary choices:
 
 - Enforce cross-file visibility and replace textual imports with a real module
   and namespace design.
-- Decide how composite globals are constructed at startup.
 - Define structural equality for shapes, or keep the current field-by-field
   rule permanently.
 - Decide whether callbacks, variadics, safe unions or fixed arrays deserve
@@ -195,10 +198,10 @@ Remaining implementation or secondary choices:
 ## Next Steps
 
 1. Add a real module/namespace design and enforce `open`/`sealed` across files.
-2. Implement `comptime` per 5.1: parser support, a step-limited constant
-   evaluator and constant contexts.
-3. Design linear resources (`guard`, `<Shape>_release`) before adding file or
+2. Design linear resources (`guard`, `<Shape>_release`) before adding file or
    socket APIs.
+3. Design growable collections (`Vec<T>`, maps) as library code now that
+   generics and explicit monomorphization exist.
 4. Extend the binding generator for the C constructs that still require
    hand-written shims, and add window/render examples for SDL2 and raylib on a
    machine with the runtimes installed.

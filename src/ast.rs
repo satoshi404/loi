@@ -34,11 +34,14 @@ pub enum Direction {
     Inout,
 }
 
-/// A Loi type. Slices are written `[T]`.
+/// A Loi type. Slices are written `[T]` and generic instantiations `Name<T>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
     Named(String),
     Slice(Box<Type>),
+    /// A generic instantiation such as `Vec<i32>`. It is resolved to a
+    /// `Named` type by monomorphization before type checking.
+    Generic(String, Vec<Type>),
 }
 
 /// A complete source file.
@@ -98,6 +101,8 @@ pub struct InterfaceDecl {
     pub close_line: usize,
     pub visibility: Visibility,
     pub name: String,
+    /// Type parameters declared as `shape Name<T, U>`.
+    pub type_params: Vec<String>,
     pub fields: Vec<FieldDecl>,
 }
 
@@ -124,6 +129,11 @@ pub struct FunctionDecl {
     pub span: Span,
     pub visibility: Visibility,
     pub name: String,
+    /// Type parameters declared as `flow name<T, U>`.
+    pub type_params: Vec<String>,
+    /// True for `comptime flow`: the body must be pure and is evaluated at
+    /// compile time when called from a constant context.
+    pub comptime: bool,
     pub params: Vec<Param>,
     pub return_type: Option<Type>,
     pub body: Block,
@@ -256,6 +266,7 @@ pub enum ExprKind {
     },
     InterfaceLiteral {
         name: String,
+        type_args: Vec<Type>,
         fields: Vec<FieldInit>,
     },
     Unary {
@@ -273,6 +284,7 @@ pub enum ExprKind {
     },
     Call {
         callee: Box<Expr>,
+        type_args: Vec<Type>,
         args: Vec<CallArg>,
     },
     Alloc {
@@ -290,6 +302,8 @@ pub enum ExprKind {
         base: Box<Expr>,
         index: Box<Expr>,
     },
+    /// `comptime expr`: force compile-time evaluation.
+    Comptime(Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
