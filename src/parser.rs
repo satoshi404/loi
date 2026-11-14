@@ -45,6 +45,10 @@ pub fn parse(tokens: Vec<Token>) -> ParseResult<Program> {
 pub struct Parser {
     tokens: Vec<Token>,
     position: usize,
+    /// Tokens rewritten while splitting `>>` into two `>` closers. Backtracking
+    /// from a failed type-argument attempt restores them so a later attempt
+    /// sees the original stream.
+    splits: Vec<(usize, Token)>,
 }
 
 impl Parser {
@@ -60,6 +64,7 @@ impl Parser {
         Self {
             tokens,
             position: 0,
+            splits: Vec::new(),
         }
     }
 
@@ -539,7 +544,10 @@ impl Parser {
             }
             TokenKind::Shr => {
                 // Consume one `>` from the `>>` token and leave the other in
-                // place for the enclosing generic.
+                // place for the enclosing generic. Remember the original token
+                // so a failed speculative parse can restore it.
+                let original = self.tokens[self.position].clone();
+                self.splits.push((self.position, original));
                 let token = &mut self.tokens[self.position];
                 token.kind = TokenKind::Gt;
                 token.lexeme = ">".to_string();
@@ -559,10 +567,15 @@ impl Parser {
             return None;
         }
         let saved = self.position;
+        let saved_splits = self.splits.len();
         match self.parse_type_arguments() {
             Ok(args) if self.at(after) => Some(args),
             _ => {
                 self.position = saved;
+                while self.splits.len() > saved_splits {
+                    let (index, original) = self.splits.pop().expect("split token");
+                    self.tokens[index] = original;
+                }
                 None
             }
         }
