@@ -36,7 +36,7 @@ impl Diagnostic {
 
 /// Check a complete program, returning every diagnostic found.
 pub fn check(program: &Program) -> Vec<Diagnostic> {
-    let (program, mono_errors) = crate::monomorphize::monomorphize_for_check(program);
+    let (program, mono_errors, source_names) = crate::monomorphize::monomorphize_for_check(program);
     let has_mono_errors = !mono_errors.is_empty();
     let mut diagnostics = mono_errors
         .into_iter()
@@ -73,7 +73,53 @@ pub fn check(program: &Program) -> Vec<Diagnostic> {
     checker.declare_globals(&program);
     checker.check_functions(&program);
     diagnostics.extend(checker.diagnostics);
+    show_source_names(&mut diagnostics, &source_names);
     diagnostics
+}
+
+/// Replace monomorphized identifiers in diagnostics with the spelling the user
+/// wrote. Generated C symbols stay mangled; only messages are rewritten.
+fn show_source_names(
+    diagnostics: &mut [Diagnostic],
+    source_names: &std::collections::HashMap<String, String>,
+) {
+    if source_names.is_empty() {
+        return;
+    }
+    // Longest first so `Vec__i32__i64` is not split into `Vec<i32>__i64`.
+    let mut names = source_names.iter().collect::<Vec<_>>();
+    names.sort_by_key(|entry| std::cmp::Reverse(entry.0.len()));
+    for diagnostic in diagnostics {
+        for (mangled, source) in &names {
+            diagnostic.message = replace_identifier(&diagnostic.message, mangled, source);
+        }
+    }
+}
+
+fn replace_identifier(text: &str, needle: &str, replacement: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut result = String::with_capacity(text.len());
+    let mut index = 0;
+    while index < text.len() {
+        if text[index..].starts_with(needle) {
+            let before = index == 0 || !is_identifier_byte(bytes[index - 1]);
+            let end = index + needle.len();
+            let after = end == text.len() || !is_identifier_byte(bytes[end]);
+            if before && after {
+                result.push_str(replacement);
+                index = end;
+                continue;
+            }
+        }
+        let character = text[index..].chars().next().expect("valid char boundary");
+        result.push(character);
+        index += character.len_utf8();
+    }
+    result
+}
+
+fn is_identifier_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
 #[derive(Debug, Clone)]
@@ -120,6 +166,9 @@ struct VarInfo {
     /// `protect` allocations or block-local slice literals reachable through
     /// this variable.
     taints: Vec<RegionTaint>,
+    /// Top-level bindings are stored in the base scope. Their move state is
+    /// never recorded: ownership is tracked per function body.
+    is_global: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -662,6 +711,7 @@ impl Checker {
                     moved: HashSet::new(),
                     home_region: None,
                     taints: Vec::new(),
+                    is_global: true,
                 },
             );
         }
@@ -940,6 +990,7 @@ impl Checker {
                 moved: HashSet::new(),
                 home_region: None,
                 taints: Vec::new(),
+                is_global: false,
             };
             self.scopes
                 .last_mut()
@@ -1059,6 +1110,7 @@ impl Checker {
                         moved: HashSet::new(),
                         home_region: self.current_region(),
                         taints: Vec::new(),
+                        is_global: false,
                     },
                 );
                 if carries_storage {
@@ -1157,6 +1209,7 @@ impl Checker {
                             moved: HashSet::new(),
                             home_region: self.current_region(),
                             taints: Vec::new(),
+                            is_global: false,
                         },
                     );
                 }
@@ -1211,6 +1264,7 @@ impl Checker {
                             moved: HashSet::new(),
                             home_region: self.current_region(),
                             taints: Vec::new(),
+                            is_global: false,
                         },
                     );
                 }
@@ -2097,6 +2151,13 @@ impl Checker {
             let (Some(root), Some(path)) = (place_root(&arg.value), place_path(&arg.value)) else {
                 continue;
             };
+            if self.lookup(&root).is_some_and(|var| var.is_global) {
+                self.error(
+                    arg.value.span,
+                    format!("cannot give from global '{root}'; use clone(...)"),
+                );
+                continue;
+            }
             self.record_move(&root, &path);
         }
     }
@@ -2295,8 +2356,14 @@ impl Checker {
         let direction = var.direction;
         let initialized = var.initialized;
         let moved = path_is_moved(&var.moved, &path);
+        let is_global = var.is_global;
 
-        if direction == Some(Direction::In) {
+        if is_global {
+            self.error(
+                value.span,
+                format!("cannot give from global '{root}'; use clone(...)"),
+            );
+        } else if direction == Some(Direction::In) {
             self.error(
                 value.span,
                 format!("cannot give from '<-' parameter '{root}'"),
@@ -2544,6 +2611,9 @@ impl Checker {
     fn record_move(&mut self, name: &str, path: &str) {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(info) = scope.get_mut(name) {
+                if info.is_global {
+                    return;
+                }
                 info.moved.retain(|moved| !path_is_ancestor(path, moved));
                 info.moved.insert(path.to_string());
                 return;

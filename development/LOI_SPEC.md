@@ -206,7 +206,7 @@ Every parameter declares its direction. The direction is mandatory.
 ### 4.3 Ownership, `give` and `clone`
 
 - Every value has exactly one owner and one live name.
-- `give(x)` transfers ownership. After it, `x` is dead and must not be used.
+- `give(x)` transfers ownership. After it, `x` is dead and must not be used. A global, or a field/element of a global, cannot be given (there is no enclosing function that owns it); use `clone(...)` instead.
 
 ```loi
 a <- 7

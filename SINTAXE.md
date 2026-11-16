@@ -172,7 +172,9 @@ expressions, constant globals, shape/slice literals and `comptime` calls. The C
 backend emits them as static initializers, including nested shapes, slices and
 strings. These initializers are strict C11: shapes use brace/designated
 initializers (no compound literals), and slice constants are backed by named
-`static` arrays emitted before the globals.
+`static` arrays emitted before the globals. Globals can be read or cloned, but
+`give` cannot transfer ownership out of a global or out of a field/element of
+one; use `clone(...)` instead.
 
 ---
 
@@ -443,7 +445,9 @@ xs.len         // u64
 ## 11. Ownership
 
 - Every value has exactly one owner and one live name.
-- `give(x)` transfers ownership; `x` is dead afterwards.
+- `give(x)` transfers ownership; `x` is dead afterwards. A global, or a
+  field/element of a global, cannot be given because there is no enclosing
+  function that owns it; use `clone(...)` instead.
 
   ```loi
   a <- Vec2[ x: 1, y: 2 ]

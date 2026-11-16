@@ -887,6 +887,70 @@ fn globals_are_checked_and_must_be_constant() {
 }
 
 #[test]
+fn give_of_a_global_is_rejected() {
+    let messages = messages(
+        "SAMPLE: [i32] <- [i32: 1, 2, 3]\n\nflow reader\n    => i32\n{\n    mut i: u64 <- 0\n    => SAMPLE[i]\n}\n\nflow poke\n    <- n: i32\n    => i32\n{\n    mut s <- give(SAMPLE)\n    s[0] = 99\n    => 0\n}\n\nopen flow main\n    => i32\n{\n    mut ignore <- poke(1)\n    => reader()\n}\n",
+    );
+    assert!(
+        messages.iter().any(|message| {
+            message.contains("cannot give from global 'SAMPLE'") && message.contains("clone")
+        }),
+        "expected a global-give diagnostic suggesting clone, got {messages:#?}"
+    );
+    assert!(
+        !messages
+            .iter()
+            .any(|message| message.contains("use of moved value 'SAMPLE'")),
+        "global move state must not leak between functions, got {messages:#?}"
+    );
+}
+
+#[test]
+fn give_of_a_global_field_or_element_is_rejected() {
+    assert_message(
+        "shape Vec2 [\n    x: i32\n    y: i32\n]\n\nPOINT: Vec2 <- Vec2[ x: 1, y: 2 ]\n\nflow main\n    => i32\n{\n    mut x <- give(POINT.x)\n    => x\n}\n",
+        "cannot give from global 'POINT'",
+    );
+    assert_message(
+        "SAMPLE: [i32] <- [i32: 1, 2, 3]\n\nflow main\n    => i32\n{\n    mut x <- give(SAMPLE[0])\n    => x\n}\n",
+        "cannot give from global 'SAMPLE'",
+    );
+    assert_message(
+        "NAME: [u8] <- \"hi\"\n\nflow main\n    => i32\n{\n    mut name <- give(NAME)\n    => name.len as i32\n}\n",
+        "cannot give from global 'NAME'",
+    );
+}
+
+#[test]
+fn global_moved_state_is_per_function_body_and_order_independent() {
+    let poke_before_reader = "SAMPLE: [i32] <- [i32: 1, 2, 3]\n\nflow poke\n    => i32\n{\n    mut s <- give(SAMPLE)\n    s[0] = 99\n    => 0\n}\n\nflow reader\n    => i32\n{\n    mut i: u64 <- 0\n    => SAMPLE[i]\n}\n\nflow main\n    => i32\n{\n    mut ignore <- poke()\n    => reader()\n}\n";
+    let reader_before_poke = "SAMPLE: [i32] <- [i32: 1, 2, 3]\n\nflow reader\n    => i32\n{\n    mut i: u64 <- 0\n    => SAMPLE[i]\n}\n\nflow poke\n    => i32\n{\n    mut s <- give(SAMPLE)\n    s[0] = 99\n    => 0\n}\n\nflow main\n    => i32\n{\n    mut ignore <- poke()\n    => reader()\n}\n";
+
+    for source in [poke_before_reader, reader_before_poke] {
+        let messages = messages(source);
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("cannot give from global 'SAMPLE'")),
+            "expected the global-give error regardless of declaration order, got {messages:#?}"
+        );
+        assert!(
+            !messages
+                .iter()
+                .any(|message| message.contains("use of moved value 'SAMPLE'")),
+            "a move in one function must not affect another function, got {messages:#?}"
+        );
+    }
+}
+
+#[test]
+fn clone_and_reads_of_globals_still_work() {
+    assert_clean(
+        "shape Vec2 [\n    x: i32\n    y: i32\n]\n\nORIGIN: Vec2 <- Vec2[ x: 0, y: 0 ]\nLIMIT: i32 <- 3\nNAME: [u8] <- \"hi\"\n\nflow main\n    => i32\n{\n    mut p <- clone(ORIGIN)\n    => p.x + LIMIT + NAME.len as i32\n}\n",
+    );
+}
+
+#[test]
 fn accepts_opaque_handles_extern_flows_and_cstr_literals() {
     assert_clean(
         "opaque Handle\n\n\
@@ -1227,5 +1291,22 @@ fn unused_generic_templates_are_still_checked() {
     );
     assert_clean(
         "shape Vec<T> [\n    data: [T]\n    len: u64\n]\n\nflow unused_sum<T>\n    <- xs: Vec<T>\n    => i32\n{\n    mut total: i32 <- 0\n    for i in 0..xs.len {\n        total += xs.data[i] as i32\n    }\n    => total\n}\n\nflow main\n    => i32\n{\n    => 0\n}\n",
+    );
+}
+
+#[test]
+fn diagnostics_use_source_spelling_for_generic_instantiations() {
+    let messages = messages(
+        "shape Vec<T> [\n    data: [T]\n]\n\nflow main\n    => i32\n{\n    x: Vec<i32> <- Vec<i64>[ data: [i64: 1] ]\n    => 0\n}\n",
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Vec<i32>") && message.contains("Vec<i64>")),
+        "expected source spellings in the diagnostic, got {messages:#?}"
+    );
+    assert!(
+        !messages.iter().any(|message| message.contains("__")),
+        "diagnostics must not expose mangled names, got {messages:#?}"
     );
 }

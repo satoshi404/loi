@@ -36,7 +36,8 @@ const MAX_INSTANTIATION_DEPTH: usize = 64;
 /// The returned program contains no `ast::Type::Generic`, no type parameters
 /// and no generic templates.
 pub fn monomorphize(program: &Program) -> (Program, Vec<MonoError>) {
-    run(program, false)
+    let (program, errors, _) = run(program, false);
+    (program, errors)
 }
 
 /// Like [`monomorphize`], but also instantiates templates that the program
@@ -48,11 +49,16 @@ pub fn monomorphize(program: &Program) -> (Program, Vec<MonoError>) {
 /// type. Real uses are still checked with their actual type arguments. The
 /// extra declarations are only used by the checker; code generation calls
 /// [`monomorphize`] and never sees them.
-pub fn monomorphize_for_check(program: &Program) -> (Program, Vec<MonoError>) {
+pub fn monomorphize_for_check(
+    program: &Program,
+) -> (Program, Vec<MonoError>, HashMap<String, String>) {
     run(program, true)
 }
 
-fn run(program: &Program, validate_unused_templates: bool) -> (Program, Vec<MonoError>) {
+fn run(
+    program: &Program,
+    validate_unused_templates: bool,
+) -> (Program, Vec<MonoError>, HashMap<String, String>) {
     let mut pass = Monomorphizer {
         interfaces: HashMap::new(),
         functions: HashMap::new(),
@@ -122,7 +128,7 @@ fn run(program: &Program, validate_unused_templates: bool) -> (Program, Vec<Mono
     }
 
     items.append(&mut pass.generated);
-    (Program { items }, pass.errors)
+    (Program { items }, pass.errors, pass.requested)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

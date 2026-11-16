@@ -13,7 +13,12 @@
   3. `comptime` arithmetic follows runtime overflow, width, shift and `f32`
      rounding rules while `as` still truncates;
   4. static global initializers are strict C11, with named arrays for slice
-     data instead of compound literals.
+     data instead of compound literals;
+  5. `give` of a global, or of a field/element of one, is rejected with a
+     `clone(...)` suggestion, and ownership/move state is tracked per function
+     body so globals are never marked moved;
+  6. checker diagnostics print the source spelling of generic instantiations
+     (`Vec<i32>`) while generated C symbols stay mangled (`Vec__i32`).
   Growable collections (`Vec<T>`, maps) remain library work; the type-system
   blocker is resolved.
 - **Overall health:** good; the full test suite, `cargo fmt --check` and
@@ -28,9 +33,9 @@
 | Lexer | Working | Canonical Flow Syntax only; strings with decoded escapes; decimal/hex/binary integers; floats; `<-`/`->`/`<->`/`=>` glyphs; bitwise/shift/compound tokens; `//` comments collected for `fmt` |
 | AST / parser | Working | Shapes and generic shapes, flows and generic flows, `extern flow ... as`, `opaque`, imports, globals, slice/shape literals, `give`/`clone`/`alloc`, `protect`, loops, bitwise/shift precedence, `comptime flow`/`comptime expr`, explicit type arguments |
 | Pretty-printer | Working | Emits canonical Flow Syntax including generics and `comptime`; idempotent on all canonical files; `loi fmt` preserves `//` comments (`format_program` remains comment-free) |
-| Type checker | Working | Types, literals, directions, calls, globals, intrinsics, `opaque`/`cstr`, constant folding, shape-cycle detection, bitwise/shift rules, I/O intrinsic signatures and allocation effects; monomorphization feeds concrete declarations into the checker |
+| Type checker | Working | Types, literals, directions, calls, globals, intrinsics, `opaque`/`cstr`, constant folding, shape-cycle detection, bitwise/shift rules, I/O intrinsic signatures and allocation effects; monomorphization feeds concrete declarations into the checker and diagnostics show source generic spellings |
 | Compile-time evaluation | Working | `src/const_eval.rs`: pure `comptime flow` interpreter with step/depth limits, constant globals and shape defaults, `comptime expr`, purity diagnostics |
-| Ownership | Working | Give liveness, definite assignment/return, exclusive `->`/`<->`, cross-flow consumption, `protect` taints and lexical-block escape analysis for slice literals, `read_file`/`read_stdin`/`read_line` |
+| Ownership | Working | Give liveness, definite assignment/return, exclusive `->`/`<->`, cross-flow consumption, `protect` taints and lexical-block escape analysis for slice literals, `read_file`/`read_stdin`/`read_line`; gives from globals are rejected and move state is per function body |
 | C backend | Working | One C11 translation unit, ordered shape layouts, checked arithmetic, bitwise/shift helpers, growable arena, bounds checks, defaults, headers, source maps, multi-file objects, statics, file/stdin I/O and numeric printing |
 | C interop | Working | `opaque` → `void *`, `cstr` → `const char *`, bodyless `extern flow`, `--c-source`, `--cc-flag`; string literals coerce to `cstr` |
 | Binding generator | Working | `tools/bindgen/bindgen.py` emits `opaque` handles, safe `shape`s, typed constants, `extern flow`s, a `memcpy` shim with `_Static_assert` checks and a skip report |
@@ -52,15 +57,18 @@ cargo clippy --all-targets -- -D warnings
 cargo test --all-targets
 ```
 
-- `cargo test --all-targets`: **223 passed, 0 failed** (suite breakdown is
+- `cargo test --all-targets`: **228 passed, 0 failed** (suite breakdown is
   printed by Cargo; compile-and-run tests skip when `cc` is unavailable).
 - New coverage: generic shapes and flows (including nested instantiations,
   `>>` token splitting and backtracking, comparisons around `<`/`>`),
   monomorphized C symbols, recursive-instantiation depth limits, generated-name
   collisions, validation of unused templates, pure `comptime` flows and
   expressions with signed overflow, unsigned wrap, cast and `f32` parity,
-  `comptime`-initialized globals, strict-C11 composite globals, and formatter
-  idempotence for generics and `comptime`. The previous bitwise/shift,
+  `comptime`-initialized globals, strict-C11 composite globals, formatter
+  idempotence for generics and `comptime`, global-`give` rejection for slices,
+  fields, elements and strings, per-function move state independent of
+  declaration order, `clone`/reads of globals, and source-spelling diagnostics
+  for generic instantiations. The previous bitwise/shift,
   file/stdin I/O, numeric printing and comment-preserving `fmt` coverage still
   passes unchanged.
 - `examples/systems.loi` builds and runs (`2215315943 1193046 1.5`), and
