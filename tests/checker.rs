@@ -1152,3 +1152,80 @@ fn comptime_flows_can_initialize_globals() {
         "must be a compile-time constant",
     );
 }
+
+#[test]
+fn comptime_overflow_is_diagnosed_like_a_runtime_trap() {
+    assert_message(
+        "LIMIT: i32 <- comptime 2147483647 + 1\n\nflow main\n    => i32\n{\n    => LIMIT\n}\n",
+        "integer overflow in comptime expression",
+    );
+    assert_message(
+        "comptime flow bump\n    <- x: i32\n    => i32\n{\n    => x + 1\n}\n\nLIMIT: i32 <- comptime bump(2147483647)\n\nflow main\n    => i32\n{\n    => LIMIT\n}\n",
+        "integer overflow in comptime expression",
+    );
+    assert_message(
+        "LIMIT: i8 <- comptime -127 - 2\n\nflow main\n    => i32\n{\n    => LIMIT as i32\n}\n",
+        "integer overflow in comptime expression",
+    );
+}
+
+#[test]
+fn comptime_explicit_casts_still_truncate() {
+    assert_clean(
+        "TINY: i8 <- comptime 300 as i8\n\nflow main\n    => i32\n{\n    => TINY as i32\n}\n",
+    );
+}
+
+#[test]
+fn comptime_unsigned_arithmetic_wraps_at_its_width() {
+    assert_clean(
+        "U: u8 <- comptime 250 + 10\nV: u8 <- comptime 255 - 255\nW: u8 <- comptime 200 as u8\n\nflow main\n    => i32\n{\n    => U as i32 + V as i32 + W as i32\n}\n",
+    );
+    assert_message(
+        "SHIFT: u8 <- comptime 1 << 8\n\nflow main\n    => i32\n{\n    => SHIFT as i32\n}\n",
+        "shift count is out of range",
+    );
+}
+
+#[test]
+fn recursive_generic_instantiation_reports_a_depth_limit() {
+    let messages = messages(
+        "shape Vec<T> [\n    data: [T]\n    len: u64\n]\n\nflow f<T>\n    <- x: T\n    => i32\n{\n    empty <- Vec<T>[ data: [T:], len: 0 ]\n    => f<Vec<T>>(empty)\n}\n\nflow main\n    => i32\n{\n    => f<i32>(1)\n}\n",
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("depth limit")),
+        "expected a depth-limit diagnostic, got {messages:#?}"
+    );
+    assert!(
+        messages.len() == 1,
+        "depth-limit errors should not cascade, got {messages:#?}"
+    );
+}
+
+#[test]
+fn generated_names_colliding_with_user_shapes_are_reported_clearly() {
+    let messages = messages(
+        "shape Vec<T> [\n    data: [T]\n    len: u64\n]\n\nshape Vec__i32 [\n    x: i32\n]\n\nflow main\n    => i32\n{\n    v <- Vec<i32>[ data: [i32: 1], len: 1 ]\n    w <- Vec__i32[ x: 2 ]\n    => v.len as i32 + w.x\n}\n",
+    );
+    assert!(
+        messages.iter().any(|message| {
+            message.contains("generated name 'Vec__i32'")
+                && message.contains("Vec<i32>")
+                && message.contains("collides")
+        }),
+        "expected a clear collision diagnostic, got {messages:#?}"
+    );
+}
+
+#[test]
+fn unused_generic_templates_are_still_checked() {
+    assert_message(
+        "flow broken<T>\n    <- x: T\n    => i32\n{\n    => missing_name + x\n}\n\nflow main\n    => i32\n{\n    => 0\n}\n",
+        "unknown variable 'missing_name'",
+    );
+    assert_clean(
+        "shape Vec<T> [\n    data: [T]\n    len: u64\n]\n\nflow unused_sum<T>\n    <- xs: Vec<T>\n    => i32\n{\n    mut total: i32 <- 0\n    for i in 0..xs.len {\n        total += xs.data[i] as i32\n    }\n    => total\n}\n\nflow main\n    => i32\n{\n    => 0\n}\n",
+    );
+}

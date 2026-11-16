@@ -125,7 +125,19 @@ nested  <- Vec<Vec<i32>>[ data: [Vec<i32>:], len: 0 ]
 - Generic declarations are templates. The compiler monomorphizes each used
   instantiation into a concrete shape before type checking and code generation.
 - Type arguments may be primitives, shapes, slices, or other generic
-  instantiations. The lexer's `>>` is split when closing nested arguments.
+  instantiations. The lexer's `>>` is split when closing nested arguments, and
+  the split is undone when a speculative parse backtracks.
+- A template that is never instantiated is still checked once, with `i32`
+  substituted for every type parameter. This catches name, type and ownership
+  errors in unused code. It is a smoke test, not a proof that the body is valid
+  for every `T`; real uses are checked with their actual arguments.
+- Instantiation is not allowed to recurse indefinitely. A template such as
+  `f<T>` that instantiates `f<Vec<T>>` stops at a depth limit with a clear
+  diagnostic instead of generating types forever.
+- The generated C name for `Vec<i32>` is `Vec__i32`. If a user declaration
+  already uses that name, or two instantiations mangle to the same identifier,
+  the compiler reports the collision and suggests renaming the declaration or
+  changing the type argument.
 
 ---
 
@@ -158,7 +170,9 @@ open mut LIMIT: i32 <- 3
 Global initializers must be compile-time constants: literals, constant
 expressions, constant globals, shape/slice literals and `comptime` calls. The C
 backend emits them as static initializers, including nested shapes, slices and
-strings.
+strings. These initializers are strict C11: shapes use brace/designated
+initializers (no compound literals), and slice constants are backed by named
+`static` arrays emitted before the globals.
 
 ---
 
@@ -243,7 +257,9 @@ flow main
 - Passing a type argument to a non-generic flow is an error, as is the wrong
   number of arguments.
 - Generic flows are monomorphized per instantiation, so each concrete type
-  argument produces a separate compiled function.
+  argument produces a separate compiled function. Unused generic flows are
+  checked with `i32` placeholders, and recursive instantiations hit the same
+  depth limit as generic shapes.
 
 ### 5.4 `comptime`
 
@@ -276,6 +292,12 @@ flow next
   non-`comptime` flow there is an error.
 - Evaluation is step-limited and call-depth-limited, so a recursive
   `comptime` flow produces a diagnostic instead of hanging the compiler.
+- `comptime` arithmetic has the same semantics as runtime arithmetic for the
+  result type: signed integer overflow is a compile error, unsigned arithmetic
+  wraps at its declared width, and shifts are checked at that width. `as` is
+  still an explicit truncating cast, so `300 as i8` is `44`. `f32` results are
+  rounded to `f32` precision, so `comptime 1.0 / 3.0` used as `f32` matches the
+  value the C backend computes at runtime.
 
 ---
 

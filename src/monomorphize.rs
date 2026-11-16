@@ -27,20 +27,44 @@ impl MonoError {
     }
 }
 
+/// Maximum nesting of generic instantiations. A template such as
+/// `flow f<T> { => f<Vec<T>>(...) }` would otherwise generate types forever.
+const MAX_INSTANTIATION_DEPTH: usize = 64;
+
 /// Instantiate every generic declaration used by `program`.
 ///
 /// The returned program contains no `ast::Type::Generic`, no type parameters
 /// and no generic templates.
 pub fn monomorphize(program: &Program) -> (Program, Vec<MonoError>) {
+    run(program, false)
+}
+
+/// Like [`monomorphize`], but also instantiates templates that the program
+/// never uses so the checker can validate their bodies.
+///
+/// Type parameters have no constraints, so an unused template is validated
+/// once with `i32` substituted for every parameter. This is a smoke test for
+/// name, type and ownership errors, not a proof that the body works for every
+/// type. Real uses are still checked with their actual type arguments. The
+/// extra declarations are only used by the checker; code generation calls
+/// [`monomorphize`] and never sees them.
+pub fn monomorphize_for_check(program: &Program) -> (Program, Vec<MonoError>) {
+    run(program, true)
+}
+
+fn run(program: &Program, validate_unused_templates: bool) -> (Program, Vec<MonoError>) {
     let mut pass = Monomorphizer {
         interfaces: HashMap::new(),
         functions: HashMap::new(),
         named_interfaces: HashSet::new(),
         named_functions: HashSet::new(),
-        requested: HashSet::new(),
+        requested: HashMap::new(),
+        instantiated: HashSet::new(),
         queue: Vec::new(),
         generated: Vec::new(),
         errors: Vec::new(),
+        current_depth: 0,
+        depth_error_reported: false,
     };
 
     for item in &program.items {
@@ -90,24 +114,18 @@ pub fn monomorphize(program: &Program) -> (Program, Vec<MonoError>) {
         }
     }
 
-    let mut guard = 0usize;
-    while let Some(request) = pass.queue.pop() {
-        guard += 1;
-        if guard > 4096 {
-            pass.errors.push(MonoError::new(
-                request.span,
-                "generic instantiation is too deep or recursive",
-            ));
-            break;
-        }
-        pass.build(request);
+    pass.drain_queue();
+
+    if validate_unused_templates {
+        pass.request_unused_templates();
+        pass.drain_queue();
     }
 
     items.append(&mut pass.generated);
     (Program { items }, pass.errors)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum RequestKind {
     Interface,
     Function,
@@ -120,6 +138,7 @@ struct Request {
     args: Vec<Type>,
     name: String,
     span: Span,
+    depth: usize,
 }
 
 struct Monomorphizer<'a> {
@@ -127,10 +146,17 @@ struct Monomorphizer<'a> {
     functions: HashMap<String, &'a FunctionDecl>,
     named_interfaces: HashSet<String>,
     named_functions: HashSet<String>,
-    requested: HashSet<String>,
+    /// Concrete name -> readable instantiation, used to detect mangling
+    /// collisions as well as collisions with user declarations.
+    requested: HashMap<String, String>,
+    instantiated: HashSet<(RequestKind, String)>,
     queue: Vec<Request>,
     generated: Vec<Item>,
     errors: Vec<MonoError>,
+    /// Depth of the request currently being rewritten. Requests created while
+    /// rewriting it are one level deeper.
+    current_depth: usize,
+    depth_error_reported: bool,
 }
 
 impl<'a> Monomorphizer<'a> {
@@ -365,19 +391,111 @@ impl<'a> Monomorphizer<'a> {
 
     fn request(&mut self, kind: RequestKind, base: &str, args: Vec<Type>, span: Span) -> String {
         let name = instantiation_name(base, &args);
-        if self.requested.insert(name.clone()) {
-            self.queue.push(Request {
-                kind,
-                base: base.to_string(),
-                args,
-                name: name.clone(),
+        let display = instantiation_display(base, &args);
+
+        let declared = match kind {
+            RequestKind::Interface => self.named_interfaces.contains(&name),
+            RequestKind::Function => self.named_functions.contains(&name),
+        };
+        if declared {
+            let noun = match kind {
+                RequestKind::Interface => "shape",
+                RequestKind::Function => "flow",
+            };
+            self.errors.push(MonoError::new(
                 span,
-            });
+                format!(
+                    "generated name '{name}' for {noun} '{display}' collides with an existing declaration named '{name}'; rename the declaration or change the type argument"
+                ),
+            ));
         }
+        if let Some(existing) = self.requested.get(&name) {
+            if existing != &display {
+                self.errors.push(MonoError::new(
+                    span,
+                    format!(
+                        "generated name '{name}' is ambiguous: it names both '{existing}' and '{display}'; rename one of the types involved"
+                    ),
+                ));
+            }
+            return name;
+        }
+        self.requested.insert(name.clone(), display);
+
+        let depth = self.current_depth + 1;
+        if depth > MAX_INSTANTIATION_DEPTH {
+            if !self.depth_error_reported {
+                self.depth_error_reported = true;
+                self.errors.push(MonoError::new(
+                    span,
+                    format!(
+                        "generic instantiation exceeds the depth limit of {MAX_INSTANTIATION_DEPTH}; recursive instantiations such as 'f<T>' calling 'f<Vec<T>>' are not allowed"
+                    ),
+                ));
+            }
+            return name;
+        }
+
+        self.queue.push(Request {
+            kind,
+            base: base.to_string(),
+            args,
+            name: name.clone(),
+            span,
+            depth,
+        });
         name
     }
 
+    fn drain_queue(&mut self) {
+        while let Some(request) = self.queue.pop() {
+            self.current_depth = request.depth;
+            self.build(request);
+        }
+        self.current_depth = 0;
+    }
+
+    /// Instantiate every still-unused template with `i32` for each type
+    /// parameter, so the checker validates its body.
+    fn request_unused_templates(&mut self) {
+        let mut interfaces = self
+            .interfaces
+            .iter()
+            .map(|(name, decl)| (name.clone(), decl.type_params.len(), decl.span))
+            .collect::<Vec<_>>();
+        let mut functions = self
+            .functions
+            .iter()
+            .map(|(name, decl)| (name.clone(), decl.type_params.len(), decl.span))
+            .collect::<Vec<_>>();
+        interfaces.sort_by(|left, right| left.0.cmp(&right.0));
+        functions.sort_by(|left, right| left.0.cmp(&right.0));
+
+        for (name, arity, span) in interfaces {
+            if self
+                .instantiated
+                .contains(&(RequestKind::Interface, name.clone()))
+            {
+                continue;
+            }
+            let args = vec![Type::Named("i32".to_string()); arity];
+            self.request(RequestKind::Interface, &name, args, span);
+        }
+        for (name, arity, span) in functions {
+            if self
+                .instantiated
+                .contains(&(RequestKind::Function, name.clone()))
+            {
+                continue;
+            }
+            let args = vec![Type::Named("i32".to_string()); arity];
+            self.request(RequestKind::Function, &name, args, span);
+        }
+    }
+
     fn build(&mut self, request: Request) {
+        self.instantiated
+            .insert((request.kind, request.base.clone()));
         let mut mapping = HashMap::new();
         match request.kind {
             RequestKind::Interface => {
@@ -456,5 +574,25 @@ fn type_mangle(ty: &Type) -> String {
         Type::Named(name) => name.clone(),
         Type::Slice(element) => format!("slice_{}", type_mangle(element)),
         Type::Generic(name, args) => instantiation_name(name, args),
+    }
+}
+
+/// Human-readable spelling of an instantiation, for diagnostics. This is what
+/// users wrote (`Vec<i32>`), unlike the mangled C identifier (`Vec__i32`).
+fn instantiation_display(base: &str, args: &[Type]) -> String {
+    if args.is_empty() {
+        return base.to_string();
+    }
+    format!(
+        "{base}<{}>",
+        args.iter().map(type_display).collect::<Vec<_>>().join(", ")
+    )
+}
+
+fn type_display(ty: &Type) -> String {
+    match ty {
+        Type::Named(name) => name.clone(),
+        Type::Slice(element) => format!("[{}]", type_display(element)),
+        Type::Generic(name, args) => instantiation_display(name, args),
     }
 }

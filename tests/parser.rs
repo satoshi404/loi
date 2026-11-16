@@ -779,3 +779,73 @@ fn parses_comptime_flows_and_expressions() {
         other => panic!("expected return, got {other:?}"),
     }
 }
+
+#[test]
+fn parses_nested_generic_call_arguments_after_a_shift_split() {
+    let program = parse_source(
+        "shape Vec<T> [\n    data: [T]\n    len: u64\n]\n\nflow id<T>\n    <- x: T\n    => u64\n{\n    => 0\n}\n\nflow main\n    => i32\n{\n    v <- Vec<Vec<i32>>[ data: [Vec<i32>:], len: 0 ]\n    w <- id<Vec<Vec<i32>>>(v)\n    => w as i32\n}\n",
+    );
+
+    let main = function(&program, "main");
+    let StmtKind::Let {
+        value: Some(value), ..
+    } = &main.body.statements[1].kind
+    else {
+        panic!("expected let statement");
+    };
+    match kind(value) {
+        ExprKind::Call { type_args, .. } => {
+            assert_eq!(
+                type_args,
+                &vec![Type::Generic(
+                    "Vec".to_string(),
+                    vec![Type::Generic(
+                        "Vec".to_string(),
+                        vec![Type::Named("i32".to_string())]
+                    )]
+                )]
+            );
+        }
+        other => panic!("expected generic call, got {other:?}"),
+    }
+}
+
+#[test]
+fn comparisons_and_shifts_do_not_consume_generic_angle_brackets() {
+    let program = parse_source(
+        "flow f\n    <- a: i32\n    <- b: i32\n    <- x: i32\n    <- y: i32\n    <- z: i32\n    <- w: i32\n    => bool\n{\n    r <- a >> 1\n    s <- a << 2\n    => a < b and x < y and z > w and r > s\n}\n",
+    );
+
+    let f = function(&program, "f");
+    let StmtKind::Let {
+        value: Some(value), ..
+    } = &f.body.statements[0].kind
+    else {
+        panic!("expected shift binding");
+    };
+    assert!(matches!(
+        kind(value),
+        ExprKind::Binary {
+            op: BinaryOp::Shr,
+            ..
+        }
+    ));
+
+    let StmtKind::Return(Some(value)) = &f.body.statements[2].kind else {
+        panic!("expected return");
+    };
+    // The top-level `and` chain keeps the comparisons as nested binaries.
+    let mut seen = Vec::new();
+    collect_binary_ops(value, &mut seen);
+    for op in [BinaryOp::Lt, BinaryOp::Gt] {
+        assert!(seen.contains(&op), "missing {op:?} in {seen:?}");
+    }
+}
+
+fn collect_binary_ops(expr: &Expr, ops: &mut Vec<BinaryOp>) {
+    if let ExprKind::Binary { op, left, right } = kind(expr) {
+        ops.push(*op);
+        collect_binary_ops(left, ops);
+        collect_binary_ops(right, ops);
+    }
+}

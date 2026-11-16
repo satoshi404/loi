@@ -98,17 +98,28 @@ impl ConstError {
     }
 }
 
-type Env = HashMap<String, ConstValue>;
+#[derive(Debug, Clone)]
+struct Binding {
+    value: ConstValue,
+    /// Declared type of the binding, when known. Compile-time arithmetic uses
+    /// it to reproduce the width and overflow behaviour of runtime values.
+    ty: Option<Ty>,
+}
+
+type Env = HashMap<String, Binding>;
 
 /// Evaluates constant expressions and pure `comptime flow` bodies.
 pub struct ConstEvaluator<'a> {
     interfaces: HashMap<&'a str, &'a InterfaceDecl>,
     functions: HashMap<&'a str, &'a FunctionDecl>,
-    globals: HashMap<String, ConstValue>,
+    globals: HashMap<String, Binding>,
     steps: usize,
     max_steps: usize,
     call_depth: usize,
     max_call_depth: usize,
+    /// Expected type of the `return` currently being evaluated, used to catch
+    /// overflow with the same width the runtime would use.
+    current_return: Option<Ty>,
 }
 
 impl<'a> ConstEvaluator<'a> {
@@ -134,6 +145,7 @@ impl<'a> ConstEvaluator<'a> {
             max_steps: 1_000_000,
             call_depth: 0,
             max_call_depth: 128,
+            current_return: None,
         }
     }
 
@@ -141,16 +153,23 @@ impl<'a> ConstEvaluator<'a> {
     pub fn eval_global(&mut self, decl: &GlobalDecl) -> Result<ConstValue, ConstError> {
         let expected = decl.ty.as_ref().and_then(|ty| self.resolve_type(ty));
         let value = self.eval_expr(&decl.value, expected.as_ref())?;
-        let value = match expected {
-            Some(expected) => convert_to(value, &expected, decl.value.span)?,
+        let value = match &expected {
+            Some(expected) => coerce_to(value, expected, decl.value.span)?,
             None => value,
         };
-        self.globals.insert(decl.name.clone(), value.clone());
+        self.globals.insert(
+            decl.name.clone(),
+            Binding {
+                value: value.clone(),
+                ty: expected,
+            },
+        );
         Ok(value)
     }
 
     pub fn set_global(&mut self, name: impl Into<String>, value: ConstValue) {
-        self.globals.insert(name.into(), value);
+        self.globals
+            .insert(name.into(), Binding { value, ty: None });
     }
 
     /// Evaluate an expression with no local bindings.
@@ -201,7 +220,17 @@ impl<'a> ConstEvaluator<'a> {
         self.tick(expr.span)?;
         match &expr.kind {
             ExprKind::Int(text) => Ok(ConstValue::Int(parse_int(text, expr.span)?)),
-            ExprKind::Float(text) => Ok(ConstValue::Float(parse_float(text, expr.span)?)),
+            ExprKind::Float(text) => {
+                let value = parse_float(text, expr.span)?;
+                // A literal used as `f32` must be rounded to `f32` precision
+                // before it reaches arithmetic, exactly like the C backend.
+                let value = if matches!(expected, Some(Ty::F32)) {
+                    value as f32 as f64
+                } else {
+                    value
+                };
+                Ok(ConstValue::Float(value))
+            }
             ExprKind::Bool(value) => Ok(ConstValue::Bool(*value)),
             ExprKind::String(text) => {
                 if matches!(expected, Some(Ty::CStr)) {
@@ -211,10 +240,10 @@ impl<'a> ConstEvaluator<'a> {
                 }
             }
             ExprKind::Ident(name) => {
-                if let Some(value) = env.get(name) {
-                    Ok(value.clone())
-                } else if let Some(value) = self.globals.get(name) {
-                    Ok(value.clone())
+                if let Some(binding) = env.get(name) {
+                    Ok(binding.value.clone())
+                } else if let Some(binding) = self.globals.get(name) {
+                    Ok(binding.value.clone())
                 } else {
                     Err(ConstError::new(
                         expr.span,
@@ -235,7 +264,7 @@ impl<'a> ConstEvaluator<'a> {
                 for item in elements {
                     let value = self.eval_expr_env(item, element.as_ref(), env)?;
                     let value = match &element {
-                        Some(element) => convert_to(value, element, item.span)?,
+                        Some(element) => coerce_to(value, element, item.span)?,
                         None => value,
                     };
                     values.push(value);
@@ -282,7 +311,7 @@ impl<'a> ConstEvaluator<'a> {
                         }
                     };
                     let value = match expected {
-                        Some(expected) => convert_to(value, &expected, expr.span)?,
+                        Some(expected) => coerce_to(value, &expected, expr.span)?,
                         None => value,
                     };
                     values.push((field.name.clone(), value));
@@ -301,29 +330,38 @@ impl<'a> ConstEvaluator<'a> {
                 })
             }
             ExprKind::Unary { op, operand } => {
-                let value = self.eval_expr_env(operand, expected, env)?;
+                let operand_expected = match op {
+                    UnaryOp::Neg | UnaryOp::BitNot => expected.filter(|ty| ty.is_numeric()),
+                    UnaryOp::Not => None,
+                };
+                let value = self.eval_expr_env(operand, operand_expected, env)?;
                 let span = expr.span;
                 match op {
-                    UnaryOp::Neg => match value {
-                        ConstValue::Int(value) => {
-                            Ok(ConstValue::Int(value.checked_neg().ok_or_else(|| {
-                                ConstError::new(span, "integer overflow in comptime expression")
-                            })?))
-                        }
-                        ConstValue::Float(value) => Ok(ConstValue::Float(-value)),
-                        ConstValue::UInt(value) => {
-                            let value = i128::try_from(value).map_err(|_| {
-                                ConstError::new(span, "integer overflow in comptime expression")
-                            })?;
-                            Ok(ConstValue::Int(value.checked_neg().ok_or_else(|| {
-                                ConstError::new(span, "integer overflow in comptime expression")
-                            })?))
-                        }
-                        _ => Err(ConstError::new(
-                            span,
-                            "'-' requires a numeric compile-time value",
-                        )),
-                    },
+                    UnaryOp::Neg => {
+                        let value = match value {
+                            ConstValue::Int(value) => {
+                                ConstValue::Int(value.checked_neg().ok_or_else(|| {
+                                    ConstError::new(span, "integer overflow in comptime expression")
+                                })?)
+                            }
+                            ConstValue::Float(value) => ConstValue::Float(-value),
+                            ConstValue::UInt(value) => {
+                                let value = i128::try_from(value).map_err(|_| {
+                                    ConstError::new(span, "integer overflow in comptime expression")
+                                })?;
+                                ConstValue::Int(value.checked_neg().ok_or_else(|| {
+                                    ConstError::new(span, "integer overflow in comptime expression")
+                                })?)
+                            }
+                            _ => {
+                                return Err(ConstError::new(
+                                    span,
+                                    "'-' requires a numeric compile-time value",
+                                ));
+                            }
+                        };
+                        fit_result(value, expected, span)
+                    }
                     UnaryOp::Not => match value {
                         ConstValue::Bool(value) => Ok(ConstValue::Bool(!value)),
                         _ => Err(ConstError::new(
@@ -331,14 +369,19 @@ impl<'a> ConstEvaluator<'a> {
                             "'not' requires a bool compile-time value",
                         )),
                     },
-                    UnaryOp::BitNot => match value {
-                        ConstValue::Int(value) => Ok(ConstValue::Int(!value)),
-                        ConstValue::UInt(value) => Ok(ConstValue::UInt(!value)),
-                        _ => Err(ConstError::new(
-                            span,
-                            "'~' requires an integer compile-time value",
-                        )),
-                    },
+                    UnaryOp::BitNot => {
+                        let value = match value {
+                            ConstValue::Int(value) => ConstValue::Int(!value),
+                            ConstValue::UInt(value) => ConstValue::UInt(!value),
+                            _ => {
+                                return Err(ConstError::new(
+                                    span,
+                                    "'~' requires an integer compile-time value",
+                                ));
+                            }
+                        };
+                        fit_bitwise_result(value, expected, span)
+                    }
                 }
             }
             ExprKind::Binary { op, left, right } => {
@@ -360,9 +403,10 @@ impl<'a> ConstEvaluator<'a> {
                     let right_value = self.eval_expr_env(right, Some(&Ty::Bool), env)?;
                     return Ok(ConstValue::Bool(as_bool_value(right_value, right.span)?));
                 }
-                let left_value = self.eval_expr_env(left, None, env)?;
-                let right_value = self.eval_expr_env(right, None, env)?;
-                eval_binary(*op, left_value, right_value, expr.span)
+                let numeric_expected = expected.filter(|ty| ty.is_numeric());
+                let left_value = self.eval_expr_env(left, numeric_expected, env)?;
+                let right_value = self.eval_expr_env(right, numeric_expected, env)?;
+                eval_binary(*op, left_value, right_value, expr.span, expected)
             }
             ExprKind::Cast { expr: inner, ty } => {
                 let target = self
@@ -546,11 +590,17 @@ impl<'a> ConstEvaluator<'a> {
             }
             let expected = self.resolve_type(&param.ty);
             let value = self.eval_expr_env(&arg.value, expected.as_ref(), caller_env)?;
-            let value = match expected {
-                Some(expected) => convert_to(value, &expected, arg.value.span)?,
+            let value = match &expected {
+                Some(expected) => coerce_to(value, expected, arg.value.span)?,
                 None => value,
             };
-            env.insert(param.name.clone(), value);
+            env.insert(
+                param.name.clone(),
+                Binding {
+                    value,
+                    ty: expected,
+                },
+            );
         }
 
         self.call_depth += 1;
@@ -561,17 +611,21 @@ impl<'a> ConstEvaluator<'a> {
                 "comptime call depth exceeded; is the flow recursive?",
             ));
         }
+        let return_expected = match &function.return_type {
+            Some(ty) => Some(
+                self.resolve_type(ty)
+                    .ok_or_else(|| ConstError::new(span, "unknown return type in comptime flow"))?,
+            ),
+            None => None,
+        };
+        let saved_return = std::mem::replace(&mut self.current_return, return_expected.clone());
         let result = self.exec_block(&function.body, &mut env);
+        self.current_return = saved_return;
         self.call_depth -= 1;
         match result? {
             Flow::Return(value) => {
-                let value = match &function.return_type {
-                    Some(ty) => {
-                        let expected = self.resolve_type(ty).ok_or_else(|| {
-                            ConstError::new(span, "unknown return type in comptime flow")
-                        })?;
-                        convert_to(value, &expected, span)?
-                    }
+                let value = match &return_expected {
+                    Some(expected) => coerce_to(value, expected, span)?,
                     None => value,
                 };
                 Ok(value)
@@ -604,10 +658,16 @@ impl<'a> ConstEvaluator<'a> {
                     )
                 })?;
                 let mut value = self.eval_expr_env(value, expected.as_ref(), env)?;
-                if let Some(expected) = expected {
-                    value = convert_to(value, &expected, statement.span)?;
+                if let Some(expected) = &expected {
+                    value = coerce_to(value, expected, statement.span)?;
                 }
-                env.insert(name.clone(), value);
+                env.insert(
+                    name.clone(),
+                    Binding {
+                        value,
+                        ty: expected,
+                    },
+                );
                 Ok(Flow::Normal)
             }
             StmtKind::Assign { target, op, value } => {
@@ -625,21 +685,31 @@ impl<'a> ConstEvaluator<'a> {
                         ),
                     ));
                 }
-                let right = self.eval_expr_env(value, None, env)?;
+                let existing = env.get(name).cloned().expect("local binding");
+                let right = self.eval_expr_env(value, existing.ty.as_ref(), env)?;
                 let result = if *op == AssignOp::Assign {
                     right
                 } else {
-                    let left = env.get(name).cloned().expect("local binding");
-                    apply_assign(*op, left, right, statement.span)?
+                    apply_assign(
+                        *op,
+                        existing.value.clone(),
+                        right,
+                        statement.span,
+                        existing.ty.as_ref(),
+                    )?
                 };
-                let result = if let Some(existing) = env.get(name)
-                    && let Some(expected) = Some(existing.ty())
-                {
-                    convert_to(result, &expected, statement.span)?
+                let result = if let Some(expected) = &existing.ty {
+                    coerce_to(result, expected, statement.span)?
                 } else {
                     result
                 };
-                env.insert(name.clone(), result);
+                env.insert(
+                    name.clone(),
+                    Binding {
+                        value: result,
+                        ty: existing.ty,
+                    },
+                );
                 Ok(Flow::Normal)
             }
             StmtKind::Expr(expr) => {
@@ -685,6 +755,7 @@ impl<'a> ConstEvaluator<'a> {
             } => {
                 let start_value = self.eval_expr_env(start, None, env)?;
                 let end_value = self.eval_expr_env(end, None, env)?;
+                let index_ty = start_value.ty();
                 let start_int = start_value
                     .as_int()
                     .ok_or_else(|| ConstError::new(start.span, "range start must be an integer"))?;
@@ -694,7 +765,13 @@ impl<'a> ConstEvaluator<'a> {
                 let mut index = start_int;
                 while index < end_int {
                     self.tick(statement.span)?;
-                    env.insert(variable.clone(), ConstValue::Int(index));
+                    env.insert(
+                        variable.clone(),
+                        Binding {
+                            value: ConstValue::Int(index),
+                            ty: Some(index_ty.clone()),
+                        },
+                    );
                     match self.exec_block(body, env)? {
                         Flow::Normal | Flow::Continue => {}
                         Flow::Break => break,
@@ -717,13 +794,15 @@ impl<'a> ConstEvaluator<'a> {
                     ));
                 }
                 let value = self.eval_expr_env(iterable, None, env)?;
-                let values = match value {
-                    ConstValue::Slice { values, .. } => values,
-                    ConstValue::String(text) => text
-                        .into_bytes()
-                        .into_iter()
-                        .map(|byte| ConstValue::UInt(byte as u128))
-                        .collect(),
+                let (values, element_ty) = match value {
+                    ConstValue::Slice { element, values } => (values, Some(element)),
+                    ConstValue::String(text) => (
+                        text.into_bytes()
+                            .into_iter()
+                            .map(|byte| ConstValue::UInt(byte as u128))
+                            .collect(),
+                        Some(Ty::U8),
+                    ),
                     _ => {
                         return Err(ConstError::new(
                             iterable.span,
@@ -733,7 +812,13 @@ impl<'a> ConstEvaluator<'a> {
                 };
                 for value in values {
                     self.tick(statement.span)?;
-                    env.insert(variable.clone(), value);
+                    env.insert(
+                        variable.clone(),
+                        Binding {
+                            value,
+                            ty: element_ty.clone(),
+                        },
+                    );
                     match self.exec_block(body, env)? {
                         Flow::Normal | Flow::Continue => {}
                         Flow::Break => break,
@@ -747,8 +832,16 @@ impl<'a> ConstEvaluator<'a> {
                 "'protect' is not allowed in a comptime flow",
             )),
             StmtKind::Return(value) => {
+                let expected = self.current_return.clone();
                 let value = match value {
-                    Some(value) => self.eval_expr_env(value, None, env)?,
+                    Some(value) => {
+                        let span = value.span;
+                        let mut value = self.eval_expr_env(value, expected.as_ref(), env)?;
+                        if let Some(expected) = &expected {
+                            value = coerce_to(value, expected, span)?;
+                        }
+                        value
+                    }
                     None => ConstValue::Void,
                 };
                 Ok(Flow::Return(value))
@@ -803,6 +896,7 @@ fn eval_binary(
     left: ConstValue,
     right: ConstValue,
     span: Span,
+    expected: Option<&Ty>,
 ) -> Result<ConstValue, ConstError> {
     match op {
         BinaryOp::Eq => Ok(ConstValue::Bool(values_equal(&left, &right))),
@@ -818,7 +912,7 @@ fn eval_binary(
             };
             Ok(ConstValue::Bool(value))
         }
-        _ => numeric_binary(op, left, right, span),
+        _ => numeric_binary(op, left, right, span, expected),
     }
 }
 
@@ -827,15 +921,25 @@ fn numeric_binary(
     left: ConstValue,
     right: ConstValue,
     span: Span,
+    expected: Option<&Ty>,
 ) -> Result<ConstValue, ConstError> {
-    if matches!(left, ConstValue::Float(_)) || matches!(right, ConstValue::Float(_)) {
-        let a = left
+    let float_expected = expected.filter(|ty| ty.is_float());
+    if float_expected.is_some()
+        || matches!(left, ConstValue::Float(_))
+        || matches!(right, ConstValue::Float(_))
+    {
+        let mut a = left
             .as_float()
             .ok_or_else(|| ConstError::new(span, "operator requires numeric operands"))?;
-        let b = right
+        let mut b = right
             .as_float()
             .ok_or_else(|| ConstError::new(span, "operator requires numeric operands"))?;
-        let value = match op {
+        let round = matches!(float_expected, Some(Ty::F32));
+        if round {
+            a = a as f32 as f64;
+            b = b as f32 as f64;
+        }
+        let mut value = match op {
             BinaryOp::Add => a + b,
             BinaryOp::Sub => a - b,
             BinaryOp::Mul => a * b,
@@ -858,10 +962,20 @@ fn numeric_binary(
                 ));
             }
         };
+        if round {
+            value = value as f32 as f64;
+        }
         return Ok(ConstValue::Float(value));
     }
 
-    let unsigned = matches!(left, ConstValue::UInt(_)) || matches!(right, ConstValue::UInt(_));
+    let bits = expected.and_then(integer_bits).unwrap_or(128);
+    let signed_expected =
+        expected.is_some_and(|ty| matches!(ty, Ty::I8 | Ty::I16 | Ty::I32 | Ty::I64));
+    let unsigned_expected =
+        expected.is_some_and(|ty| matches!(ty, Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64));
+    let unsigned = unsigned_expected
+        || (!signed_expected
+            && (matches!(left, ConstValue::UInt(_)) || matches!(right, ConstValue::UInt(_))));
     if unsigned {
         let a = left
             .as_uint()
@@ -870,40 +984,42 @@ fn numeric_binary(
             .as_uint()
             .ok_or_else(|| ConstError::new(span, "unsigned operand is out of range"))?;
         let value = match op {
-            BinaryOp::Add => a.checked_add(b),
-            BinaryOp::Sub => a.checked_sub(b),
-            BinaryOp::Mul => a.checked_mul(b),
+            // Unsigned `+`, `-` and `*` wrap, matching the C backend.
+            BinaryOp::Add => a.wrapping_add(b),
+            BinaryOp::Sub => a.wrapping_sub(b),
+            BinaryOp::Mul => a.wrapping_mul(b),
             BinaryOp::Div => {
                 if b == 0 {
                     return Err(ConstError::new(span, "division by zero"));
                 }
-                Some(a / b)
+                mask_int(a / b, bits)
             }
             BinaryOp::Mod => {
                 if b == 0 {
                     return Err(ConstError::new(span, "remainder by zero"));
                 }
-                Some(a % b)
+                mask_int(a % b, bits)
             }
-            BinaryOp::BitAnd => Some(a & b),
-            BinaryOp::BitOr => Some(a | b),
-            BinaryOp::BitXor => Some(a ^ b),
+            BinaryOp::BitAnd => mask_int(a & b, bits),
+            BinaryOp::BitOr => mask_int(a | b, bits),
+            BinaryOp::BitXor => mask_int(a ^ b, bits),
             BinaryOp::Shl => {
-                if b >= 128 {
+                if b >= bits as u128 {
                     return Err(ConstError::new(span, "shift count is out of range"));
                 }
-                Some(a << b)
+                mask_int(a.wrapping_shl(b as u32), bits)
             }
             BinaryOp::Shr => {
-                if b >= 128 {
+                if b >= bits as u128 {
                     return Err(ConstError::new(span, "shift count is out of range"));
                 }
-                Some(a >> b)
+                mask_int(a >> b, bits)
             }
-            _ => None,
-        }
-        .ok_or_else(|| ConstError::new(span, "integer overflow in comptime expression"))?;
-        return Ok(ConstValue::UInt(value));
+            _ => {
+                return Err(ConstError::new(span, "operator requires numeric operands"));
+            }
+        };
+        return Ok(ConstValue::UInt(mask_int(value, bits)));
     }
 
     let a = left
@@ -932,21 +1048,105 @@ fn numeric_binary(
         BinaryOp::BitOr => Some(a | b),
         BinaryOp::BitXor => Some(a ^ b),
         BinaryOp::Shl => {
-            if !(0..128).contains(&b) {
+            if !(0..bits as i128).contains(&b) {
                 return Err(ConstError::new(span, "shift count is out of range"));
             }
-            Some(a << b)
+            Some(a.wrapping_shl(b as u32))
         }
         BinaryOp::Shr => {
-            if !(0..128).contains(&b) {
+            if !(0..bits as i128).contains(&b) {
                 return Err(ConstError::new(span, "shift count is out of range"));
             }
             Some(a >> b)
         }
-        _ => None,
+        _ => {
+            return Err(ConstError::new(span, "operator requires numeric operands"));
+        }
     }
     .ok_or_else(|| ConstError::new(span, "integer overflow in comptime expression"))?;
+    let value = if matches!(
+        op,
+        BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod
+    ) {
+        check_signed_range(value, bits, span)?
+    } else {
+        wrap_int(value, bits)
+    };
     Ok(ConstValue::Int(value))
+}
+
+/// Fit a unary arithmetic result to the expected type, rejecting the overflow
+/// that the runtime would trap on.
+fn fit_result(
+    value: ConstValue,
+    expected: Option<&Ty>,
+    span: Span,
+) -> Result<ConstValue, ConstError> {
+    fit_result_impl(value, expected, span, false)
+}
+
+/// Fit a bitwise result, which wraps to the expected width instead of trapping.
+fn fit_bitwise_result(
+    value: ConstValue,
+    expected: Option<&Ty>,
+    span: Span,
+) -> Result<ConstValue, ConstError> {
+    fit_result_impl(value, expected, span, true)
+}
+
+fn fit_result_impl(
+    value: ConstValue,
+    expected: Option<&Ty>,
+    span: Span,
+    wrap: bool,
+) -> Result<ConstValue, ConstError> {
+    let Some(expected) = expected else {
+        return Ok(value);
+    };
+    match expected {
+        Ty::I8 | Ty::I16 | Ty::I32 | Ty::I64 => {
+            let bits = integer_bits(expected).expect("signed integer width");
+            match value {
+                ConstValue::Int(value) => {
+                    let value = if wrap {
+                        wrap_int(value, bits)
+                    } else {
+                        check_signed_range(value, bits, span)?
+                    };
+                    Ok(ConstValue::Int(value))
+                }
+                other => Ok(other),
+            }
+        }
+        Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64 => {
+            let bits = integer_bits(expected).expect("unsigned integer width");
+            match value {
+                ConstValue::UInt(value) => Ok(ConstValue::UInt(mask_int(value, bits))),
+                ConstValue::Int(value) => Ok(ConstValue::UInt(mask_int(value as u128, bits))),
+                other => Ok(other),
+            }
+        }
+        Ty::F32 => match value {
+            ConstValue::Float(value) => Ok(ConstValue::Float(value as f32 as f64)),
+            other => Ok(other),
+        },
+        _ => Ok(value),
+    }
+}
+
+fn check_signed_range(value: i128, bits: u32, span: Span) -> Result<i128, ConstError> {
+    if bits >= 128 {
+        return Ok(value);
+    }
+    let min = -(1i128 << (bits - 1));
+    let max = (1i128 << (bits - 1)) - 1;
+    if value < min || value > max {
+        return Err(ConstError::new(
+            span,
+            "integer overflow in comptime expression",
+        ));
+    }
+    Ok(value)
 }
 
 fn apply_assign(
@@ -954,6 +1154,7 @@ fn apply_assign(
     left: ConstValue,
     right: ConstValue,
     span: Span,
+    expected: Option<&Ty>,
 ) -> Result<ConstValue, ConstError> {
     let binary = match op {
         AssignOp::Assign => return Ok(right),
@@ -968,7 +1169,7 @@ fn apply_assign(
         AssignOp::Shl => BinaryOp::Shl,
         AssignOp::Shr => BinaryOp::Shr,
     };
-    numeric_binary(binary, left, right, span)
+    numeric_binary(binary, left, right, span, expected)
 }
 
 fn values_equal(left: &ConstValue, right: &ConstValue) -> bool {
@@ -1018,27 +1219,104 @@ fn compare_values(
     ))
 }
 
+/// Explicit cast (`as`): truncate integers to the target width.
 fn convert_to(value: ConstValue, target: &Ty, span: Span) -> Result<ConstValue, ConstError> {
+    convert_impl(value, target, span, false)
+}
+
+/// Implicit assignment coercion: require the value to fit, like runtime
+/// arithmetic that traps instead of wrapping.
+fn coerce_to(value: ConstValue, target: &Ty, span: Span) -> Result<ConstValue, ConstError> {
+    convert_impl(value, target, span, true)
+}
+
+fn convert_impl(
+    value: ConstValue,
+    target: &Ty,
+    span: Span,
+    checked: bool,
+) -> Result<ConstValue, ConstError> {
     match target {
         Ty::I8 | Ty::I16 | Ty::I32 | Ty::I64 => {
             let bits = integer_bits(target).unwrap_or(64);
-            let value = value
-                .as_int()
-                .or_else(|| value.as_uint().map(|value| value as i128))
-                .or_else(|| value.as_float().map(|value| value as i128))
-                .ok_or_else(|| ConstError::new(span, "expected an integer value"))?;
-            Ok(ConstValue::Int(wrap_int(value, bits)))
+            let raw = match &value {
+                ConstValue::Int(value) => *value,
+                ConstValue::UInt(value) => i128::try_from(*value).map_err(|_| {
+                    ConstError::new(span, format!("integer value is out of range for {target}"))
+                })?,
+                ConstValue::Float(value) => *value as i128,
+                _ => {
+                    return Err(ConstError::new(span, "expected an integer value"));
+                }
+            };
+            if checked {
+                let min = -(1i128 << (bits - 1));
+                let max = (1i128 << (bits - 1)) - 1;
+                if raw < min || raw > max {
+                    return Err(ConstError::new(
+                        span,
+                        format!(
+                            "integer overflow in comptime expression: value does not fit in {target}"
+                        ),
+                    ));
+                }
+                Ok(ConstValue::Int(raw))
+            } else {
+                Ok(ConstValue::Int(wrap_int(raw, bits)))
+            }
         }
         Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64 => {
             let bits = integer_bits(target).unwrap_or(64);
-            let value = value
-                .as_uint()
-                .or_else(|| value.as_int().map(|value| value as u128))
-                .or_else(|| value.as_float().map(|value| value as u128))
-                .ok_or_else(|| ConstError::new(span, "expected an integer value"))?;
-            Ok(ConstValue::UInt(mask_int(value, bits)))
+            let raw = match &value {
+                ConstValue::UInt(value) => *value,
+                ConstValue::Int(value) => {
+                    if *value < 0 {
+                        return Err(ConstError::new(
+                            span,
+                            format!(
+                                "integer overflow in comptime expression: value does not fit in {target}"
+                            ),
+                        ));
+                    }
+                    *value as u128
+                }
+                ConstValue::Float(value) => {
+                    if *value < 0.0 {
+                        return Err(ConstError::new(
+                            span,
+                            format!(
+                                "integer overflow in comptime expression: value does not fit in {target}"
+                            ),
+                        ));
+                    }
+                    *value as u128
+                }
+                _ => {
+                    return Err(ConstError::new(span, "expected an integer value"));
+                }
+            };
+            if checked {
+                let max = if bits >= 128 {
+                    u128::MAX
+                } else {
+                    (1u128 << bits) - 1
+                };
+                if raw > max {
+                    return Err(ConstError::new(
+                        span,
+                        format!(
+                            "integer overflow in comptime expression: value does not fit in {target}"
+                        ),
+                    ));
+                }
+            }
+            Ok(ConstValue::UInt(mask_int(raw, bits)))
         }
-        Ty::F32 | Ty::F64 => value
+        Ty::F32 => value
+            .as_float()
+            .map(|value| ConstValue::Float(value as f32 as f64))
+            .ok_or_else(|| ConstError::new(span, "expected a numeric value")),
+        Ty::F64 => value
             .as_float()
             .map(ConstValue::Float)
             .ok_or_else(|| ConstError::new(span, "expected a numeric value")),

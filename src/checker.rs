@@ -36,7 +36,8 @@ impl Diagnostic {
 
 /// Check a complete program, returning every diagnostic found.
 pub fn check(program: &Program) -> Vec<Diagnostic> {
-    let (program, mono_errors) = crate::monomorphize::monomorphize(program);
+    let (program, mono_errors) = crate::monomorphize::monomorphize_for_check(program);
+    let has_mono_errors = !mono_errors.is_empty();
     let mut diagnostics = mono_errors
         .into_iter()
         .map(|error| Diagnostic {
@@ -44,6 +45,12 @@ pub fn check(program: &Program) -> Vec<Diagnostic> {
             message: error.message,
         })
         .collect::<Vec<_>>();
+    if has_mono_errors {
+        // Generic errors (missing arguments, recursion limits, name
+        // collisions) leave the program partly rewritten. Checking it would
+        // only add cascades about unknown generated names.
+        return diagnostics;
+    }
     for error in crate::const_eval::validate_comptime_functions(&program) {
         diagnostics.push(Diagnostic {
             span: error.span,
@@ -613,13 +620,18 @@ impl Checker {
             let value_ty = self.check_expr(&decl.value);
 
             if let Err(error) = evaluator.eval_global(decl) {
-                self.error(
-                    decl.value.span,
+                let message = if error.message.contains("overflow") {
+                    format!(
+                        "initializer for global '{}' is invalid: {}",
+                        decl.name, error.message
+                    )
+                } else {
                     format!(
                         "initializer for global '{}' must be a compile-time constant: {}",
                         decl.name, error.message
-                    ),
-                );
+                    )
+                };
+                self.error(decl.value.span, message);
             }
 
             let resolved = match (declared, value_ty) {

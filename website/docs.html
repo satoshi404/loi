@@ -250,6 +250,15 @@ flow main
             declaration, supplying the wrong number, or passing arguments to a non-generic flow is
             a compile error.
           </p>
+          <p>
+            A template that is never instantiated is still checked once with <code>i32</code>
+            substituted for every type parameter, so unused code with name, type or ownership errors
+            is reported. This is a smoke test, not a proof for every type. Recursive instantiation
+            such as <code>f&lt;T&gt;</code> calling <code>f&lt;Vec&lt;T&gt;&gt;</code> stops at a
+            depth limit instead of expanding forever. If a generated name such as
+            <code>Vec__i32</code> collides with a user declaration, the compiler reports both the
+            readable instantiation and the mangled name.
+          </p>
 
           <h3>Flows</h3>
           <p>
@@ -320,7 +329,10 @@ flow next
             Global initializers and shape field defaults are constant contexts. A call to a
             non-<code>comptime</code> flow there is an error. Evaluation is step- and
             depth-limited, so runaway or recursive constant evaluation produces a diagnostic
-            instead of hanging the compiler.
+            instead of hanging the compiler. Compile-time arithmetic matches the runtime: signed
+            overflow is an error, unsigned arithmetic wraps at its width, shifts are checked at
+            that width, <code>as</code> still truncates, and <code>f32</code> results are rounded
+            to <code>f32</code> precision.
           </p>
 
           <h3>Bindings and assignment</h3>
@@ -1086,8 +1098,8 @@ sealed flow winning_line
             <tbody>
               <tr><td>Lexer, parser, pretty-printer</td><td>Working; canonical Flow Syntax only. <code>loi fmt</code> preserves comments.</td></tr>
               <tr><td>Type checker</td><td>Working, including literal ranges, intrinsic signatures, bitwise/shift rules, shape cycle detection, generic instantiation and canonical diagnostics.</td></tr>
-              <tr><td>Monomorphization</td><td>Working: generic shapes and flows are expanded into concrete declarations before checking and code generation, with mangled names.</td></tr>
-              <tr><td>Compile-time evaluation</td><td>Working: pure <code>comptime flow</code> and <code>comptime expr</code>, constant globals of any shape, and shape defaults, with purity checks and step/depth limits.</td></tr>
+              <tr><td>Monomorphization</td><td>Working: generic shapes and flows are expanded into concrete declarations before checking and code generation, with mangled names, a recursion depth limit, collision diagnostics and validation of unused templates.</td></tr>
+              <tr><td>Compile-time evaluation</td><td>Working: pure <code>comptime flow</code> and <code>comptime expr</code>, constant globals of any shape, and shape defaults, with purity checks, step/depth limits and runtime-matching overflow, cast and <code>f32</code> semantics.</td></tr>
               <tr><td>Ownership analysis</td><td>Working: give liveness, definite assignment, exclusive <code>&lt;-&gt;</code>, region escape checks, and allocating read intrinsics.</td></tr>
               <tr><td>C backend</td><td>Working: one C11 translation unit, bounds checks, regions, checked arithmetic, bitwise/shift helpers, file/stdin I/O, numeric printing, source maps, headers, multi-file objects.</td></tr>
               <tr><td>C interop</td><td>Working: <code>opaque</code>, <code>cstr</code>, <code>extern flow</code>, <code>--c-source</code>, and a header-to-Loi binding generator.</td></tr>
@@ -1101,7 +1113,7 @@ sealed flow winning_line
           <ul>
             <li>I/O is limited to whole-file and whole-stdin reads/writes plus numeric printing. There is no socket, directory, seek, environment or process API. <code>read_file</code>, <code>read_stdin</code> and <code>read_line</code> allocate in the current <code>protect</code> region and cannot escape it.</li>
             <li>Imports are textual and cross-file visibility is not enforced. Multi-file builds give sealed flows external linkage so cross-file calls link.</li>
-            <li>Globals accept any compile-time constant, including nested shapes, slices and strings; the backend folds them into C static initializers. Growable collections (<code>Vec&lt;T&gt;</code>, maps) remain library work even though generics are available.</li>
+            <li>Globals accept any compile-time constant, including nested shapes, slices and strings; the backend folds them into strict C11 static initializers (named arrays back slice data, with no compound literals). Growable collections (<code>Vec&lt;T&gt;</code>, maps) remain library work even though generics are available.</li>
             <li>A slice literal cannot escape the block that created it, including being returned or stored into an outer variable; allocate long-lived data in a <code>protect</code> region.</li>
             <li><code>&lt;-</code> composite parameters are passed to C by value (slice headers still point at the caller's data). The checker forbids storing or returning the borrowed value, so the parameter stays observationally read-only.</li>
             <li><code>loi fmt</code> preserves <code>//</code> comments and is idempotent; comments inside multi-line expressions may move to the next statement boundary. Shape literals stay on one line.</li>

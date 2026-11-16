@@ -577,6 +577,11 @@ struct Generator<'a> {
     global_order: Vec<String>,
     /// Compile-time values of globals, used for static initializers.
     global_values: HashMap<String, ConstValue>,
+    /// Static arrays backing slice constants in global initializers. Compound
+    /// literals are not standard C constant expressions, so each slice gets a
+    /// named array emitted at file scope.
+    global_arrays: Vec<String>,
+    global_array_counter: usize,
     /// When set, only these declarations are defined in the output; the rest
     /// are emitted as external declarations (multi-file builds).
     defined: Option<std::collections::HashSet<String>>,
@@ -682,6 +687,8 @@ impl<'a> Generator<'a> {
             globals,
             global_order,
             global_values,
+            global_arrays: Vec::new(),
+            global_array_counter: 0,
             defined,
             strings,
             string_order,
@@ -1028,7 +1035,9 @@ impl<'a> Generator<'a> {
     /// become `extern` declarations instead of definitions.
     fn emit_globals(&mut self) {
         let order = self.global_order.clone();
-        let mut emitted = false;
+        self.global_arrays.clear();
+        self.global_array_counter = 0;
+        let mut declarations = Vec::new();
         for name in &order {
             let Some(decl) = self.globals.get(name).copied() else {
                 continue;
@@ -1046,20 +1055,29 @@ impl<'a> Generator<'a> {
             let c_ty = self.c_type(&ty);
             if local {
                 let initializer = self.global_initializer(name, &ty, &decl.value);
-                self.emit(format!("{c_ty} {c_name} = {initializer};"));
+                declarations.push(format!("{c_ty} {c_name} = {initializer};"));
             } else {
-                self.emit(format!("extern {c_ty} {c_name};"));
+                declarations.push(format!("extern {c_ty} {c_name};"));
             }
-            emitted = true;
         }
-        if emitted {
+
+        // Slice constants need a named static array; a compound literal is
+        // not a constant expression under `-std=c11 -pedantic-errors`.
+        let arrays = std::mem::take(&mut self.global_arrays);
+        for array in arrays {
+            self.emit(array);
+        }
+        if !declarations.is_empty() {
+            for declaration in declarations {
+                self.emit(declaration);
+            }
             self.emit("");
         }
     }
 
     fn global_initializer(&mut self, name: &str, ty: &Ty, value: &Expr) -> String {
         if let Some(constant) = self.global_values.get(name).cloned() {
-            return self.const_value_code(&constant);
+            return self.const_value_static_code(&constant);
         }
         if matches!(ty, Ty::CStr) {
             return self.gen_coerced_expr(value, ty);
@@ -1071,6 +1089,60 @@ impl<'a> Generator<'a> {
             }
             _ => self.gen_expr(value),
         }
+    }
+
+    /// Emit a compile-time value as a standard C static initializer.
+    ///
+    /// Unlike [`Generator::const_value_code`], this never uses a compound
+    /// literal: file-scope slices are backed by named arrays emitted before
+    /// the globals, and shapes use plain brace initializers.
+    fn const_value_static_code(&mut self, value: &ConstValue) -> String {
+        match value {
+            ConstValue::Void => "0".to_string(),
+            ConstValue::Int(value) => c_signed_literal(*value),
+            ConstValue::UInt(value) => c_unsigned_literal(*value),
+            ConstValue::Float(value) => c_float_value(*value),
+            ConstValue::Bool(value) => value.to_string(),
+            ConstValue::String(text) => {
+                let index = self.string_index(text);
+                format!("{{ (void*)loi_str_{index}, {} }}", text.len())
+            }
+            ConstValue::CStr(text) => {
+                let index = self.string_index(text);
+                format!("((const char*)loi_str_{index})")
+            }
+            ConstValue::Slice { element, values } => {
+                if values.is_empty() {
+                    "{ NULL, 0 }".to_string()
+                } else {
+                    let element_c = self.c_type(element);
+                    let items = values
+                        .iter()
+                        .map(|item| self.const_value_static_code(item))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let array_name = format!("loi_gs_{}", self.global_array_counter);
+                    self.global_array_counter += 1;
+                    self.global_arrays.push(format!(
+                        "static {element_c} {array_name}[] = {{ {items} }};"
+                    ));
+                    format!("{{ (void*){array_name}, {} }}", values.len())
+                }
+            }
+            ConstValue::Shape { fields, .. } => {
+                if fields.is_empty() {
+                    return "{0}".to_string();
+                }
+                let mut initializers = Vec::new();
+                for (field_name, field_value) in fields {
+                    let code = self.const_value_static_code(field_value);
+                    initializers.push(format!(".{} = {code}", self.c_field(field_name)));
+                }
+                format!("{{ {} }}", initializers.join(", "))
+            }
+        }
+        .trim()
+        .to_string()
     }
 
     /// Emit a compile-time value as a C expression.

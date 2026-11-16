@@ -4,13 +4,16 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Last completed task (2026-11-14):** added metaprogramming and generics:
-  1. `comptime flow` and `comptime expr`, backed by a pure, step-limited
-     constant evaluator shared by the checker and codegen;
-  2. generic shapes and flows (`Vec<T>`, `sum<i32>(...)`) with explicit type
-     arguments and monomorphization before checking/codegen;
-  3. globals of any constant shape, including nested shapes, slices and
-     strings, emitted as C static initializers.
+- **Last completed task (2026-11-16):** hardened `comptime`, generics and
+  composite globals after an audit:
+  1. parser backtracking now restores split `>>` tokens, so nested generic
+     calls and ordinary `<`/`>` comparisons coexist;
+  2. monomorphization has a depth limit, reports generated-name collisions and
+     validates never-instantiated templates once with `i32`;
+  3. `comptime` arithmetic follows runtime overflow, width, shift and `f32`
+     rounding rules while `as` still truncates;
+  4. static global initializers are strict C11, with named arrays for slice
+     data instead of compound literals.
   Growable collections (`Vec<T>`, maps) remain library work; the type-system
   blocker is resolved.
 - **Overall health:** good; the full test suite, `cargo fmt --check` and
@@ -39,7 +42,7 @@
 
 ## Verification
 
-Last verified 2026-11-14 with:
+Last verified 2026-11-16 with:
 
 ```sh
 export PATH=/root/.cargo/bin:$PATH
@@ -49,14 +52,17 @@ cargo clippy --all-targets -- -D warnings
 cargo test --all-targets
 ```
 
-- `cargo test --all-targets`: **212 passed, 0 failed** (suite breakdown is
+- `cargo test --all-targets`: **223 passed, 0 failed** (suite breakdown is
   printed by Cargo; compile-and-run tests skip when `cc` is unavailable).
-- New coverage: generic shapes and flows (including nested instantiations and
-  `>>` token splitting), monomorphized C symbols, pure `comptime` flows and
-  expressions, `comptime`-initialized globals, composite globals of any constant
-  shape, and formatter idempotence for generics and `comptime`. The previous
-  bitwise/shift, file/stdin I/O, numeric printing and comment-preserving `fmt`
-  coverage still passes unchanged.
+- New coverage: generic shapes and flows (including nested instantiations,
+  `>>` token splitting and backtracking, comparisons around `<`/`>`),
+  monomorphized C symbols, recursive-instantiation depth limits, generated-name
+  collisions, validation of unused templates, pure `comptime` flows and
+  expressions with signed overflow, unsigned wrap, cast and `f32` parity,
+  `comptime`-initialized globals, strict-C11 composite globals, and formatter
+  idempotence for generics and `comptime`. The previous bitwise/shift,
+  file/stdin I/O, numeric printing and comment-preserving `fmt` coverage still
+  passes unchanged.
 - `examples/systems.loi` builds and runs (`2215315943 1193046 1.5`), and
   `loi check` passes on `examples/raylib_window.loi`.
 - `loi check vendor/sdl2/sdl2.loi` and `loi check vendor/raylib/raylib.loi`:
@@ -133,8 +139,9 @@ cargo test --all-targets
   returned and compared by identity but not indexed, measured, printed or
   dereferenced. Byte access requires a hand-written shim.
 - Globals may use any compile-time constant: scalars, strings, slices and
-  nested shapes. The backend folds them once and emits C static initializers
-  with designated/compound literals.
+  nested shapes. The backend folds them once and emits strict C11 static
+  initializers: brace/designated initializers for shapes and named `static`
+  arrays for slice data, with no compound literals.
 - `==`/`!=` are defined for scalars, `bool` and `[u8]` only.
 - Imports are textual inclusion without namespaces or cross-file visibility
   enforcement. Multi-file builds give sealed flows external linkage so
@@ -148,7 +155,10 @@ cargo test --all-targets
   defaults. Freshness, spatial tiers and ordering blocks are not implemented.
 - Generic declarations are templates; only instantiations reach checking and
   code generation. There is no type inference and no user-visible `Type::Generic`
-  after monomorphization.
+  after monomorphization. Unused templates are validated once with `i32`
+  placeholders in the checker only; recursive instantiation stops at a depth
+  limit, and generated-name collisions are diagnosed with the readable
+  instantiation and the mangled name.
 - The pretty-printer prints shape literals on one line. `loi fmt` reattaches
   `//` comments to source-line anchors, so comments inside multi-line
   expressions can move to the next statement boundary; output becomes stable

@@ -859,12 +859,16 @@ fn composite_globals_use_static_initializers() {
     );
 
     assert!(
-        c.contains("loi_t_Color loi_g_GREEN = (loi_t_Color){ .loi_f_r = 0, .loi_f_g = 255, .loi_f_b = 0, .loi_f_a = 255 };"),
-        "shape globals should use compound literals:\n{c}"
+        c.contains("loi_t_Color loi_g_GREEN = { .loi_f_r = 0, .loi_f_g = 255, .loi_f_b = 0, .loi_f_a = 255 };"),
+        "shape globals should use designated initializers without a compound literal:\n{c}"
     );
     assert!(
-        c.contains("loi_t_Scene loi_g_SCENE = (loi_t_Scene){ .loi_f_color = (loi_t_Color){ .loi_f_r = 1, .loi_f_g = 2, .loi_f_b = 3, .loi_f_a = 4 }, .loi_f_points = (LoiSlice){ (void*)(int32_t[]){ 7, 8 }, 2 }, .loi_f_name = (LoiSlice){ (void*)loi_str_0, 5 } };"),
-        "nested shape globals should use designated initializers:\n{c}"
+        c.contains("static int32_t loi_gs_0[] = { 7, 8 };"),
+        "slice data should be a named static array:\n{c}"
+    );
+    assert!(
+        c.contains("loi_t_Scene loi_g_SCENE = { .loi_f_color = { .loi_f_r = 1, .loi_f_g = 2, .loi_f_b = 3, .loi_f_a = 4 }, .loi_f_points = { (void*)loi_gs_0, 2 }, .loi_f_name = { (void*)loi_str_0, 5 } };"),
+        "nested shape globals should use plain designated initializers:\n{c}"
     );
 }
 
@@ -883,4 +887,54 @@ int main(void) {
 }
 "#;
     compile_and_run("composite-globals-comptime", &generated(source), harness);
+}
+
+#[test]
+fn composite_globals_compile_as_strict_c11() {
+    let source = "shape Color [\n    r: u8\n    g: u8\n    b: u8\n    a: u8\n]\n\nshape Scene [\n    color: Color\n    points: [i32]\n    name: [u8]\n]\n\nGREEN: Color <- Color[ r: 0, g: 255, b: 0, a: 255 ]\nPOINTS: [i32] <- [i32: 4, 5, 6]\nSCENE: Scene <- Scene[ color: Color[ r: 1, g: 2, b: 3, a: 4 ], points: [i32: 7, 8], name: \"scene\" ]\n";
+    let c = generated(source);
+    if !has_c_compiler() {
+        eprintln!("skipping strict c11 test: no C compiler found");
+        return;
+    }
+
+    let dir = PathBuf::from("/tmp/opencode")
+        .join(format!("loi-codegen-{}-strict-c11", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("test directory should be creatable");
+    let path = dir.join("generated.c");
+    fs::write(&path, &c).expect("generated C should be writable");
+    let output = Command::new("cc")
+        .arg("-std=c11")
+        .arg("-pedantic-errors")
+        .arg("-fsyntax-only")
+        .arg(&path)
+        .output()
+        .expect("cc should run");
+    let _ = fs::remove_dir_all(&dir);
+    assert!(
+        output.status.success(),
+        "strict C11 rejected the generated code:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn compiled_constant_globals_with_expressions_and_negation() {
+    let source = "SIZE: i32 <- 2 + 3\nNEG: i32 <- -7\n\nflow main\n    => i32\n{\n    if SIZE == 5 and NEG == -7 {\n        => 0\n    }\n    => 1\n}\n";
+    let c = generated(source);
+    assert!(c.contains("int32_t loi_g_SIZE = 5;"), "unexpected C:\n{c}");
+    assert!(c.contains("int32_t loi_g_NEG = -7;"), "unexpected C:\n{c}");
+    compile_and_run("constant-globals", &c, "");
+}
+
+#[test]
+fn comptime_f32_rounds_like_runtime() {
+    let source = "comptime flow third\n    => f32\n{\n    => 1.0 / 3.0\n}\n\nX: f32 <- comptime third()\n\nflow same\n    => bool\n{\n    y: f32 <- 1.0 / 3.0\n    => X == y\n}\n\nflow main\n    => i32\n{\n    if same() {\n        => 0\n    }\n    => 1\n}\n";
+    let c = generated(source);
+    assert!(
+        c.contains("float loi_g_X = 0.3333333432674408;"),
+        "comptime f32 should be rounded to f32 precision:\n{c}"
+    );
+    compile_and_run("comptime-f32", &c, "");
 }

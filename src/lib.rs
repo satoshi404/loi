@@ -19,7 +19,7 @@ pub use checker::{Diagnostic, check};
 pub use codegen::{CodegenError, generate_c, generate_c_subset, generate_header, generate_ir};
 pub use ir::{IrBuilder, IrModule};
 pub use lexer::{Comment, LexError, Lexer, tokenize, tokenize_with_comments};
-pub use monomorphize::{instantiation_name, monomorphize};
+pub use monomorphize::{instantiation_name, monomorphize, monomorphize_for_check};
 pub use parser::{ParseError, Parser, parse};
 pub use pretty::{format_expr, format_program, format_program_with_comments, format_type};
 pub use token::{Token, TokenKind};

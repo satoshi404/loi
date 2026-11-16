@@ -401,11 +401,12 @@ All nine questions from the 0.2 draft are decided. Each entry states the rule, t
 - `comptime expr` is an error unless `expr` consists only of literals, constant globals, `comptime` functions and constant-foldable operators/casts. Allocation, `protect`, I/O and `panic` are forbidden.
 - `comptime flow f ...` declares a function that may be called in a constant context. Its parameters must be `<-`; it may not use `->`/`<->`, `alloc`, `protect`, I/O or mutate globals. It may also be called at runtime; the annotation only guarantees that the compiler can evaluate it.
 - Evaluation is deterministic, has no side effects, and is bounded: a step limit produces a compile error instead of a compiler hang.
+- Compile-time arithmetic follows the same rules as the runtime for the expected result type: signed overflow is an error, unsigned arithmetic wraps at its declared width, shift counts are checked at that width, and `as` remains the explicit truncating cast. `f32` results are rounded to `f32` precision before comparison or emission.
 - `comptime` does not create a new type or a new storage class.
 
 **Why:** the first draft was ambiguous because a `comptime` function could receive runtime values. A guarantee gives the compiler something it can rely on, keeps constant contexts honest, and leaves ordinary constant folding free to happen anywhere as an optimization.
 
-**Status:** implemented. The parser accepts `comptime flow` and `comptime expr`; `const_eval.rs` evaluates globals, shape defaults and `comptime` expressions with purity checks, a step budget and a call-depth limit. Global initializers of any shape are emitted as C static initializers.
+**Status:** implemented. The parser accepts `comptime flow` and `comptime expr`; `const_eval.rs` evaluates globals, shape defaults and `comptime` expressions with purity checks, a step budget and a call-depth limit, using the expected type to reproduce runtime width, overflow and `f32` rounding. Global initializers of any shape are emitted as strict C11 static initializers: plain brace/designated initializers for shapes and named `static` arrays for slice data, with no compound literals.
 
 ### 5.1a Generics — explicit instantiation, monomorphized
 
@@ -414,11 +415,14 @@ All nine questions from the 0.2 draft are decided. Each entry states the rule, t
 - Type parameters may be used anywhere a type appears: fields, parameters, results, locals, slice elements and nested instantiations (`Vec<Vec<i32>>`).
 - Monomorphization runs before type checking and code generation. It removes every template and emits a concrete declaration per instantiation, with mangled names such as `Vec__i32` and `sum__Vec__i32`.
 - The wrong number of type arguments, a missing argument list on a generic declaration, or type arguments on a non-generic flow are compile errors.
+- A template that no use instantiates is still validated once with `i32` for every type parameter, so unused broken code is diagnosed. This is a checker-only smoke test; code generation only sees real instantiations.
+- Recursive instantiation (for example `f<T>` calling `f<Vec<T>>`) is rejected at a depth limit with a single clear diagnostic.
+- A generated name that collides with a user declaration, or two instantiations that mangle to the same identifier, are reported as collisions with both the readable instantiation and the generated name.
 - Growable collections remain library work; generics make a future `Vec<T>` implementation possible without changing the language.
 
 **Why:** explicit arguments make monomorphization predictable and keep the first implementation small. Inference can be added later without changing the surface syntax.
 
-**Status:** implemented and tested for shapes, flows, nested instantiations and `>>` token splitting.
+**Status:** implemented and tested for shapes, flows, nested instantiations, speculative `>>` token splitting, depth limits, name collisions and unused-template validation.
 
 ### 5.2 Pointers — none (question 2)
 
