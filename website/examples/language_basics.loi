@@ -32,6 +32,7 @@ open flow main
     if LIMIT != 3 {
         => 2
     }
+    prant("j")
     if not str_eq("loi", "loi") {
         => 3
     }
