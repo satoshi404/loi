@@ -94,6 +94,9 @@ cargo test --all-targets
 - `loi fmt` preserves `//` comments and is idempotent.
 - Foreign C is available through `opaque` handles, `cstr`, `extern flow` and
   vendored shims.
+- The explicit library is modular: `lib/std.loi`, `lib/math.loi` and
+  `lib/ctype.loi` are pure Loi; `lib/os.loi` and `lib/net.loi` are thin bindings
+  with POSIX shims.
 
 Start with [`SINTAXE.md`](SINTAXE.md) for the canonical surface and
 [`examples/flow_syntax.loi`](examples/flow_syntax.loi) for a complete tour. The
@@ -106,7 +109,7 @@ visualizer; see [`website/docs.html`](website/docs.html) for their build command
 |---|---|
 | `src/` | Lexer, parser, type/ownership checker, C backend, draft IR/assembly |
 | `tests/` | Lexer/parser/checker/codegen/CLI/bindgen integration tests |
-| `lib/std.loi` | Minimal standard library written in Loi |
+| `lib/*.loi`, `lib/*_shim.c` | Modular library: pure Loi helpers plus POSIX shims for `os`/`net` |
 | `examples/` | Reference programs, including `flow_syntax.loi`, `systems.loi` and `tictactoe.loi` |
 | `vendor/` | Generated Loi bindings for SDL2 and raylib 5.5, with shims and skip reports |
 | `tools/bindgen/` | Header-to-Loi binding generator |

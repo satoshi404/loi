@@ -8,7 +8,8 @@
 //!
 //! Imports are textual, so every helper below lives in the program namespace.
 //! Names are prefixed by kind (`min_i32`, `str_find`, ...) to avoid clashes
-//! with user code.
+//! with user code. See also `lib/math.loi`, `lib/ctype.loi`, `lib/os.loi` and
+//! `lib/net.loi`.
 
 // ---------------------------------------------------------------------------
 // Integers

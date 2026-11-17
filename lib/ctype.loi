@@ -1,0 +1,165 @@
+//! Byte classification and parsing helpers written entirely in Loi.
+//!
+//! Import it explicitly:
+//!
+//! ```loi
+//! import "lib/ctype.loi"
+//! ```
+//!
+//! These helpers work on ASCII bytes (`u8`), which is also how Loi strings are
+//! represented. Names are prefixed so several libraries can be imported at
+//! once without collisions.
+
+flow ctype_is_digit
+    <- byte: u8
+    => bool
+{
+    => byte >= 48 and byte <= 57
+}
+
+flow ctype_is_upper
+    <- byte: u8
+    => bool
+{
+    => byte >= 65 and byte <= 90
+}
+
+flow ctype_is_lower
+    <- byte: u8
+    => bool
+{
+    => byte >= 97 and byte <= 122
+}
+
+flow ctype_is_alpha
+    <- byte: u8
+    => bool
+{
+    => ctype_is_upper(byte) or ctype_is_lower(byte)
+}
+
+flow ctype_is_alnum
+    <- byte: u8
+    => bool
+{
+    => ctype_is_alpha(byte) or ctype_is_digit(byte)
+}
+
+flow ctype_is_hex_digit
+    <- byte: u8
+    => bool
+{
+    => ctype_is_digit(byte) or (byte >= 65 and byte <= 70) or (byte >= 97 and byte <= 102)
+}
+
+flow ctype_is_space
+    <- byte: u8
+    => bool
+{
+    => byte == 32 or (byte >= 9 and byte <= 13)
+}
+
+flow ctype_is_ascii
+    <- byte: u8
+    => bool
+{
+    => byte < 128
+}
+
+flow ctype_to_lower
+    <- byte: u8
+    => u8
+{
+    if ctype_is_upper(byte) {
+        => byte + 32
+    }
+    => byte
+}
+
+flow ctype_to_upper
+    <- byte: u8
+    => u8
+{
+    if ctype_is_lower(byte) {
+        => byte - 32
+    }
+    => byte
+}
+
+/// Value of a hexadecimal digit, or -1 when `byte` is not one.
+flow ctype_hex_value
+    <- byte: u8
+    => i32
+{
+    if ctype_is_digit(byte) {
+        => (byte as i32) - 48
+    }
+    if byte >= 65 and byte <= 70 {
+        => (byte as i32) - 55
+    }
+    if byte >= 97 and byte <= 102 {
+        => (byte as i32) - 87
+    }
+    => -1
+}
+
+/// Result of `ctype_parse_u64`: `ok` is false on bad input or overflow.
+shape CTypeParseResult [
+    ok: bool
+    value: u64
+    consumed: u64
+]
+
+/// Parse an unsigned decimal prefix; `consumed` counts the digits read.
+flow ctype_parse_u64
+    <- text: [u8]
+    => CTypeParseResult
+{
+    mut index: u64 <- 0
+    mut value: u64 <- 0
+    while index < text.len {
+        byte <- text[index]
+        if not ctype_is_digit(byte) {
+            break
+        }
+        digit <- (byte - 48) as u64
+        if value > (18446744073709551615 - digit) / 10 {
+            => CTypeParseResult[ ok: false, value: 0, consumed: index ]
+        }
+        value = value * 10 + digit
+        index += 1
+    }
+    if index == 0 {
+        => CTypeParseResult[ ok: false, value: 0, consumed: 0 ]
+    }
+    => CTypeParseResult[ ok: true, value: value, consumed: index ]
+}
+
+flow ctype_count_digits
+    <- text: [u8]
+    => u64
+{
+    mut count: u64 <- 0
+    for i in 0..text.len {
+        if ctype_is_digit(text[i]) {
+            count += 1
+        }
+    }
+    => count
+}
+
+flow ctype_equals_ignore_case
+    <- left: [u8]
+    <- right: [u8]
+    => bool
+{
+    if left.len != right.len {
+        => false
+    }
+    for i in 0..left.len {
+        if ctype_to_lower(left[i]) != ctype_to_lower(right[i]) {
+            => false
+        }
+    }
+    => true
+}

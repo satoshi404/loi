@@ -1,0 +1,154 @@
+//! IPv4 helpers and a minimal TCP client backed by `lib/net_shim.c`.
+//!
+//! Import it explicitly and compile the shim with the program:
+//!
+//! ```loi
+//! import "lib/net.loi"
+//! ```
+//!
+//! ```sh
+//! loi build main.loi -o main --c-source lib/net_shim.c
+//! ```
+//!
+//! The byte-level helpers are pure Loi. Foreign sockets stay behind the shim
+//! as integer descriptors, so no pointer types enter ordinary Loi values.
+
+/// Result of `net_parse_ipv4`: `ok` is false for malformed addresses.
+shape NetIpv4Result [
+    ok: bool
+    addr: u32
+]
+
+/// Build a big-endian IPv4 address from four octets.
+flow net_ipv4
+    <- a: u8
+    <- b: u8
+    <- c: u8
+    <- d: u8
+    => u32
+{
+    => (a as u32) << 24 | (b as u32) << 16 | (c as u32) << 8 | d as u32
+}
+
+/// Read octet 0 (most significant) through 3; out-of-range indices return 0.
+flow net_ipv4_octet
+    <- addr: u32
+    <- index: u32
+    => u8
+{
+    if index > 3 {
+        => 0
+    }
+    shift <- (3 - index) * 8
+    => (addr >> shift) as u8
+}
+
+flow net_port_is_valid
+    <- port: u32
+    => bool
+{
+    => port > 0 and port < 65536
+}
+
+/// Parse dotted decimal notation. Leading zeroes are accepted.
+flow net_parse_ipv4
+    <- text: [u8]
+    => NetIpv4Result
+{
+    mut addr: u32 <- 0
+    mut value: u32 <- 0
+    mut digits: u32 <- 0
+    mut parts: u32 <- 0
+    mut i: u64 <- 0
+    while i < text.len {
+        byte <- text[i]
+        if byte == 46 {
+            if digits == 0 or value > 255 {
+                => NetIpv4Result[ ok: false, addr: 0 ]
+            }
+            addr = (addr << 8) | value
+            parts += 1
+            value = 0
+            digits = 0
+        } else {
+            if not (byte >= 48 and byte <= 57) {
+                => NetIpv4Result[ ok: false, addr: 0 ]
+            }
+            value = value * 10 + (byte - 48) as u32
+            digits += 1
+            if value > 255 {
+                => NetIpv4Result[ ok: false, addr: 0 ]
+            }
+        }
+        i += 1
+    }
+    if digits == 0 or value > 255 or parts != 3 {
+        => NetIpv4Result[ ok: false, addr: 0 ]
+    }
+    addr = (addr << 8) | value
+    => NetIpv4Result[ ok: true, addr: addr ]
+}
+
+extern flow loi_net_tcp_connect
+    <- host: cstr
+    <- port: u32
+    => i32
+
+extern flow loi_net_close
+    <- fd: i32
+
+extern flow loi_net_send
+    <- fd: i32
+    <- data: [u8]
+    => i64
+
+extern flow loi_net_recv
+    <- fd: i32
+    <-> data: [u8]
+    => i64
+
+/// Connect to a numeric IPv4 host. Returns -1 on failure.
+flow net_tcp_connect
+    <- host: cstr
+    <- port: u32
+    => i32
+{
+    if not net_port_is_valid(port) {
+        => -1
+    }
+    => loi_net_tcp_connect(host, port)
+}
+
+flow net_close
+    <- fd: i32
+{
+    if fd >= 0 {
+        loi_net_close(fd)
+    }
+}
+
+/// Send every byte of `data`; returns false on a short write or error.
+flow net_send
+    <- fd: i32
+    <- data: [u8]
+    => bool
+{
+    if fd < 0 {
+        => false
+    }
+    written <- loi_net_send(fd, data)
+    => written == data.len as i64
+}
+
+/// Read up to `data.len` bytes into the caller's buffer; a negative descriptor
+/// yields 0 without calling C.
+flow net_recv
+    <- fd: i32
+    <-> data: [u8]
+    => i64
+{
+    if fd < 0 {
+        => 0
+    }
+    => loi_net_recv(fd, <-> data)
+}

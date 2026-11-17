@@ -11,10 +11,10 @@
  *   POST /api/run      -> { source } -> build result plus program output
  *
  * Programs are compiled and executed in a fresh temporary directory. The
- * standard library and the vendored raylib bindings are copied next to the
- * source so `import "lib/std.loi"`, `import "../lib/std.loi"` and
- * `import "../vendor/raylib/raylib.loi"` resolve without touching the
- * repository.
+ * library modules (with their C shims) and the vendored raylib bindings are
+ * copied next to the source so `import "lib/math.loi"`,
+ * `import "../lib/std.loi"` and `import "../vendor/raylib/raylib.loi"` resolve
+ * without touching the repository.
  *
  * This is a local development tool. Executed programs run with the permissions
  * of the server process, so bind to localhost and do not expose it publicly.
@@ -39,6 +39,9 @@ import {
 const websiteDir = path.dirname(fileURLToPath(import.meta.url));
 const projectDir = path.dirname(websiteDir);
 const libPath = path.join(projectDir, "lib", "std.loi");
+const libDir = path.join(projectDir, "lib");
+const libraryModules = ["std.loi", "math.loi", "ctype.loi", "os.loi", "net.loi"];
+const libraryShims = ["os_shim.c", "net_shim.c"];
 const raylibPath = path.join(projectDir, "vendor", "raylib", "raylib.loi");
 
 const HOST = process.env.HOST || "127.0.0.1";
@@ -136,18 +139,20 @@ function runProcess(command, args, options = {}) {
 async function prepareWorkspace(source) {
   const root = await mkdtemp(path.join(os.tmpdir(), "loi-playground-"));
   const examplesDir = path.join(root, "examples");
-  const libDir = path.join(root, "lib");
+  const workspaceLibDir = path.join(root, "lib");
   const nestedLibDir = path.join(examplesDir, "lib");
   const raylibDir = path.join(root, "vendor", "raylib");
 
   await mkdir(examplesDir, { recursive: true });
-  await mkdir(libDir, { recursive: true });
+  await mkdir(workspaceLibDir, { recursive: true });
   await mkdir(nestedLibDir, { recursive: true });
   await mkdir(raylibDir, { recursive: true });
 
-  const std = await readFile(libPath, "utf8");
-  await writeFile(path.join(libDir, "std.loi"), std);
-  await writeFile(path.join(nestedLibDir, "std.loi"), std);
+  for (const name of [...libraryModules, ...libraryShims]) {
+    const source = path.join(libDir, name);
+    await copyFile(source, path.join(workspaceLibDir, name));
+    await copyFile(source, path.join(nestedLibDir, name));
+  }
   await copyFile(raylibPath, path.join(raylibDir, "raylib.loi"));
 
   const sourcePath = path.join(examplesDir, "main.loi");
@@ -256,7 +261,15 @@ async function runSource(source) {
     const outputPath = path.join(root, "main");
     const build = await runProcess(
       compiler,
-      ["build", sourcePath, "-o", outputPath, "--error-format=short", "--color=never"],
+      [
+        "build",
+        sourcePath,
+        "-o",
+        outputPath,
+        "--error-format=short",
+        "--color=never",
+        ...libraryShims.flatMap((name) => ["--c-source", `lib/${name}`]),
+      ],
       { cwd: root, timeoutMs: BUILD_TIMEOUT_MS }
     );
 

@@ -673,33 +673,97 @@ print(other.x)</code></pre>
 // n=42 big=9000000000 f=0.10 s=ok pct=100%</code></pre>
           </div>
 
-          <h3><code>lib/std.loi</code></h3>
-          <p>Import it with <code>import "lib/std.loi"</code>. The library is deliberately prefixed by kind.</p>
+          <h3>Library modules</h3>
+          <p>Every library file is imported explicitly, for example
+            <code>import "lib/std.loi"</code>. Names are prefixed by module
+            (<code>math_*</code>, <code>ctype_*</code>, <code>os_*</code>,
+            <code>net_*</code>) because imports are textual.</p>
 
           <table class="doc-table">
             <thead>
-              <tr><th>Group</th><th>Functions</th></tr>
+              <tr><th>File</th><th>Helpers</th><th>Shim</th></tr>
             </thead>
             <tbody>
               <tr>
-                <td>Integers</td>
+                <td><code>lib/std.loi</code></td>
                 <td><code>min_i32</code>, <code>max_i32</code>, <code>abs_i32</code>,
-                  <code>clamp_i32</code> — all <code>&lt;- i32... =&gt; i32</code></td>
+                  <code>clamp_i32</code> and the <code>f64</code> variants;
+                  <code>str_len</code>, <code>str_eq</code>,
+                  <code>str_starts_with</code>, <code>str_find</code></td>
+                <td>no</td>
               </tr>
               <tr>
-                <td>Floats</td>
-                <td><code>min_f64</code>, <code>max_f64</code>, <code>abs_f64</code>,
-                  <code>clamp_f64</code> — all <code>&lt;- f64... =&gt; f64</code></td>
+                <td><code>lib/math.loi</code></td>
+                <td><code>MATH_PI</code>, <code>MATH_E</code>, <code>MATH_TAU</code>,
+                  <code>math_factorial</code>, generic
+                  <code>math_min&lt;T&gt;</code> / <code>math_max&lt;T&gt;</code> /
+                  <code>math_clamp&lt;T&gt;</code> / <code>math_sum&lt;T&gt;</code>,
+                  <code>math_lerp</code>, <code>math_smoothstep</code>,
+                  <code>math_deg_to_rad</code>, <code>math_rad_to_deg</code>,
+                  <code>math_hypot</code>, <code>math_near</code>,
+                  <code>math_sign_i32</code>, <code>math_gcd_u64</code>,
+                  <code>math_pow_u64</code>, <code>math_dot_f64</code></td>
+                <td>no</td>
               </tr>
               <tr>
-                <td>Byte strings</td>
-                <td><code>str_len(&lt;- [u8]) =&gt; u64</code>,
-                  <code>str_eq(&lt;- [u8], &lt;- [u8]) =&gt; bool</code>,
-                  <code>str_starts_with(&lt;- [u8], &lt;- [u8]) =&gt; bool</code>,
-                  <code>str_find(&lt;- [u8], &lt;- [u8]) =&gt; i64</code></td>
+                <td><code>lib/ctype.loi</code></td>
+                <td>ASCII classifiers (<code>ctype_is_digit</code>,
+                  <code>ctype_is_alpha</code>, <code>ctype_is_space</code>, ...),
+                  <code>ctype_to_lower</code> / <code>ctype_to_upper</code>,
+                  <code>ctype_hex_value</code>, <code>ctype_parse_u64</code>,
+                  <code>ctype_count_digits</code>,
+                  <code>ctype_equals_ignore_case</code></td>
+                <td>no</td>
+              </tr>
+              <tr>
+                <td><code>lib/os.loi</code></td>
+                <td><code>os_pid</code>, <code>os_unix_time</code>,
+                  <code>os_sleep</code>, <code>os_has_env</code>,
+                  <code>os_env_i32</code>, <code>os_errno</code>,
+                  <code>os_exit</code></td>
+                <td><code>lib/os_shim.c</code></td>
+              </tr>
+              <tr>
+                <td><code>lib/net.loi</code></td>
+                <td><code>net_ipv4</code>, <code>net_ipv4_octet</code>,
+                  <code>net_parse_ipv4</code>, <code>net_port_is_valid</code>,
+                  <code>net_tcp_connect</code>, <code>net_close</code>,
+                  <code>net_send</code>, <code>net_recv</code></td>
+                <td><code>lib/net_shim.c</code></td>
               </tr>
             </tbody>
           </table>
+
+          <p><code>lib/math.loi</code> and <code>lib/ctype.loi</code> are pure
+            Loi; the math module uses generic flows and a
+            <code>comptime flow</code>. <code>lib/os.loi</code> and
+            <code>lib/net.loi</code> are thin POSIX bindings: compile their
+            shims with the program. Sockets are integer descriptors, so no
+            foreign pointer enters ordinary Loi values.</p>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>shims.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-loi">import "lib/math.loi"
+import "lib/os.loi"
+
+open flow main
+    =&gt; i32
+{
+    if comptime math_factorial(5) != 120 {
+        =&gt; 1
+    }
+    if os_pid() &lt;= 0 {
+        =&gt; 2
+    }
+    print("library ok\n")
+    =&gt; 0
+}</code></pre>
+          </div>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-sh">loi build main.loi -o main --c-source lib/os_shim.c --c-source lib/net_shim.c</code></pre>
+          </div>
 
           <div class="doc-code">
             <div class="doc-code-bar"><span>stdlib.loi</span><button type="button" data-copy>copy</button></div>

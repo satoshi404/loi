@@ -302,7 +302,7 @@ These rules were added to unblock real programs and are implemented and tested. 
 **Builtin intrinsics and standard library**
 
 - Intrinsics: `print(<- [u8])`, `eprint(<- [u8])`, `panic(<- [u8])`, `print_int(<- integer)`, `print_float(<- f64)`, `printf(<- [u8], ...)` (literal format string plus typed varargs), `sqrt/floor/ceil/fabs(<- f64) => f64`, `pow/fmod(<- f64, <- f64) => f64` and `len([T]) => u64`.
-- `lib/std.loi` is a minimal, explicitly imported standard library (integer/float min/max/abs/clamp and byte-string helpers). It is written in Loi and uses only the features above.
+- The library is a set of explicitly imported files: `lib/std.loi` (integer/float and byte-string helpers), `lib/math.loi` (generic and `comptime` math), `lib/ctype.loi` (ASCII byte helpers), `lib/os.loi` and `lib/net.loi` (thin POSIX bindings with C shims). The first three are pure Loi and use only the features above; the last two use `extern flow` declarations and must be linked with their shims.
 
 ### 4.9 Foreign C interop
 
@@ -553,7 +553,7 @@ is no long-lived file/socket handle API or `guard` yet.
    They cannot be redeclared by user code and are always available (no import).
    `read_file`, `read_stdin` and `read_line` allocate in the current `protect`
    region and follow the same escape rules as `alloc`.
-2. **The standard library** is ordinary Loi in `lib/std.loi`, explicitly imported. It has no implicit prelude. Names are prefixed (`min_i32`, `str_eq`, ...) until a module/namespace design exists.
+2. **The library** is ordinary Loi in `lib/std.loi`, `lib/math.loi` and `lib/ctype.loi`, plus thin `extern flow` bindings in `lib/os.loi` and `lib/net.loi` with matching C shims. Files are explicitly imported; there is no implicit prelude. Names are prefixed (`min_i32`, `math_sum`, `ctype_is_digit`, ...) until a module/namespace design exists.
 
 New functionality goes into the library by default; an intrinsic is added only when the operation must be implemented by the backend or the OS.
 

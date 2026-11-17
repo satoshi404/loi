@@ -1,0 +1,204 @@
+//! Pure math helpers built on intrinsics, generics and `comptime`.
+//!
+//! Import it explicitly:
+//!
+//! ```loi
+//! import "lib/math.loi"
+//! ```
+//!
+//! Imports are textual, so names are prefixed (`math_*`, `MATH_*`) to avoid
+//! clashes with user code and with the other library files.
+
+MATH_PI: f64 <- 3.141592653589793
+MATH_E: f64 <- 2.718281828459045
+MATH_TAU: f64 <- comptime 2.0 * MATH_PI
+
+/// Compile-time factorial; usable in globals and `comptime` expressions.
+comptime flow math_factorial
+    <- n: u32
+    => u64
+{
+    mut result: u64 <- 1
+    mut i: u32 <- 2
+    while i <= n {
+        result *= i as u64
+        i += 1
+    }
+    => result
+}
+
+flow math_min<T>
+    <- a: T
+    <- b: T
+    => T
+{
+    if a < b {
+        => a
+    }
+    => b
+}
+
+flow math_max<T>
+    <- a: T
+    <- b: T
+    => T
+{
+    if a > b {
+        => a
+    }
+    => b
+}
+
+flow math_clamp<T>
+    <- value: T
+    <- low: T
+    <- high: T
+    => T
+{
+    if value < low {
+        => low
+    }
+    if value > high {
+        => high
+    }
+    => value
+}
+
+/// Sum every element of a slice; the element type is supplied explicitly.
+flow math_sum<T>
+    <- xs: [T]
+    => T
+{
+    mut total: T <- 0
+    for i in 0..xs.len {
+        total += xs[i]
+    }
+    => total
+}
+
+flow math_clamp_f64
+    <- value: f64
+    <- low: f64
+    <- high: f64
+    => f64
+{
+    if value < low {
+        => low
+    }
+    if value > high {
+        => high
+    }
+    => value
+}
+
+flow math_lerp
+    <- a: f64
+    <- b: f64
+    <- t: f64
+    => f64
+{
+    => a + (b - a) * t
+}
+
+flow math_smoothstep
+    <- edge0: f64
+    <- edge1: f64
+    <- x: f64
+    => f64
+{
+    t <- math_clamp_f64((x - edge0) / (edge1 - edge0), 0.0, 1.0)
+    => t * t * (3.0 - 2.0 * t)
+}
+
+flow math_deg_to_rad
+    <- degrees: f64
+    => f64
+{
+    => degrees * MATH_PI / 180.0
+}
+
+flow math_rad_to_deg
+    <- radians: f64
+    => f64
+{
+    => radians * 180.0 / MATH_PI
+}
+
+flow math_hypot
+    <- x: f64
+    <- y: f64
+    => f64
+{
+    => sqrt(x * x + y * y)
+}
+
+flow math_near
+    <- a: f64
+    <- b: f64
+    <- epsilon: f64
+    => bool
+{
+    => fabs(a - b) <= epsilon
+}
+
+flow math_sign_i32
+    <- value: i32
+    => i32
+{
+    if value < 0 {
+        => -1
+    }
+    if value > 0 {
+        => 1
+    }
+    => 0
+}
+
+/// Greatest common divisor. Both zero arguments produce zero.
+flow math_gcd_u64
+    <- a: u64
+    <- b: u64
+    => u64
+{
+    mut x: u64 <- a
+    mut y: u64 <- b
+    while y != 0 {
+        remainder <- x % y
+        x = y
+        y = remainder
+    }
+    => x
+}
+
+/// Exponentiation by squaring. Unsigned overflow wraps, as in Loi arithmetic.
+flow math_pow_u64
+    <- base: u64
+    <- exponent: u32
+    => u64
+{
+    mut result: u64 <- 1
+    mut factor: u64 <- base
+    mut power: u32 <- exponent
+    while power > 0 {
+        if (power & 1) != 0 {
+            result *= factor
+        }
+        factor *= factor
+        power >>= 1
+    }
+    => result
+}
+
+/// Dot product over the shorter of the two slices.
+flow math_dot_f64
+    <- a: [f64]
+    <- b: [f64]
+    => f64
+{
+    count <- math_min<u64>(a.len, b.len)
+    mut total: f64 <- 0
+    for i in 0..count {
+        total += a[i] * b[i]
+    }
+    => total
+}

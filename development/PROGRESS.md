@@ -4,25 +4,33 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-17):** added `examples/audio_visualizer.loi`, a Loi
+- **Current task (2026-11-17):** expanded the explicit library into modular
+  files. `lib/math.loi` provides generic `math_min/max/clamp/sum<T>`, a
+  `comptime math_factorial`, constants and float/integer helpers;
+  `lib/ctype.loi` provides pure ASCII byte classification and decimal parsing.
+  `lib/os.loi` and `lib/net.loi` are thin POSIX bindings with `lib/os_shim.c`
+  and `lib/net_shim.c`: process/environment queries and a minimal TCP client
+  with IPv4 helpers. No new intrinsics or language rules were added. Docs,
+  playground library copying/linking and 7 new `tests/lib.rs` cases are in
+  place; the existing `lib/std.loi` API is unchanged. Verified: `cargo fmt
+  --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test
+  --all-targets` (**263 passed, 0 failed**:
+  22+6+1+102+39+43+2+6+7+23+12), `python3 tools/sync_examples.py --check`,
+  `git diff --check`, `node --check website/server.mjs`, `cc -std=c11 -Wall
+  -Wextra -fsyntax-only` on both shims and `loi check` on every library file
+  all exit 0. A live local playground `/api/run` request importing `math.loi`
+  and `os.loi` returned `ok:true` with the expected output.
+- **Previous task (2026-11-17):** added `examples/audio_visualizer.loi`, a Loi
   adaptation of the C3 playground's "Audio Visualizer". It keeps the original
   110 BPM, 16-step sequencer and procedural kick/snare/bass/lead/solo state
   machine, then drives reactive bars, circles and a waveform. `examples/sound_shim.c`
   gained `loi_audio_feed`: native builds feed a raylib `AudioStream` with
   `UpdateAudioStream`; the browser queues back-to-back `AudioBufferSourceNode`
   buffers. No keyboard key starts the audio on either platform. The site now has
-  a third preset/tab/iframe, and the docs cover both audio examples. Verified:
-  `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
-  `node --check website/web/audio_visualizer.js website/web/sound_synth.js website/assets/playground.js`,
-  `sh -n examples/build_web.sh`, `python3 tools/sync_examples.py --check`,
-  `git diff --check`, `./target/debug/loi check examples/audio_visualizer.loi`
-  and `cc -std=c11 -Ivendor/raylib/include -c examples/sound_shim.c`
-  all exit 0; `cargo test --all-targets` reports **256 passed, 0 failed**
-  (22+6+1+102+39+43+2+6+23+12 across all targets). Rebuilding both audio demos
-  with Emscripten 7.0.0 exits 0 and their JS contains `ASM_CONSTS`,
-  `createBuffer` and `node.start`. No browser was available locally, so audible
-  output was not confirmed firsthand; native raylib link still needs a usable
-  `libraylib.a`.
+  a third preset/tab/iframe, and the docs cover both audio examples. Rebuilding
+  both audio demos with Emscripten 7.0.0 exits 0; no browser was available
+  locally, so audible output was not confirmed firsthand and native raylib link
+  still needs a usable `libraylib.a`.
 - **Previous task (2026-11-17):** added `printf` variadic format support
   and made the raylib audio demo auto-play. `printf` is a reserved compiler
   intrinsic: its first argument must be a string literal; the checker validates
@@ -132,6 +140,7 @@
 | Ownership | Working | Give liveness, definite assignment/return, exclusive `->`/`<->`, cross-flow consumption, `protect` taints and lexical-block escape analysis for slice literals, `read_file`/`read_stdin`/`read_line`; gives from globals are rejected and move state is per function body |
 | C backend | Working | One C11 translation unit, ordered shape layouts, checked arithmetic, bitwise/shift helpers, growable arena, bounds checks, defaults, headers, source maps, multi-file objects, statics, file/stdin I/O and numeric printing |
 | C interop | Working | `opaque` → `void *`, `cstr` → `const char *`, bodyless `extern flow`, `--c-source`, `--cc-flag`; string literals coerce to `cstr` |
+| Library | Working | `lib/std.loi` (scalar/string helpers), `lib/math.loi` (generic and `comptime`), `lib/ctype.loi` (pure ASCII helpers), `lib/os.loi`/`lib/net.loi` (thin POSIX bindings with C shims); prefixed names, explicitly imported, 7 integration tests |
 | Binding generator | Working | `tools/bindgen/bindgen.py` emits `opaque` handles, safe `shape`s, typed constants, `extern flow`s, a `memcpy` shim with `_Static_assert` checks and a skip report |
 | Vendored bindings | Working (syntax-verified) | `vendor/sdl2/` (SDL2 2.32.10) and `vendor/raylib/` (raylib 5.5), each with generated `.loi`, shim, skip report and README |
 | IR | Draft | `src/ir.rs`; `--emit-ir` writes text. Globals and some literals are not lowered |
@@ -150,12 +159,18 @@ cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test --all-targets
 python3 tools/sync_examples.py --check
+git diff --check
+node --check website/server.mjs
+for f in lib/os_shim.c lib/net_shim.c; do cc -std=c11 -Wall -Wextra -fsyntax-only "$f"; done
+for f in lib/std.loi lib/math.loi lib/ctype.loi lib/os.loi lib/net.loi; do ./target/debug/loi check "$f"; done
 ```
 
 - `cargo fmt --check`: exit 0.
 - `cargo clippy --all-targets -- -D warnings`: exit 0.
-- `cargo test --all-targets`: **256 passed, 0 failed** (22+6+1+102+39+43+2+6+23+12 across all targets; compile-and-run tests run when `cc` is available).
+- `cargo test --all-targets`: **263 passed, 0 failed** (22+6+1+102+39+43+2+6+7+23+12 across all targets; compile-and-run tests run when `cc` is available).
 - `python3 tools/sync_examples.py --check`: `website/examples` is in sync.
+- `git diff --check`, `node --check website/server.mjs`, both strict-C11 shim checks and `loi check` on every library file: exit 0.
+- `tests/lib.rs` builds and runs programs that import every module, including both shims, and checks that generic/comptime math, ASCII parsing, environment reads and IPv4/TCP helpers behave as documented. A local playground `/api/run` request importing `math.loi` and `os.loi` returned `ok:true` with `playground libs ok`.
 - `node --check website/web/*.js`: exit 0 for both generated demos;
   `loi check examples/sound_synth.loi`: exit 0; `gcc -std=c11 -Wall -Wextra
   -fsyntax-only` on the generated synth C: exit 0 (warnings only).
@@ -280,13 +295,19 @@ python3 tools/sync_examples.py --check
 - Imports are textual inclusion without namespaces or cross-file visibility
   enforcement. Multi-file builds give sealed flows external linkage so
   cross-file calls link.
-- I/O is limited to `print`, `eprint`, `panic`, numeric/`printf` formatting and
-  whole-file / whole-stdin reads and writes. There is no socket, directory,
-  seek, environment or process API. `printf` needs a literal format string and
-  rejects dynamic `*` width/precision; user-declared variadic flows are not
-  supported. `read_file`, `read_stdin` and `read_line` allocate in the current
-  `protect` region and cannot escape it. Resources (`guard`) are specified but
-  not implemented.
+- I/O intrinsics are limited to `print`, `eprint`, `panic`, numeric/`printf`
+  formatting and whole-file / whole-stdin reads and writes. `printf` needs a
+  literal format string and rejects dynamic `*` width/precision; user-declared
+  variadic flows are not supported. `read_file`, `read_stdin` and `read_line`
+  allocate in the current `protect` region and cannot escape it. There is no
+  directory, seek or process API in the intrinsic set. `lib/os.loi` and
+  `lib/net.loi` wrap a few POSIX calls through shims (process/environment
+  queries and a minimal TCP client); those shims are POSIX-only, expose sockets
+  as plain integer descriptors and have no `guard`/release discipline.
+  Resources (`guard`) are specified but not implemented.
+- Library limits: `lib/ctype.loi` classifies ASCII bytes only (Loi strings are
+  UTF-8 bytes), and `math_factorial`/`math_pow_u64` follow unsigned Loi
+  arithmetic, so large results wrap at 64 bits.
 - `comptime` is implemented for pure flows, expressions, globals and shape
   defaults. Freshness, spatial tiers and ordering blocks are not implemented.
 - Generic declarations are templates; only instantiations reach checking and
@@ -345,8 +366,9 @@ Remaining implementation or secondary choices:
 ## Next Steps
 
 1. Add a real module/namespace design and enforce `open`/`sealed` across files.
-2. Design linear resources (`guard`, `<Shape>_release`) before adding file or
-   socket APIs.
+2. Design linear resources (`guard`, `<Shape>_release`) and apply them to the
+   socket descriptors now exposed by `lib/net.loi`; the shim alone does not
+   manage lifetimes.
 3. Design growable collections (`Vec<T>`, maps) as library code now that
    generics and explicit monomorphization exist.
 4. Extend the binding generator for the C constructs that still require

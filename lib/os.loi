@@ -1,0 +1,94 @@
+//! Small process/environment library backed by a C shim.
+//!
+//! Import it explicitly and compile `lib/os_shim.c` with the program:
+//!
+//! ```loi
+//! import "lib/os.loi"
+//! ```
+//!
+//! ```sh
+//! loi build main.loi -o main --c-source lib/os_shim.c
+//! ```
+//!
+//! Like the vendored bindings, the `extern flow` declarations below are a thin
+//! binding: the shim owns the POSIX details and keeps foreign pointers out of
+//! ordinary Loi values. The helpers are POSIX-only.
+
+extern flow loi_os_pid
+    => i32
+
+extern flow loi_os_unix_time
+    => i64
+
+extern flow loi_os_sleep_ms
+    <- millis: i32
+
+extern flow loi_os_has_env
+    <- name: cstr
+    => bool
+
+extern flow loi_os_env_i32
+    <- name: cstr
+    <- fallback: i32
+    => i32
+
+extern flow loi_os_errno
+    => i32
+
+extern flow loi_os_exit
+    <- code: i32
+
+flow os_pid
+    => i32
+{
+    => loi_os_pid()
+}
+
+/// Seconds since the Unix epoch, or -1 when the platform cannot provide it.
+flow os_unix_time
+    => i64
+{
+    => loi_os_unix_time()
+}
+
+/// Sleep for whole milliseconds. Returns false for a negative duration.
+flow os_sleep
+    <- millis: i32
+    => bool
+{
+    if millis < 0 {
+        => false
+    }
+    loi_os_sleep_ms(millis)
+    => true
+}
+
+flow os_has_env
+    <- name: cstr
+    => bool
+{
+    => loi_os_has_env(name)
+}
+
+/// Read an integer environment variable, using `fallback` when it is absent,
+/// empty or malformed.
+flow os_env_i32
+    <- name: cstr
+    <- fallback: i32
+    => i32
+{
+    => loi_os_env_i32(name, fallback)
+}
+
+flow os_errno
+    => i32
+{
+    => loi_os_errno()
+}
+
+/// Terminate the process immediately; no Loi cleanup runs.
+flow os_exit
+    <- code: i32
+{
+    loi_os_exit(code)
+}

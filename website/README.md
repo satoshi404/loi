@@ -43,8 +43,8 @@ address. `CC` and `AR` are passed through to `loi build`.
 Each API request:
 
 1. creates a fresh temporary directory;
-2. copies `lib/std.loi` to both `lib/std.loi` and `examples/lib/std.loi`, plus
-   `vendor/raylib/raylib.loi` to `vendor/raylib/raylib.loi`;
+2. copies every `lib/*.loi` module and its `*_shim.c` to both `lib/` and
+   `examples/lib/`, plus `vendor/raylib/raylib.loi` to `vendor/raylib/`;
 3. writes the submitted program to `examples/main.loi`;
 4. runs `loi check`, `loi fmt` or `loi build` there;
 5. for `/api/run`, executes the resulting binary and captures its output;
@@ -52,7 +52,8 @@ Each API request:
 
 Programs are limited to 200 KB, output is capped at 128 KB, compilation has a
 30-second timeout and execution has a 10-second timeout. At most four requests
-compile at once.
+compile at once. `/api/run` passes both `lib/os_shim.c` and `lib/net_shim.c` to
+`loi build`, so the shim-backed modules work in the playground too.
 
 ## Security
 

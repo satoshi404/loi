@@ -600,9 +600,32 @@ print_float(0.1)
 print("\n")
 ```
 
-`lib/std.loi` provides ordinary Loi helpers with prefixed names:
-`min_i32`, `max_i32`, `abs_i32`, `clamp_i32`, `min_f64`, `max_f64`, `abs_f64`,
-`clamp_f64`, `str_len`, `str_eq`, `str_starts_with`, `str_find`.
+### Library modules
+
+Every library file is imported explicitly with the canonical `import` form.
+Names are prefixed by module (`math_*`, `ctype_*`, `os_*`, `net_*`) because
+imports are textual and there are no namespaces yet.
+
+| File | Helpers | Needs a shim? |
+|---|---|---|
+| `lib/std.loi` | `min_i32`, `max_i32`, `abs_i32`, `clamp_i32`, `min_f64`, `max_f64`, `abs_f64`, `clamp_f64`, `str_len`, `str_eq`, `str_starts_with`, `str_find` | no |
+| `lib/math.loi` | `MATH_PI`, `MATH_E`, `MATH_TAU`, `math_factorial`, generic `math_min<T>` / `math_max<T>` / `math_clamp<T>` / `math_sum<T>`, `math_lerp`, `math_smoothstep`, `math_deg_to_rad`, `math_rad_to_deg`, `math_hypot`, `math_near`, `math_sign_i32`, `math_gcd_u64`, `math_pow_u64`, `math_dot_f64` | no |
+| `lib/ctype.loi` | `ctype_is_digit`, `ctype_is_upper`, `ctype_is_lower`, `ctype_is_alpha`, `ctype_is_alnum`, `ctype_is_hex_digit`, `ctype_is_space`, `ctype_is_ascii`, `ctype_to_lower`, `ctype_to_upper`, `ctype_hex_value`, `ctype_parse_u64`, `ctype_count_digits`, `ctype_equals_ignore_case` | no |
+| `lib/os.loi` | `os_pid`, `os_unix_time`, `os_sleep`, `os_has_env`, `os_env_i32`, `os_errno`, `os_exit` | `lib/os_shim.c` |
+| `lib/net.loi` | `NetIpv4Result`, `net_ipv4`, `net_ipv4_octet`, `net_port_is_valid`, `net_parse_ipv4`, `net_tcp_connect`, `net_close`, `net_send`, `net_recv` | `lib/net_shim.c` |
+
+`lib/math.loi` and `lib/ctype.loi` are pure Loi: the math module uses generic
+flows and a `comptime flow` for factorials. `lib/os.loi` and `lib/net.loi` are
+thin POSIX bindings: their `extern flow` declarations call symbols defined in
+the matching C shim, so a program that imports them must compile the shim:
+
+```sh
+loi build main.loi -o main --c-source lib/os_shim.c --c-source lib/net_shim.c
+```
+
+The socket helpers expose integer descriptors only; no foreign pointer type
+enters ordinary Loi values. The shims are POSIX-only and are not part of the
+closed intrinsic set.
 
 ---
 
