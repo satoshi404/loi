@@ -5,6 +5,7 @@ pub mod ast;
 pub mod checker;
 pub mod codegen;
 pub mod const_eval;
+pub mod diagnostic;
 pub mod ir;
 pub mod lexer;
 pub mod monomorphize;
@@ -15,8 +16,9 @@ pub mod types;
 
 pub use asm::{generate_asm, generate_asm_from_program};
 pub use ast::*;
-pub use checker::{Diagnostic, check};
+pub use checker::check;
 pub use codegen::{CodegenError, generate_c, generate_c_subset, generate_header, generate_ir};
+pub use diagnostic::{ColorChoice, Diagnostic, ErrorFormat, Severity};
 pub use ir::{IrBuilder, IrModule};
 pub use lexer::{Comment, LexError, Lexer, tokenize, tokenize_with_comments};
 pub use monomorphize::{instantiation_name, monomorphize, monomorphize_for_check};

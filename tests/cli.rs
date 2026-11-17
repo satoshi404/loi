@@ -1621,3 +1621,123 @@ fn emit_asm_is_rejected_with_a_clear_message() {
     );
     assert!(!asm.exists(), "no assembly file should be written");
 }
+
+#[test]
+fn check_supports_human_short_and_json_error_formats() {
+    let dir = test_dir("error-formats");
+    let input = dir.join("program.loi");
+    fs::write(&input, "flow main => i32 {\n    => missing\n}\n").expect("input should be writable");
+    let path = input.display().to_string();
+
+    let human = Command::new(loi())
+        .arg("check")
+        .arg(&input)
+        .arg("--error-format=human")
+        .arg("--color=never")
+        .output()
+        .expect("loi should run");
+    assert_eq!(human.status.code(), Some(1));
+    let human_stderr = String::from_utf8_lossy(&human.stderr);
+    assert!(
+        human_stderr.contains("error: unknown variable 'missing'"),
+        "unexpected human stderr: {human_stderr}"
+    );
+    assert!(
+        human_stderr.contains(&format!("--> {path}:2:8")),
+        "human output should point at the use: {human_stderr}"
+    );
+    assert!(
+        human_stderr.trim_end().ends_with("1 error"),
+        "human output should summarize: {human_stderr}"
+    );
+
+    let short = Command::new(loi())
+        .arg("check")
+        .arg(&input)
+        .arg("--error-format")
+        .arg("short")
+        .output()
+        .expect("loi should run");
+    assert_eq!(short.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&short.stderr).trim_end(),
+        format!("{path}:2:8: unknown variable 'missing'")
+    );
+
+    let json = Command::new(loi())
+        .arg("check")
+        .arg(&input)
+        .arg("--error-format=json")
+        .output()
+        .expect("loi should run");
+    assert_eq!(json.status.code(), Some(1));
+    let json_stderr = String::from_utf8_lossy(&json.stderr);
+    assert!(
+        json_stderr.starts_with('['),
+        "unexpected JSON: {json_stderr}"
+    );
+    assert!(
+        json_stderr.contains("\"severity\":\"error\"")
+            && json_stderr.contains("\"message\":\"unknown variable 'missing'\"")
+            && json_stderr.contains("\"line\":2")
+            && json_stderr.contains("\"column\":8"),
+        "unexpected JSON: {json_stderr}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn check_color_flags_control_ansi_escapes() {
+    let dir = test_dir("color-flags");
+    let input = dir.join("program.loi");
+    fs::write(&input, "flow main => i32 {\n    => missing\n}\n").expect("input should be writable");
+
+    let never = Command::new(loi())
+        .arg("check")
+        .arg(&input)
+        .arg("--color=never")
+        .output()
+        .expect("loi should run");
+    assert_eq!(never.status.code(), Some(1));
+    assert!(
+        !String::from_utf8_lossy(&never.stderr).contains('\u{1b}'),
+        "expected no ANSI escapes with --color=never"
+    );
+
+    let always = Command::new(loi())
+        .arg("check")
+        .arg(&input)
+        .arg("--color=always")
+        .output()
+        .expect("loi should run");
+    assert_eq!(always.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&always.stderr).contains("\u{1b}[31m"),
+        "expected red ANSI escapes with --color=always"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn check_rejects_an_unknown_error_format() {
+    let dir = test_dir("bad-error-format");
+    let input = dir.join("program.loi");
+    fs::write(&input, "flow main {\n}\n").expect("input should be writable");
+
+    let output = Command::new(loi())
+        .arg("check")
+        .arg(&input)
+        .arg("--error-format=yaml")
+        .output()
+        .expect("loi should run");
+    let _ = fs::remove_dir_all(&dir);
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown error format 'yaml'"),
+        "unexpected stderr: {stderr}"
+    );
+}

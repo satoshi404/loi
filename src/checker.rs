@@ -16,23 +16,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
+use crate::diagnostic::Diagnostic;
 use crate::types::{self, Ty};
-
-/// A semantic error with a source position.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Diagnostic {
-    pub span: Span,
-    pub message: String,
-}
-
-impl Diagnostic {
-    fn new(span: Span, message: impl Into<String>) -> Self {
-        Self {
-            span,
-            message: message.into(),
-        }
-    }
-}
 
 /// Check a complete program, returning every diagnostic found.
 pub fn check(program: &Program) -> Vec<Diagnostic> {
@@ -40,10 +25,7 @@ pub fn check(program: &Program) -> Vec<Diagnostic> {
     let has_mono_errors = !mono_errors.is_empty();
     let mut diagnostics = mono_errors
         .into_iter()
-        .map(|error| Diagnostic {
-            span: error.span,
-            message: error.message,
-        })
+        .map(|error| Diagnostic::from_error(error.message, error.span))
         .collect::<Vec<_>>();
     if has_mono_errors {
         // Generic errors (missing arguments, recursion limits, name
@@ -52,16 +34,10 @@ pub fn check(program: &Program) -> Vec<Diagnostic> {
         return diagnostics;
     }
     for error in crate::const_eval::validate_comptime_functions(&program) {
-        diagnostics.push(Diagnostic {
-            span: error.span,
-            message: error.message,
-        });
+        diagnostics.push(Diagnostic::from_error(error.message, error.span));
     }
     for error in crate::const_eval::check_comptime_expressions(&program) {
-        diagnostics.push(Diagnostic {
-            span: error.span,
-            message: error.message,
-        });
+        diagnostics.push(Diagnostic::from_error(error.message, error.span));
     }
     let mut checker = Checker::new();
     checker.collect_names(&program);
@@ -90,8 +66,25 @@ fn show_source_names(
     let mut names = source_names.iter().collect::<Vec<_>>();
     names.sort_by_key(|entry| std::cmp::Reverse(entry.0.len()));
     for diagnostic in diagnostics {
-        for (mangled, source) in &names {
-            diagnostic.message = replace_identifier(&diagnostic.message, mangled, source);
+        let rewrite = |text: &str| {
+            let mut text = text.to_string();
+            for (mangled, source) in &names {
+                text = replace_identifier(&text, mangled, source);
+            }
+            text
+        };
+        diagnostic.message = rewrite(&diagnostic.message);
+        if let Some(label) = &diagnostic.label {
+            diagnostic.label = Some(rewrite(label));
+        }
+        for secondary in &mut diagnostic.secondary {
+            secondary.label = rewrite(&secondary.label);
+        }
+        if let Some(help) = &diagnostic.help {
+            diagnostic.help = Some(rewrite(help));
+        }
+        if let Some(note) = &diagnostic.note {
+            diagnostic.note = Some(rewrite(note));
         }
     }
 }
@@ -158,8 +151,9 @@ struct VarInfo {
     initialized: bool,
     direction: Option<Direction>,
     span: Span,
-    /// Paths moved out of this variable. `""` means the whole variable.
-    moved: HashSet<String>,
+    /// Paths moved out of this variable, with the move site. `""` means the
+    /// whole variable.
+    moved: HashMap<String, Span>,
     /// Lexical block or `protect` region where this variable's storage lives;
     /// `None` means a parameter or the caller.
     home_region: Option<usize>,
@@ -218,7 +212,7 @@ struct LvalueInfo {
 #[derive(Debug, Clone)]
 struct ControlState {
     initialized: bool,
-    moved: HashSet<String>,
+    moved: HashMap<String, Span>,
     taints: Vec<RegionTaint>,
 }
 
@@ -247,6 +241,8 @@ struct Checker {
     region_parents: Vec<Option<usize>>,
     /// Kind of each region, indexed by region id.
     region_kinds: Vec<RegionKind>,
+    /// Where each region started, for escape diagnostics.
+    region_origins: Vec<Option<Span>>,
     /// Regions currently active, innermost last.
     region_stack: Vec<usize>,
 }
@@ -269,12 +265,65 @@ impl Checker {
             global_names: HashSet::new(),
             region_parents: Vec::new(),
             region_kinds: Vec::new(),
+            region_origins: Vec::new(),
             region_stack: Vec::new(),
         }
     }
 
     fn error(&mut self, span: Span, message: impl Into<String>) {
-        self.diagnostics.push(Diagnostic::new(span, message));
+        self.diagnostics.push(Diagnostic::from_error(message, span));
+    }
+
+    /// Report an unknown name and suggest the closest declaration when one is
+    /// close enough. Message text is unchanged; the suggestion is a help line.
+    fn error_unknown(&mut self, span: Span, message: impl Into<String>, name: &str) {
+        let mut diagnostic = Diagnostic::from_error(message, span);
+        if let Some(suggestion) = self.name_suggestion(name) {
+            diagnostic = diagnostic.with_help(format!("did you mean '{suggestion}'?"));
+        }
+        self.diagnostics.push(diagnostic);
+    }
+
+    fn name_suggestion(&self, name: &str) -> Option<String> {
+        let mut candidates = HashSet::new();
+        for scope in &self.scopes {
+            candidates.extend(scope.keys().cloned());
+        }
+        candidates.extend(self.functions.keys().cloned());
+        candidates.extend(self.interfaces.keys().cloned());
+        candidates.extend(self.opaques.iter().cloned());
+        candidates.extend(self.global_names.iter().cloned());
+        crate::diagnostic::suggest_name(name, candidates.iter().map(String::as_str))
+            .map(str::to_string)
+    }
+
+    /// Report a use after move and point at the move that killed the value.
+    fn error_moved(&mut self, span: Span, message: impl Into<String>, root: &str, path: &str) {
+        let moved_here = self.moved_span(root, path);
+        let mut diagnostic = Diagnostic::from_error(message, span).with_label("used after move");
+        if let Some(moved_here) = moved_here {
+            diagnostic = diagnostic.with_secondary(moved_here, "moved here");
+        }
+        self.diagnostics.push(diagnostic);
+    }
+
+    fn moved_span(&self, root: &str, path: &str) -> Option<Span> {
+        self.lookup(root).and_then(|var| {
+            var.moved
+                .iter()
+                .find(|(moved, _)| paths_overlap(moved, path))
+                .map(|(_, span)| *span)
+        })
+    }
+
+    /// Report a write to read-only storage and point at the declaration.
+    fn error_readonly(&mut self, span: Span, message: impl Into<String>, name: &str, label: &str) {
+        let declared = self.lookup(name).map(|var| var.span);
+        let mut diagnostic = Diagnostic::from_error(message, span).with_label("cannot write here");
+        if let Some(declared) = declared {
+            diagnostic = diagnostic.with_secondary(declared, label);
+        }
+        self.diagnostics.push(diagnostic);
     }
 
     // ------------------------------------------------------------------
@@ -708,7 +757,7 @@ impl Checker {
                     initialized: true,
                     direction: None,
                     span: decl.span,
-                    moved: HashSet::new(),
+                    moved: HashMap::new(),
                     home_region: None,
                     taints: Vec::new(),
                     is_global: true,
@@ -729,7 +778,7 @@ impl Checker {
                 } else if self.opaques.contains(name) {
                     Ty::Opaque(name.clone())
                 } else {
-                    self.error(span, format!("unknown type '{name}'"));
+                    self.error_unknown(span, format!("unknown type '{name}'"), name);
                     Ty::Error
                 }
             }
@@ -978,7 +1027,7 @@ impl Checker {
         self.current_return = signature.return_type.clone();
         self.current_function = decl.name.clone();
         self.scopes.push(HashMap::new());
-        let body_region = self.begin_region(RegionKind::Block);
+        let body_region = self.begin_region(RegionKind::Block, Some(decl.span));
 
         for (param, signature) in decl.params.iter().zip(signature.params.iter()) {
             let info = VarInfo {
@@ -987,7 +1036,7 @@ impl Checker {
                 initialized: signature.direction != Direction::Out,
                 direction: Some(signature.direction),
                 span: param.span,
-                moved: HashSet::new(),
+                moved: HashMap::new(),
                 home_region: None,
                 taints: Vec::new(),
                 is_global: false,
@@ -1026,7 +1075,7 @@ impl Checker {
         let outer = self.reachable;
         self.reachable = true;
         self.scopes.push(HashMap::new());
-        let region = self.begin_region(RegionKind::Block);
+        let region = self.begin_region(RegionKind::Block, None);
         self.check_statements(&block.statements);
         let reachable = self.reachable;
         self.end_region(region);
@@ -1107,7 +1156,7 @@ impl Checker {
                         initialized,
                         direction: None,
                         span: statement.span,
-                        moved: HashSet::new(),
+                        moved: HashMap::new(),
                         home_region: self.current_region(),
                         taints: Vec::new(),
                         is_global: false,
@@ -1196,7 +1245,7 @@ impl Checker {
                 self.loop_depth += 1;
                 let before = self.snapshot();
                 self.scopes.push(HashMap::new());
-                let body_region = self.begin_region(RegionKind::Block);
+                let body_region = self.begin_region(RegionKind::Block, Some(statement.span));
                 if variable != "_" {
                     self.declare_variable(
                         variable,
@@ -1206,7 +1255,7 @@ impl Checker {
                             initialized: true,
                             direction: None,
                             span: statement.span,
-                            moved: HashSet::new(),
+                            moved: HashMap::new(),
                             home_region: self.current_region(),
                             taints: Vec::new(),
                             is_global: false,
@@ -1251,7 +1300,7 @@ impl Checker {
                 self.loop_depth += 1;
                 let before = self.snapshot();
                 self.scopes.push(HashMap::new());
-                let body_region = self.begin_region(RegionKind::Block);
+                let body_region = self.begin_region(RegionKind::Block, Some(statement.span));
                 if variable != "_" {
                     self.declare_variable(
                         variable,
@@ -1261,7 +1310,7 @@ impl Checker {
                             initialized: true,
                             direction: Some(*direction),
                             span: statement.span,
-                            moved: HashSet::new(),
+                            moved: HashMap::new(),
                             home_region: self.current_region(),
                             taints: Vec::new(),
                             is_global: false,
@@ -1279,7 +1328,7 @@ impl Checker {
             }
             StmtKind::Protect(block) => {
                 let entry_reachable = self.reachable;
-                let region = self.enter_protect();
+                let region = self.enter_protect(statement.span);
                 let block_reachable = self.check_block(block);
                 self.leave_protect(region);
                 self.reachable = entry_reachable && block_reachable;
@@ -1445,7 +1494,7 @@ impl Checker {
                         );
                     } else {
                         // Returning a composite transfers ownership to the caller.
-                        self.record_move(&root, &path);
+                        self.record_move(&root, &path, value.span);
                     }
                 }
             }
@@ -1583,12 +1632,17 @@ impl Checker {
                     if !initialized {
                         self.error(expr.span, format!("use of uninitialized variable '{name}'"));
                     } else if moved {
-                        self.error(expr.span, format!("use of moved value '{name}'"));
+                        self.error_moved(
+                            expr.span,
+                            format!("use of moved value '{name}'"),
+                            name,
+                            "",
+                        );
                     }
                     ty
                 }
                 None => {
-                    self.error(expr.span, format!("unknown variable '{name}'"));
+                    self.error_unknown(expr.span, format!("unknown variable '{name}'"), name);
                     Ty::Error
                 }
             },
@@ -1783,13 +1837,13 @@ impl Checker {
         if !initialized {
             self.error(span, format!("use of uninitialized variable '{root}'"));
         } else if moved {
-            self.error(span, format!("use of moved value '{root}'"));
+            self.error_moved(span, format!("use of moved value '{root}'"), &root, &path);
         }
     }
 
     fn check_interface_literal(&mut self, name: &str, fields: &[FieldInit], span: Span) -> Ty {
         if !self.interfaces.contains_key(name) {
-            self.error(span, format!("unknown shape '{name}'"));
+            self.error_unknown(span, format!("unknown shape '{name}'"), name);
             for field in fields {
                 self.check_expr(&field.value);
             }
@@ -2029,7 +2083,7 @@ impl Checker {
         }
 
         let Some(signature) = self.functions.get(name).cloned() else {
-            self.error(callee.span, format!("unknown function '{name}'"));
+            self.error_unknown(callee.span, format!("unknown function '{name}'"), name);
             for arg in args {
                 self.check_unmatched_arg(arg);
             }
@@ -2158,7 +2212,7 @@ impl Checker {
                 );
                 continue;
             }
-            self.record_move(&root, &path);
+            self.record_move(&root, &path, arg.value.span);
         }
     }
 
@@ -2364,9 +2418,11 @@ impl Checker {
                 format!("cannot give from global '{root}'; use clone(...)"),
             );
         } else if direction == Some(Direction::In) {
-            self.error(
+            self.error_readonly(
                 value.span,
                 format!("cannot give from '<-' parameter '{root}'"),
+                &root,
+                "declared as a '<-' parameter here",
             );
         } else if !initialized {
             self.error(
@@ -2374,9 +2430,14 @@ impl Checker {
                 format!("cannot give from uninitialized variable '{root}'"),
             );
         } else if moved {
-            self.error(value.span, format!("use of moved value '{root}'"));
+            self.error_moved(
+                value.span,
+                format!("use of moved value '{root}'"),
+                &root,
+                &path,
+            );
         } else {
-            self.record_move(&root, &path);
+            self.record_move(&root, &path, value.span);
         }
         info.ty
     }
@@ -2404,7 +2465,7 @@ impl Checker {
                     path: Some(String::new()),
                 },
                 None => {
-                    self.error(expr.span, format!("unknown variable '{name}'"));
+                    self.error_unknown(expr.span, format!("unknown variable '{name}'"), name);
                     LvalueInfo {
                         ty: Ty::Error,
                         root: None,
@@ -2526,11 +2587,16 @@ impl Checker {
         let reinitializes = !path.is_empty()
             && var
                 .moved
-                .iter()
+                .keys()
                 .any(|moved| !moved.is_empty() && path_is_ancestor(&path, moved));
 
         if direction == Some(Direction::In) {
-            self.error(span, format!("cannot write to '<-' parameter '{name}'"));
+            self.error_readonly(
+                span,
+                format!("cannot write to '<-' parameter '{name}'"),
+                &name,
+                "declared as a '<-' parameter here",
+            );
             return false;
         }
 
@@ -2540,15 +2606,22 @@ impl Checker {
         }
 
         if initialized && !mutable {
-            self.error(
+            self.error_readonly(
                 span,
                 format!("cannot assign to immutable variable '{name}'"),
+                &name,
+                "declared immutable here",
             );
             return false;
         }
 
         if moved_here && !path.is_empty() && !reinitializes {
-            self.error(span, format!("cannot write to moved value '{name}'"));
+            self.error_moved(
+                span,
+                format!("cannot write to moved value '{name}'"),
+                &name,
+                &path,
+            );
             return false;
         }
 
@@ -2571,7 +2644,12 @@ impl Checker {
         let moved = path_is_moved(&var.moved, &path);
 
         if direction == Some(Direction::In) {
-            self.error(span, format!("cannot write to '<-' parameter '{name}'"));
+            self.error_readonly(
+                span,
+                format!("cannot write to '<-' parameter '{name}'"),
+                &name,
+                "declared as a '<-' parameter here",
+            );
             return false;
         }
         if !initialized {
@@ -2579,13 +2657,15 @@ impl Checker {
             return false;
         }
         if moved {
-            self.error(span, format!("use of moved value '{name}'"));
+            self.error_moved(span, format!("use of moved value '{name}'"), &name, &path);
             return false;
         }
         if !mutable {
-            self.error(
+            self.error_readonly(
                 span,
                 format!("cannot assign to immutable variable '{name}'"),
+                &name,
+                "declared immutable here",
             );
             return false;
         }
@@ -2599,7 +2679,7 @@ impl Checker {
                 if path.is_empty() {
                     info.moved.clear();
                 } else {
-                    info.moved.retain(|moved| !path_is_ancestor(path, moved));
+                    info.moved.retain(|moved, _| !path_is_ancestor(path, moved));
                 }
                 info.taints
                     .retain(|taint| !paths_overlap(&taint.path, path));
@@ -2608,14 +2688,14 @@ impl Checker {
         }
     }
 
-    fn record_move(&mut self, name: &str, path: &str) {
+    fn record_move(&mut self, name: &str, path: &str, span: Span) {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(info) = scope.get_mut(name) {
                 if info.is_global {
                     return;
                 }
-                info.moved.retain(|moved| !path_is_ancestor(path, moved));
-                info.moved.insert(path.to_string());
+                info.moved.retain(|moved, _| !path_is_ancestor(path, moved));
+                info.moved.insert(path.to_string(), span);
                 return;
             }
         }
@@ -2640,10 +2720,11 @@ impl Checker {
             .find(|region| self.region_kinds.get(*region) == Some(&RegionKind::Protect))
     }
 
-    fn begin_region(&mut self, kind: RegionKind) -> usize {
+    fn begin_region(&mut self, kind: RegionKind, origin: Option<Span>) -> usize {
         let id = self.region_parents.len();
         self.region_parents.push(self.current_region());
         self.region_kinds.push(kind);
+        self.region_origins.push(origin);
         self.region_stack.push(id);
         id
     }
@@ -2687,21 +2768,31 @@ impl Checker {
     fn check_region_escape(&mut self, destination: Option<usize>, regions: &[usize], span: Span) {
         for region in regions {
             if !self.region_within(destination, *region) {
-                let message = match self.region_kinds.get(*region) {
-                    Some(RegionKind::Protect) => {
-                        "value allocated inside 'protect' escapes the block".to_string()
-                    }
-                    _ => "slice literal storage escapes the block that created it; keep it in a variable declared in the same block".to_string(),
+                let (message, label) = match self.region_kinds.get(*region) {
+                    Some(RegionKind::Protect) => (
+                        "value allocated inside 'protect' escapes the block".to_string(),
+                        "allocated in this 'protect' block",
+                    ),
+                    _ => (
+                        "slice literal storage escapes the block that created it; keep it in a variable declared in the same block".to_string(),
+                        "allocated in this block",
+                    ),
                 };
-                self.error(span, message);
+                let origin = self.region_origins.get(*region).copied().flatten();
+                let mut diagnostic =
+                    Diagnostic::from_error(message, span).with_label("escapes here");
+                if let Some(origin) = origin {
+                    diagnostic = diagnostic.with_secondary(origin, label);
+                }
+                self.diagnostics.push(diagnostic);
                 return;
             }
         }
     }
 
     /// Allocate a fresh protect region for a `protect` body.
-    fn enter_protect(&mut self) -> usize {
-        self.begin_region(RegionKind::Protect)
+    fn enter_protect(&mut self, span: Span) -> usize {
+        self.begin_region(RegionKind::Protect, Some(span))
     }
 
     fn leave_protect(&mut self, region: usize) {
@@ -2939,7 +3030,9 @@ impl Checker {
                 };
                 info.initialized = left_state.initialized && right_state.initialized;
                 let mut moved = left_state.moved.clone();
-                moved.extend(right_state.moved.iter().cloned());
+                for (path, span) in &right_state.moved {
+                    moved.entry(path.clone()).or_insert(*span);
+                }
                 info.moved = moved;
                 let mut taints = left_state.taints.clone();
                 for taint in &right_state.taints {
@@ -3204,8 +3297,8 @@ fn paths_overlap(left: &str, right: &str) -> bool {
     path_is_ancestor(left, right) || path_is_ancestor(right, left)
 }
 
-fn path_is_moved(moved: &HashSet<String>, path: &str) -> bool {
-    moved.iter().any(|moved| paths_overlap(moved, path))
+fn path_is_moved(moved: &HashMap<String, Span>, path: &str) -> bool {
+    moved.keys().any(|moved| paths_overlap(moved, path))
 }
 
 /// Evaluates an integer expression made only of literals, unary negation and

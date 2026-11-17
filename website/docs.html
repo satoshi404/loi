@@ -859,9 +859,25 @@ loi build main.loi helpers.loi -o app</code></pre>
             file next to the output so unchanged rebuilds are skipped.
           </p>
           <p>
-            Diagnostics are printed as <code>path:line:column: message</code> to standard error.
-            <code>check</code> and <code>build</code> exit non-zero when any diagnostic is reported.
+            Diagnostics are printed to standard error. By default they use a human-readable
+            layout with the source line, labelled underlines and a final error count.
+            <code>--error-format=short</code> keeps the original
+            <code>path:line:column: message</code> form, and <code>--error-format=json</code>
+            emits machine-readable objects. <code>check</code> and <code>build</code> exit
+            non-zero when any diagnostic is reported. The playground server requests
+            <code>short</code> output so browser logs stay free of ANSI escapes.
           </p>
+
+          <h3>Diagnostic options</h3>
+          <table class="doc-table">
+            <thead>
+              <tr><th>Option</th><th>Effect</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>--error-format human|short|json</code></td><td>Selects the diagnostic layout (default <code>human</code>).</td></tr>
+              <tr><td><code>--color auto|always|never</code></td><td>Controls ANSI colors (default <code>auto</code>). <code>auto</code> colors only on a terminal and honors <code>NO_COLOR</code>; <code>CLICOLOR_FORCE</code> forces color.</td></tr>
+            </tbody>
+          </table>
 
           <h3>Playground server</h3>
           <div class="doc-code">

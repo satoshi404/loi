@@ -4,14 +4,13 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Last completed task (2026-11-17):** verified and added explicit regression
-  coverage for two issues: `give` of a global (including `[u8]` string globals
-  and fields/elements) is rejected with a `clone(...)` suggestion, and
-  moved-state is never recorded on globals so it cannot leak across function
-  bodies or depend on declaration order; checker diagnostics show the source
-  spelling of generic instantiations (`Vec<i32>`, `Vec<i64>`) and never expose
-  mangled names, while generated C symbols remain mangled. No compiler behavior
-  changes were required beyond existing fixes.
+- **Last completed task (2026-11-17):** added a rich diagnostic renderer in
+  `src/diagnostic.rs` with human, short and JSON output, ANSI colors,
+  source-line underlines, secondary labels and edit-distance name suggestions.
+  Existing message texts are unchanged; moved-value, protect/block escape and
+  immutable-assignment errors now point at both the failing use and the
+  originating declaration. `--error-format` and `--color` are available on
+  every mode, and the playground requests short, uncolored output.
 - **Overall health:** good; the full test suite, `cargo fmt --check` and
   `cargo clippy --all-targets -- -D warnings` pass.
 - **Not done:** resources/`guard`, real module namespaces, growable collections
@@ -26,6 +25,7 @@
 | Pretty-printer | Working | Emits canonical Flow Syntax including generics and `comptime`; idempotent on all canonical files; `loi fmt` preserves `//` comments (`format_program` remains comment-free) |
 | Type checker | Working | Types, literals, directions, calls, globals, intrinsics, `opaque`/`cstr`, constant folding, shape-cycle detection, bitwise/shift rules, I/O intrinsic signatures and allocation effects; monomorphization feeds concrete declarations into the checker and diagnostics show source generic spellings |
 | Compile-time evaluation | Working | `src/const_eval.rs`: pure `comptime flow` interpreter with step/depth limits, constant globals and shape defaults, `comptime expr`, purity diagnostics |
+| Diagnostics | Working | `src/diagnostic.rs`: human output with source underlines, secondary labels and an error summary; `short` keeps `path:line:column: message`; `json` emits structured objects; ANSI colors honor `NO_COLOR`/`CLICOLOR_FORCE`; unknown names get edit-distance suggestions |
 | Ownership | Working | Give liveness, definite assignment/return, exclusive `->`/`<->`, cross-flow consumption, `protect` taints and lexical-block escape analysis for slice literals, `read_file`/`read_stdin`/`read_line`; gives from globals are rejected and move state is per function body |
 | C backend | Working | One C11 translation unit, ordered shape layouts, checked arithmetic, bitwise/shift helpers, growable arena, bounds checks, defaults, headers, source maps, multi-file objects, statics, file/stdin I/O and numeric printing |
 | C interop | Working | `opaque` → `void *`, `cstr` → `const char *`, bodyless `extern flow`, `--c-source`, `--cc-flag`; string literals coerce to `cstr` |
@@ -33,8 +33,8 @@
 | Vendored bindings | Working (syntax-verified) | `vendor/sdl2/` (SDL2 2.32.10) and `vendor/raylib/` (raylib 5.5), each with generated `.loi`, shim, skip report and README |
 | IR | Draft | `src/ir.rs`; `--emit-ir` writes text. Globals and some literals are not lowered |
 | Assembly | Disabled draft | `src/asm.rs` cannot generate runnable code; the CLI rejects `--emit-asm` with exit 2 |
-| CLI | Working | `lex`/`parse`/`fmt`/`check`/`gen`/`build`/`clean`, incremental stamps, profiles, source maps, `--arena-size`, `--c-source` |
-| Website / playground | Working (local only) | Static site plus `website/server.mjs` driving the real compiler; `127.0.0.1` by default with source/output/time limits |
+| CLI | Working | `lex`/`parse`/`fmt`/`check`/`gen`/`build`/`clean`, incremental stamps, profiles, source maps, `--arena-size`, `--c-source`, `--error-format`, `--color` |
+| Website / playground | Working (local only) | Static site plus `website/server.mjs` driving the real compiler with `--error-format=short --color=never`; `127.0.0.1` by default with source/output/time limits |
 
 ## Verification
 
@@ -51,20 +51,22 @@ python3 tools/sync_examples.py --check
 
 - `cargo fmt --check`: exit 0.
 - `cargo clippy --all-targets -- -D warnings`: exit 0.
-- `cargo test --all-targets`: **229 passed, 0 failed** (9+6+1+99+34+42+6+20+12 across all targets; compile-and-run tests run when `cc` is available).
+- `cargo test --all-targets`: **239 passed, 0 failed** (16+6+1+99+37+42+6+20+12 across all targets; compile-and-run tests run when `cc` is available).
 - `python3 tools/sync_examples.py --check`: `website/examples` is in sync.
-- New coverage: generic shapes and flows (including nested instantiations,
-  `>>` token splitting and backtracking, comparisons around `<`/`>`),
-  monomorphized C symbols, recursive-instantiation depth limits, generated-name
-  collisions, validation of unused templates, pure `comptime` flows and
-  expressions with signed overflow, unsigned wrap, cast and `f32` parity,
-  `comptime`-initialized globals, strict-C11 composite globals, formatter
-  idempotence for generics and `comptime`, global-`give` rejection for slices,
-  fields, elements and strings, per-function move state independent of
-  declaration order, `clone`/reads of globals, and source-spelling diagnostics
-  for generic instantiations. The previous bitwise/shift,
-  file/stdin I/O, numeric printing and comment-preserving `fmt` coverage still
-  passes unchanged.
+- New coverage: diagnostic rendering to strings without colors (target layout,
+  token extent scanning, short and JSON formats, sorting/summary and
+  suggestions), CLI `--error-format` and `--color` behavior, generic shapes and
+  flows (including nested instantiations, `>>` token splitting and
+  backtracking, comparisons around `<`/`>`), monomorphized C symbols,
+  recursive-instantiation depth limits, generated-name collisions, validation
+  of unused templates, pure `comptime` flows and expressions with signed
+  overflow, unsigned wrap, cast and `f32` parity, `comptime`-initialized
+  globals, strict-C11 composite globals, formatter idempotence for generics and
+  `comptime`, global-`give` rejection for slices, fields, elements and strings,
+  per-function move state independent of declaration order, `clone`/reads of
+  globals, and source-spelling diagnostics for generic instantiations. The
+  previous bitwise/shift, file/stdin I/O, numeric printing and
+  comment-preserving `fmt` coverage still passes unchanged.
 - `examples/systems.loi` builds and runs (`2215315943 1193046 1.5`), and
   `loi check` passes on `examples/raylib_window.loi`.
 - `loi check vendor/sdl2/sdl2.loi` and `loi check vendor/raylib/raylib.loi`:

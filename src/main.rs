@@ -6,7 +6,9 @@ use std::process::{self, Command};
 
 use std::collections::HashSet;
 
-const USAGE: &str = "usage:\n  loi <lex|parse|fmt|check> <file.loi>\n  loi gen <file.loi> [-o output.c] [--emit-h header.h] [--source-map map.json]\n  loi build <file.loi> [-o output] [--emit exe|obj|lib]\n                    [--debug|--release] [--rebuild] [--emit-c file.c] [--emit-h header.h]\n                    [--arena-size BYTES] [--source-map map.json] [--cc-flag FLAG]...\n                    [--c-source FILE]...\n  loi clean <file.loi> [-o output]\n\n'gen', 'build' and 'clean' accept -o/--output.\n'--emit', '--debug', '--release', '--rebuild', '--emit-c', '--emit-h', '--arena-size', '--source-map', '--cc-flag' and '--c-source'\nare only supported by 'build'. '--c-source' compiles an extra C file (a vendored\nFFI shim) and links it into an executable or library; it is rejected with '--emit obj'.\n'--emit-h' and '--source-map' are also supported by 'gen'.\nWith '--emit obj' the default output is '<input stem>.o'; with '--emit lib'\nit is 'lib<input stem>.a'; otherwise it is './a.out'.\n'build' invokes 'cc' and 'ar'; set 'CC'/'AR' to override them. Those values\nmay contain arguments, split like a POSIX shell command line ('...' quotes,\n\"...\" quotes and backslash escapes).\nWithout -o, 'clean' removes ./a.out, <input stem>.o and lib<input stem>.a\nwhen their .loi-stamp files exist; with -o it removes exactly that output\nand its stamp. Both forms also remove generated C retained for that output\nthrough 'build --emit-c'. It does not read or check the source.\n\noptions:\n  -h, --help     show this help\n  -V, --version  show the compiler version\n  -g, --debug    compile with debug info (-g)\n      --release  compile with optimizations (-O2)\n      --rebuild  force recompilation, ignoring the incremental stamp\n      --arena-size BYTES  set the protect arena size (default 67108864 = 64 MiB)\n      --source-map FILE  write source map JSON Lines to FILE";
+use loi::{ColorChoice, ErrorFormat};
+
+const USAGE: &str = "usage:\n  loi <lex|parse|fmt|check> <file.loi>\n  loi gen <file.loi> [-o output.c] [--emit-h header.h] [--source-map map.json]\n  loi build <file.loi> [-o output] [--emit exe|obj|lib]\n                    [--debug|--release] [--rebuild] [--emit-c file.c] [--emit-h header.h]\n                    [--arena-size BYTES] [--source-map map.json] [--cc-flag FLAG]...\n                    [--c-source FILE]...\n  loi clean <file.loi> [-o output]\n\n'gen', 'build' and 'clean' accept -o/--output.\n'--emit', '--debug', '--release', '--rebuild', '--emit-c', '--emit-h', '--arena-size', '--source-map', '--cc-flag' and '--c-source'\nare only supported by 'build'. '--c-source' compiles an extra C file (a vendored\nFFI shim) and links it into an executable or library; it is rejected with '--emit obj'.\n'--emit-h' and '--source-map' are also supported by 'gen'.\nWith '--emit obj' the default output is '<input stem>.o'; with '--emit lib'\nit is 'lib<input stem>.a'; otherwise it is './a.out'.\n'build' invokes 'cc' and 'ar'; set 'CC'/'AR' to override them. Those values\nmay contain arguments, split like a POSIX shell command line ('...' quotes,\n\"...\" quotes and backslash escapes).\nWithout -o, 'clean' removes ./a.out, <input stem>.o and lib<input stem>.a\nwhen their .loi-stamp files exist; with -o it removes exactly that output\nand its stamp. Both forms also remove generated C retained for that output\nthrough 'build --emit-c'. It does not read or check the source.\n\noptions:\n  -h, --help     show this help\n  -V, --version  show the compiler version\n  -g, --debug    compile with debug info (-g)\n      --release  compile with optimizations (-O2)\n      --rebuild  force recompilation, ignoring the incremental stamp\n      --arena-size BYTES  set the protect arena size (default 67108864 = 64 MiB)\n      --source-map FILE  write source map JSON Lines to FILE\n      --error-format FMT  diagnostic format: human, short or json (default human)\n      --color WHEN   colorize diagnostics: auto, always or never (default auto)";
 
 fn main() {
     let options = Options::parse();
@@ -25,12 +27,16 @@ fn main() {
             process::exit(1);
         }
     };
+    let diagnostics = DiagnosticOptions {
+        format: options.error_format,
+        color: options.color,
+    };
 
     match options.mode.as_str() {
         "lex" => lex(&source, primary_path),
         "parse" => parse_source(&source, primary_path),
         "fmt" => format_source(&source, primary_path),
-        "check" => check_source(&source, primary_path),
+        "check" => check_source(&source, primary_path, diagnostics),
         "gen" => gen_source(
             &source,
             primary_path,
@@ -38,6 +44,7 @@ fn main() {
             options.emit_h.as_deref(),
             options.source_map.as_deref(),
             options.emit_ir.as_deref(),
+            diagnostics,
         ),
         "build" => build_source(
             &options.paths,
@@ -55,6 +62,7 @@ fn main() {
                 cc_flags: &options.cc_flags,
                 c_sources: &options.c_sources,
             },
+            diagnostics,
         ),
         other => {
             eprintln!(
@@ -233,6 +241,8 @@ struct Options {
     emit_ir: Option<PathBuf>,
     cc_flags: Vec<String>,
     c_sources: Vec<PathBuf>,
+    error_format: ErrorFormat,
+    color: ColorChoice,
 }
 
 impl Options {
@@ -269,6 +279,8 @@ impl Options {
         let mut emit_ir = None;
         let mut cc_flags = Vec::new();
         let mut c_sources = Vec::new();
+        let mut error_format = ErrorFormat::Human;
+        let mut color = ColorChoice::Auto;
         let mut index = 1;
 
         while index < args.len() {
@@ -398,6 +410,54 @@ impl Options {
                     };
                     c_sources.push(PathBuf::from(value));
                 }
+                "--error-format" => {
+                    index += 1;
+                    let Some(value) = args.get(index) else {
+                        eprintln!("loi: '--error-format' requires 'human', 'short' or 'json'");
+                        process::exit(2);
+                    };
+                    let Some(parsed) = ErrorFormat::parse(value) else {
+                        eprintln!(
+                            "loi: unknown error format '{value}' (expected 'human', 'short' or 'json')"
+                        );
+                        process::exit(2);
+                    };
+                    error_format = parsed;
+                }
+                value if value.starts_with("--error-format=") => {
+                    let value = &value["--error-format=".len()..];
+                    let Some(parsed) = ErrorFormat::parse(value) else {
+                        eprintln!(
+                            "loi: unknown error format '{value}' (expected 'human', 'short' or 'json')"
+                        );
+                        process::exit(2);
+                    };
+                    error_format = parsed;
+                }
+                "--color" => {
+                    index += 1;
+                    let Some(value) = args.get(index) else {
+                        eprintln!("loi: '--color' requires 'auto', 'always' or 'never'");
+                        process::exit(2);
+                    };
+                    let Some(parsed) = ColorChoice::parse(value) else {
+                        eprintln!(
+                            "loi: unknown color choice '{value}' (expected 'auto', 'always' or 'never')"
+                        );
+                        process::exit(2);
+                    };
+                    color = parsed;
+                }
+                value if value.starts_with("--color=") => {
+                    let value = &value["--color=".len()..];
+                    let Some(parsed) = ColorChoice::parse(value) else {
+                        eprintln!(
+                            "loi: unknown color choice '{value}' (expected 'auto', 'always' or 'never')"
+                        );
+                        process::exit(2);
+                    };
+                    color = parsed;
+                }
                 other if other.starts_with('-') => {
                     eprintln!("loi: unknown option '{other}'");
                     process::exit(2);
@@ -486,6 +546,8 @@ impl Options {
             emit_ir,
             cc_flags,
             c_sources,
+            error_format,
+            color,
         }
     }
 }
@@ -538,9 +600,9 @@ fn format_source(source: &str, path: &Path) {
     print!("{}", loi::format_program_with_comments(&program, &comments));
 }
 
-fn check_source(source: &str, path: &Path) {
+fn check_source(source: &str, path: &Path, diagnostics: DiagnosticOptions) {
     let program = load_program_with_imports(source, path);
-    report_diagnostics(path, &loi::check(&program));
+    report_diagnostics(path, source, &loi::check(&program), diagnostics);
 }
 
 fn gen_source(
@@ -550,9 +612,10 @@ fn gen_source(
     emit_h: Option<&Path>,
     source_map: Option<&Path>,
     emit_ir: Option<&Path>,
+    diagnostics: DiagnosticOptions,
 ) {
     let program = load_program_with_imports(source, path);
-    let c_source = generate_checked_program(&program, path, source_map);
+    let c_source = generate_checked_program(&program, path, source, source_map, diagnostics);
     match output {
         Some(output) => {
             ensure_distinct_output(path, output);
@@ -670,7 +733,12 @@ fn remove_build_artifact(path: &Path) {
     }
 }
 
-fn build_source(paths: &[PathBuf], primary_path: &Path, request: BuildRequest<'_>) {
+fn build_source(
+    paths: &[PathBuf],
+    primary_path: &Path,
+    request: BuildRequest<'_>,
+    diagnostics: DiagnosticOptions,
+) {
     let BuildRequest {
         output,
         kind,
@@ -707,7 +775,7 @@ fn build_source(paths: &[PathBuf], primary_path: &Path, request: BuildRequest<'_
             }
         };
 
-        let c_source = generate_checked(&source, input_path, source_map);
+        let c_source = generate_checked(&source, input_path, source_map, diagnostics);
         let output_path = output
             .map(Path::to_path_buf)
             .unwrap_or_else(|| kind.default_output(input_path));
@@ -880,7 +948,17 @@ fn build_source(paths: &[PathBuf], primary_path: &Path, request: BuildRequest<'_
     let merged = loi::Program {
         items: merged_items,
     };
-    report_diagnostics(primary_path, &loi::check(&merged));
+    let primary_source = units
+        .iter()
+        .find(|(input, _, _)| input == primary_path)
+        .map(|(_, _, source)| source.as_str())
+        .unwrap_or("");
+    report_diagnostics(
+        primary_path,
+        primary_source,
+        &loi::check(&merged),
+        diagnostics,
+    );
 
     let mut object_files = Vec::new();
     for (input_path, defined, source) in &units {
@@ -1345,17 +1423,24 @@ fn load_program_with_imports(source: &str, path: &Path) -> loi::Program {
     loi::Program { items }
 }
 
-fn generate_checked(source: &str, path: &Path, source_map_path: Option<&Path>) -> String {
+fn generate_checked(
+    source: &str,
+    path: &Path,
+    source_map_path: Option<&Path>,
+    diagnostics: DiagnosticOptions,
+) -> String {
     let program = load_program_with_imports(source, path);
-    generate_checked_program(&program, path, source_map_path)
+    generate_checked_program(&program, path, source, source_map_path, diagnostics)
 }
 
 fn generate_checked_program(
     program: &loi::Program,
     path: &Path,
+    source: &str,
     source_map_path: Option<&Path>,
+    diagnostics: DiagnosticOptions,
 ) -> String {
-    report_diagnostics(path, &loi::check(program));
+    report_diagnostics(path, source, &loi::check(program), diagnostics);
 
     match loi::generate_c(program, source_map_path) {
         Ok(c_source) => c_source,
@@ -1376,20 +1461,31 @@ fn ensure_distinct_output(input: &Path, output: &Path) {
     }
 }
 
-fn report_diagnostics(path: &Path, diagnostics: &[loi::Diagnostic]) {
+#[derive(Clone, Copy)]
+struct DiagnosticOptions {
+    format: ErrorFormat,
+    color: ColorChoice,
+}
+
+fn report_diagnostics(
+    path: &Path,
+    source: &str,
+    diagnostics: &[loi::Diagnostic],
+    options: DiagnosticOptions,
+) {
     if diagnostics.is_empty() {
         return;
     }
 
-    for diagnostic in diagnostics {
-        eprintln!(
-            "{}:{}:{}: {}",
-            path.display(),
-            diagnostic.span.line,
-            diagnostic.span.column,
-            diagnostic.message
-        );
-    }
+    let color = options.color.resolve();
+    let rendered = loi::diagnostic::render_all(
+        diagnostics,
+        source,
+        &path.display().to_string(),
+        options.format,
+        color,
+    );
+    eprint!("{rendered}");
     process::exit(1);
 }
 

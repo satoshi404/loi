@@ -55,6 +55,14 @@ loi build FILE... [-o out] [--emit exe|obj|lib] [--debug|--release] [--rebuild]
 loi clean FILE [-o out]
 ```
 
+Every mode accepts `--error-format human|short|json` (default `human`) and
+`--color auto|always|never` (default `auto`). Human diagnostics show the source
+line with labelled underlines and a final error count; `short` keeps the
+historical `path:line:column: message` form for tools and editors; `json`
+emits one machine-readable object per diagnostic. `auto` colors only when
+standard error is a terminal and honors `NO_COLOR`; `CLICOLOR_FORCE` overrides
+that detection.
+
 `gen` writes C11; `build` invokes `cc` (or `$CC`) and `ar` (or `$AR`) and
 supports incremental builds. `--emit-asm` is deliberately rejected: the x86-64
 assembly backend is an unfinished draft, and the C backend is the production

@@ -204,7 +204,7 @@ async function checkSource(source) {
   return withWorkspace(source, async ({ root, sourcePath }) => {
     const result = await runProcess(
       compiler,
-      ["check", sourcePath],
+      ["check", sourcePath, "--error-format=short", "--color=never"],
       { cwd: root, timeoutMs: CHECK_TIMEOUT_MS }
     );
     const timedOut = isTimeout(result);
@@ -251,7 +251,7 @@ async function runSource(source) {
     const outputPath = path.join(root, "main");
     const build = await runProcess(
       compiler,
-      ["build", sourcePath, "-o", outputPath],
+      ["build", sourcePath, "-o", outputPath, "--error-format=short", "--color=never"],
       { cwd: root, timeoutMs: BUILD_TIMEOUT_MS }
     );
 
