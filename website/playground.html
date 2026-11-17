@@ -64,6 +64,11 @@
                   <option value="directions">Directions &amp; flows</option>
                   <option value="ownership">Ownership &amp; regions</option>
                   <option value="tictactoe">Tic-tac-toe</option>
+                  <optgroup label="Raylib examples">
+                    <option value="raylib_web">Raylib web demo</option>
+                    <option value="text_editor">Simple text editor</option>
+                    <option value="sound_synth">Math sound + waveform</option>
+                  </optgroup>
                 </select>
                 <button class="btn btn-small" type="button" data-action="check" title="Check without running (Shift+Ctrl+Enter)">Check</button>
                 <button class="btn btn-small" type="button" data-action="format" title="Format the program">Format</button>
@@ -111,6 +116,22 @@ open flow main
             </div>
           </div>
         </div>
+
+        <section class="web-demo" aria-labelledby="web-demo-title">
+          <div class="web-demo-head">
+            <div>
+              <p class="section-kicker">Emscripten</p>
+              <h2 id="web-demo-title">Raylib + WebAssembly, rodando aqui</h2>
+              <p>
+                O <code>examples/raylib_web.loi</code> compilado com Emscripten. Clique no canvas
+                e use o mouse, ESPAÇO, R e as setas. Para recompilar, veja
+                <code>examples/build_web.sh</code>.
+              </p>
+            </div>
+            <a class="btn btn-small" href="web/raylib_web.html" target="_blank" rel="noopener noreferrer">Open in new tab</a>
+          </div>
+          <iframe class="web-demo-frame" src="web/raylib_web.html" title="Raylib WebAssembly demo" loading="lazy"></iframe>
+        </section>
 
         <p class="playground-hint">
           Press <kbd>Ctrl</kbd> + <kbd>Enter</kbd> to run, <kbd>Shift</kbd> + <kbd>Ctrl</kbd> + <kbd>Enter</kbd>

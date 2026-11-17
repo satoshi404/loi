@@ -925,10 +925,18 @@ node website/server.mjs
           <p>
             The server serves the static site and exposes <code>POST /api/run</code>,
             <code>/api/check</code> and <code>/api/format</code>. Each request writes the program to a
-            temporary directory, copies <code>lib/std.loi</code> there so imports resolve, and runs the
-            real <code>loi</code> binary. Set <code>LOI_BIN</code> to use a specific compiler, and
+            temporary directory, copies <code>lib/std.loi</code> and
+            <code>vendor/raylib/raylib.loi</code> there so imports resolve, and runs the real
+            <code>loi</code> binary. Set <code>LOI_BIN</code> to use a specific compiler, and
             <code>PORT</code>/<code>HOST</code> to change the listen address. It binds to
             <code>127.0.0.1</code> by default; it is a development tool, not a public sandbox.
+          </p>
+          <p>
+            The playground preset menu includes the three raylib examples. Use <b>Check</b> or
+            <b>Format</b> on them in the browser; executing them needs a native raylib build and the
+            shims described above. The <b>Raylib web demo</b> preset also appears below the editor as a
+            prebuilt WebAssembly frame, generated with <code>examples/build_web.sh</code> into
+            <code>website/web/</code>. Reload that frame after rebuilding to pick up changes.
           </p>
         </section>
 
@@ -1045,7 +1053,9 @@ sealed flow winning_line
             with <code>write_file</code>. <code>examples/sound_synth.loi</code> generates four wave
             forms sample by sample, draws them like an oscilloscope and plays them via the audio
             shim. These examples link small C shims with <code>--c-source</code>; their complete
-            build commands are in the source headers and in the C interop section above.
+            build commands are in the source headers and in the C interop section above. All three
+            are also selectable presets in the playground, where <b>Check</b> and <b>Format</b> work
+            directly on their source.
           </p>
 
           <h3>Error examples</h3>

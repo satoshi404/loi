@@ -1311,6 +1311,44 @@ code {
   font-size: 0.72rem;
 }
 
+.web-demo {
+  overflow: hidden;
+  margin-top: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.web-demo-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.web-demo-head h2 {
+  margin: 4px 0 0;
+  font-size: 1.08rem;
+  letter-spacing: -0.02em;
+}
+
+.web-demo-head p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.web-demo-frame {
+  display: block;
+  width: 100%;
+  min-height: 520px;
+  border: 0;
+  background: #0a0e14;
+}
+
 /* 404 */
 .error-page {
   display: grid;
@@ -1502,6 +1540,10 @@ code {
 
   .playground-head {
     align-items: flex-start;
+  }
+
+  .web-demo-frame {
+    min-height: 420px;
   }
 
   .editor-wrap {

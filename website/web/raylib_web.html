@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Loi + raylib na web</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0;
+      padding: 12px;
+      background: #0a0e14;
+      color: #e8ecf8;
+      font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    #status { margin-bottom: 8px; color: #98a2b8; }
+    #canvas {
+      display: block;
+      max-width: 100%;
+      border: 1px solid #2a3040;
+      background: #000;
+    }
+    #output {
+      display: none;
+      max-height: 96px;
+      overflow: auto;
+      margin: 8px 0 0;
+      color: #98a2b8;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <div id="status">Carregando...</div>
+  <canvas id="canvas" tabindex="-1"></canvas>
+  <pre id="output"></pre>
+  <script src="raylib_web.loader.js"></script>
+  <script async src="raylib_web.js"></script>
+</body>
+</html>

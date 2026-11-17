@@ -4,7 +4,20 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Last completed task (2026-11-17):** added three interactive raylib examples
+- **Last completed task (2026-11-17):** integrated the raylib examples into the
+  website playground. The preset menu now offers the three examples, whose
+  sources load from `website/examples/`; **Check** and **Format** work on them
+  because the playground server also copies `vendor/raylib/raylib.loi` into each
+  temporary workspace. **Run** detects a raylib import in the source and shows
+  build guidance instead of trying to link a native window in the browser. The
+  playground embeds a prebuilt WebAssembly demo in an iframe below the editor;
+  `examples/build_web.sh` now emits `.js`/`.wasm` plus a CSP-friendly HTML
+  wrapper (no inline scripts) into `website/web/`, and the server sends
+  `frame-ancestors 'self'` / `script-src 'self' 'wasm-unsafe-eval'`. Verified:
+  `node --check` on the JS, the server serves the three presets through
+  `/api/check` (all `ok:true`) and the demo with `application/wasm`, and an
+  Emscripten 7.0.0 + raylib `PLATFORM_WEB` build completes.
+- **Previous task (2026-11-17):** added three interactive raylib examples
   and an Emscripten build path. `examples/raylib_web.loi` is a bouncing-ball demo
   that runs natively and compiles to WebAssembly with `examples/build_web.sh`
   (`CC=emcc`, raylib built for `PLATFORM_WEB`, `-sASYNCIFY`).
@@ -98,6 +111,14 @@ python3 tools/sync_examples.py --check
 - `cargo clippy --all-targets -- -D warnings`: exit 0.
 - `cargo test --all-targets`: **251 passed, 0 failed** (19+6+1+101+39+42+2+6+23+12 across all targets; compile-and-run tests run when `cc` is available).
 - `python3 tools/sync_examples.py --check`: `website/examples` is in sync.
+- Playground integration: `node --check website/assets/playground.js` and
+  `node --check website/server.mjs` exit 0; with `node website/server.mjs`
+  running, `GET /playground.html`, `/assets/playground.js`, `/web/raylib_web.html`
+  and `/web/raylib_web.js` return 200, `/web/raylib_web.wasm` returns 200 with
+  `application/wasm`, and `POST /api/check` returns `ok:true` for the three
+  raylib examples. Emscripten 7.0.0 with raylib built for `PLATFORM_WEB`
+  completes `sh examples/build_web.sh examples/raylib_web.loi` into
+  `website/web/` (no browser was available locally to exercise the iframe).
 - New examples: `raylib_web.loi`, `text_editor.loi` and `sound_synth.loi`
   (with `examples/editor_shim.c`, `examples/sound_shim.c` and
   `examples/build_web.sh`), mirrored to `website/examples/` and documented in

@@ -11,8 +11,10 @@
  *   POST /api/run      -> { source } -> build result plus program output
  *
  * Programs are compiled and executed in a fresh temporary directory. The
- * standard library is copied next to the source so `import "lib/std.loi"`
- * (and `import "../lib/std.loi"`) resolve without touching the repository.
+ * standard library and the vendored raylib bindings are copied next to the
+ * source so `import "lib/std.loi"`, `import "../lib/std.loi"` and
+ * `import "../vendor/raylib/raylib.loi"` resolve without touching the
+ * repository.
  *
  * This is a local development tool. Executed programs run with the permissions
  * of the server process, so bind to localhost and do not expose it publicly.
@@ -37,6 +39,7 @@ import {
 const websiteDir = path.dirname(fileURLToPath(import.meta.url));
 const projectDir = path.dirname(websiteDir);
 const libPath = path.join(projectDir, "lib", "std.loi");
+const raylibPath = path.join(projectDir, "vendor", "raylib", "raylib.loi");
 
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 4173);
@@ -135,15 +138,17 @@ async function prepareWorkspace(source) {
   const examplesDir = path.join(root, "examples");
   const libDir = path.join(root, "lib");
   const nestedLibDir = path.join(examplesDir, "lib");
+  const raylibDir = path.join(root, "vendor", "raylib");
 
   await mkdir(examplesDir, { recursive: true });
   await mkdir(libDir, { recursive: true });
   await mkdir(nestedLibDir, { recursive: true });
-
+  await mkdir(raylibDir, { recursive: true });
 
   const std = await readFile(libPath, "utf8");
   await writeFile(path.join(libDir, "std.loi"), std);
   await writeFile(path.join(nestedLibDir, "std.loi"), std);
+  await copyFile(raylibPath, path.join(raylibDir, "raylib.loi"));
 
   const sourcePath = path.join(examplesDir, "main.loi");
   await writeFile(sourcePath, source);
@@ -327,12 +332,12 @@ const MIME_TYPES = new Map([
 function securityHeaders(res) {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "no-referrer");
-  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
   res.setHeader(
     "Content-Security-Policy",
     "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; " +
-      "script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; " +
-      "frame-ancestors 'none'"
+      "script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; base-uri 'none'; " +
+      "form-action 'none'; frame-ancestors 'self'"
   );
 }
 

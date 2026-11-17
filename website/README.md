@@ -13,6 +13,7 @@ playground with the real compiler. There are no npm dependencies.
 | `404.html` | Not-found page |
 | `assets/` | Shared CSS, syntax highlighter and page scripts |
 | `examples/` | Mirrors of the repository examples, used by the playground and docs links |
+| `web/` | Prebuilt Emscripten output for `examples/raylib_web.loi`, embedded in the playground |
 
 ## Run the site and playground
 
@@ -42,7 +43,8 @@ address. `CC` and `AR` are passed through to `loi build`.
 Each API request:
 
 1. creates a fresh temporary directory;
-2. copies `lib/std.loi` to both `lib/std.loi` and `examples/lib/std.loi`;
+2. copies `lib/std.loi` to both `lib/std.loi` and `examples/lib/std.loi`, plus
+   `vendor/raylib/raylib.loi` to `vendor/raylib/raylib.loi`;
 3. writes the submitted program to `examples/main.loi`;
 4. runs `loi check`, `loi fmt` or `loi build` there;
 5. for `/api/run`, executes the resulting binary and captures its output;
@@ -67,3 +69,14 @@ public service without adding real sandboxing.
 - The docs are hand-written HTML so they work without a build step. Keep them in
   sync with `development/LOI_SPEC.md`, `development/PROGRESS.md` and
   `development/DECISIONS.md`.
+- `web/` is generated, not mirrored. Rebuild it after changing the web example:
+
+  ```sh
+  RAYLIB_WEB=/caminho/raylib-5.5/src OUT_DIR=website/web \
+    sh examples/build_web.sh examples/raylib_web.loi
+  ```
+
+  The script emits only `.js`/`.wasm` plus a small CSP-friendly HTML wrapper, so
+  the playground can embed it in an iframe. The server sends
+  `frame-ancestors 'self'` and `script-src 'self' 'wasm-unsafe-eval'` for that
+  reason.

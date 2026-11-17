@@ -115,6 +115,27 @@ open flow main
       label: "Tic-tac-toe",
       url: "examples/tictactoe.loi",
     },
+    raylib_web: {
+      label: "Raylib web demo",
+      url: "examples/raylib_web.loi",
+      note:
+        "Loaded the raylib web demo. Check and Format work here. " +
+        "Run opens a native window and needs a local raylib build; use the WebAssembly demo below instead.",
+    },
+    text_editor: {
+      label: "Simple text editor",
+      url: "examples/text_editor.loi",
+      note:
+        "Loaded the text editor. Check and Format work here. " +
+        "Run needs a native raylib build and examples/editor_shim.c; see the source header for the command.",
+    },
+    sound_synth: {
+      label: "Math sound + waveform",
+      url: "examples/sound_synth.loi",
+      note:
+        "Loaded the sound synthesis demo. Check and Format work here. " +
+        "Run needs a native raylib build and examples/sound_shim.c; see the source header for the command.",
+    },
   };
 
   let busy = false;
@@ -213,6 +234,15 @@ open flow main
       showOutput("Programs are limited to 200 KB in the playground.", "error");
       return;
     }
+    if (mode === "run" && source.includes('import "../vendor/raylib/raylib.loi"')) {
+      showOutput(
+        "This example uses raylib and needs a native build with C shims. Use Check or Format " +
+          "here; to execute it, follow the build command in the source header or use the " +
+          "WebAssembly demo below."
+      );
+      if (meta) meta.textContent = "";
+      return;
+    }
 
     setBusy(true);
     showOutput(mode === "format" ? "Formatting…" : "Compiling…");
@@ -273,7 +303,7 @@ open flow main
         editor.value = await response.text();
       } catch (_) {
         showOutput(
-          "Could not load the tic-tac-toe example. Start the playground server to load it from the website examples directory.",
+          `Could not load ${item.label}. Start the playground server to load it from the website examples directory.`,
           "error"
         );
         return;
@@ -283,7 +313,7 @@ open flow main
     }
     localStorage.setItem(STORAGE_KEY, editor.value);
     renderEditor();
-    showOutput("Loaded preset. Press Run to compile and execute it.");
+    showOutput(item.note || "Loaded preset. Press Run to compile and execute it.");
     if (meta) meta.textContent = "";
   }
 
