@@ -80,8 +80,15 @@ public service without adding real sandboxing.
   ```
 
   The script emits only `.js`/`.wasm` plus a small CSP-friendly HTML wrapper, so
-  the playground can embed it in an iframe. The wrapper focuses the canvas on
-  the first click (needed for GLFW keyboard input) and hides a hint that also
-  tells the user to unlock WebAudio. The server sends
-  `frame-ancestors 'self'` and `script-src 'self' 'wasm-unsafe-eval'` for that
-  reason.
+  the playground can embed it in an iframe. It passes `-std=gnu11` to the C
+  compiler because the CLI's `-std=c11` default disables Emscripten's `EM_ASM`,
+  which the audio shim uses. The wrapper focuses the canvas on the first click
+  (needed for GLFW keyboard input) and creates/resumes a WebAudio `AudioContext`
+  there, since browsers start it suspended until a user gesture. The server
+  sends `frame-ancestors 'self'` and `script-src 'self' 'wasm-unsafe-eval'` for
+  that reason.
+
+  Sound is played directly through WebAudio in the browser: `sound_shim.c` copies
+  the generated `Float32Array` into an `AudioBuffer` and starts a buffer source.
+  It bypasses raylib/miniaudio on the web because that backend needs AudioWorklets
+  (Wasm workers + COOP/COEP headers); native builds still use raylib's `Sound`.

@@ -15,6 +15,14 @@
   function activate() {
     if (hint) hint.style.display = "none";
     if (canvas) canvas.focus();
+    // Browsers create the AudioContext suspended; the first click is a user
+    // gesture, so resume it here before the program reaches ESPAÇO.
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    if (!window.loiAudioContext) window.loiAudioContext = new Ctx();
+    if (window.loiAudioContext.state === "suspended") {
+      window.loiAudioContext.resume();
+    }
   }
   document.addEventListener("pointerdown", activate, true);
   document.addEventListener("mousedown", activate, true);

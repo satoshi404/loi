@@ -33,6 +33,8 @@ for src in ${WEB_C_SOURCES:-}; do
 done
 
 # CC=emcc faz o loi chamar o Emscripten no lugar do cc.
+# -std=gnu11      o loi usa -std=c11 por padrao, onde EM_ASM e desabilitado;
+#                 o sound_shim.c usa EM_ASM para tocar audio via WebAudio.
 # -sASYNCIFY      deixa o 'while not WindowShouldClose()' bloqueante funcionar no navegador
 # -sUSE_GLFW=3    janela/entrada pelo GLFW do Emscripten
 # -sALLOW_MEMORY_GROWTH  evita estourar a memoria inicial
@@ -41,6 +43,7 @@ done
 # shellcheck disable=SC2086
 CC=emcc "$LOI_BIN" build "$SOURCE" -o "$OUT_DIR/$NAME.js" --release \
     --c-source vendor/raylib/raylib_shim.c $EXTRA_SOURCES \
+    --cc-flag -std=gnu11 \
     --cc-flag -Ivendor/raylib/include \
     --cc-flag "-L$RAYLIB_WEB" \
     --cc-flag -lraylib \
@@ -71,6 +74,14 @@ cat > "$OUT_DIR/$NAME.loader.js" <<'EOF'
   function activate() {
     if (hint) hint.style.display = "none";
     if (canvas) canvas.focus();
+    // Browsers create the AudioContext suspended; the first click is a user
+    // gesture, so resume it here before the program reaches ESPAÇO.
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    if (!window.loiAudioContext) window.loiAudioContext = new Ctx();
+    if (window.loiAudioContext.state === "suspended") {
+      window.loiAudioContext.resume();
+    }
   }
   document.addEventListener("pointerdown", activate, true);
   document.addEventListener("mousedown", activate, true);

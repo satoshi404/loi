@@ -809,10 +809,22 @@ python3 -m http.server -d web 8000   # abra http://localhost:8000</code></pre>
 
           <p>
             The script writes <code>.js</code>/<code>.wasm</code> plus a small HTML wrapper without
-            inline scripts, so it works under the site's CSP. Click once inside the frame before
-            using the keyboard: that focuses the canvas for GLFW input and unlocks the WebAudio
-            context that browsers create in a suspended state. The sound demo starts muted by
-            browser policy; press <kbd>ESPAÇO</kbd> after clicking to hear the generated wave.
+            inline scripts, so it works under the site's CSP. It passes <code>-std=gnu11</code> to
+            the C compiler because the Loi CLI defaults to <code>-std=c11</code>, where Emscripten
+            disables <code>EM_ASM</code>. Click once inside the frame before using the keyboard:
+            that focuses the canvas for GLFW input and unlocks the WebAudio context that browsers
+            create in a suspended state. The sound demo starts muted by browser policy; press
+            <kbd>ESPAÇO</kbd> after clicking to hear the generated wave.
+          </p>
+
+          <p>
+            In the browser <code>examples/sound_shim.c</code> bypasses raylib/miniaudio and feeds
+            the samples straight to WebAudio (<code>AudioContext</code> +
+            <code>AudioBufferSourceNode</code>). miniaudio's WebAudio backend needs Wasm AudioWorklets,
+            which in turn need <code>-sAUDIO_WORKLET=1</code>, Wasm workers and COOP/COEP headers for
+            shared memory — more machinery than a tiny synth warrants. The direct path plays the
+            generated <code>Float32Array</code> with a plain buffer source and needs none of that.
+            Native builds still use raylib's <code>Sound</code> API.
           </p>
 
           <p>
