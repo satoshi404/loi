@@ -73,14 +73,61 @@ pub enum Direction {
 }
 
 /// A Loi type. Slices are written `[T]` and generic instantiations `Name<T>`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Every variant carries the span of the complete type text (including the
+/// brackets of a slice and the `<...>` of a generic). Diagnostics use that span
+/// instead of falling back to the enclosing statement.
+#[derive(Debug, Clone)]
 pub enum Type {
-    Named(String),
-    Slice(Box<Type>),
+    Named(String, Span),
+    Slice(Box<Type>, Span),
     /// A generic instantiation such as `Vec<i32>`. It is resolved to a
     /// `Named` type by monomorphization before type checking.
-    Generic(String, Vec<Type>),
+    Generic(String, Vec<Type>, Span),
 }
+
+impl Type {
+    /// A named type without a source span, for synthesized types and tests.
+    pub fn named(name: impl Into<String>) -> Self {
+        Self::Named(name.into(), Span::default())
+    }
+
+    /// A slice type without an explicit source span.
+    pub fn slice(element: Type) -> Self {
+        let span = element.span();
+        Self::Slice(Box::new(element), span)
+    }
+
+    /// A generic type without a source span, for synthesized types and tests.
+    pub fn generic(name: impl Into<String>, args: Vec<Type>) -> Self {
+        Self::Generic(name.into(), args, Span::default())
+    }
+
+    /// The source extent of this type.
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Named(_, span) | Self::Slice(_, span) | Self::Generic(_, _, span) => *span,
+        }
+    }
+}
+
+/// Spans are diagnostic metadata, not part of a type's meaning: two types are
+/// equal when their names and structure match, regardless of where they were
+/// written. This keeps AST assertions focused on syntax.
+impl PartialEq for Type {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Named(left, _), Self::Named(right, _)) => left == right,
+            (Self::Slice(left, _), Self::Slice(right, _)) => left == right,
+            (Self::Generic(left_name, left_args, _), Self::Generic(right_name, right_args, _)) => {
+                left_name == right_name && left_args == right_args
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Type {}
 
 /// A complete source file.
 #[derive(Debug, Clone, PartialEq, Eq)]

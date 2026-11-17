@@ -573,7 +573,7 @@ impl Checker {
             let mut fields = Vec::new();
             let mut field_index = HashMap::new();
             for field in &decl.fields {
-                let ty = self.resolve_type(&field.ty, field.span);
+                let ty = self.resolve_type(&field.ty);
                 if field_index.contains_key(&field.name) {
                     self.error(
                         field.span,
@@ -617,7 +617,7 @@ impl Checker {
             }
             let mut deps = Vec::new();
             for field in &decl.fields {
-                if let Type::Named(name) = &field.ty
+                if let Type::Named(name, _) = &field.ty
                     && self.interfaces.contains_key(name)
                 {
                     deps.push(name.clone());
@@ -683,7 +683,7 @@ impl Checker {
             let mut params = Vec::new();
             let mut seen = HashSet::new();
             for param in &decl.params {
-                let ty = self.resolve_type(&param.ty, param.span);
+                let ty = self.resolve_type(&param.ty);
                 if !seen.insert(param.name.clone()) {
                     self.error(
                         param.span,
@@ -702,7 +702,7 @@ impl Checker {
             }
 
             let return_type = match &decl.return_type {
-                Some(ty) => self.resolve_type(ty, decl.span),
+                Some(ty) => self.resolve_type(ty),
                 None => Ty::Void,
             };
 
@@ -738,7 +738,12 @@ impl Checker {
                 continue;
             };
 
-            let declared = decl.ty.as_ref().map(|ty| self.resolve_type(ty, decl.span));
+            let declared = decl.ty.as_ref().map(|ty| self.resolve_type(ty));
+            let declared_span = decl
+                .ty
+                .as_ref()
+                .map(|ty| ty.span())
+                .unwrap_or(decl.value.span);
             let value_ty = self.check_expr(&decl.value);
 
             if let Err(error) = evaluator.eval_global(decl) {
@@ -760,7 +765,7 @@ impl Checker {
                 (Some(declared), value_ty) => {
                     if !self.assignable_expr(&declared, &value_ty, &decl.value) {
                         self.error(
-                            decl.value.span,
+                            declared_span,
                             format!(
                                 "cannot initialize '{}' of type {} with {}",
                                 decl.name, declared, value_ty
@@ -790,9 +795,12 @@ impl Checker {
         }
     }
 
-    fn resolve_type(&mut self, ty: &Type, span: Span) -> Ty {
+    /// Resolve a syntactic type to a semantic type, reporting type diagnostics
+    /// on the span of the type itself rather than the enclosing declaration.
+    fn resolve_type(&mut self, ty: &Type) -> Ty {
+        let span = ty.span();
         match ty {
-            Type::Named(name) => {
+            Type::Named(name, _) => {
                 if let Some(primitive) = Ty::from_name(name) {
                     primitive
                 } else if name == "cstr" {
@@ -811,8 +819,8 @@ impl Checker {
                     Ty::Error
                 }
             }
-            Type::Slice(element) => Ty::Slice(Box::new(self.resolve_type(element, span))),
-            Type::Generic(name, _) => {
+            Type::Slice(element, _) => Ty::Slice(Box::new(self.resolve_type(element))),
+            Type::Generic(name, _, _) => {
                 self.error(
                     span,
                     format!("generic type '{name}' must be instantiated before checking"),
@@ -1127,7 +1135,7 @@ impl Checker {
                 ty,
                 value,
             } => {
-                let declared = ty.as_ref().map(|ty| self.resolve_type(ty, statement.span));
+                let declared = ty.as_ref().map(|ty| self.resolve_type(ty));
                 let value_ty = value.as_ref().map(|value| self.check_expr(value));
                 let value_regions = value
                     .as_ref()
@@ -1143,7 +1151,7 @@ impl Checker {
                         let actual_expr = value.as_ref().expect("value type");
                         if !self.assignable_expr(&declared, &value_ty, actual_expr) {
                             self.error(
-                                actual_expr.span,
+                                ty.as_ref().expect("declared type").span(),
                                 format!(
                                     "cannot initialize '{}' of type {} with {}",
                                     name, declared, value_ty
@@ -1740,13 +1748,13 @@ impl Checker {
                 self.check_interface_literal(name, fields, expr.span)
             }
             ExprKind::Cast { expr: inner, ty } => {
-                let target = self.resolve_type(ty, expr.span);
+                let target = self.resolve_type(ty);
                 let source = self.check_expr(inner);
                 if !source.is_error()
                     && !target.is_error()
                     && !(source.is_numeric() && target.is_numeric())
                 {
-                    self.error(expr.span, format!("cannot cast {source} to {target}"));
+                    self.error(ty.span(), format!("cannot cast {source} to {target}"));
                 }
                 target
             }
@@ -1783,7 +1791,7 @@ impl Checker {
         span: Span,
     ) -> Ty {
         if let Some(element_type) = element_type {
-            let element_ty = self.resolve_type(element_type, span);
+            let element_ty = self.resolve_type(element_type);
             for element in elements {
                 let actual = self.check_expr(element);
                 if !self.assignable_expr(&element_ty, &actual, element) {
@@ -2489,7 +2497,7 @@ impl Checker {
     fn check_alloc(&mut self, target: &Expr, element_type: &Type, count: &Expr, span: Span) -> Ty {
         let info = self.lvalue_info(target);
         self.check_write(&info, true, target.span);
-        let element = self.resolve_type(element_type, span);
+        let element = self.resolve_type(element_type);
 
         match &info.ty {
             Ty::Slice(actual) => {

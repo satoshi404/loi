@@ -513,17 +513,19 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> ParseResult<Type> {
+        let start = self.span_here();
         if self.matches(TokenKind::LBracket) {
             let element = self.parse_type()?;
             self.expect(TokenKind::RBracket, "']'")?;
-            Ok(Type::Slice(Box::new(element)))
+            Ok(Type::Slice(Box::new(element), self.through_last(start)))
         } else {
             let token = self.expect(TokenKind::Identifier, "type name")?;
             if self.at(TokenKind::Lt) {
                 let args = self.parse_type_arguments()?;
-                Ok(Type::Generic(token.lexeme, args))
+                Ok(Type::Generic(token.lexeme, args, self.through_last(start)))
             } else {
-                Ok(Type::Named(token.lexeme))
+                let span = Span::new(token.line, token.column).with_lexeme(&token.lexeme);
+                Ok(Type::Named(token.lexeme, span))
             }
         }
     }

@@ -4,7 +4,17 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-17):** expanded the explicit library into modular
+- **Current task (2026-11-17):** gave every `ast::Type` an explicit span (named
+  token, slice brackets, generic name through `>`), recorded it in `parse_type`,
+  and used it for unknown-type, generic-arity and annotation/cast mismatch
+  diagnostics. Seven new `tests/errors/type_span_*.loi` cases cover annotation,
+  parameter, return, shape-field and cast positions plus arity and mismatch;
+  two old expectations were wrong (they pointed at the enclosing statement or
+  the initializer instead of the type) and were corrected. Gate: `cargo fmt
+  --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test
+  --all-targets` (**263 passed, 0 failed**: 22+6+1+102+39+43+2+6+7+23+12),
+  `python3 tools/sync_examples.py --check` all exit 0.
+- **Previous task (2026-11-17):** expanded the explicit library into modular
   files. `lib/math.loi` provides generic `math_min/max/clamp/sum<T>`, a
   `comptime math_factorial`, constants and float/integer helpers;
   `lib/ctype.loi` provides pure ASCII byte classification and decimal parsing.

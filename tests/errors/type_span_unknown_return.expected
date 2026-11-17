@@ -1,0 +1,1 @@
+tests/errors/type_span_unknown_return.loi:2:8: unknown type 'Missing'

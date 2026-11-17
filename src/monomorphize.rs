@@ -370,26 +370,28 @@ impl<'a> Monomorphizer<'a> {
     }
 
     fn rewrite_type(&mut self, ty: &Type, mapping: &HashMap<String, Type>) -> Type {
+        let span = ty.span();
         match ty {
-            Type::Named(name) => match mapping.get(name) {
+            Type::Named(name, _) => match mapping.get(name) {
                 Some(ty) => ty.clone(),
-                None => Type::Named(name.clone()),
+                None => Type::Named(name.clone(), span),
             },
-            Type::Slice(element) => Type::Slice(Box::new(self.rewrite_type(element, mapping))),
-            Type::Generic(name, args) => {
+            Type::Slice(element, _) => {
+                Type::Slice(Box::new(self.rewrite_type(element, mapping)), span)
+            }
+            Type::Generic(name, args, _) => {
                 let args = args
                     .iter()
                     .map(|arg| self.rewrite_type(arg, mapping))
                     .collect::<Vec<_>>();
                 if self.interfaces.contains_key(name) {
-                    let span = Span::default();
-                    Type::Named(self.request(RequestKind::Interface, name, args, span))
+                    Type::Named(self.request(RequestKind::Interface, name, args, span), span)
                 } else {
                     self.errors.push(MonoError::new(
-                        Span::default(),
+                        span,
                         format!("unknown generic type '{name}'"),
                     ));
-                    Type::Named(name.clone())
+                    Type::Named(name.clone(), span)
                 }
             }
         }
@@ -484,7 +486,7 @@ impl<'a> Monomorphizer<'a> {
             {
                 continue;
             }
-            let args = vec![Type::Named("i32".to_string()); arity];
+            let args = vec![Type::named("i32"); arity];
             self.request(RequestKind::Interface, &name, args, span);
         }
         for (name, arity, span) in functions {
@@ -494,7 +496,7 @@ impl<'a> Monomorphizer<'a> {
             {
                 continue;
             }
-            let args = vec![Type::Named("i32".to_string()); arity];
+            let args = vec![Type::named("i32"); arity];
             self.request(RequestKind::Function, &name, args, span);
         }
     }
@@ -577,9 +579,9 @@ pub fn instantiation_name(base: &str, args: &[Type]) -> String {
 
 fn type_mangle(ty: &Type) -> String {
     match ty {
-        Type::Named(name) => name.clone(),
-        Type::Slice(element) => format!("slice_{}", type_mangle(element)),
-        Type::Generic(name, args) => instantiation_name(name, args),
+        Type::Named(name, _) => name.clone(),
+        Type::Slice(element, _) => format!("slice_{}", type_mangle(element)),
+        Type::Generic(name, args, _) => instantiation_name(name, args),
     }
 }
 
@@ -597,8 +599,8 @@ fn instantiation_display(base: &str, args: &[Type]) -> String {
 
 fn type_display(ty: &Type) -> String {
     match ty {
-        Type::Named(name) => name.clone(),
-        Type::Slice(element) => format!("[{}]", type_display(element)),
-        Type::Generic(name, args) => instantiation_display(name, args),
+        Type::Named(name, _) => name.clone(),
+        Type::Slice(element, _) => format!("[{}]", type_display(element)),
+        Type::Generic(name, args, _) => instantiation_display(name, args),
     }
 }

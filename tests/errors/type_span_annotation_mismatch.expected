@@ -1,0 +1,1 @@
+tests/errors/type_span_annotation_mismatch.loi:2:8: cannot initialize 'x' of type i32 with bool

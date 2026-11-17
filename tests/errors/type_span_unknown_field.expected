@@ -1,0 +1,1 @@
+tests/errors/type_span_unknown_field.loi:2:12: unknown type 'Missing'

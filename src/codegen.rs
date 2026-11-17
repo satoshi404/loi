@@ -887,7 +887,7 @@ impl<'a> Generator<'a> {
 
     fn resolve_type(&self, ty: &Type) -> Ty {
         match ty {
-            Type::Named(name) => {
+            Type::Named(name, _) => {
                 if let Some(primitive) = Ty::from_name(name) {
                     primitive
                 } else if name == "cstr" {
@@ -898,8 +898,8 @@ impl<'a> Generator<'a> {
                     Ty::Named(name.clone())
                 }
             }
-            Type::Slice(element) => Ty::Slice(Box::new(self.resolve_type(element))),
-            Type::Generic(name, _) => Ty::Named(name.clone()),
+            Type::Slice(element, _) => Ty::Slice(Box::new(self.resolve_type(element))),
+            Type::Generic(name, _, _) => Ty::Named(name.clone()),
         }
     }
 
@@ -955,7 +955,7 @@ impl<'a> Generator<'a> {
         state.insert(name.to_string(), 1);
         if let Some(decl) = self.interfaces.get(name).copied() {
             for field in &decl.fields {
-                if let Type::Named(dependency) = &field.ty
+                if let Type::Named(dependency, _) = &field.ty
                     && self.interfaces.contains_key(dependency)
                 {
                     self.visit_interface(dependency, state, order)?;
@@ -2554,18 +2554,18 @@ pub fn generate_ir(program: &Program) -> Result<String, CodegenError> {
 /// Resolve a Loi `Type` to an IR type.
 fn resolve_ir_type(ty: &Type) -> Result<IrType, CodegenError> {
     match ty {
-        Type::Named(name) => {
+        Type::Named(name, _) => {
             if let Some(ir_ty) = resolve_primitive(name) {
                 Ok(ir_ty)
             } else {
                 Ok(IrType::Named(name.clone()))
             }
         }
-        Type::Slice(element) => {
+        Type::Slice(element, _) => {
             let elem_ty = resolve_ir_type(element)?;
             Ok(IrType::Slice(Box::new(elem_ty)))
         }
-        Type::Generic(name, _) => Ok(IrType::Named(name.clone())),
+        Type::Generic(name, _, _) => Ok(IrType::Named(name.clone())),
     }
 }
 

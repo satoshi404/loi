@@ -1,0 +1,6 @@
+flow f
+    <- x: Missing
+    => i32
+{
+    => 0
+}

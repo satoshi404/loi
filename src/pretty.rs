@@ -44,9 +44,9 @@ pub fn format_expr(expr: &Expr) -> String {
 /// Format a type using Flow Syntax (`[T]`).
 pub fn format_type(ty: &Type) -> String {
     match ty {
-        Type::Named(name) => name.clone(),
-        Type::Slice(element) => format!("[{}]", format_type(element)),
-        Type::Generic(name, args) => format!(
+        Type::Named(name, _) => name.clone(),
+        Type::Slice(element, _) => format!("[{}]", format_type(element)),
+        Type::Generic(name, args, _) => format!(
             "{name}<{}>",
             args.iter().map(format_type).collect::<Vec<_>>().join(", ")
         ),

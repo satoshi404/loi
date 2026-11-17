@@ -195,7 +195,7 @@ impl<'a> ConstEvaluator<'a> {
 
     pub fn resolve_type(&self, ty: &Type) -> Option<Ty> {
         match ty {
-            Type::Named(name) => {
+            Type::Named(name, _) => {
                 if let Some(primitive) = Ty::from_name(name) {
                     Some(primitive)
                 } else if name == "cstr" {
@@ -206,8 +206,8 @@ impl<'a> ConstEvaluator<'a> {
                     None
                 }
             }
-            Type::Slice(element) => Some(Ty::Slice(Box::new(self.resolve_type(element)?))),
-            Type::Generic(_, _) => None,
+            Type::Slice(element, _) => Some(Ty::Slice(Box::new(self.resolve_type(element)?))),
+            Type::Generic(_, _, _) => None,
         }
     }
 

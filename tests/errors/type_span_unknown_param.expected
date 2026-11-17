@@ -1,0 +1,1 @@
+tests/errors/type_span_unknown_param.loi:2:11: unknown type 'Missing'

@@ -162,7 +162,7 @@ fn parses_opaque_and_extern_flow_declarations() {
     assert!(make.external);
     assert_eq!(make.link_name, None);
     assert_eq!(make.params.len(), 1);
-    assert_eq!(make.return_type, Some(Type::Named("Handle".to_string())));
+    assert_eq!(make.return_type, Some(Type::named("Handle")));
 
     let renamed = function(&program, "renamed");
     assert!(renamed.external);
@@ -209,10 +209,7 @@ fn parses_imports_globals_strings_and_slice_literals() {
         })
         .expect("greeting global should parse");
     assert!(!global.mutable);
-    assert_eq!(
-        global.ty,
-        Some(Type::Slice(Box::new(Type::Named("u8".to_string()))))
-    );
+    assert_eq!(global.ty, Some(Type::slice(Type::named("u8"))));
     assert_eq!(kind(&global.value), &ExprKind::String("hi\n".to_string()));
 
     let count = program
@@ -240,7 +237,7 @@ fn parses_imports_globals_strings_and_slice_literals() {
     else {
         panic!("expected an explicit slice literal");
     };
-    assert_eq!(element_type, &Some(Type::Named("i32".to_string())));
+    assert_eq!(element_type, &Some(Type::named("i32")));
     assert_eq!(elements.len(), 2);
     assert!(matches!(kind(&elements[0]), ExprKind::Int(text) if text == "1"));
     assert!(matches!(kind(&elements[1]), ExprKind::Int(text) if text == "2"));
@@ -269,23 +266,20 @@ fn parses_interfaces_and_field_defaults() {
     let vec2 = interface(&program, "Vec2");
     assert_eq!(vec2.fields.len(), 2);
     assert_eq!(vec2.fields[0].name, "x");
-    assert_eq!(vec2.fields[0].ty, Type::Named("f64".to_string()));
+    assert_eq!(vec2.fields[0].ty, Type::named("f64"));
 
     let particle = interface(&program, "Particle");
     assert_eq!(particle.fields.len(), 4);
     let alive = &particle.fields[3];
     assert_eq!(alive.name, "alive");
-    assert_eq!(alive.ty, Type::Named("bool".to_string()));
+    assert_eq!(alive.ty, Type::named("bool"));
     assert_eq!(
         alive.default.as_ref().map(kind),
         Some(&ExprKind::Bool(true))
     );
 
     let world = interface(&program, "World");
-    assert_eq!(
-        world.fields[0].ty,
-        Type::Slice(Box::new(Type::Named("Particle".to_string())))
-    );
+    assert_eq!(world.fields[0].ty, Type::slice(Type::named("Particle")));
     assert_eq!(
         world.fields[3].default.as_ref().map(kind),
         Some(&ExprKind::Int("0".to_string()))
@@ -305,11 +299,11 @@ fn parses_function_signatures() {
     assert_eq!(world_new.params[1].name, "size");
     assert_eq!(world_new.params[2].direction, Direction::Out);
     assert_eq!(world_new.params[2].name, "w");
-    assert_eq!(world_new.params[2].ty, Type::Named("World".to_string()));
+    assert_eq!(world_new.params[2].ty, Type::named("World"));
 
     let clamp = function(&program, "clamp");
     assert_eq!(clamp.visibility, Visibility::Hidden);
-    assert_eq!(clamp.return_type, Some(Type::Named("f64".to_string())));
+    assert_eq!(clamp.return_type, Some(Type::named("f64")));
     match &clamp.body.statements.last().unwrap().kind {
         StmtKind::Return(Some(value)) => assert_eq!(kind(value), &ExprKind::Ident("v".to_string())),
         other => panic!("expected return statement, got {other:?}"),
@@ -320,7 +314,7 @@ fn parses_function_signatures() {
     assert_eq!(step.params[0].direction, Direction::Inout);
 
     let main = function(&program, "main");
-    assert_eq!(main.return_type, Some(Type::Named("i32".to_string())));
+    assert_eq!(main.return_type, Some(Type::named("i32")));
 }
 
 #[test]
@@ -337,10 +331,7 @@ fn parses_alloc_move_copy_and_literals() {
         } => {
             assert!(*mutable);
             assert_eq!(name, "ps");
-            assert_eq!(
-                ty,
-                &Some(Type::Slice(Box::new(Type::Named("Particle".to_string()))))
-            );
+            assert_eq!(ty, &Some(Type::slice(Type::named("Particle"))));
             assert_eq!(value, &None);
         }
         other => panic!("expected 'var ps', got {other:?}"),
@@ -357,7 +348,7 @@ fn parses_alloc_move_copy_and_literals() {
             ..
         }) => {
             assert_eq!(kind(target), &ExprKind::Ident("ps".to_string()));
-            assert_eq!(element_type, &Type::Named("Particle".to_string()));
+            assert_eq!(element_type, &Type::named("Particle"));
             assert_eq!(kind(count), &ExprKind::Ident("count".to_string()));
         }
         other => panic!("expected alloc expression, got {other:?}"),
@@ -554,7 +545,7 @@ fn parses_while_let_and_else_if() {
         } => {
             assert!(!mutable);
             assert_eq!(name, "x");
-            assert_eq!(ty, &Some(Type::Named("i32".to_string())));
+            assert_eq!(ty, &Some(Type::named("i32")));
             assert_eq!(
                 value.as_ref().map(kind),
                 Some(&ExprKind::Int("0".to_string()))
@@ -627,13 +618,13 @@ fn parses_flow_syntax_declarations() {
 
     let clamp = function(&program, "clamp");
     assert_eq!(clamp.visibility, Visibility::Hidden);
-    assert_eq!(clamp.return_type, Some(Type::Named("f64".to_string())));
+    assert_eq!(clamp.return_type, Some(Type::named("f64")));
 
     let step = function(&program, "step");
     assert_eq!(step.params[0].direction, Direction::Inout);
 
     let main = function(&program, "main");
-    assert_eq!(main.return_type, Some(Type::Named("i32".to_string())));
+    assert_eq!(main.return_type, Some(Type::named("i32")));
 
     match &world_new.body.statements[0].kind {
         StmtKind::Let {
@@ -644,10 +635,7 @@ fn parses_flow_syntax_declarations() {
         } => {
             assert!(*mutable);
             assert_eq!(name, "ps");
-            assert_eq!(
-                ty,
-                &Some(Type::Slice(Box::new(Type::Named("Particle".to_string()))))
-            );
+            assert_eq!(ty, &Some(Type::slice(Type::named("Particle"))));
             assert_eq!(value, &None);
         }
         other => panic!("expected flow binding, got {other:?}"),
@@ -740,7 +728,7 @@ fn parses_typed_slice_literals_in_flow_syntax() {
                 element_type,
                 elements,
             } => {
-                assert_eq!(element_type, &Some(Type::Named("i32".to_string())));
+                assert_eq!(element_type, &Some(Type::named("i32")));
                 assert_eq!(elements.len(), 3);
             }
             other => panic!("expected typed slice literal, got {other:?}"),
@@ -757,16 +745,13 @@ fn parses_generic_shapes_flows_and_calls() {
 
     let vec = interface(&program, "Vec");
     assert_eq!(vec.type_params, vec!["T".to_string()]);
-    assert_eq!(
-        vec.fields[0].ty,
-        Type::Slice(Box::new(Type::Named("T".to_string())))
-    );
+    assert_eq!(vec.fields[0].ty, Type::slice(Type::named("T")));
 
     let push = function(&program, "push");
     assert_eq!(push.type_params, vec!["T".to_string()]);
     assert_eq!(
         push.params[0].ty,
-        Type::Generic("Vec".to_string(), vec![Type::Named("T".to_string())])
+        Type::generic("Vec", vec![Type::named("T")])
     );
 
     let main = function(&program, "main");
@@ -780,7 +765,7 @@ fn parses_generic_shapes_flows_and_calls() {
                 fields,
             } => {
                 assert_eq!(name, "Vec");
-                assert_eq!(type_args, &vec![Type::Named("i32".to_string())]);
+                assert_eq!(type_args, &vec![Type::named("i32")]);
                 assert_eq!(fields.len(), 2);
             }
             other => panic!("expected generic shape literal, got {other:?}"),
@@ -793,7 +778,7 @@ fn parses_generic_shapes_flows_and_calls() {
             ExprKind::Call {
                 type_args, args, ..
             } => {
-                assert_eq!(type_args, &vec![Type::Named("i32".to_string())]);
+                assert_eq!(type_args, &vec![Type::named("i32")]);
                 assert_eq!(args.len(), 2);
             }
             other => panic!("expected generic call, got {other:?}"),
@@ -811,13 +796,7 @@ fn parses_nested_generic_types_with_shift_tokens() {
     let f = function(&program, "f");
     assert_eq!(
         f.params[0].ty,
-        Type::Generic(
-            "Vec".to_string(),
-            vec![Type::Generic(
-                "Vec".to_string(),
-                vec![Type::Named("i32".to_string())]
-            )]
-        )
+        Type::generic("Vec", vec![Type::generic("Vec", vec![Type::named("i32")])])
     );
 }
 
@@ -859,12 +838,9 @@ fn parses_nested_generic_call_arguments_after_a_shift_split() {
         ExprKind::Call { type_args, .. } => {
             assert_eq!(
                 type_args,
-                &vec![Type::Generic(
-                    "Vec".to_string(),
-                    vec![Type::Generic(
-                        "Vec".to_string(),
-                        vec![Type::Named("i32".to_string())]
-                    )]
+                &vec![Type::generic(
+                    "Vec",
+                    vec![Type::generic("Vec", vec![Type::named("i32")])]
                 )]
             );
         }

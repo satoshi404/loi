@@ -1,0 +1,5 @@
+open flow main => i32 {
+    mut c: Contador <- 1
+    => 0
+}
+shape Counter [ value: i32 ]

@@ -1,0 +1,4 @@
+flow main => i32 {
+    x <- 1
+    => x as Missing
+}

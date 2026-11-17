@@ -485,18 +485,18 @@ pub fn program_to_ir_module(program: &crate::ast::Program) -> Result<IrModule, S
 
 fn ast_type_to_ir(ty: &crate::ast::Type) -> Result<IrType, String> {
     match ty {
-        crate::ast::Type::Named(name) => {
+        crate::ast::Type::Named(name, _) => {
             if let Some(ir_ty) = resolve_primitive(name) {
                 Ok(ir_ty)
             } else {
                 Ok(IrType::Named(name.clone()))
             }
         }
-        crate::ast::Type::Slice(element) => {
+        crate::ast::Type::Slice(element, _) => {
             let elem_ty = ast_type_to_ir(element)?;
             Ok(IrType::Slice(Box::new(elem_ty)))
         }
-        crate::ast::Type::Generic(name, _) => Ok(IrType::Named(name.clone())),
+        crate::ast::Type::Generic(name, _, _) => Ok(IrType::Named(name.clone())),
     }
 }
 

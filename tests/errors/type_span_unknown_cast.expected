@@ -1,0 +1,1 @@
+tests/errors/type_span_unknown_cast.loi:3:13: unknown type 'Missing'
