@@ -1,0 +1,2 @@
+tests/errors/exclusive_alias.loi:15:14: cannot pass 'v' as '<->' in the call to 'swap' because it is also used by another argument
+tests/errors/exclusive_alias.loi:15:21: cannot pass 'v' as '<->' in the call to 'swap' because it is also used by another argument

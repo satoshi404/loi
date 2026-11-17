@@ -1,0 +1,1 @@
+tests/errors/name_collision.loi:13:10: generated name 'Vec__i32' for shape 'Vec<i32>' collides with an existing declaration named 'Vec__i32'; rename the declaration or change the type argument

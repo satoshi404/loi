@@ -1,0 +1,8 @@
+shape Counter [
+    value: i32
+]
+
+flow main {
+    mut counter <- Counter[ value: 0 ]
+    cuonter.value += 1
+}

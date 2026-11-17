@@ -1,0 +1,1 @@
+tests/errors/immutable_write.loi:3:5: cannot assign to immutable variable 'x'

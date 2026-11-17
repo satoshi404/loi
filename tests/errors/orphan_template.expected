@@ -1,0 +1,1 @@
+tests/errors/orphan_template.loi:5:8: unknown variable 'missing_name'

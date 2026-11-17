@@ -1,0 +1,1 @@
+tests/errors/type_mismatch.loi:2:15: cannot initialize 'x' of type i32 with bool

@@ -1,0 +1,7 @@
+comptime flow bad
+    => i32
+{
+    mut xs: [i32]
+    alloc(-> xs, i32, 3)
+    => 0
+}

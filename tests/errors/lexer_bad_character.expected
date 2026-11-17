@@ -1,0 +1,1 @@
+loi: tests/errors/lexer_bad_character.loi:tests/errors/lexer_bad_character.loi:2:12: unexpected character '`'

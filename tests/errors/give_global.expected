@@ -1,0 +1,1 @@
+tests/errors/give_global.loi:6:19: cannot give from global 'SAMPLE'; use clone(...)

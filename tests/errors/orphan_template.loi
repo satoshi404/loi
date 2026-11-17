@@ -1,0 +1,12 @@
+flow broken<T>
+    <- x: T
+    => i32
+{
+    => missing_name + x
+}
+
+flow main
+    => i32
+{
+    => 0
+}

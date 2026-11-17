@@ -1,0 +1,1 @@
+tests/errors/wrong_arity.loi:12:8: function 'add' expects 2 argument(s), found 1

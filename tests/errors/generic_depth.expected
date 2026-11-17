@@ -1,0 +1,1 @@
+tests/errors/generic_depth.loi:10:14: generic instantiation exceeds the depth limit of 64; recursive instantiations such as 'f<T>' calling 'f<Vec<T>>' are not allowed

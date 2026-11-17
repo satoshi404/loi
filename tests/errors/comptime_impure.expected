@@ -1,0 +1,1 @@
+tests/errors/comptime_impure.loi:5:5: 'alloc' is not allowed in a comptime flow

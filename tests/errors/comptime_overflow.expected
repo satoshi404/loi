@@ -1,0 +1,1 @@
+tests/errors/comptime_overflow.loi:1:15: initializer for global 'LIMIT' is invalid: integer overflow in comptime expression

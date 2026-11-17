@@ -1,0 +1,1 @@
+tests/errors/integer_overflow.loi:4:8: integer constant is out of range for u8

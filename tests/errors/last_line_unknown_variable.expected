@@ -1,0 +1,1 @@
+tests/errors/last_line_unknown_variable.loi:4:8: unknown variable 'missing'

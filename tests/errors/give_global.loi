@@ -1,0 +1,8 @@
+SAMPLE: [i32] <- [i32: 1, 2, 3]
+
+flow main
+    => i32
+{
+    mut s <- give(SAMPLE)
+    => s[0]
+}

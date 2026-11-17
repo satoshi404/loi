@@ -1,0 +1,1 @@
+tests/errors/protect_escape.loi:8:18: value allocated inside 'protect' escapes the block

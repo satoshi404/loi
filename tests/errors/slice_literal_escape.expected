@@ -1,0 +1,2 @@
+tests/errors/slice_literal_escape.loi:4:17: slice literal storage escapes the block that created it; keep it in a variable declared in the same block
+tests/errors/slice_literal_escape.loi:6:17: slice literal storage escapes the block that created it; keep it in a variable declared in the same block

@@ -1,0 +1,3 @@
+flow f {
+    x: i32 <- true
+}

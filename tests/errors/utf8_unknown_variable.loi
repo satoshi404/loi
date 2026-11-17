@@ -1,0 +1,5 @@
+flow main
+    => i32
+{
+    => héllo
+}

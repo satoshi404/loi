@@ -1,0 +1,7 @@
+LIMIT: i32 <- comptime 2147483647 + 1
+
+flow main
+    => i32
+{
+    => LIMIT
+}

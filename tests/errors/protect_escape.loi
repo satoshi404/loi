@@ -1,0 +1,10 @@
+shape Particle [
+    mass: f64
+]
+
+flow main {
+    mut ps: [Particle]
+    protect {
+        alloc(-> ps, Particle, 3)
+    }
+}

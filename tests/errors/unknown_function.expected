@@ -1,0 +1,1 @@
+tests/errors/unknown_function.loi:2:5: unknown function 'nope'

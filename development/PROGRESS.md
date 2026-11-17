@@ -4,7 +4,14 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Last completed task (2026-11-17):** added a rich diagnostic renderer in
+- **Last completed task (2026-11-17):** added a golden corpus for `loi check
+  --error-format short --color never` under `tests/errors/`, a runner that
+  diffs every `NAME.loi` against its `NAME.expected` (`LOI_BLESS=1` rewrites
+  them), and a clean-check test over every non-error example. `KNOWN_BAD.txt`
+  records cases whose current output will be fixed by the following diagnostic
+  commits. Also fixed a stray `prant("j")` typo in `examples/language_basics.loi`
+  (and its website mirror) so the example suite is clean again.
+- **Previous task (2026-11-17):** added a rich diagnostic renderer in
   `src/diagnostic.rs` with human, short and JSON output, ANSI colors,
   source-line underlines, secondary labels and edit-distance name suggestions.
   Existing message texts are unchanged; moved-value, protect/block escape and
@@ -53,9 +60,11 @@ python3 tools/sync_examples.py --check
 
 - `cargo fmt --check`: exit 0.
 - `cargo clippy --all-targets -- -D warnings`: exit 0.
-- `cargo test --all-targets`: **241 passed, 0 failed** (17+6+1+99+37+42+6+21+12 across all targets; compile-and-run tests run when `cc` is available).
+- `cargo test --all-targets`: **243 passed, 0 failed** (17+6+1+99+37+42+6+21+12+2 across all targets; compile-and-run tests run when `cc` is available).
 - `python3 tools/sync_examples.py --check`: `website/examples` is in sync.
-- New coverage: diagnostic rendering to strings without colors (target layout,
+- New coverage: 31 golden error cases (ownership, global give, aliasing,
+  comptime, generics, lexer/parser errors, line-1/mid-file/last-line, UTF-8,
+  tabs and CRLF) plus a clean check of every example; diagnostic rendering to strings without colors (target layout,
   token extent scanning, exact span ends, short and JSON formats,
   sorting/summary and suggestions), parser token extents, CLI `--error-format`
   and `--color` behavior, generic shapes and flows (including nested

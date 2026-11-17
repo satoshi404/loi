@@ -1,0 +1,1 @@
+tests/errors/missing_return.loi:1:1: function 'f' must return a value of type i32 on all paths

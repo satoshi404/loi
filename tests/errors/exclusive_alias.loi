@@ -1,0 +1,16 @@
+shape Vec2 [
+    x: f64
+    y: f64
+]
+
+flow swap
+    <-> a: Vec2
+    <-> b: Vec2
+{
+}
+
+flow f
+    <-> v: Vec2
+{
+    swap(<-> v, <-> v)
+}

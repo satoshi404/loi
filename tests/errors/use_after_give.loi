@@ -1,0 +1,7 @@
+flow f
+    => i32
+{
+    mut a: i32 <- 1
+    mut b: i32 <- give(a)
+    => a + b
+}

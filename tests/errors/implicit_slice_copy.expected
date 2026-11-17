@@ -1,0 +1,1 @@
+tests/errors/implicit_slice_copy.loi:9:9: cannot copy World implicitly; use give(...) or clone(...)

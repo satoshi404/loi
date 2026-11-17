@@ -1,0 +1,1 @@
+tests/errors/shift_out_of_range.loi:5:13: shift count 32 is out of range for i32 (0..32)

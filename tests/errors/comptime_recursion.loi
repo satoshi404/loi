@@ -1,0 +1,13 @@
+comptime flow loop
+    => i32
+{
+    => comptime loop()
+}
+
+LIMIT: i32 <- comptime loop()
+
+flow main
+    => i32
+{
+    => LIMIT
+}

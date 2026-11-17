@@ -1,0 +1,10 @@
+open flow main => i32 {
+    mut outer: [i32]
+    if true {
+        outer = [7, 8, 9]
+    } else {
+        outer = [1, 2, 3]
+    }
+    mut i: u64 <- 1
+    => outer[i]
+}
