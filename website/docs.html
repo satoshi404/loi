@@ -637,6 +637,7 @@ print(other.x)</code></pre>
               <tr><td><code>panic</code></td><td><code>&lt;- [u8]</code></td><td>Reports and aborts the program.</td></tr>
               <tr><td><code>print_int</code></td><td><code>&lt;- integer</code></td><td>Writes an integer's digits; no newline. Any width.</td></tr>
               <tr><td><code>print_float</code></td><td><code>&lt;- f32 | f64</code></td><td>Writes the shortest round-tripping decimal; no newline.</td></tr>
+              <tr><td><code>printf</code></td><td><code>&lt;- [u8], ...</code></td><td>Formatted output; literal format string plus typed varargs.</td></tr>
               <tr><td><code>read_file</code></td><td><code>&lt;- [u8] =&gt; [u8]</code></td><td>Reads a whole file into the current <code>protect</code> region; traps on failure.</td></tr>
               <tr><td><code>write_file</code></td><td><code>&lt;- [u8], &lt;- [u8] =&gt; bool</code></td><td>Writes exact bytes; returns whether write and close succeeded.</td></tr>
               <tr><td><code>read_stdin</code></td><td><code>=> [u8]</code></td><td>Reads the rest of standard input into the current <code>protect</code> region.</td></tr>
@@ -653,9 +654,24 @@ print(other.x)</code></pre>
           <p>
             Intrinsic names are reserved. User code may not redeclare them. <code>len</code> and the
             math intrinsics are checked against the same signatures as an ordinary flow.
+            <code>printf</code> is the only variadic intrinsic: its first argument must be a string
+            literal, whose conversions (<code>d i u x X o f F e E g G a A s c</code> and
+            <code>%%</code>) decide how many values follow and of which kind. Flags, numeric width,
+            precision and length modifiers are forwarded to C; dynamic <code>*</code> widths are
+            rejected. Each value is cast to the C type its conversion reads.
             <code>read_file</code>, <code>read_stdin</code> and <code>read_line</code> allocate,
             so call them inside a <code>protect</code> block and do not let their result escape it.
           </p>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>formatted.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-loi">flow main {
+    n: i32 &lt;- 42
+    big: i64 &lt;- 9000000000
+    printf("n=%d big=%lld f=%.2f s=%s pct=100%%\n", n, big, 0.1, "ok")
+}
+// n=42 big=9000000000 f=0.10 s=ok pct=100%</code></pre>
+          </div>
 
           <h3><code>lib/std.loi</code></h3>
           <p>Import it with <code>import "lib/std.loi"</code>. The library is deliberately prefixed by kind.</p>
@@ -771,8 +787,9 @@ extern flow SDL_DestroyWindow
             The interactive examples add small hand-written shims:
             <code>examples/editor_shim.c</code> turns a dynamic <code>[u8]</code> buffer into a
             C string for <code>DrawText</code>, and <code>examples/sound_shim.c</code> hides
-            raylib's <code>Sound</code> record behind static state so Loi can play mathematically
-            generated samples. Build them like this:
+            raylib's skipped audio records behind static state. It plays one-shot samples through
+            <code>Sound</code> and feeds continuous synthesis through a native
+            <code>AudioStream</code> or queued WebAudio buffers. Build them like this:
           </p>
 
           <div class="doc-code">
@@ -787,6 +804,12 @@ loi build examples/sound_synth.loi -o synth \
     --c-source examples/sound_shim.c \
     --c-source vendor/raylib/raylib_shim.c \
     --cc-flag -Ivendor/raylib/include \
+    --cc-flag -lraylib --cc-flag -lm
+
+loi build examples/audio_visualizer.loi -o visualizer \
+    --c-source examples/sound_shim.c \
+    --c-source vendor/raylib/raylib_shim.c \
+    --cc-flag -Ivendor/raylib/include \
     --cc-flag -lraylib --cc-flag -lm</code></pre>
           </div>
 
@@ -795,7 +818,7 @@ loi build examples/sound_synth.loi -o synth \
             WebAssembly. It needs Emscripten on <code>PATH</code> and a raylib build for
             <code>PLATFORM_WEB</code>; <code>CC=emcc</code> makes the CLI call Emscripten instead of
             the normal C compiler, and <code>-sASYNCIFY</code> keeps the blocking window loop working.
-            <code>WEB_C_SOURCES</code> adds extra shims, so the sound synth needs
+            <code>WEB_C_SOURCES</code> adds extra shims, so both audio demos need
             <code>examples/sound_shim.c</code>:
           </p>
 
@@ -804,6 +827,8 @@ loi build examples/sound_synth.loi -o synth \
             <pre><code>RAYLIB_WEB=/caminho/raylib-5.5/src sh examples/build_web.sh examples/raylib_web.loi
 RAYLIB_WEB=/caminho/raylib-5.5/src WEB_C_SOURCES=examples/sound_shim.c \
     sh examples/build_web.sh examples/sound_synth.loi
+RAYLIB_WEB=/caminho/raylib-5.5/src WEB_C_SOURCES=examples/sound_shim.c \
+    sh examples/build_web.sh examples/audio_visualizer.loi
 python3 -m http.server -d web 8000   # abra http://localhost:8000</code></pre>
           </div>
 
@@ -811,10 +836,10 @@ python3 -m http.server -d web 8000   # abra http://localhost:8000</code></pre>
             The script writes <code>.js</code>/<code>.wasm</code> plus a small HTML wrapper without
             inline scripts, so it works under the site's CSP. It passes <code>-std=gnu11</code> to
             the C compiler because the Loi CLI defaults to <code>-std=c11</code>, where Emscripten
-            disables <code>EM_ASM</code>. Click once inside the frame before using the keyboard:
-            that focuses the canvas for GLFW input and unlocks the WebAudio context that browsers
-            create in a suspended state. The sound demo starts muted by browser policy; press
-            <kbd>ESPAÇO</kbd> after clicking to hear the generated wave.
+            disables <code>EM_ASM</code>. The wrapper tries to unlock WebAudio at load and again on
+            the first click or touch; no keyboard key is needed. On native builds both audio demos
+            start as soon as the device is ready. In the browser, contexts that start suspended
+            wait for that first gesture and then play automatically.
           </p>
 
           <p>
@@ -823,8 +848,10 @@ python3 -m http.server -d web 8000   # abra http://localhost:8000</code></pre>
             <code>AudioBufferSourceNode</code>). miniaudio's WebAudio backend needs Wasm AudioWorklets,
             which in turn need <code>-sAUDIO_WORKLET=1</code>, Wasm workers and COOP/COEP headers for
             shared memory — more machinery than a tiny synth warrants. The direct path plays the
-            generated <code>Float32Array</code> with a plain buffer source and needs none of that.
-            Native builds still use raylib's <code>Sound</code> API.
+            generated <code>Float32Array</code> with a plain buffer source and needs none of that;
+            the visualizer queues short buffers back to back for gapless continuous audio. Native
+            builds use raylib's <code>Sound</code> for one-shot samples and an
+            <code>AudioStream</code> for the continuous feed.
           </p>
 
           <p>
@@ -956,14 +983,14 @@ node website/server.mjs
             <code>127.0.0.1</code> by default; it is a development tool, not a public sandbox.
           </p>
           <p>
-            The playground preset menu includes the three raylib examples. Use <b>Check</b> or
+            The playground preset menu includes the raylib examples. Use <b>Check</b> or
             <b>Format</b> on them in the browser; executing them needs a native raylib build and the
-            shims described above. Two of them also run below the editor as prebuilt WebAssembly
-            frames: the bouncing-ball demo and the math sound synth. Select a tab or a preset to
-            switch frames, click once inside the frame to focus the keyboard and unlock WebAudio,
-            then use the keys shown in the caption. The frames are generated with
-            <code>examples/build_web.sh</code> into <code>website/web/</code>; reload a frame after
-            rebuilding to pick up changes.
+            shims described above. Three of them also run below the editor as prebuilt WebAssembly
+            frames: bouncing balls, the math sound synth and the C3-inspired audio visualizer.
+            Select a tab or a preset to switch frames. Click or tap once inside a frame if the
+            browser asks for a gesture to unlock WebAudio; both audio demos then play on their own.
+            The frames are generated with <code>examples/build_web.sh</code> into
+            <code>website/web/</code>; reload a frame after rebuilding to pick up changes.
           </p>
         </section>
 
@@ -1013,7 +1040,11 @@ node website/server.mjs
             </a>
             <a class="feature-card" href="examples/sound_synth.loi">
               <h3>Sound synthesis</h3>
-              <p>Waves generated sample by sample with math, drawn as an oscilloscope and played through a small audio shim.</p>
+              <p>Waves generated sample by sample with math, drawn as an oscilloscope and played automatically through a small audio shim.</p>
+            </a>
+            <a class="feature-card" href="examples/audio_visualizer.loi">
+              <h3>Audio visualizer</h3>
+              <p>A C3-inspired 16-step sequencer: procedural drums, bass, lead and solo drive reactive bars, circles and a waveform.</p>
             </a>
           </div>
 
@@ -1209,11 +1240,11 @@ sealed flow winning_line
             </thead>
             <tbody>
               <tr><td>Lexer, parser, pretty-printer</td><td>Working; canonical Flow Syntax only. <code>loi fmt</code> preserves comments.</td></tr>
-              <tr><td>Type checker</td><td>Working, including literal ranges, intrinsic signatures, bitwise/shift rules, shape cycle detection, generic instantiation and canonical diagnostics.</td></tr>
+              <tr><td>Type checker</td><td>Working, including literal ranges, intrinsic signatures, checked <code>printf</code> varargs, bitwise/shift rules, shape cycle detection, generic instantiation and canonical diagnostics.</td></tr>
               <tr><td>Monomorphization</td><td>Working: generic shapes and flows are expanded into concrete declarations before checking and code generation, with mangled names, a recursion depth limit, collision diagnostics and validation of unused templates.</td></tr>
               <tr><td>Compile-time evaluation</td><td>Working: pure <code>comptime flow</code> and <code>comptime expr</code>, constant globals of any shape, and shape defaults, with purity checks, step/depth limits and runtime-matching overflow, cast and <code>f32</code> semantics.</td></tr>
               <tr><td>Ownership analysis</td><td>Working: give liveness, definite assignment, exclusive <code>&lt;-&gt;</code>, region escape checks, and allocating read intrinsics.</td></tr>
-              <tr><td>C backend</td><td>Working: one C11 translation unit, bounds checks, regions, checked arithmetic, bitwise/shift helpers, file/stdin I/O, numeric printing, source maps, headers, multi-file objects.</td></tr>
+              <tr><td>C backend</td><td>Working: one C11 translation unit, bounds checks, regions, checked arithmetic, bitwise/shift helpers, file/stdin I/O, numeric and formatted printing, source maps, headers, multi-file objects.</td></tr>
               <tr><td>C interop</td><td>Working: <code>opaque</code>, <code>cstr</code>, <code>extern flow</code>, <code>--c-source</code>, and a header-to-Loi binding generator.</td></tr>
               <tr><td>IR and assembly</td><td>Draft: <code>--emit-ir</code> emits IR text; <code>--emit-asm</code> is rejected because the assembly backend cannot generate runnable code yet. The C backend is the production path.</td></tr>
               <tr><td><code>comptime</code></td><td>Working for pure flows, expressions, globals and shape defaults. Recursive or runaway evaluation is rejected by step/depth limits.</td></tr>
@@ -1223,7 +1254,7 @@ sealed flow winning_line
 
           <h3>Known limitations</h3>
           <ul>
-            <li>I/O is limited to whole-file and whole-stdin reads/writes plus numeric printing. There is no socket, directory, seek, environment or process API. <code>read_file</code>, <code>read_stdin</code> and <code>read_line</code> allocate in the current <code>protect</code> region and cannot escape it.</li>
+            <li>I/O is limited to whole-file and whole-stdin reads/writes plus numeric and <code>printf</code> formatting. There is no socket, directory, seek, environment or process API. User-declared variadic flows are not supported. <code>read_file</code>, <code>read_stdin</code> and <code>read_line</code> allocate in the current <code>protect</code> region and cannot escape it.</li>
             <li>Imports are textual and cross-file visibility is not enforced. Multi-file builds give sealed flows external linkage so cross-file calls link.</li>
             <li>Globals accept any compile-time constant, including nested shapes, slices and strings; the backend folds them into strict C11 static initializers (named arrays back slice data, with no compound literals). Growable collections (<code>Vec&lt;T&gt;</code>, maps) remain library work even though generics are available.</li>
             <li>A slice literal cannot escape the block that created it, including being returned or stored into an outer variable; allocate long-lived data in a <code>protect</code> region.</li>

@@ -2121,6 +2121,12 @@ impl Checker {
             return Ty::Void;
         }
 
+        // `printf` is variadic: the first argument is a literal format string
+        // whose conversions decide how many values follow and of which kind.
+        if name == "printf" {
+            return self.check_printf_call(args, span);
+        }
+
         let Some(signature) = self.functions.get(name).cloned() else {
             self.error_unknown(
                 callee.span,
@@ -2164,6 +2170,95 @@ impl Checker {
         self.propagate_call_regions(name, args, &signature, &out_targets);
 
         signature.return_type
+    }
+
+    /// Check a variadic `printf(...)` call.
+    ///
+    /// The format must be a string literal so the conversions are known while
+    /// checking. Each conversion consumes exactly one following value; the
+    /// kind of that value is validated against the conversion. Callers never
+    /// need casts because the C backend casts each vararg to what the
+    /// conversion reads.
+    fn check_printf_call(&mut self, args: &[CallArg], span: Span) -> Ty {
+        let Some(fmt) = args.first() else {
+            self.error(span, "printf expects a format string argument");
+            return Ty::Void;
+        };
+        if fmt.direction != Direction::In {
+            self.error(fmt.value.span, "printf expects a '<-' format string");
+        }
+
+        let ExprKind::String(text) = &fmt.value.kind else {
+            self.error(fmt.value.span, "printf format must be a string literal");
+            self.check_expr(&fmt.value);
+            for arg in &args[1..] {
+                self.check_unmatched_arg(arg);
+            }
+            return Ty::Void;
+        };
+
+        let pieces = match crate::format::parse_format(text) {
+            Ok(pieces) => pieces,
+            Err(message) => {
+                self.error(fmt.value.span, format!("invalid format string: {message}"));
+                for arg in &args[1..] {
+                    self.check_unmatched_arg(arg);
+                }
+                return Ty::Void;
+            }
+        };
+        let specs = pieces
+            .iter()
+            .filter_map(|piece| match piece {
+                crate::format::FormatPiece::Spec(spec) => Some(spec),
+                crate::format::FormatPiece::Text(_) => None,
+            })
+            .collect::<Vec<_>>();
+
+        if specs.len() != args.len() - 1 {
+            self.error(
+                span,
+                format!(
+                    "printf format expects {} argument(s), found {}",
+                    specs.len(),
+                    args.len() - 1
+                ),
+            );
+        }
+
+        for (index, arg) in args[1..].iter().enumerate() {
+            let Some(spec) = specs.get(index) else {
+                self.check_unmatched_arg(arg);
+                continue;
+            };
+            if arg.direction != Direction::In {
+                self.error(
+                    arg.value.span,
+                    format!("printf expects a '<-' argument for '{}'", spec.raw),
+                );
+            }
+            let ty = self.check_expr(&arg.value);
+            let Some(kind) = spec.kind() else {
+                continue;
+            };
+            let is_string = matches!(kind, crate::format::FormatKind::Str)
+                && matches!(arg.value.kind, ExprKind::String(_));
+            if !is_string && !ty.is_error() && !crate::format::type_matches(kind, &ty) {
+                let expected = match kind {
+                    crate::format::FormatKind::SignedInt => "an integer",
+                    crate::format::FormatKind::UnsignedInt => "an integer",
+                    crate::format::FormatKind::Float => "a float",
+                    crate::format::FormatKind::Str => "a string literal or cstr",
+                    crate::format::FormatKind::Char => "an integer",
+                };
+                self.error(
+                    arg.value.span,
+                    format!("format '{}' expects {expected}, found {ty}", spec.raw),
+                );
+            }
+        }
+
+        Ty::Void
     }
 
     /// Carry protect-region taints from consumed `inout` arguments to `out`
@@ -3175,6 +3270,7 @@ fn is_intrinsic_name(name: &str) -> bool {
             | "read_line"
             | "print_int"
             | "print_float"
+            | "printf"
     )
 }
 

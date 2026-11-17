@@ -136,6 +136,13 @@ open flow main
         "Loaded the sound synthesis demo. Check and Format work here. " +
         "Run needs a native raylib build; use the Síntese de som WebAssembly demo below instead.",
     },
+    audio_visualizer: {
+      label: "Audio visualizer",
+      url: "examples/audio_visualizer.loi",
+      note:
+        "Loaded the C3-inspired audio visualizer. Check and Format work here. " +
+        "Run needs a native raylib build; use the Visualizador WebAssembly demo below instead.",
+    },
   };
 
   const WEB_DEMOS = {
@@ -145,7 +152,11 @@ open flow main
     },
     sound_synth: {
       caption:
-        "<b>Som:</b> 1 a 4 trocam a onda, cima/baixo mudam a frequência, ESPAÇO toca, ESC sai.",
+        "<b>Som:</b> toca automaticamente; 1 a 4 trocam a onda, cima/baixo mudam a frequência, ESC sai.",
+    },
+    audio_visualizer: {
+      caption:
+        "<b>Visualizador:</b> sequenciador de 16 passos inspirado no exemplo C3; a música e as barras/círculos/onda reagem ao áudio, sem teclas.",
     },
   };
 

@@ -1356,3 +1356,34 @@ fn diagnostics_use_source_spelling_for_generic_instantiations() {
         "diagnostics must not expose mangled names, got {messages:#?}"
     );
 }
+
+#[test]
+fn printf_format_arguments_are_checked() {
+    assert_clean("flow main {\n    printf(\"n=%d f=%.2f s=%s pct=%%\\n\", 1, 2.5, \"ok\")\n}\n");
+    assert_clean("flow main {\n    title: cstr <- \"hi\"\n    printf(\"%s\\n\", title)\n}\n");
+
+    assert_message(
+        "flow main {\n    printf(\"%d %d\", 1)\n}\n",
+        "printf format expects 2 argument(s), found 1",
+    );
+    assert_message(
+        "flow main {\n    printf(\"%d\", 1, 2)\n}\n",
+        "printf format expects 1 argument(s), found 2",
+    );
+    assert_message(
+        "flow main {\n    f: f64 <- 1.0\n    printf(\"%d\", f)\n}\n",
+        "format '%d' expects an integer, found f64",
+    );
+    assert_message(
+        "flow main {\n    printf(\"%q\", 1)\n}\n",
+        "invalid format string: unsupported conversion '%q'",
+    );
+    assert_message(
+        "flow main {\n    printf(\"%*d\", 1, 2)\n}\n",
+        "invalid format string: dynamic '*' width/precision is not supported",
+    );
+    assert_message(
+        "flow main {\n    fmt <- \"%d\"\n    printf(fmt, 1)\n}\n",
+        "printf format must be a string literal",
+    );
+}

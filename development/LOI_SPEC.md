@@ -301,7 +301,7 @@ These rules were added to unblock real programs and are implemented and tested. 
 
 **Builtin intrinsics and standard library**
 
-- Intrinsics: `print(<- [u8])`, `eprint(<- [u8])`, `panic(<- [u8])`, `sqrt/floor/ceil/fabs(<- f64) => f64`, `pow/fmod(<- f64, <- f64) => f64` and `len([T]) => u64`.
+- Intrinsics: `print(<- [u8])`, `eprint(<- [u8])`, `panic(<- [u8])`, `print_int(<- integer)`, `print_float(<- f64)`, `printf(<- [u8], ...)` (literal format string plus typed varargs), `sqrt/floor/ceil/fabs(<- f64) => f64`, `pow/fmod(<- f64, <- f64) => f64` and `len([T]) => u64`.
 - `lib/std.loi` is a minimal, explicitly imported standard library (integer/float min/max/abs/clamp and byte-string helpers). It is written in Loi and uses only the features above.
 
 ### 4.9 Foreign C interop
@@ -546,7 +546,7 @@ is no long-lived file/socket handle API or `guard` yet.
 **Decision:** two tiers, closed.
 
 1. **Intrinsics** are compiler-known, reserved names with fixed signatures and a direct backend mapping:
-   - I/O: `print`, `eprint`, `panic`, `print_int`, `print_float`, `read_file`, `write_file`, `read_stdin`, `read_line`
+   - I/O: `print`, `eprint`, `panic`, `print_int`, `print_float`, `printf`, `read_file`, `write_file`, `read_stdin`, `read_line`
    - math: `sqrt`, `floor`, `ceil`, `fabs`, `pow`, `fmod`
    - `len`
 
@@ -559,7 +559,7 @@ New functionality goes into the library by default; an intrinsic is added only w
 
 **Why:** a tiny closed intrinsic set keeps the compiler small and portable; a Loi-written library exercises the language and can grow without changing the compiler.
 
-**Status:** implemented. `len` is now reserved in the checker like the other intrinsics, and the old "user-defined `len` wins" exception is gone.
+**Status:** implemented. `len` is now reserved in the checker like the other intrinsics, and the old "user-defined `len` wins" exception is gone. `printf` is the only variadic intrinsic: its first argument must be a string literal, and the conversions in that literal determine the number and kind of the remaining arguments. User-declared variadic flows remain out of scope.
 
 ### 5.10 Syntax identity — Loi Flow Syntax (adopted, complete)
 

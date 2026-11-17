@@ -1,0 +1,235 @@
+// Audio visualizer inspirado no exemplo "Audio Visualizer" do playground C3.
+//
+// A musica e gerada amostra a amostra em Loi e enviada continuamente para o
+// shim de audio: raylib AudioStream no desktop, fila de AudioBuffer no
+// navegador. Nenhuma tecla e necessaria; no navegador o primeiro clique/toque
+// apenas libera o AudioContext exigido pelos browsers.
+//
+// Build nativo:
+//   loi build examples/audio_visualizer.loi -o visualizer \
+//       --c-source examples/sound_shim.c \
+//       --c-source vendor/raylib/raylib_shim.c \
+//       --cc-flag -Ivendor/raylib/include \
+//       --cc-flag -lraylib --cc-flag -lm
+//
+// Build web:
+//   RAYLIB_WEB=/caminho/raylib-5.5/src WEB_C_SOURCES=examples/sound_shim.c \
+//       sh examples/build_web.sh examples/audio_visualizer.loi
+import "../vendor/raylib/raylib.loi"
+
+extern flow c_sin as sin
+    <- x: f64
+    => f64
+
+extern flow loi_audio_feed
+    <- samples: [f32]
+    <- sample_rate: u32
+
+extern flow loi_audio_ready
+    => bool
+
+extern flow loi_samples_playing
+    => bool
+
+extern flow loi_audio_cleanup
+
+SAMPLE_RATE: u32 <- 44100
+
+STEP_SAMPLES: i32 <- 6014
+
+FRAMES_PER_TICK: i32 <- 735
+
+TAU: f64 <- 6.283185307179586
+
+DECAY: f64 <- 0.9994
+
+BASS_NOTES: [f64] <- [55.0, 55.0, 55.0, 55.0, 65.4, 65.4, 65.4, 65.4, 49.0, 49.0, 49.0, 49.0, 43.65, 43.65, 43.65, 43.65]
+
+SOLO_SCALE: [f64] <- [293.7, 329.6, 392.0, 440.0, 523.3, 587.3, 659.3]
+
+mut amp0: f64 <- 0.0
+
+mut amp1: f64 <- 0.0
+
+mut amp2: f64 <- 0.0
+
+mut amp3: f64 <- 0.0
+
+mut phase0: f64 <- 0.0
+
+mut phase1: f64 <- 0.0
+
+mut phase2: f64 <- 0.0
+
+mut phase3: f64 <- 0.0
+
+mut solo_amp: f64 <- 0.0
+
+mut solo_phase: f64 <- 0.0
+
+mut solo_freq: f64 <- 0.0
+
+mut solo_target_freq: f64 <- 0.0
+
+mut sample_count: i64 <- 0
+
+mut step: i32 <- 0
+
+mut lfo_phase: f64 <- 0.0
+
+flow rand01
+    => f64
+{
+    => GetRandomValue(0, 1000000) as f64 / 1000000.0
+}
+
+// Gera FRAMES_PER_TICK amostras e atualiza o estado usado pelo desenho.
+// A logica segue de perto o audio_callback do exemplo C3.
+flow generate_audio
+    -> out: [f32]
+{
+    for i in 0..FRAMES_PER_TICK {
+        bar <- sample_count / (STEP_SAMPLES as i64 * 16) % 8
+        if sample_count % STEP_SAMPLES as i64 == 0 {
+            sub <- step % 4
+            if sub == 0 and step % 8 == 0 and bar != 7 {
+                amp0 = 0.8
+                phase0 = 0.0
+            }
+            if sub == 2 and bar >= 1 {
+                amp1 = 0.15
+            }
+            if (sub == 1 or sub == 3) and bar >= 1 and bar != 6 {
+                amp1 = 0.06
+            }
+            if (step == 4 or step == 12) and bar >= 2 {
+                amp1 = 0.45
+                phase1 = 0.0
+            }
+            if bar >= 2 and bar != 6 {
+                amp2 = 0.18
+            }
+            if bar >= 3 and step % 3 == 2 {
+                amp3 = 0.15
+            }
+            if (bar == 4 or bar == 5 or bar == 7) and rand01() < 0.70 {
+                solo_target_freq = SOLO_SCALE[(rand01() * 7.0) as i32]
+                solo_amp = 0.30
+            }
+            step = (step + 1) % 16
+        }
+        sample_count += 1
+        amp0 *= DECAY
+        amp1 *= DECAY
+        amp2 *= DECAY
+        amp3 *= DECAY
+        solo_amp *= 0.9995
+        lfo_phase += 1.5 / SAMPLE_RATE as f64
+        if lfo_phase > 1.0 {
+            lfo_phase -= 1.0
+        }
+        solo_freq += (solo_target_freq - solo_freq) * 0.002
+        modulated_solo <- solo_freq + c_sin(lfo_phase * TAU * 6.0) * (solo_amp * 40.0)
+        mut bass_root: f64 <- BASS_NOTES[step]
+        if step % 2 == 1 {
+            bass_root = bass_root * 2.0
+        }
+        mut lead_base: f64 <- BASS_NOTES[step]
+        if bar == 4 or bar == 5 {
+            lead_base = lead_base * 2.0
+        }
+        if bar == 6 {
+            lead_base = lead_base * 1.5
+        }
+        lead_freq <- lead_base + c_sin(lfo_phase * TAU * 2.5) * 2.5
+        phase0 += 350.0 * amp0 / SAMPLE_RATE as f64
+        phase1 += 180.0 / SAMPLE_RATE as f64
+        phase2 += bass_root / SAMPLE_RATE as f64
+        phase3 += lead_freq / SAMPLE_RATE as f64
+        phase0 -= floor(phase0)
+        phase1 -= floor(phase1)
+        phase2 -= floor(phase2)
+        phase3 -= floor(phase3)
+        solo_phase += modulated_solo / SAMPLE_RATE as f64
+        if solo_phase > 1.0 {
+            solo_phase -= 1.0
+        }
+        kick_raw <- c_sin(phase0 * TAU)
+        kick_wave <- kick_raw * (1.2 - 0.2 * kick_raw * kick_raw)
+        snare_wave <- (rand01() * 2.0 - 1.0) * 0.7 + c_sin(phase1 * TAU) * 0.3
+        bass_mod <- c_sin(phase2 * TAU) * 1.5
+        bass_wave <- c_sin(phase2 * TAU + bass_mod)
+        lead_wave <- fabs(phase3 * 2.0 - 1.0) * 2.0 - 1.0
+        duty <- 0.5 + c_sin(lfo_phase * TAU * 2.0) * 0.25
+        mut solo_sign: f64 <- 0.6
+        if solo_phase >= duty {
+            solo_sign = -0.6
+        }
+        solo_wave <- solo_sign * solo_amp
+        sample_value <- (kick_wave * amp0 + snare_wave * amp1 + bass_wave * amp2 + lead_wave * amp3 + solo_wave) * 0.35
+        out[i] = sample_value as f32
+    }
+}
+
+open flow main
+    => i32
+{
+    InitWindow(640, 480, "Audio Visualizer - Loi + raylib")
+    InitAudioDevice()
+    SetTargetFPS(60)
+    bg: Color <- Color[ r: 15, g: 23, b: 42, a: 255 ]
+    magenta: Color <- Color[ r: 255, g: 20, b: 147, a: 80 ]
+    blue: Color <- Color[ r: 20, g: 80, b: 240, a: 180 ]
+    cyan: Color <- Color[ r: 0, g: 255, b: 255, a: 220 ]
+    gold: Color <- Color[ r: 240, g: 200, b: 20, a: 120 ]
+    white: Color <- Color[ r: 255, g: 255, b: 255, a: 255 ]
+    protect {
+        mut samples: [f32]
+        alloc(-> samples, f32, FRAMES_PER_TICK)
+        while not WindowShouldClose() {
+            if loi_audio_ready() {
+                generate_audio(-> samples)
+                loi_audio_feed(samples, SAMPLE_RATE)
+            }
+            sw <- GetRenderWidth()
+            sh <- GetRenderHeight()
+            scale <- sh as f64 / 480.0
+            BeginDrawing()
+            ClearBackground(bg)
+            bass_w <- (amp2 * sw as f64 * 0.25) as i32
+            DrawRectangle(0, 0, bass_w, sh, magenta)
+            DrawRectangle(sw - bass_w, 0, bass_w, sh, magenta)
+            kick_r <- (amp0 * 120.0 * scale) as f32
+            DrawCircle(sw / 2, sh / 2, kick_r, blue)
+            lead_r <- (amp3 * 90.0 * scale) as f32
+            if lead_r > 2.0 {
+                DrawCircleLines(sw / 2, sh / 2, lead_r, cyan)
+            }
+            hat_flash <- (amp1 * 60.0 * scale) as i32
+            DrawRectangle(0, 0, sw, hat_flash, gold)
+            DrawRectangle(0, sh - hat_flash, sw, hat_flash, gold)
+            solo_height <- solo_amp * 90.0 * scale
+            mut x: i32 <- 0
+            while x < sw - 1 {
+                w1 <- c_sin(x as f64 * 0.08 + solo_phase * TAU) * solo_height
+                w2 <- c_sin((x + 4) as f64 * 0.08 + solo_phase * TAU) * solo_height
+                DrawLine(x, sh / 2 + w1 as i32, x + 4, sh / 2 + w2 as i32, white)
+                x += 4
+            }
+            DrawText("Loi Audio & Visuals Synthesizer", 20, 20, 20, white)
+            if loi_audio_ready() {
+                if loi_samples_playing() {
+                    DrawText("audio ativo", 20, 46, 14, cyan)
+                }
+            } else {
+                DrawText("clique ou toque para liberar o audio", 20, 46, 14, gold)
+            }
+            DrawFPS(sw - 80, 20)
+            EndDrawing()
+        }
+        loi_audio_cleanup()
+    }
+    CloseAudioDevice()
+    CloseWindow()
+    => 0
+}

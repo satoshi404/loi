@@ -2,7 +2,8 @@
 //
 // Quatro formatos de onda (seno, quadrada, serra, triangulo) sao gerados
 // amostra a amostra em Loi, desenhados na tela e tocados pelo shim de audio.
-// ESPACO toca; 1..4 trocam a onda; cima/baixo mudam a frequencia; ESC sai.
+// O som toca automaticamente; 1..4 trocam a onda; cima/baixo mudam a
+// frequencia; ESC sai. Nenhuma tecla e necessaria para ouvir.
 //
 // Build:
 //   loi build examples/sound_synth.loi -o synth \
@@ -23,6 +24,9 @@ extern flow loi_play_samples
 extern flow loi_stop_samples
 
 extern flow loi_samples_playing
+    => bool
+
+extern flow loi_audio_ready
     => bool
 
 extern flow loi_audio_cleanup
@@ -81,6 +85,7 @@ open flow main
         mut kind: i32 <- 0
         mut freq: f64 <- 220.0
         mut dirty: bool <- true
+        mut started: bool <- false
 
         while not WindowShouldClose() {
             key <- GetKeyPressed()
@@ -109,12 +114,17 @@ open flow main
                 freq -= 55.0
                 dirty <- true
             }
-            if key == KEY_SPACE {
+            // Toca assim que o dispositivo/contexto de audio estiver pronto.
+            // No desktop isso acontece na primeira frame; no navegador o
+            // primeiro toque/click libera o AudioContext suspenso e o som
+            // entra na frame seguinte. Nenhuma tecla e necessaria.
+            if loi_audio_ready() and not started and not loi_samples_playing() {
                 for i in 0..TOTAL_SAMPLES {
                     t <- i as f64 / SAMPLE_RATE as f64
                     samples[i] = sample_value(t, kind as f64, freq)
                 }
                 loi_play_samples(samples, SAMPLE_RATE)
+                started <- true
             }
 
             // Recalcula o trecho visivel sempre que a forma ou a frequencia muda.
@@ -131,7 +141,7 @@ open flow main
 
             DrawText("Sintese de onda em Loi", 20, 16, 22, ink)
             DrawText("1 seno  2 quadrada  3 serra  4 triangulo", 20, 46, 14, ink)
-            DrawText("cima/baixo: frequencia | espaco: tocar | ESC: sair", 20, 66, 14, ink)
+            DrawText("audio automatico | 1..4: onda | cima/baixo: frequencia | ESC: sair", 20, 66, 14, ink)
 
             // Malha de referencia: linha do zero e linhas verticais.
             mid <- 300

@@ -635,6 +635,7 @@ impl<'a> Generator<'a> {
         intrinsic_return_ty.insert("write_file".to_string(), Ty::Bool);
         intrinsic_return_ty.insert("print_int".to_string(), Ty::Void);
         intrinsic_return_ty.insert("print_float".to_string(), Ty::Void);
+        intrinsic_return_ty.insert("printf".to_string(), Ty::Void);
 
         for item in &program.items {
             match item {
@@ -2216,6 +2217,34 @@ impl<'a> Generator<'a> {
             "print_float" => {
                 let value = self.gen_expr(&args.first()?.value);
                 Some(format!("loi_print_float((double)({value}))"))
+            }
+            "printf" => {
+                let fmt = args.first()?;
+                let ExprKind::String(text) = &fmt.value.kind else {
+                    return None;
+                };
+                let pieces = crate::format::parse_format(text).ok()?;
+                let specs = pieces.iter().filter_map(|piece| match piece {
+                    crate::format::FormatPiece::Spec(spec) => Some(spec),
+                    crate::format::FormatPiece::Text(_) => None,
+                });
+                let mut lowered = Vec::new();
+                // The literal already has a trailing NUL, so it is safe as a C
+                // string without creating another static array.
+                let index = self.string_index(text);
+                lowered.push(format!("((const char*)loi_str_{index})"));
+                for (spec, arg) in specs.zip(args.iter().skip(1)) {
+                    let value = if spec.kind() == Some(crate::format::FormatKind::Str) {
+                        // A string literal is a `[u8]` slice in Loi; reuse the
+                        // existing NUL-terminated `cstr` coercion for `%s`.
+                        self.gen_coerced_expr(&arg.value, &Ty::CStr)
+                    } else {
+                        let value = self.gen_expr(&arg.value);
+                        format!("(({})( {value} ))", spec.c_cast())
+                    };
+                    lowered.push(value);
+                }
+                Some(format!("printf({})", lowered.join(", ")))
             }
             _ => None,
         }

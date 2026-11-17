@@ -535,6 +535,7 @@ Compiler intrinsics (always available, cannot be redeclared):
 | `eprint` | `(<- [u8])` |
 | `panic` | `(<- [u8])` |
 | `print_int` | `(<- i8 \| i16 \| i32 \| i64 \| u8 \| u16 \| u32 \| u64)` |
+| `printf` | `(<- [u8], ...)` | Formatted output; literal format string plus typed varargs |
 | `print_float` | `(<- f32 \| f64)` |
 | `read_file` | `(<- [u8]) => [u8]` |
 | `write_file` | `(<- [u8], <- [u8]) => bool` |
@@ -563,6 +564,28 @@ Compiler intrinsics (always available, cannot be redeclared):
 - `print_float` writes the shortest decimal that round-trips to the same
   value (`0.1`, `1`, `1.5`). To separate values, print a literal:
   `print_int(n) print(" ")`.
+
+### Formatted output
+
+`printf(fmt, ...)` lowers to C `printf`. The first argument must be a string
+literal: the checker parses its conversions and accepts exactly one value per
+conversion. Supported conversions are `d i u x X o f F e E g G a A s c` and
+`%%`; flags, numeric width/precision and length modifiers are forwarded to C.
+Dynamic `*` width/precision is rejected because it would consume an extra
+vararg that Loi cannot type-check.
+
+`d`, `i` and `c` accept integers; `u`, `x`, `X` and `o` accept integers; the
+floating conversions accept floats; `s` accepts a string literal or `cstr`.
+Every vararg is cast to the C type its conversion reads, so conversions stay
+well-defined; use `ll` for 64-bit values:
+
+```loi
+flow main {
+    n: i32 <- 42
+    big: i64 <- 9000000000
+    printf("n=%d big=%lld f=%.2f s=%s pct=100%%\n", n, big, 0.1, "ok")
+}
+```
 
 ```loi
 protect {
@@ -648,7 +671,8 @@ extern flow SDL_Init
   pass an address.
 - Supported parameter/result types: scalars, `bool`, `opaque` handles, `cstr`,
   and shapes whose fields are themselves FFI-safe. Slices, callbacks,
-  variadics and unions require a vendored C shim.
+  variadics and unions require a vendored C shim. Loi flows cannot declare
+  variadic parameters; `printf` is the sole variadic intrinsic (section 14).
 - Extern flows are not checked for a body, ownership effects or allocation.
   Their contracts are the binding author's responsibility.
 

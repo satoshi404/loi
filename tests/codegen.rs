@@ -938,3 +938,39 @@ fn comptime_f32_rounds_like_runtime() {
     );
     compile_and_run("comptime-f32", &c, "");
 }
+
+#[test]
+fn compiled_printf_lowers_to_typed_varargs() {
+    let source = "flow show {\n    n: i32 <- 42\n    big: i64 <- 9000000000\n    u: u64 <- 7\n    f: f64 <- 0.1\n    printf(\"n=%d big=%lld u=%llu f=%.2f s=%s pct=100%%\\n\", n, big, u, f, \"ok\")\n}\n";
+    let c = generated(source);
+    assert!(
+        c.contains("printf(((const char*)loi_str_0)"),
+        "printf should use the literal format string:\n{c}"
+    );
+    assert!(
+        c.contains("((int)( loi_v_n ))"),
+        "varargs should be cast to the conversion type:\n{c}"
+    );
+    assert!(
+        c.contains("((long long)( loi_v_big ))"),
+        "length modifiers should select the C cast:\n{c}"
+    );
+    assert!(
+        c.contains("((const char*)loi_str_1)"),
+        "%s should reuse the literal's NUL terminator:\n{c}"
+    );
+
+    let harness = r#"
+int main(void) {
+    loi_fn_show();
+    return 0;
+}
+"#;
+    let Some(run) = compile_and_run_output("printf", &c, harness) else {
+        return;
+    };
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "n=42 big=9000000000 u=7 f=0.10 s=ok pct=100%\n"
+    );
+}

@@ -88,14 +88,17 @@ cargo test --all-targets
 - Bitwise and shift operators (`&`, `|`, `^`, `~`, `<<`, `>>`) and compound
   forms are available for masks, flags and hashing; shift counts are checked.
 - `read_file`, `write_file`, `read_stdin` and `read_line` cover whole-file and
-  stdin I/O, while `print_int` and `print_float` print numbers without
-  building text by hand. Reads allocate in the current `protect` region.
+  stdin I/O. `print_int`, `print_float` and `printf` print numbers and formatted
+  text without building strings by hand; `printf` checks its varargs against a
+  literal format string. Reads allocate in the current `protect` region.
 - `loi fmt` preserves `//` comments and is idempotent.
 - Foreign C is available through `opaque` handles, `cstr`, `extern flow` and
   vendored shims.
 
 Start with [`SINTAXE.md`](SINTAXE.md) for the canonical surface and
-[`examples/flow_syntax.loi`](examples/flow_syntax.loi) for a complete tour.
+[`examples/flow_syntax.loi`](examples/flow_syntax.loi) for a complete tour. The
+raylib examples include an automatic sound synth and a C3-inspired audio
+visualizer; see [`website/docs.html`](website/docs.html) for their build commands.
 
 ## Repository layout
 

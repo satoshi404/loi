@@ -6,6 +6,7 @@ pub mod checker;
 pub mod codegen;
 pub mod const_eval;
 pub mod diagnostic;
+pub mod format;
 pub mod ir;
 pub mod lexer;
 pub mod monomorphize;

@@ -4,26 +4,51 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Last completed task (2026-11-17):** made the embedded WebAssembly view
+- **Current task (2026-11-17):** added `examples/audio_visualizer.loi`, a Loi
+  adaptation of the C3 playground's "Audio Visualizer". It keeps the original
+  110 BPM, 16-step sequencer and procedural kick/snare/bass/lead/solo state
+  machine, then drives reactive bars, circles and a waveform. `examples/sound_shim.c`
+  gained `loi_audio_feed`: native builds feed a raylib `AudioStream` with
+  `UpdateAudioStream`; the browser queues back-to-back `AudioBufferSourceNode`
+  buffers. No keyboard key starts the audio on either platform. The site now has
+  a third preset/tab/iframe, and the docs cover both audio examples. Verified:
+  `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
+  `node --check website/web/audio_visualizer.js website/web/sound_synth.js website/assets/playground.js`,
+  `sh -n examples/build_web.sh`, `python3 tools/sync_examples.py --check`,
+  `git diff --check`, `./target/debug/loi check examples/audio_visualizer.loi`
+  and `cc -std=c11 -Ivendor/raylib/include -c examples/sound_shim.c`
+  all exit 0; `cargo test --all-targets` reports **256 passed, 0 failed**
+  (22+6+1+102+39+43+2+6+23+12 across all targets). Rebuilding both audio demos
+  with Emscripten 7.0.0 exits 0 and their JS contains `ASM_CONSTS`,
+  `createBuffer` and `node.start`. No browser was available locally, so audible
+  output was not confirmed firsthand; native raylib link still needs a usable
+  `libraylib.a`.
+- **Previous task (2026-11-17):** added `printf` variadic format support
+  and made the raylib audio demo auto-play. `printf` is a reserved compiler
+  intrinsic: its first argument must be a string literal; the checker validates
+  conversion count and argument kinds, rejects unknown conversions and dynamic
+  `*` width/precision, and the C backend casts each vararg to the exact C type
+  its conversion reads. A new `src/format.rs` parser is shared by both phases;
+  `printf` is rejected in `comptime` like other I/O.
+  `examples/sound_synth.loi` now queries the new `loi_audio_ready` shim and
+  starts on the first ready frame (native: immediately after
+  `InitAudioDevice`; web: as soon as the browser reports a running
+  `AudioContext`). The generated wrapper tries to unlock WebAudio at load and
+  again on the first click/tap, so no keyboard key is needed. Documentation,
+  examples and the WebAssembly demos were updated.
+- **Previous task (2026-11-17):** made the embedded WebAssembly view
   actually interactive, added the audio demo and made its sound play.
   `website/playground.html` now has two tabs (bolas / síntese de som) that
   switch iframes; selecting a matching preset switches the tab too.
   `examples/build_web.sh` accepts `WEB_C_SOURCES`, so `sound_synth.loi` builds
-  for the web with `examples/sound_shim.c`, and its generated wrapper focuses
-  the canvas on the first click (GLFW keyboard input) and creates/resumes the
-  WebAudio `AudioContext` there (browsers start it suspended). On the web the
-  shim now bypasses raylib/miniaudio — whose WebAudio backend needs AudioWorklets,
-  Wasm workers and COOP/COEP headers — and copies the generated `Float32Array`
-  straight into an `AudioBuffer`, started with a `BufferSourceNode`. This uses
-  `EM_ASM`, so the build passes `-std=gnu11` (the CLI defaults to `-std=c11`,
-  where Emscripten disables `EM_ASM`). Native builds still use raylib's `Sound`.
+  for the web with `examples/sound_shim.c`. On the web the shim bypasses
+  raylib/miniaudio — whose WebAudio backend needs AudioWorklets, Wasm workers
+  and COOP/COEP headers — and copies the generated `Float32Array` straight into
+  an `AudioBuffer`, started with a `BufferSourceNode`. This uses `EM_ASM`, so
+  the build passes `-std=gnu11` (the CLI defaults to `-std=c11`, where
+  Emscripten disables `EM_ASM`). Native builds still use raylib's `Sound`.
   `examples/raylib_web.loi` shows the tone name, a `PAUSADO` marker and a
-  background color that follows the arrow keys, so input is visible. Verified:
-  rebuilding both demos with Emscripten 7.0.0 exits 0; the generated
-  `sound_synth.js` now contains `ASM_CONSTS` entries with `createBuffer` and
-  `node.start()` (previously they lived only in the wasm and never ran), and
-  `node --check` passes on every generated `.js`. No browser was available
-  locally, so audible output was not confirmed firsthand.
+  background color that follows the arrow keys, so input is visible.
 - **Previous task (2026-11-17):** integrated the raylib examples into the
   website playground. The preset menu now offers the three examples, whose
   sources load from `website/examples/`; **Check** and **Format** work on them
@@ -129,8 +154,11 @@ python3 tools/sync_examples.py --check
 
 - `cargo fmt --check`: exit 0.
 - `cargo clippy --all-targets -- -D warnings`: exit 0.
-- `cargo test --all-targets`: **251 passed, 0 failed** (19+6+1+101+39+42+2+6+23+12 across all targets; compile-and-run tests run when `cc` is available).
+- `cargo test --all-targets`: **256 passed, 0 failed** (22+6+1+102+39+43+2+6+23+12 across all targets; compile-and-run tests run when `cc` is available).
 - `python3 tools/sync_examples.py --check`: `website/examples` is in sync.
+- `node --check website/web/*.js`: exit 0 for both generated demos;
+  `loi check examples/sound_synth.loi`: exit 0; `gcc -std=c11 -Wall -Wextra
+  -fsyntax-only` on the generated synth C: exit 0 (warnings only).
 - Playground integration: `node --check website/assets/playground.js` and
   `node --check website/server.mjs` exit 0; with `node website/server.mjs`
   running, `GET /playground.html`, `/assets/playground.js`, `/web/raylib_web.html`
@@ -252,11 +280,13 @@ python3 tools/sync_examples.py --check
 - Imports are textual inclusion without namespaces or cross-file visibility
   enforcement. Multi-file builds give sealed flows external linkage so
   cross-file calls link.
-- I/O is limited to `print`, `eprint`, `panic`, numeric printing and whole-file
-  / whole-stdin reads and writes. There is no socket, directory, seek,
-  environment or process API. `read_file`, `read_stdin` and `read_line`
-  allocate in the current `protect` region and cannot escape it. Resources
-  (`guard`) are specified but not implemented.
+- I/O is limited to `print`, `eprint`, `panic`, numeric/`printf` formatting and
+  whole-file / whole-stdin reads and writes. There is no socket, directory,
+  seek, environment or process API. `printf` needs a literal format string and
+  rejects dynamic `*` width/precision; user-declared variadic flows are not
+  supported. `read_file`, `read_stdin` and `read_line` allocate in the current
+  `protect` region and cannot escape it. Resources (`guard`) are specified but
+  not implemented.
 - `comptime` is implemented for pure flows, expressions, globals and shape
   defaults. Freshness, spatial tiers and ordering blocks are not implemented.
 - Generic declarations are templates; only instantiations reach checking and
@@ -300,8 +330,9 @@ Remaining implementation or secondary choices:
   and namespace design.
 - Define structural equality for shapes, or keep the current field-by-field
   rule permanently.
-- Decide whether callbacks, variadics, safe unions or fixed arrays deserve
-  first-class Loi syntax or remain shim-only.
+- Decide whether callbacks, user-declared variadics, safe unions or fixed arrays
+  deserve first-class Loi syntax or remain shim-only (`printf` is already a
+  variadic intrinsic).
 - Define the byte-slice/`cstr` conversion surface beyond string literals.
 - Extend escape analysis beyond lexical blocks if programs need block-local
   slices to outlive their block without `alloc`.

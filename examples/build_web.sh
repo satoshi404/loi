@@ -11,6 +11,8 @@
 #   RAYLIB_WEB=/caminho/raylib-5.5/src sh examples/build_web.sh examples/raylib_web.loi
 #   RAYLIB_WEB=/caminho/raylib-5.5/src WEB_C_SOURCES=examples/sound_shim.c \
 #       sh examples/build_web.sh examples/sound_synth.loi
+#   RAYLIB_WEB=/caminho/raylib-5.5/src WEB_C_SOURCES=examples/sound_shim.c \
+#       sh examples/build_web.sh examples/audio_visualizer.loi
 #   python3 -m http.server -d web 8000   # abra http://localhost:8000
 #
 # Variaveis opcionais:
@@ -69,23 +71,29 @@ cat > "$OUT_DIR/$NAME.loader.js" <<'EOF'
     target.textContent += args.join(" ") + "\n";
   }
 
-  // O teclado do Emscripten so chega ao GLFW quando o canvas tem foco. O
-  // primeiro clique tambem libera o AudioContext suspenso do WebAudio.
-  function activate() {
-    if (hint) hint.style.display = "none";
-    if (canvas) canvas.focus();
-    // Browsers create the AudioContext suspended; the first click is a user
-    // gesture, so resume it here before the program reaches ESPAÇO.
+  // Browsers start the AudioContext suspended. Try to unlock it at load (some
+  // desktop setups allow that) and always retry on the first real gesture.
+  function ensureAudio() {
     var Ctx = window.AudioContext || window.webkitAudioContext;
     if (!Ctx) return;
     if (!window.loiAudioContext) window.loiAudioContext = new Ctx();
     if (window.loiAudioContext.state === "suspended") {
-      window.loiAudioContext.resume();
+      var resumed = window.loiAudioContext.resume();
+      if (resumed && resumed.catch) resumed.catch(function () {});
     }
+  }
+
+  // The GLFW keyboard needs canvas focus, but the synth never requires a key.
+  // The first click/tap only serves as the gesture browsers demand for audio.
+  function activate() {
+    if (hint) hint.style.display = "none";
+    if (canvas) canvas.focus();
+    ensureAudio();
   }
   document.addEventListener("pointerdown", activate, true);
   document.addEventListener("mousedown", activate, true);
   document.addEventListener("touchstart", activate, true);
+  ensureAudio();
 
   window.Module = {
     canvas: canvas,
@@ -152,7 +160,7 @@ cat > "$OUT_DIR/$NAME.html" <<EOF
   <div id="status">Carregando...</div>
   <div id="stage">
     <canvas id="canvas" tabindex="0"></canvas>
-    <div id="hint">Clique para focar o teclado e liberar o audio</div>
+    <div id="hint">Clique ou toque para liberar o audio</div>
   </div>
   <pre id="output"></pre>
   <script src="$NAME.loader.js"></script>
