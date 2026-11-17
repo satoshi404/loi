@@ -130,6 +130,8 @@ impl Parser {
         let token = self.current();
         if token.kind == TokenKind::Eof {
             "end of file".to_string()
+        } else if token.kind == TokenKind::Newline {
+            "end of line".to_string()
         } else {
             format!("'{}'", token.lexeme)
         }

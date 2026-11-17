@@ -33,9 +33,9 @@ fn main() {
     };
 
     match options.mode.as_str() {
-        "lex" => lex(&source, primary_path),
-        "parse" => parse_source(&source, primary_path),
-        "fmt" => format_source(&source, primary_path),
+        "lex" => lex(&source, primary_path, diagnostics),
+        "parse" => parse_source(&source, primary_path, diagnostics),
+        "fmt" => format_source(&source, primary_path, diagnostics),
         "check" => check_source(&source, primary_path, diagnostics),
         "gen" => gen_source(
             &source,
@@ -552,7 +552,7 @@ impl Options {
     }
 }
 
-fn lex(source: &str, path: &Path) {
+fn lex(source: &str, path: &Path, diagnostics: DiagnosticOptions) {
     match loi::tokenize(source, &path.display().to_string()) {
         Ok(tokens) => {
             for token in &tokens {
@@ -569,39 +569,45 @@ fn lex(source: &str, path: &Path) {
                 }
             }
         }
-        Err(error) => {
-            eprintln!("loi: {error}");
-            process::exit(1);
-        }
+        Err(error) => report_one_diagnostic(
+            path,
+            source,
+            loi::Diagnostic::from_error(error.message, loi::Span::new(error.line, error.column)),
+            diagnostics,
+        ),
     }
 }
 
-fn parse_source(source: &str, path: &Path) {
-    let program = load_program(source, path);
+fn parse_source(source: &str, path: &Path, diagnostics: DiagnosticOptions) {
+    let program = load_program(source, path, diagnostics);
     println!("{program:#?}");
 }
 
-fn format_source(source: &str, path: &Path) {
+fn format_source(source: &str, path: &Path, diagnostics: DiagnosticOptions) {
     let filename = path.display().to_string();
     let (tokens, comments) = match loi::tokenize_with_comments(source, &filename) {
         Ok(parts) => parts,
-        Err(error) => {
-            eprintln!("loi: {}:{error}", path.display());
-            process::exit(1);
-        }
+        Err(error) => report_one_diagnostic(
+            path,
+            source,
+            loi::Diagnostic::from_error(error.message, loi::Span::new(error.line, error.column)),
+            diagnostics,
+        ),
     };
     let program = match loi::parse(tokens) {
         Ok(program) => program,
-        Err(error) => {
-            eprintln!("loi: {}:{error}", path.display());
-            process::exit(1);
-        }
+        Err(error) => report_one_diagnostic(
+            path,
+            source,
+            loi::Diagnostic::from_error(error.message, loi::Span::new(error.line, error.column)),
+            diagnostics,
+        ),
     };
     print!("{}", loi::format_program_with_comments(&program, &comments));
 }
 
 fn check_source(source: &str, path: &Path, diagnostics: DiagnosticOptions) {
-    let program = load_program_with_imports(source, path);
+    let program = load_program_with_imports(source, path, diagnostics);
     report_diagnostics(path, source, &loi::check(&program), diagnostics);
 }
 
@@ -614,7 +620,7 @@ fn gen_source(
     emit_ir: Option<&Path>,
     diagnostics: DiagnosticOptions,
 ) {
-    let program = load_program_with_imports(source, path);
+    let program = load_program_with_imports(source, path, diagnostics);
     let c_source = generate_checked_program(&program, path, source, source_map, diagnostics);
     match output {
         Some(output) => {
@@ -835,7 +841,10 @@ fn build_source(
 
         // Emit the header file if requested.
         if let Some(header_path) = emit_h {
-            match loi::generate_header(&load_program(&source, input_path), Some(header_path)) {
+            match loi::generate_header(
+                &load_program(&source, input_path, diagnostics),
+                Some(header_path),
+            ) {
                 Ok(header) => {
                     if let Err(error) = fs::write(header_path, &header) {
                         eprintln!("loi: {}: {error}", header_path.display());
@@ -851,7 +860,7 @@ fn build_source(
 
         // Emit IR if requested.
         if let Some(ir_path) = emit_ir {
-            match loi::generate_ir(&load_program(&source, input_path)) {
+            match loi::generate_ir(&load_program(&source, input_path, diagnostics)) {
                 Ok(ir) => {
                     if let Err(error) = fs::write(ir_path, ir) {
                         eprintln!("loi: {}: {error}", ir_path.display());
@@ -942,6 +951,7 @@ fn build_source(
             &mut visited,
             &mut merged_items,
             &mut defined,
+            diagnostics,
         );
         units.push((input_path.clone(), defined, source));
     }
@@ -984,7 +994,7 @@ fn build_source(
         let header_path = input_path.with_extension("h");
         ensure_distinct_output(input_path, &header_path);
         match loi::generate_header(
-            &load_program(source.as_str(), input_path.as_path()),
+            &load_program(source.as_str(), input_path.as_path(), diagnostics),
             Some(header_path.as_path()),
         ) {
             Ok(header) => {
@@ -1349,19 +1359,40 @@ fn temporary_object_path() -> PathBuf {
     temporary_path("o")
 }
 
-fn load_program(source: &str, path: &Path) -> loi::Program {
+fn load_program(source: &str, path: &Path, diagnostics: DiagnosticOptions) -> loi::Program {
     match parse_source_program(source, path) {
         Ok(program) => program,
-        Err(error) => {
-            eprintln!("loi: {}:{error}", path.display());
-            process::exit(1);
-        }
+        Err(error) => report_one_diagnostic(
+            path,
+            source,
+            loi::Diagnostic::from_error(error.message, loi::Span::new(error.line, error.column)),
+            diagnostics,
+        ),
     }
 }
 
-fn parse_source_program(source: &str, path: &Path) -> Result<loi::Program, String> {
-    let tokens = loi::tokenize(source, &path.display().to_string()).map_err(|e| e.to_string())?;
-    loi::parse(tokens).map_err(|e| e.to_string())
+/// The position and message of the first lexer or parser error in one file.
+/// Kept small because it is the `Err` type of the frontend pipeline.
+struct FrontendError {
+    message: String,
+    line: usize,
+    column: usize,
+}
+
+/// Lex and parse one file, keeping the source position of the first frontend
+/// error so the CLI can render it like every checker diagnostic.
+fn parse_source_program(source: &str, path: &Path) -> Result<loi::Program, FrontendError> {
+    let tokens =
+        loi::tokenize(source, &path.display().to_string()).map_err(|error| FrontendError {
+            message: error.message,
+            line: error.line,
+            column: error.column,
+        })?;
+    loi::parse(tokens).map_err(|error| FrontendError {
+        message: error.message,
+        line: error.line,
+        column: error.column,
+    })
 }
 
 fn canonical_key(path: &Path) -> PathBuf {
@@ -1387,8 +1418,9 @@ fn expand_program(
     visited: &mut HashSet<PathBuf>,
     items: &mut Vec<loi::Item>,
     names: &mut HashSet<String>,
+    diagnostics: DiagnosticOptions,
 ) {
-    let program = load_program(source, path);
+    let program = load_program(source, path, diagnostics);
     for item in program.items {
         if let loi::Item::Import(import) = &item {
             let child = resolve_import_path(&import.path, path);
@@ -1403,7 +1435,7 @@ fn expand_program(
                     process::exit(1);
                 }
             };
-            expand_program(&child_source, &child, visited, items, names);
+            expand_program(&child_source, &child, visited, items, names, diagnostics);
             continue;
         }
         if let Some(name) = item.declared_name() {
@@ -1414,12 +1446,23 @@ fn expand_program(
 }
 
 /// Load a source file together with everything it imports.
-fn load_program_with_imports(source: &str, path: &Path) -> loi::Program {
+fn load_program_with_imports(
+    source: &str,
+    path: &Path,
+    diagnostics: DiagnosticOptions,
+) -> loi::Program {
     let mut visited = HashSet::new();
     visited.insert(canonical_key(path));
     let mut items = Vec::new();
     let mut names = HashSet::new();
-    expand_program(source, path, &mut visited, &mut items, &mut names);
+    expand_program(
+        source,
+        path,
+        &mut visited,
+        &mut items,
+        &mut names,
+        diagnostics,
+    );
     loi::Program { items }
 }
 
@@ -1429,7 +1472,7 @@ fn generate_checked(
     source_map_path: Option<&Path>,
     diagnostics: DiagnosticOptions,
 ) -> String {
-    let program = load_program_with_imports(source, path);
+    let program = load_program_with_imports(source, path, diagnostics);
     generate_checked_program(&program, path, source, source_map_path, diagnostics)
 }
 
@@ -1465,6 +1508,26 @@ fn ensure_distinct_output(input: &Path, output: &Path) {
 struct DiagnosticOptions {
     format: ErrorFormat,
     color: ColorChoice,
+}
+
+/// Render a single frontend error and stop, using the same format and colors
+/// as checker diagnostics.
+fn report_one_diagnostic(
+    path: &Path,
+    source: &str,
+    diagnostic: loi::Diagnostic,
+    options: DiagnosticOptions,
+) -> ! {
+    let color = options.color.resolve();
+    let rendered = loi::diagnostic::render_all(
+        &[diagnostic],
+        source,
+        &path.display().to_string(),
+        options.format,
+        color,
+    );
+    eprint!("{rendered}");
+    process::exit(1);
 }
 
 fn report_diagnostics(

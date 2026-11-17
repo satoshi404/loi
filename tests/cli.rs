@@ -1721,6 +1721,128 @@ fn check_color_flags_control_ansi_escapes() {
 }
 
 #[test]
+fn lexer_errors_use_the_diagnostic_renderer() {
+    let dir = test_dir("lexer-diagnostic");
+    let input = dir.join("lex.loi");
+    fs::write(&input, "flow main {\n    print(\"oops)\n}\n").expect("input should be writable");
+    let path = input.display().to_string();
+
+    let short = Command::new(loi())
+        .arg("check")
+        .arg(&input)
+        .args(["--error-format=short", "--color=never"])
+        .output()
+        .expect("loi should run");
+    assert_eq!(short.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&short.stderr),
+        format!("{path}:2:11: unterminated string literal\n"),
+        "short output must have one path and no loi: prefix"
+    );
+
+    let human = Command::new(loi())
+        .arg("check")
+        .arg(&input)
+        .args(["--error-format=human", "--color=never"])
+        .output()
+        .expect("loi should run");
+    assert_eq!(human.status.code(), Some(1));
+    let human_stderr = String::from_utf8_lossy(&human.stderr);
+    assert!(
+        human_stderr.contains("error: unterminated string literal")
+            && human_stderr.contains(&format!("--> {path}:2:11"))
+            && human_stderr.contains("2 |     print(\"oops)")
+            && human_stderr.trim_end().ends_with("1 error"),
+        "unexpected human output: {human_stderr}"
+    );
+
+    let json = Command::new(loi())
+        .arg("check")
+        .arg(&input)
+        .args(["--error-format=json", "--color=never"])
+        .output()
+        .expect("loi should run");
+    assert_eq!(json.status.code(), Some(1));
+    let json_stderr = String::from_utf8_lossy(&json.stderr);
+    assert!(
+        json_stderr.starts_with('[')
+            && json_stderr.contains("\"message\":\"unterminated string literal\"")
+            && json_stderr.contains(&format!("\"file\":\"{path}\""))
+            && json_stderr.contains("\"line\":2")
+            && json_stderr.contains("\"column\":11"),
+        "unexpected JSON: {json_stderr}"
+    );
+
+    let colored = Command::new(loi())
+        .arg("check")
+        .arg(&input)
+        .arg("--color=always")
+        .output()
+        .expect("loi should run");
+    assert!(
+        String::from_utf8_lossy(&colored.stderr).contains("\u{1b}[31merror"),
+        "human diagnostics should honor --color=always"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn parser_errors_use_the_diagnostic_renderer() {
+    let dir = test_dir("parser-diagnostic");
+    let input = dir.join("parse.loi");
+    fs::write(&input, "flow main {\n    x <- \n}\n").expect("input should be writable");
+    let path = input.display().to_string();
+
+    let short = Command::new(loi())
+        .arg("check")
+        .arg(&input)
+        .args(["--error-format=short", "--color=never"])
+        .output()
+        .expect("loi should run");
+    assert_eq!(short.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&short.stderr),
+        format!("{path}:2:10: expected expression, found end of line\n"),
+        "short output must have one path and describe the newline"
+    );
+
+    let human = Command::new(loi())
+        .arg("check")
+        .arg(&input)
+        .args(["--error-format=human", "--color=never"])
+        .output()
+        .expect("loi should run");
+    assert_eq!(human.status.code(), Some(1));
+    let human_stderr = String::from_utf8_lossy(&human.stderr);
+    assert!(
+        human_stderr.contains("error: expected expression, found end of line")
+            && human_stderr.contains(&format!("--> {path}:2:10"))
+            && human_stderr.trim_end().ends_with("1 error"),
+        "unexpected human output: {human_stderr}"
+    );
+
+    let json = Command::new(loi())
+        .arg("check")
+        .arg(&input)
+        .args(["--error-format=json", "--color=never"])
+        .output()
+        .expect("loi should run");
+    assert_eq!(json.status.code(), Some(1));
+    let json_stderr = String::from_utf8_lossy(&json.stderr);
+    assert!(
+        json_stderr.starts_with('[')
+            && json_stderr.contains("\"message\":\"expected expression, found end of line\"")
+            && json_stderr.contains(&format!("\"file\":\"{path}\""))
+            && json_stderr.contains("\"line\":2")
+            && json_stderr.contains("\"column\":10"),
+        "unexpected JSON: {json_stderr}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn check_rejects_an_unknown_error_format() {
     let dir = test_dir("bad-error-format");
     let input = dir.join("program.loi");

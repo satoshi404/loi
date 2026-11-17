@@ -4,12 +4,6 @@
 # an entry in the commit that fixes it and re-bless the `.expected` file, with
 # the reason in the commit message.
 #
-# B: lexer/parser errors bypass the Diagnostic renderer (duplicated file name,
-#    no --error-format short, raw newline in the message).
-lexer_bad_character.loi
-lexer_unterminated_string.loi
-parser_expected_expression.loi
-#
 # C: the suggestion comes from the wrong namespace and the unknown name
 #    cascades into "assignment target is not a variable".
 unknown_name_cascade.loi

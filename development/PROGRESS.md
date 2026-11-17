@@ -4,7 +4,15 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Last completed task (2026-11-17):** added a golden corpus for `loi check
+- **Last completed task (2026-11-17):** routed lexer and parser errors through
+  `Diagnostic`, so `loi lex/parse/fmt/check` all honor `--error-format`
+  (human/short/json) and `--color`. Short output is now exactly
+  `file:line:column: message`, with one file name and no `loi:` prefix;
+  newlines in parser messages are described as `end of line`. The three
+  previously known-bad lexer/parser corpus cases were re-blessed and removed
+  from `KNOWN_BAD.txt`, with CLI tests covering all formats for one lexer and
+  one parser error.
+- **Previous task (2026-11-17):** added a golden corpus for `loi check
   --error-format short --color never` under `tests/errors/`, a runner that
   diffs every `NAME.loi` against its `NAME.expected` (`LOI_BLESS=1` rewrites
   them), and a clean-check test over every non-error example. `KNOWN_BAD.txt`
@@ -60,9 +68,10 @@ python3 tools/sync_examples.py --check
 
 - `cargo fmt --check`: exit 0.
 - `cargo clippy --all-targets -- -D warnings`: exit 0.
-- `cargo test --all-targets`: **243 passed, 0 failed** (17+6+1+99+37+42+6+21+12+2 across all targets; compile-and-run tests run when `cc` is available).
+- `cargo test --all-targets`: **245 passed, 0 failed** (17+6+1+99+37+39+42+2+6+21+12 across all targets; compile-and-run tests run when `cc` is available).
 - `python3 tools/sync_examples.py --check`: `website/examples` is in sync.
-- New coverage: 31 golden error cases (ownership, global give, aliasing,
+- New coverage: all three diagnostic formats plus color for one lexer and one
+  parser error, and 31 golden error cases (ownership, global give, aliasing,
   comptime, generics, lexer/parser errors, line-1/mid-file/last-line, UTF-8,
   tabs and CRLF) plus a clean check of every example; diagnostic rendering to strings without colors (target layout,
   token extent scanning, exact span ends, short and JSON formats,

@@ -1,1 +1,1 @@
-loi: tests/errors/lexer_unterminated_string.loi:tests/errors/lexer_unterminated_string.loi:2:11: unterminated string literal
+tests/errors/lexer_unterminated_string.loi:2:11: unterminated string literal
