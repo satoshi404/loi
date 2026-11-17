@@ -26,6 +26,26 @@ sealed flow ball_color
     => Color[ r: 255, g: 213, b: 79, a: 255 ]
 }
 
+sealed flow bg_color
+    <- tone: i32
+    => Color
+{
+    if tone == 0 { => Color[ r: 18, g: 20, b: 32, a: 255 ] }
+    if tone == 1 { => Color[ r: 11, g: 28, b: 48, a: 255 ] }
+    if tone == 2 { => Color[ r: 14, g: 38, b: 28, a: 255 ] }
+    => Color[ r: 44, g: 34, b: 14, a: 255 ]
+}
+
+sealed flow tone_name
+    <- tone: i32
+    => cstr
+{
+    if tone == 0 { => "rosa" }
+    if tone == 1 { => "azul" }
+    if tone == 2 { => "verde" }
+    => "amarelo"
+}
+
 sealed flow spawn
     -> b: Ball
     <- x: f32
@@ -75,7 +95,6 @@ open flow main
     InitWindow(width, height, "Loi + raylib na web")
     SetTargetFPS(60)
 
-    bg: Color <- Color[ r: 18, g: 20, b: 32, a: 255 ]
     ink: Color <- Color[ r: 232, g: 236, b: 248, a: 255 ]
     hint: cstr <- "clique: criar bola | espaco: pausa | R: reinicia | setas: cor"
 
@@ -114,12 +133,14 @@ open flow main
             }
 
             BeginDrawing()
-            ClearBackground(bg)
+            ClearBackground(bg_color(tone))
             for i in 0..count {
                 b <- clone(balls[i])
                 DrawCircle(b.x as i32, b.y as i32, b.radius, ball_color(b.tone))
             }
             DrawText(hint, 10, 10, 14, ink)
+            DrawText(tone_name(tone), 10, 30, 14, ball_color(tone))
+            if paused { DrawText("PAUSADO", 10, 50, 14, ink) }
             DrawFPS(10, height - 24)
             EndDrawing()
         }

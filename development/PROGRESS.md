@@ -4,7 +4,18 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Last completed task (2026-11-17):** integrated the raylib examples into the
+- **Last completed task (2026-11-17):** made the embedded WebAssembly view
+  actually interactive and added the audio demo. `website/playground.html` now
+  has two tabs (bolas / síntese de som) that switch iframes; selecting a
+  matching preset switches the tab too. `examples/build_web.sh` accepts
+  `WEB_C_SOURCES`, so `sound_synth.loi` builds for the web with
+  `examples/sound_shim.c`, and its generated wrapper focuses the canvas on the
+  first click (GLFW keyboard input) while a hint explains that the click also
+  unlocks the suspended WebAudio context. `examples/raylib_web.loi` now shows
+  the selected tone name, a `PAUSADO` marker and a background color that
+  changes with the arrow keys, so input is visible. Verified by rebuilding both
+  demos with Emscripten 7.0.0 and checking that the generated JS parses.
+- **Previous task (2026-11-17):** integrated the raylib examples into the
   website playground. The preset menu now offers the three examples, whose
   sources load from `website/examples/`; **Check** and **Format** work on them
   because the playground server also copies `vendor/raylib/raylib.loi` into each
@@ -119,6 +130,9 @@ python3 tools/sync_examples.py --check
   raylib examples. Emscripten 7.0.0 with raylib built for `PLATFORM_WEB`
   completes `sh examples/build_web.sh examples/raylib_web.loi` into
   `website/web/` (no browser was available locally to exercise the iframe).
+  The same command with `WEB_C_SOURCES=examples/sound_shim.c` and
+  `examples/sound_synth.loi` also exits 0; `website/web/` now holds both demos
+  and `node --check` passes for every generated `.js`.
 - New examples: `raylib_web.loi`, `text_editor.loi` and `sound_synth.loi`
   (with `examples/editor_shim.c`, `examples/sound_shim.c` and
   `examples/build_web.sh`), mirrored to `website/examples/` and documented in

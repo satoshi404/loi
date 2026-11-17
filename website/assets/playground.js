@@ -134,9 +134,37 @@ open flow main
       url: "examples/sound_synth.loi",
       note:
         "Loaded the sound synthesis demo. Check and Format work here. " +
-        "Run needs a native raylib build and examples/sound_shim.c; see the source header for the command.",
+        "Run needs a native raylib build; use the Síntese de som WebAssembly demo below instead.",
     },
   };
+
+  const WEB_DEMOS = {
+    raylib_web: {
+      caption:
+        "<b>Bolas:</b> clique cria uma bola, ESPAÇO pausa, R reinicia, setas trocam a cor.",
+    },
+    sound_synth: {
+      caption:
+        "<b>Som:</b> 1 a 4 trocam a onda, cima/baixo mudam a frequência, ESPAÇO toca, ESC sai.",
+    },
+  };
+
+  function showWebDemo(name) {
+    const demo = WEB_DEMOS[name];
+    if (!demo) return;
+    const open = document.getElementById("web-demo-open");
+    const caption = document.getElementById("web-demo-caption");
+    document.querySelectorAll("[data-web-frame]").forEach((frame) => {
+      frame.hidden = frame.getAttribute("data-web-frame") !== name;
+    });
+    document.querySelectorAll("[data-web-demo]").forEach((tab) => {
+      const active = tab.getAttribute("data-web-demo") === name;
+      tab.classList.toggle("is-active", active);
+      tab.setAttribute("aria-selected", active ? "true" : "false");
+    });
+    if (open) open.href = `web/${name}.html`;
+    if (caption) caption.innerHTML = demo.caption;
+  }
 
   let busy = false;
 
@@ -237,8 +265,8 @@ open flow main
     if (mode === "run" && source.includes('import "../vendor/raylib/raylib.loi"')) {
       showOutput(
         "This example uses raylib and needs a native build with C shims. Use Check or Format " +
-          "here; to execute it, follow the build command in the source header or use the " +
-          "WebAssembly demo below."
+          "here; to execute it, follow the build command in the source header or use one of " +
+          "the WebAssembly demos below."
       );
       if (meta) meta.textContent = "";
       return;
@@ -313,6 +341,7 @@ open flow main
     }
     localStorage.setItem(STORAGE_KEY, editor.value);
     renderEditor();
+    if (WEB_DEMOS[name]) showWebDemo(name);
     showOutput(item.note || "Loaded preset. Press Run to compile and execute it.");
     if (meta) meta.textContent = "";
   }
@@ -351,6 +380,9 @@ open flow main
   if (preset) {
     preset.addEventListener("change", () => loadPreset(preset.value));
   }
+  document.querySelectorAll("[data-web-demo]").forEach((tab) => {
+    tab.addEventListener("click", () => showWebDemo(tab.getAttribute("data-web-demo")));
+  });
   if (runButton) runButton.addEventListener("click", () => run("run"));
   if (checkButton) checkButton.addEventListener("click", () => run("check"));
   if (formatButton) formatButton.addEventListener("click", () => run("format"));

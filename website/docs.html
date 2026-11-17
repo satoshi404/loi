@@ -791,17 +791,29 @@ loi build examples/sound_synth.loi -o synth \
           </div>
 
           <p>
-            For the browser, <code>examples/build_web.sh</code> compiles the raylib demo to WebAssembly.
-            It needs Emscripten on <code>PATH</code> and a raylib build for
+            For the browser, <code>examples/build_web.sh</code> compiles a raylib example to
+            WebAssembly. It needs Emscripten on <code>PATH</code> and a raylib build for
             <code>PLATFORM_WEB</code>; <code>CC=emcc</code> makes the CLI call Emscripten instead of
-            the normal C compiler, and <code>-sASYNCIFY</code> keeps the blocking window loop working:
+            the normal C compiler, and <code>-sASYNCIFY</code> keeps the blocking window loop working.
+            <code>WEB_C_SOURCES</code> adds extra shims, so the sound synth needs
+            <code>examples/sound_shim.c</code>:
           </p>
 
           <div class="doc-code">
             <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
             <pre><code>RAYLIB_WEB=/caminho/raylib-5.5/src sh examples/build_web.sh examples/raylib_web.loi
+RAYLIB_WEB=/caminho/raylib-5.5/src WEB_C_SOURCES=examples/sound_shim.c \
+    sh examples/build_web.sh examples/sound_synth.loi
 python3 -m http.server -d web 8000   # abra http://localhost:8000</code></pre>
           </div>
+
+          <p>
+            The script writes <code>.js</code>/<code>.wasm</code> plus a small HTML wrapper without
+            inline scripts, so it works under the site's CSP. Click once inside the frame before
+            using the keyboard: that focuses the canvas for GLFW input and unlocks the WebAudio
+            context that browsers create in a suspended state. The sound demo starts muted by
+            browser policy; press <kbd>ESPAÇO</kbd> after clicking to hear the generated wave.
+          </p>
 
           <p>
             Generate bindings from a C header with the conservative binding generator:
@@ -934,9 +946,12 @@ node website/server.mjs
           <p>
             The playground preset menu includes the three raylib examples. Use <b>Check</b> or
             <b>Format</b> on them in the browser; executing them needs a native raylib build and the
-            shims described above. The <b>Raylib web demo</b> preset also appears below the editor as a
-            prebuilt WebAssembly frame, generated with <code>examples/build_web.sh</code> into
-            <code>website/web/</code>. Reload that frame after rebuilding to pick up changes.
+            shims described above. Two of them also run below the editor as prebuilt WebAssembly
+            frames: the bouncing-ball demo and the math sound synth. Select a tab or a preset to
+            switch frames, click once inside the frame to focus the keyboard and unlock WebAudio,
+            then use the keys shown in the caption. The frames are generated with
+            <code>examples/build_web.sh</code> into <code>website/web/</code>; reload a frame after
+            rebuilding to pick up changes.
           </p>
         </section>
 

@@ -3,11 +3,22 @@
   var canvas = document.getElementById("canvas");
   var status = document.getElementById("status");
   var output = document.getElementById("output");
+  var hint = document.getElementById("hint");
 
   function write(target, args) {
     if (!target) return;
     target.textContent += args.join(" ") + "\n";
   }
+
+  // O teclado do Emscripten so chega ao GLFW quando o canvas tem foco. O
+  // primeiro clique tambem libera o AudioContext suspenso do WebAudio.
+  function activate() {
+    if (hint) hint.style.display = "none";
+    if (canvas) canvas.focus();
+  }
+  document.addEventListener("pointerdown", activate, true);
+  document.addEventListener("mousedown", activate, true);
+  document.addEventListener("touchstart", activate, true);
 
   window.Module = {
     canvas: canvas,

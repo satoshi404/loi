@@ -14,6 +14,19 @@
       font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
     }
     #status { margin-bottom: 8px; color: #98a2b8; }
+    #stage { position: relative; display: inline-block; max-width: 100%; }
+    #hint {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      background: rgba(10, 14, 20, 0.78);
+      color: #e8ecf8;
+      text-align: center;
+      cursor: pointer;
+    }
     #canvas {
       display: block;
       max-width: 100%;
@@ -32,7 +45,10 @@
 </head>
 <body>
   <div id="status">Carregando...</div>
-  <canvas id="canvas" tabindex="-1"></canvas>
+  <div id="stage">
+    <canvas id="canvas" tabindex="0"></canvas>
+    <div id="hint">Clique para focar o teclado e liberar o audio</div>
+  </div>
   <pre id="output"></pre>
   <script src="raylib_web.loader.js"></script>
   <script async src="raylib_web.js"></script>

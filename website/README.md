@@ -13,7 +13,7 @@ playground with the real compiler. There are no npm dependencies.
 | `404.html` | Not-found page |
 | `assets/` | Shared CSS, syntax highlighter and page scripts |
 | `examples/` | Mirrors of the repository examples, used by the playground and docs links |
-| `web/` | Prebuilt Emscripten output for `examples/raylib_web.loi`, embedded in the playground |
+| `web/` | Prebuilt Emscripten output for `raylib_web.loi` and `sound_synth.loi`, embedded in the playground |
 
 ## Run the site and playground
 
@@ -69,14 +69,19 @@ public service without adding real sandboxing.
 - The docs are hand-written HTML so they work without a build step. Keep them in
   sync with `development/LOI_SPEC.md`, `development/PROGRESS.md` and
   `development/DECISIONS.md`.
-- `web/` is generated, not mirrored. Rebuild it after changing the web example:
+- `web/` is generated, not mirrored. Rebuild it after changing a web example:
 
   ```sh
   RAYLIB_WEB=/caminho/raylib-5.5/src OUT_DIR=website/web \
     sh examples/build_web.sh examples/raylib_web.loi
+  RAYLIB_WEB=/caminho/raylib-5.5/src OUT_DIR=website/web \
+    WEB_C_SOURCES=examples/sound_shim.c \
+    sh examples/build_web.sh examples/sound_synth.loi
   ```
 
   The script emits only `.js`/`.wasm` plus a small CSP-friendly HTML wrapper, so
-  the playground can embed it in an iframe. The server sends
+  the playground can embed it in an iframe. The wrapper focuses the canvas on
+  the first click (needed for GLFW keyboard input) and hides a hint that also
+  tells the user to unlock WebAudio. The server sends
   `frame-ancestors 'self'` and `script-src 'self' 'wasm-unsafe-eval'` for that
   reason.
