@@ -6,6 +6,9 @@
 //! `//` comments recovered by the lexer, anchored to the source lines of the
 //! declarations and statements they surround.
 
+use std::collections::BTreeMap;
+use std::collections::HashMap;
+
 use crate::ast::*;
 use crate::lexer::Comment;
 
@@ -75,8 +78,15 @@ fn format_type_args(args: &[Type]) -> String {
 struct PrettyPrinter {
     output: String,
     indent: usize,
-    comments: Vec<Comment>,
-    next_comment: usize,
+    /// Comments that occupied a line of their own, in source order.
+    standalone: Vec<Comment>,
+    next_standalone: usize,
+    /// Comments that followed code on their source line, in source order.
+    trailing: Vec<Comment>,
+    /// Byte offset of the newline ending the last output line anchored to each
+    /// source line. A trailing comment is inserted there, after the last token
+    /// that source line produced, rather than after the first one.
+    line_ends: HashMap<usize, usize>,
 }
 
 impl PrettyPrinter {
@@ -85,11 +95,22 @@ impl PrettyPrinter {
     }
 
     fn with_comments(comments: Vec<Comment>) -> Self {
+        let mut standalone = Vec::new();
+        let mut trailing = Vec::new();
+        for comment in comments {
+            if comment.trailing {
+                trailing.push(comment);
+            } else {
+                standalone.push(comment);
+            }
+        }
         Self {
             output: String::new(),
             indent: 0,
-            comments,
-            next_comment: 0,
+            standalone,
+            next_standalone: 0,
+            trailing,
+            line_ends: HashMap::new(),
         }
     }
 
@@ -101,6 +122,7 @@ impl PrettyPrinter {
             self.item(item);
         }
         self.flush_remaining_comments();
+        self.attach_trailing_comments();
         self.output
     }
 
@@ -114,45 +136,60 @@ impl PrettyPrinter {
 
     /// Emit a line anchored to `source_line`.
     ///
-    /// Standalone comments before that source line are printed first, and a
-    /// comment trailing code on the same source line is appended after it.
+    /// Standalone comments before that source line are printed first. A
+    /// trailing comment is attached later, once every output line for that
+    /// source line is known, so it follows the last token instead of the first.
     fn line_at(&mut self, source_line: usize, text: impl AsRef<str>) {
         self.flush_comments_before(source_line);
         self.line(text);
-        self.flush_trailing_comment(source_line);
+        self.anchor(source_line);
+    }
+
+    /// Remember that the current output line came from `source_line`.
+    fn anchor(&mut self, source_line: usize) {
+        if self.output.ends_with('\n') {
+            self.line_ends.insert(source_line, self.output.len() - 1);
+        }
     }
 
     fn flush_comments_before(&mut self, source_line: usize) {
-        while let Some(comment) = self.comments.get(self.next_comment) {
+        while let Some(comment) = self.standalone.get(self.next_standalone) {
             if comment.line >= source_line {
                 break;
             }
             let text = comment.text.clone();
-            self.next_comment += 1;
+            self.next_standalone += 1;
             self.line(text);
         }
     }
 
-    fn flush_trailing_comment(&mut self, source_line: usize) {
-        while let Some(comment) = self.comments.get(self.next_comment) {
-            if comment.line != source_line || !comment.trailing {
-                break;
-            }
+    fn flush_remaining_comments(&mut self) {
+        while let Some(comment) = self.standalone.get(self.next_standalone) {
             let text = comment.text.clone();
-            self.next_comment += 1;
-            if self.output.ends_with('\n') {
-                self.output.pop();
-            }
-            self.output.push(' ');
-            self.output.push_str(&text);
-            self.output.push('\n');
+            self.next_standalone += 1;
+            self.line(text);
         }
     }
 
-    fn flush_remaining_comments(&mut self) {
-        while let Some(comment) = self.comments.get(self.next_comment) {
-            let text = comment.text.clone();
-            self.next_comment += 1;
+    /// Insert each trailing comment after the last output line anchored to its
+    /// source line. Insertions run from the end of the buffer so earlier byte
+    /// offsets stay valid; several comments on one line keep their source order.
+    fn attach_trailing_comments(&mut self) {
+        let mut insertions: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+        let mut orphans = Vec::new();
+        for comment in &self.trailing {
+            match self.line_ends.get(&comment.line) {
+                Some(&position) => insertions
+                    .entry(position)
+                    .or_default()
+                    .push(format!(" {}", comment.text)),
+                None => orphans.push(comment.text.clone()),
+            }
+        }
+        for (position, texts) in insertions.into_iter().rev() {
+            self.output.insert_str(position, &texts.concat());
+        }
+        for text in orphans {
             self.line(text);
         }
     }
@@ -213,6 +250,9 @@ impl PrettyPrinter {
                     type_params
                 ),
             );
+            // An empty shape prints its brackets on the header line, so a
+            // comment after `]` on a later source line still belongs there.
+            self.anchor(interface.close_line);
             self.flush_comments_before(interface.close_line);
             return;
         }
@@ -283,7 +323,10 @@ impl PrettyPrinter {
             );
         }
         if let Some(return_type) = &function.return_type {
-            self.line(format!("=> {}", format_type(return_type)));
+            self.line_at(
+                return_type.span().line,
+                format!("=> {}", format_type(return_type)),
+            );
         }
         self.indent -= 1;
         self.line_at(function.body.open_line, "{");
@@ -313,7 +356,10 @@ impl PrettyPrinter {
             );
         }
         if let Some(return_type) = &function.return_type {
-            self.line(format!("=> {}", format_type(return_type)));
+            self.line_at(
+                return_type.span().line,
+                format!("=> {}", format_type(return_type)),
+            );
         }
         self.indent -= 1;
     }

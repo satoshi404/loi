@@ -4,7 +4,20 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-17):** turned linker failures into source diagnostics.
+- **Current task (2026-11-17):** fixed trailing-comment placement in `loi fmt`.
+  The pretty-printer now separates standalone and trailing comments up front,
+  records the output line anchored to each source line, and appends trailing
+  comments after all lines for that source line are emitted — so they follow the
+  last token (`]`, `{`, `=> T`) instead of the first. Return-type lines now carry
+  their type's span. Three failing-first `tests/pretty.rs` cases pin this plus
+  idempotence for own-line-before-item, between-fields, after-last-field,
+  inside-empty-body, EOF-without-newline and `//` in a string; a fourth runs
+  `fmt` over every `examples/*.loi` and `lib/*.loi` and asserts the lexer's
+  comment list is unchanged and formatting is idempotent. Gate: `cargo fmt
+  --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test
+  --all-targets` (**268 passed, 0 failed**: 22+6+1+102+41+43+2+6+7+23+15),
+  `python3 tools/sync_examples.py --check` all exit 0.
+- **Previous task (2026-11-17):** turned linker failures into source diagnostics.
   The CLI now captures linker stderr, maps `undefined reference to \`SYMBOL\` /
   `undefined symbol: SYMBOL` to the matching `extern flow` in the main file or
   any import, and points at its declaration (e.g. `lib/os.loi:20:1`). The

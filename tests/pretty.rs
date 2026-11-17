@@ -212,3 +212,133 @@ fn formats_nested_generic_types_stably() {
     let formatted = assert_format_stable(source);
     assert!(formatted.contains("<- xs: Vec<Vec<i32>>"));
 }
+
+#[test]
+fn trailing_comments_follow_the_last_token_on_their_source_line() {
+    let source = "\
+shape Point [ x: i32, y: i32 ] // inline shape\n\
+flow add <- a: i32 => i32 { // inline flow\n\
+    => a\n\
+}\n\
+flow scaled\n\
+    <- n: i32\n\
+    => i32 // return type\n\
+{\n\
+    => n\n\
+}\n";
+
+    let formatted = format_with_comments(source);
+    assert!(
+        formatted.contains("] // inline shape"),
+        "comment should follow the shape's closing bracket: {formatted}"
+    );
+    assert!(
+        formatted.contains("{ // inline flow"),
+        "comment should follow the flow's opening brace: {formatted}"
+    );
+    assert!(
+        formatted.contains("=> i32 // return type"),
+        "comment should follow the return type: {formatted}"
+    );
+    assert_eq!(
+        format_with_comments(&formatted),
+        formatted,
+        "comment placement must be idempotent: {formatted}"
+    );
+}
+
+#[test]
+fn comment_idempotence_edge_cases() {
+    let cases = [
+        (
+            "own-line before item",
+            "// own line\nflow main {\n    => 0\n}\n",
+            "// own line",
+        ),
+        (
+            "between fields",
+            "shape S [\n    a: i32\n    // between\n    b: i32\n]\n",
+            "// between",
+        ),
+        (
+            "after last field",
+            "shape S [\n    a: i32 // after last\n]\n",
+            "// after last",
+        ),
+        (
+            "inside empty body",
+            "flow main {\n    // inside empty\n}\n",
+            "// inside empty",
+        ),
+        (
+            "EOF without newline",
+            "flow main {\n    => 0\n} // eof",
+            "// eof",
+        ),
+        (
+            "// in string",
+            "flow main {\n    => \"a // b\"\n}\n",
+            "\"a // b\"",
+        ),
+    ];
+    for (name, source, expected) in cases {
+        let formatted = format_with_comments(source);
+        assert!(
+            formatted.contains(expected),
+            "{name}: missing {expected:?} in: {formatted}"
+        );
+        let reformatted = format_with_comments(&formatted);
+        assert_eq!(
+            formatted, reformatted,
+            "{name}: formatting must be idempotent: {formatted}"
+        );
+    }
+}
+
+fn comment_texts(source: &str) -> Vec<String> {
+    let (_, comments) = tokenize_with_comments(source, "<test>").expect("source should lex");
+    comments
+        .iter()
+        .map(|comment| comment.text.clone())
+        .collect()
+}
+
+#[test]
+fn formatting_repository_sources_preserves_comment_count() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut dirs = vec![manifest.join("examples"), manifest.join("lib")];
+    let mut checked = 0;
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).expect("directory should be readable") {
+            let path = entry.expect("entry should be readable").path();
+            if path.is_dir() {
+                dirs.push(path);
+                continue;
+            }
+            if !path.extension().is_some_and(|extension| extension == "loi") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("source should be readable");
+            let before = comment_texts(&source);
+            let formatted = format_with_comments(&source);
+            let after = comment_texts(&formatted);
+            assert_eq!(
+                before,
+                after,
+                "comment count changed for {}: {before:?} -> {after:?}",
+                path.display()
+            );
+            assert_eq!(
+                format_with_comments(&formatted),
+                formatted,
+                "formatting not idempotent for {}",
+                path.display()
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked >= 20,
+        "expected to check the repository .loi sources, found {checked}"
+    );
+}
