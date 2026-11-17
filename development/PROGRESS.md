@@ -4,7 +4,23 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-17):** gave every `ast::Type` an explicit span (named
+- **Current task (2026-11-17):** turned linker failures into source diagnostics.
+  The CLI now captures linker stderr, maps `undefined reference to \`SYMBOL\` /
+  `undefined symbol: SYMBOL` to the matching `extern flow` in the main file or
+  any import, and points at its declaration (e.g. `lib/os.loi:20:1`). The
+  message names both the Loi-facing flow and the C symbol; the help line says
+  `this library ships a C shim: build with --c-source lib/os_shim.c` when a
+  sibling `<stem>_shim.c` exists, otherwise `pass the C file that defines it
+  with --c-source FILE`. Human, short and JSON all carry the help line;
+  unmapped linker output is still printed after the diagnostic. Two new
+  failing-first `tests/cli.rs` cases cover both help variants and all three
+  formats. No auto-linking or syntax was added; the short
+  `auto-link shims: options and trade-offs` proposal is in `DECISIONS.md`.
+  Gate: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
+  `cargo test --all-targets` (**265 passed, 0 failed**:
+  22+6+1+102+41+43+2+6+7+23+12), `python3 tools/sync_examples.py --check`
+  all exit 0.
+- **Previous task (2026-11-17):** gave every `ast::Type` an explicit span (named
   token, slice brackets, generic name through `>`), recorded it in `parse_type`,
   and used it for unknown-type, generic-arity and annotation/cast mismatch
   diagnostics. Seven new `tests/errors/type_span_*.loi` cases cover annotation,

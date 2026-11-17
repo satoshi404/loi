@@ -371,52 +371,130 @@ fn render_json(diagnostics: &[Diagnostic], file: &str) -> String {
         if index > 0 {
             out.push(',');
         }
-        let _ = write!(
-            out,
-            "\n  {{\"severity\":\"{}\",\"message\":\"{}\",\"file\":\"{}\",\"line\":{},\"column\":{},\"end_line\":{},\"end_column\":{}",
-            diagnostic.severity.as_str(),
-            json_escape(&diagnostic.message),
-            json_escape(file),
-            diagnostic.span.line,
-            diagnostic.span.column,
-            diagnostic.span.end_line(),
-            diagnostic.span.end_column()
-        );
-        if let Some(label) = &diagnostic.label {
-            let _ = write!(out, ",\"label\":\"{}\"", json_escape(label));
-        }
-        if !diagnostic.secondary.is_empty() {
-            out.push_str(",\"secondary\":[");
-            for (secondary_index, secondary) in diagnostic.secondary.iter().enumerate() {
-                if secondary_index > 0 {
-                    out.push(',');
-                }
-                let _ = write!(
-                    out,
-                    "{{\"file\":\"{}\",\"line\":{},\"column\":{},\"end_line\":{},\"end_column\":{},\"label\":\"{}\"}}",
-                    json_escape(file),
-                    secondary.span.line,
-                    secondary.span.column,
-                    secondary.span.end_line(),
-                    secondary.span.end_column(),
-                    json_escape(&secondary.label)
-                );
-            }
-            out.push(']');
-        }
-        if let Some(help) = &diagnostic.help {
-            let _ = write!(out, ",\"help\":\"{}\"", json_escape(help));
-        }
-        if let Some(note) = &diagnostic.note {
-            let _ = write!(out, ",\"note\":\"{}\"", json_escape(note));
-        }
-        out.push('}');
+        write_json_object(&mut out, diagnostic, file);
     }
     if !sorted.is_empty() {
         out.push('\n');
     }
     out.push_str("]\n");
     out
+}
+
+fn write_json_object(out: &mut String, diagnostic: &Diagnostic, file: &str) {
+    let _ = write!(
+        out,
+        "\n  {{\"severity\":\"{}\",\"message\":\"{}\",\"file\":\"{}\",\"line\":{},\"column\":{},\"end_line\":{},\"end_column\":{}",
+        diagnostic.severity.as_str(),
+        json_escape(&diagnostic.message),
+        json_escape(file),
+        diagnostic.span.line,
+        diagnostic.span.column,
+        diagnostic.span.end_line(),
+        diagnostic.span.end_column()
+    );
+    if let Some(label) = &diagnostic.label {
+        let _ = write!(out, ",\"label\":\"{}\"", json_escape(label));
+    }
+    if !diagnostic.secondary.is_empty() {
+        out.push_str(",\"secondary\":[");
+        for (secondary_index, secondary) in diagnostic.secondary.iter().enumerate() {
+            if secondary_index > 0 {
+                out.push(',');
+            }
+            let _ = write!(
+                out,
+                "{{\"file\":\"{}\",\"line\":{},\"column\":{},\"end_line\":{},\"end_column\":{},\"label\":\"{}\"}}",
+                json_escape(file),
+                secondary.span.line,
+                secondary.span.column,
+                secondary.span.end_line(),
+                secondary.span.end_column(),
+                json_escape(&secondary.label)
+            );
+        }
+        out.push(']');
+    }
+    if let Some(help) = &diagnostic.help {
+        let _ = write!(out, ",\"help\":\"{}\"", json_escape(help));
+    }
+    if let Some(note) = &diagnostic.note {
+        let _ = write!(out, ",\"note\":\"{}\"", json_escape(note));
+    }
+    out.push('}');
+}
+
+/// A diagnostic together with the source text it refers to. CLI-only
+/// diagnostics (for example an unresolved `extern flow`) can point into a
+/// different file than the one named on the command line.
+#[derive(Debug, Clone)]
+pub struct SourcedDiagnostic {
+    pub diagnostic: Diagnostic,
+    pub source: String,
+    pub file: String,
+}
+
+/// Render diagnostics that may come from different files.
+///
+/// This mirrors [`render_all`] except that the short format also prints each
+/// diagnostic's help line. That is reserved for CLI-only diagnostics, where
+/// there is no `.expected` corpus to keep unchanged; language diagnostics keep
+/// the compact one-line short form.
+pub fn render_sourced(items: &[SourcedDiagnostic], format: ErrorFormat, color: bool) -> String {
+    if items.is_empty() {
+        return String::new();
+    }
+    match format {
+        ErrorFormat::Human => {
+            let mut sorted = items.iter().collect::<Vec<_>>();
+            sorted.sort_by_key(|item| item.diagnostic.position());
+            let mut out = String::new();
+            for (index, item) in sorted.iter().enumerate() {
+                if index > 0 {
+                    out.push('\n');
+                }
+                out.push_str(&render_one(
+                    &item.diagnostic,
+                    &item.source,
+                    &item.file,
+                    color,
+                ));
+            }
+            let count = sorted.len();
+            out.push('\n');
+            out.push_str(&format!(
+                "{count} error{}\n",
+                if count == 1 { "" } else { "s" }
+            ));
+            out
+        }
+        ErrorFormat::Short => {
+            let mut out = String::new();
+            for item in items {
+                let diagnostic = &item.diagnostic;
+                let _ = writeln!(
+                    out,
+                    "{}:{}:{}: {}",
+                    item.file, diagnostic.span.line, diagnostic.span.column, diagnostic.message
+                );
+                if let Some(help) = &diagnostic.help {
+                    let _ = writeln!(out, "  = help: {help}");
+                }
+            }
+            out
+        }
+        ErrorFormat::Json => {
+            let mut out = String::from("[");
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                write_json_object(&mut out, &item.diagnostic, &item.file);
+            }
+            out.push('\n');
+            out.push_str("]\n");
+            out
+        }
+    }
 }
 
 fn summary(diagnostics: &[&Diagnostic]) -> String {

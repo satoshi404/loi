@@ -878,17 +878,25 @@ fn build_source(
             return;
         }
 
+        let exe_link_context;
         let success = match kind {
-            BuildKind::Exe => compile_c(
-                &compiler,
-                profile,
-                cc_flags,
-                arena_flag.as_deref(),
-                &output_path,
-                &c_path,
-                c_sources,
-                false,
-            ),
+            BuildKind::Exe => {
+                exe_link_context = LinkContext {
+                    extern_flows: collect_extern_flows(&source, input_path),
+                    options: diagnostics,
+                };
+                compile_c(
+                    &compiler,
+                    profile,
+                    cc_flags,
+                    arena_flag.as_deref(),
+                    &output_path,
+                    &c_path,
+                    c_sources,
+                    false,
+                    Some(&exe_link_context),
+                )
+            }
             BuildKind::Object => compile_c(
                 &compiler,
                 profile,
@@ -898,6 +906,7 @@ fn build_source(
                 &c_path,
                 &[],
                 true,
+                None,
             ),
             BuildKind::Library => build_library(
                 &compiler,
@@ -1061,7 +1070,11 @@ fn build_source(
                 command.arg(flag);
             }
             command.arg("-lm");
-            if !run_tool(&compiler, "C compiler/linker", &mut command) {
+            let link_context = LinkContext {
+                extern_flows: collect_extern_flows_from_units(&units),
+                options: diagnostics,
+            };
+            if !run_c_link(&compiler, &mut command, &link_context) {
                 process::exit(1);
             }
         }
@@ -1088,6 +1101,197 @@ fn build_source(
             if !archived {
                 process::exit(1);
             }
+        }
+    }
+}
+
+/// An `extern flow` declaration emitted by the C backend as a foreign symbol.
+struct ExternFlow {
+    c_symbol: String,
+    display_name: String,
+    file: String,
+    source: String,
+    span: loi::Span,
+    help: String,
+}
+
+/// The data needed to translate linker undefined-symbol errors back into
+/// diagnostics on Loi `extern flow` declarations.
+struct LinkContext {
+    extern_flows: Vec<ExternFlow>,
+    options: DiagnosticOptions,
+}
+
+/// Collect every `extern flow` in `source` and in the files it imports,
+/// keeping the source text and file name of each declaration so diagnostics can
+/// point at the right file even when it was imported.
+fn collect_extern_flows(source: &str, path: &Path) -> Vec<ExternFlow> {
+    let mut visited = HashSet::new();
+    let mut found = Vec::new();
+    collect_extern_flows_from(source, path, &mut visited, &mut found);
+    found
+}
+
+fn collect_extern_flows_from_units(
+    units: &[(PathBuf, HashSet<String>, String)],
+) -> Vec<ExternFlow> {
+    let mut visited = HashSet::new();
+    let mut found = Vec::new();
+    for (path, _, source) in units {
+        collect_extern_flows_from(source, path, &mut visited, &mut found);
+    }
+    found
+}
+
+fn collect_extern_flows_from(
+    source: &str,
+    path: &Path,
+    visited: &mut HashSet<PathBuf>,
+    found: &mut Vec<ExternFlow>,
+) {
+    if !visited.insert(canonical_key(path)) {
+        return;
+    }
+    let Ok(program) = parse_source_program(source, path) else {
+        return;
+    };
+    for item in program.items {
+        if let loi::Item::Import(import) = &item {
+            let child = resolve_import_path(&import.path, path);
+            if let Ok(child_source) = fs::read_to_string(&child) {
+                collect_extern_flows_from(&child_source, &child, visited, found);
+            }
+            continue;
+        }
+        let loi::Item::Function(decl) = &item else {
+            continue;
+        };
+        if !decl.external {
+            continue;
+        }
+        let c_symbol = decl.link_name.clone().unwrap_or_else(|| decl.name.clone());
+        // Library bindings spell their foreign flows with a `loi_` prefix to
+        // avoid clashing with C names. Show the Loi-facing name to the user.
+        let display_name = decl
+            .name
+            .strip_prefix("loi_")
+            .unwrap_or(&decl.name)
+            .to_string();
+        found.push(ExternFlow {
+            c_symbol,
+            display_name,
+            file: path.display().to_string(),
+            source: source.to_string(),
+            span: decl.span,
+            help: shim_help(path).unwrap_or_else(|| {
+                "pass the C file that defines it with --c-source FILE".to_string()
+            }),
+        });
+    }
+}
+
+/// A library keeps its C shim beside its Loi source, named `<stem>_shim.c`.
+/// Point at it when it is present; otherwise suggest a generic `--c-source`.
+fn shim_help(path: &Path) -> Option<String> {
+    let mut name = path.file_stem()?.to_os_string();
+    name.push("_shim.c");
+    let shim = path.with_file_name(name);
+    shim.is_file().then(|| {
+        format!(
+            "this library ships a C shim: build with --c-source {}",
+            shim.display()
+        )
+    })
+}
+
+/// The symbol named by a linker "undefined reference"/"undefined symbol" line.
+fn undefined_symbol(line: &str) -> Option<&str> {
+    if let Some((_, rest)) = line.split_once("undefined reference to `") {
+        return rest.split_once('\'').map(|(symbol, _)| symbol);
+    }
+    if let Some((_, rest)) = line.split_once("undefined symbol: ") {
+        return rest
+            .split_whitespace()
+            .next()
+            .map(|symbol| symbol.trim_start_matches('_'));
+    }
+    None
+}
+
+/// Turn undefined foreign symbols into source diagnostics, then print the
+/// remaining linker output verbatim. Unknown symbols keep the raw behavior.
+fn report_link_failure(stderr: &str, context: &LinkContext) {
+    let mut sourced = Vec::new();
+    let mut remaining = Vec::new();
+    let mut mapped_symbols = HashSet::new();
+    for line in stderr.lines() {
+        let flow = undefined_symbol(line).and_then(|symbol| {
+            context
+                .extern_flows
+                .iter()
+                .find(|flow| flow.c_symbol == symbol)
+        });
+        if let Some(flow) = flow {
+            if !mapped_symbols.insert(flow.c_symbol.as_str()) {
+                continue;
+            }
+            let diagnostic = loi::Diagnostic::error(
+                format!(
+                    "extern flow '{}' (C symbol '{}') is not defined by any linked C source",
+                    flow.display_name, flow.c_symbol
+                ),
+                flow.span,
+            )
+            .with_help(flow.help.clone());
+            sourced.push(loi::diagnostic::SourcedDiagnostic {
+                diagnostic,
+                source: flow.source.clone(),
+                file: flow.file.clone(),
+            });
+        } else {
+            remaining.push(line);
+        }
+    }
+
+    if sourced.is_empty() {
+        eprint!("{stderr}");
+        return;
+    }
+    eprint!(
+        "{}",
+        loi::diagnostic::render_sourced(
+            &sourced,
+            context.options.format,
+            context.options.color.resolve()
+        )
+    );
+    if !remaining.is_empty() {
+        eprintln!("{}", remaining.join("\n"));
+    }
+}
+
+/// Run the linker with captured output so undefined `extern flow` symbols can
+/// be explained at their Loi declaration instead of surfacing as raw `ld` text.
+fn run_c_link(compiler: &Tool, command: &mut Command, context: &LinkContext) -> bool {
+    use std::io::Write as _;
+
+    match command.output() {
+        Ok(output) => {
+            let _ = std::io::stdout().write_all(&output.stdout);
+            if output.status.success() {
+                let _ = std::io::stderr().write_all(&output.stderr);
+                true
+            } else {
+                report_link_failure(&String::from_utf8_lossy(&output.stderr), context);
+                false
+            }
+        }
+        Err(error) => {
+            eprintln!(
+                "loi: failed to run C compiler/linker '{}': {error}",
+                compiler.program.to_string_lossy()
+            );
+            false
         }
     }
 }
@@ -1257,6 +1461,7 @@ fn compile_c(
     c_path: &Path,
     c_sources: &[PathBuf],
     object_only: bool,
+    link_context: Option<&LinkContext>,
 ) -> bool {
     if object_only && !c_sources.is_empty() {
         eprintln!("loi: '--c-source' cannot be combined with '--emit obj'");
@@ -1289,7 +1494,10 @@ fn compile_c(
         // Link with the math library so intrinsics such as `sqrt` resolve.
         command.arg("-lm");
     }
-    run_tool(compiler, "C compiler", &mut command)
+    match link_context {
+        Some(context) if !object_only => run_c_link(compiler, &mut command, context),
+        _ => run_tool(compiler, "C compiler", &mut command),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1313,6 +1521,7 @@ fn build_library(
         c_path,
         &[],
         true,
+        None,
     );
     let mut extra_objects = Vec::new();
     let mut extras_ok = true;
@@ -1328,6 +1537,7 @@ fn build_library(
                 source,
                 &[],
                 true,
+                None,
             );
             if ok {
                 extra_objects.push(extra);

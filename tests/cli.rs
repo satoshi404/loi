@@ -1863,3 +1863,118 @@ fn check_rejects_an_unknown_error_format() {
         "unexpected stderr: {stderr}"
     );
 }
+
+/// A program importing `lib/os.loi` and calling its time helper. With no
+/// `--c-source`, linking fails on `loi_os_unix_time`.
+fn linker_error_dir(name: &str, include_shim: bool) -> PathBuf {
+    let dir = test_dir(name);
+    let lib = dir.join("lib");
+    fs::create_dir_all(&lib).expect("lib directory should be creatable");
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    fs::copy(manifest.join("lib/os.loi"), lib.join("os.loi")).expect("lib/os.loi should be copied");
+    if include_shim {
+        fs::copy(manifest.join("lib/os_shim.c"), lib.join("os_shim.c"))
+            .expect("lib/os_shim.c should be copied");
+    }
+    fs::write(
+        dir.join("main.loi"),
+        "import \"lib/os.loi\"\nflow main {\n    os_unix_time()\n}\n",
+    )
+    .expect("main.loi should be writable");
+    dir
+}
+
+fn build_with_link_error(dir: &PathBuf, format: Option<&str>) -> std::process::Output {
+    let mut command = Command::new(loi());
+    command
+        .args(["build", "main.loi", "-o", "app"])
+        .current_dir(dir);
+    if let Some(format) = format {
+        command.args(["--error-format", format]);
+    }
+    command
+        .args(["--color", "never"])
+        .output()
+        .expect("loi should run")
+}
+
+#[test]
+fn link_error_points_at_the_extern_flow_and_suggests_its_shim() {
+    if !has_c_compiler() {
+        eprintln!(
+            "skipping link_error_points_at_the_extern_flow_and_suggests_its_shim: no C compiler found"
+        );
+        return;
+    }
+    let dir = linker_error_dir("link-error-shim", true);
+    let message = "extern flow 'os_unix_time' (C symbol 'loi_os_unix_time') is not defined by any linked C source";
+    let help = "this library ships a C shim: build with --c-source lib/os_shim.c";
+
+    let human = build_with_link_error(&dir, Some("human"));
+    assert_eq!(
+        human.status.code(),
+        Some(1),
+        "build should fail at link time"
+    );
+    let human_stderr = String::from_utf8_lossy(&human.stderr);
+    assert!(
+        human_stderr.contains(&format!("error: {message}"))
+            && human_stderr.contains("--> lib/os.loi:20:1")
+            && human_stderr.contains(&format!("= help: {help}")),
+        "unexpected human output: {human_stderr}"
+    );
+    let help_pos = human_stderr.find("= help:").expect("help line");
+    let raw_pos = human_stderr
+        .find("ld returned 1")
+        .expect("unmapped linker output");
+    assert!(
+        raw_pos > help_pos,
+        "raw linker stderr should follow the diagnostic: {human_stderr}"
+    );
+
+    let short = build_with_link_error(&dir, Some("short"));
+    assert_eq!(short.status.code(), Some(1));
+    let short_stderr = String::from_utf8_lossy(&short.stderr);
+    assert!(
+        short_stderr.contains(&format!("lib/os.loi:20:1: {message}\n"))
+            && short_stderr.contains(&format!("  = help: {help}\n")),
+        "short output should carry the help line: {short_stderr}"
+    );
+
+    let json = build_with_link_error(&dir, Some("json"));
+    assert_eq!(json.status.code(), Some(1));
+    let json_stderr = String::from_utf8_lossy(&json.stderr);
+    assert!(
+        json_stderr.starts_with('[')
+            && json_stderr.contains(&format!("\"message\":\"{message}\""))
+            && json_stderr.contains("\"file\":\"lib/os.loi\"")
+            && json_stderr.contains("\"line\":20")
+            && json_stderr.contains("\"column\":1")
+            && json_stderr.contains(&format!("\"help\":\"{help}\"")),
+        "unexpected JSON: {json_stderr}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn link_error_without_a_shim_suggests_c_source_file() {
+    if !has_c_compiler() {
+        eprintln!("skipping link_error_without_a_shim_suggests_c_source_file: no C compiler found");
+        return;
+    }
+    let dir = linker_error_dir("link-error-no-shim", false);
+    let help = "pass the C file that defines it with --c-source FILE";
+
+    for format in ["human", "short", "json"] {
+        let output = build_with_link_error(&dir, Some(format));
+        assert_eq!(output.status.code(), Some(1));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(help),
+            "{format} output should carry the generic help: {stderr}"
+        );
+    }
+
+    let _ = fs::remove_dir_all(&dir);
+}
