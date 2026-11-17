@@ -906,6 +906,14 @@ fn give_of_a_global_is_rejected() {
 }
 
 #[test]
+fn give_of_a_string_global_is_rejected() {
+    assert_message(
+        "NAME: [u8] <- \"hi\"\n\nflow main\n    => i32\n{\n    mut name <- give(NAME)\n    => name.len as i32\n}\n",
+        "cannot give from global 'NAME'; use clone(...)",
+    );
+}
+
+#[test]
 fn give_of_a_global_field_or_element_is_rejected() {
     assert_message(
         "shape Vec2 [\n    x: i32\n    y: i32\n]\n\nPOINT: Vec2 <- Vec2[ x: 1, y: 2 ]\n\nflow main\n    => i32\n{\n    mut x <- give(POINT.x)\n    => x\n}\n",

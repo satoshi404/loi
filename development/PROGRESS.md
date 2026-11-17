@@ -4,23 +4,14 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Last completed task (2026-11-16):** hardened `comptime`, generics and
-  composite globals after an audit:
-  1. parser backtracking now restores split `>>` tokens, so nested generic
-     calls and ordinary `<`/`>` comparisons coexist;
-  2. monomorphization has a depth limit, reports generated-name collisions and
-     validates never-instantiated templates once with `i32`;
-  3. `comptime` arithmetic follows runtime overflow, width, shift and `f32`
-     rounding rules while `as` still truncates;
-  4. static global initializers are strict C11, with named arrays for slice
-     data instead of compound literals;
-  5. `give` of a global, or of a field/element of one, is rejected with a
-     `clone(...)` suggestion, and ownership/move state is tracked per function
-     body so globals are never marked moved;
-  6. checker diagnostics print the source spelling of generic instantiations
-     (`Vec<i32>`) while generated C symbols stay mangled (`Vec__i32`).
-  Growable collections (`Vec<T>`, maps) remain library work; the type-system
-  blocker is resolved.
+- **Last completed task (2026-11-17):** verified and added explicit regression
+  coverage for two issues: `give` of a global (including `[u8]` string globals
+  and fields/elements) is rejected with a `clone(...)` suggestion, and
+  moved-state is never recorded on globals so it cannot leak across function
+  bodies or depend on declaration order; checker diagnostics show the source
+  spelling of generic instantiations (`Vec<i32>`, `Vec<i64>`) and never expose
+  mangled names, while generated C symbols remain mangled. No compiler behavior
+  changes were required beyond existing fixes.
 - **Overall health:** good; the full test suite, `cargo fmt --check` and
   `cargo clippy --all-targets -- -D warnings` pass.
 - **Not done:** resources/`guard`, real module namespaces, growable collections
@@ -47,7 +38,7 @@
 
 ## Verification
 
-Last verified 2026-11-16 with:
+Last verified 2026-11-17 with:
 
 ```sh
 export PATH=/root/.cargo/bin:$PATH
@@ -55,10 +46,13 @@ export RUSTFLAGS="-C linker=/usr/bin/gcc"
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test --all-targets
+python3 tools/sync_examples.py --check
 ```
 
-- `cargo test --all-targets`: **228 passed, 0 failed** (suite breakdown is
-  printed by Cargo; compile-and-run tests skip when `cc` is unavailable).
+- `cargo fmt --check`: exit 0.
+- `cargo clippy --all-targets -- -D warnings`: exit 0.
+- `cargo test --all-targets`: **229 passed, 0 failed** (9+6+1+99+34+42+6+20+12 across all targets; compile-and-run tests run when `cc` is available).
+- `python3 tools/sync_examples.py --check`: `website/examples` is in sync.
 - New coverage: generic shapes and flows (including nested instantiations,
   `>>` token splitting and backtracking, comparisons around `<`/`>`),
   monomorphized C symbols, recursive-instantiation depth limits, generated-name
