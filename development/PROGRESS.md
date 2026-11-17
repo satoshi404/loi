@@ -4,7 +4,13 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Last completed task (2026-11-17):** routed lexer and parser errors through
+- **Last completed task (2026-11-17):** made "did you mean" suggestions
+  namespace-aware (variables/parameters/globals for names, flows for calls,
+  shapes for types) with adjacent transpositions costing one edit, and poisoned
+  lvalues after an unknown name so one root cause produces one error.
+  `cuonter.value += 1` now suggests `counter` and emits only the unknown-name
+  diagnostic; its golden case was re-blessed and removed from `KNOWN_BAD.txt`.
+- **Previous task (2026-11-17):** routed lexer and parser errors through
   `Diagnostic`, so `loi lex/parse/fmt/check` all honor `--error-format`
   (human/short/json) and `--color`. Short output is now exactly
   `file:line:column: message`, with one file name and no `loi:` prefix;
@@ -68,10 +74,11 @@ python3 tools/sync_examples.py --check
 
 - `cargo fmt --check`: exit 0.
 - `cargo clippy --all-targets -- -D warnings`: exit 0.
-- `cargo test --all-targets`: **245 passed, 0 failed** (17+6+1+99+37+39+42+2+6+21+12 across all targets; compile-and-run tests run when `cc` is available).
+- `cargo test --all-targets`: **247 passed, 0 failed** (17+6+1+101+37+39+42+2+6+21+12 across all targets; compile-and-run tests run when `cc` is available).
 - `python3 tools/sync_examples.py --check`: `website/examples` is in sync.
-- New coverage: all three diagnostic formats plus color for one lexer and one
-  parser error, and 31 golden error cases (ownership, global give, aliasing,
+- New coverage: namespace-separated suggestions, transposition-aware edit
+  distance and single-error cascade suppression for unknown names; all three
+  diagnostic formats plus color for one lexer and one parser error, and 31 golden error cases (ownership, global give, aliasing,
   comptime, generics, lexer/parser errors, line-1/mid-file/last-line, UTF-8,
   tabs and CRLF) plus a clean check of every example; diagnostic rendering to strings without colors (target layout,
   token extent scanning, exact span ends, short and JSON formats,

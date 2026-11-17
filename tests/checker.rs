@@ -1303,6 +1303,44 @@ fn unused_generic_templates_are_still_checked() {
 }
 
 #[test]
+fn suggestions_stay_inside_the_name_namespace() {
+    let variable = diagnostics(
+        "shape Counter [\n    value: i32\n]\n\nmut counter: i32 <- 0\n\nflow main {\n    mut x: i32 <- cuonter\n}\n",
+    );
+    assert_eq!(variable.len(), 1, "{variable:#?}");
+    assert_eq!(variable[0].message, "unknown variable 'cuonter'");
+    assert_eq!(variable[0].help.as_deref(), Some("did you mean 'counter'?"));
+
+    let function = diagnostics(
+        "shape Count [\n    value: i32\n]\n\nflow count\n    => i32\n{\n    => 0\n}\n\nflow main {\n    cnout()\n}\n",
+    );
+    assert_eq!(function.len(), 1, "{function:#?}");
+    assert_eq!(function[0].message, "unknown function 'cnout'");
+    assert_eq!(function[0].help.as_deref(), Some("did you mean 'count'?"));
+
+    let ty = diagnostics(
+        "shape Counter [\n    value: i32\n]\n\nmut counter: i32 <- 0\n\nflow main {\n    x: Cuonter <- Counter[ value: 0 ]\n}\n",
+    );
+    assert_eq!(ty.len(), 1, "{ty:#?}");
+    assert_eq!(ty[0].message, "unknown type 'Cuonter'");
+    assert_eq!(ty[0].help.as_deref(), Some("did you mean 'Counter'?"));
+}
+
+#[test]
+fn unknown_variable_does_not_cascade_into_assignment_errors() {
+    let found = diagnostics(
+        "shape Counter [\n    value: i32\n]\n\nflow main {\n    mut counter <- Counter[ value: 0 ]\n    cuonter.value += 1\n}\n",
+    );
+    assert_eq!(
+        found.len(),
+        1,
+        "one root cause should produce one error: {found:#?}"
+    );
+    assert_eq!(found[0].message, "unknown variable 'cuonter'");
+    assert_eq!(found[0].help.as_deref(), Some("did you mean 'counter'?"));
+}
+
+#[test]
 fn diagnostics_use_source_spelling_for_generic_instantiations() {
     let messages = messages(
         "shape Vec<T> [\n    data: [T]\n]\n\nflow main\n    => i32\n{\n    x: Vec<i32> <- Vec<i64>[ data: [i64: 1] ]\n    => 0\n}\n",

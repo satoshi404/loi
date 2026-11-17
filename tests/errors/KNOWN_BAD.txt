@@ -4,9 +4,5 @@
 # an entry in the commit that fixes it and re-bless the `.expected` file, with
 # the reason in the commit message.
 #
-# C: the suggestion comes from the wrong namespace and the unknown name
-#    cascades into "assignment target is not a variable".
-unknown_name_cascade.loi
-#
 # D: full-width underlines and JSON end positions only affect human and JSON
 #    output, so no short-format corpus entry changes.

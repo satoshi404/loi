@@ -207,6 +207,16 @@ struct LvalueInfo {
     root: Option<String>,
     /// Path relative to the root variable. `Some("")` is the whole variable.
     path: Option<String>,
+    /// The place contains an unknown name, so later errors about this place
+    /// would only cascade from the first diagnostic.
+    poisoned: bool,
+}
+
+#[derive(Clone, Copy)]
+enum NameSpace {
+    Variable,
+    Function,
+    Type,
 }
 
 #[derive(Debug, Clone)]
@@ -276,25 +286,39 @@ impl Checker {
 
     /// Report an unknown name and suggest the closest declaration when one is
     /// close enough. Message text is unchanged; the suggestion is a help line.
-    fn error_unknown(&mut self, span: Span, message: impl Into<String>, name: &str) {
+    fn error_unknown(
+        &mut self,
+        span: Span,
+        message: impl Into<String>,
+        name: &str,
+        namespace: NameSpace,
+    ) {
         let mut diagnostic = Diagnostic::from_error(message, span);
-        if let Some(suggestion) = self.name_suggestion(name) {
+        if let Some(suggestion) = self.name_suggestion(name, namespace) {
             diagnostic = diagnostic.with_help(format!("did you mean '{suggestion}'?"));
         }
         self.diagnostics.push(diagnostic);
     }
 
-    fn name_suggestion(&self, name: &str) -> Option<String> {
-        let mut candidates = HashSet::new();
-        for scope in &self.scopes {
-            candidates.extend(scope.keys().cloned());
-        }
-        candidates.extend(self.functions.keys().cloned());
-        candidates.extend(self.interfaces.keys().cloned());
-        candidates.extend(self.opaques.iter().cloned());
-        candidates.extend(self.global_names.iter().cloned());
-        crate::diagnostic::suggest_name(name, candidates.iter().map(String::as_str))
-            .map(str::to_string)
+    /// Suggest only names that could have been meant in this position:
+    /// variables for variables, flows for calls and shapes for types. Scopes
+    /// are visited innermost first, so a nearby local wins over a global or a
+    /// shape with the same spelling.
+    fn name_suggestion(&self, name: &str, namespace: NameSpace) -> Option<String> {
+        let mut seen = HashSet::new();
+        let candidates: Vec<&str> = match namespace {
+            NameSpace::Variable => self
+                .scopes
+                .iter()
+                .rev()
+                .flat_map(|scope| scope.keys())
+                .filter(|candidate| seen.insert(candidate.as_str()))
+                .map(String::as_str)
+                .collect(),
+            NameSpace::Function => self.functions.keys().map(String::as_str).collect(),
+            NameSpace::Type => self.interfaces.keys().map(String::as_str).collect(),
+        };
+        crate::diagnostic::suggest_name(name, candidates).map(str::to_string)
     }
 
     /// Report a use after move and point at the move that killed the value.
@@ -778,7 +802,12 @@ impl Checker {
                 } else if self.opaques.contains(name) {
                     Ty::Opaque(name.clone())
                 } else {
-                    self.error_unknown(span, format!("unknown type '{name}'"), name);
+                    self.error_unknown(
+                        span,
+                        format!("unknown type '{name}'"),
+                        name,
+                        NameSpace::Type,
+                    );
                     Ty::Error
                 }
             }
@@ -1642,7 +1671,12 @@ impl Checker {
                     ty
                 }
                 None => {
-                    self.error_unknown(expr.span, format!("unknown variable '{name}'"), name);
+                    self.error_unknown(
+                        expr.span,
+                        format!("unknown variable '{name}'"),
+                        name,
+                        NameSpace::Variable,
+                    );
                     Ty::Error
                 }
             },
@@ -1843,7 +1877,12 @@ impl Checker {
 
     fn check_interface_literal(&mut self, name: &str, fields: &[FieldInit], span: Span) -> Ty {
         if !self.interfaces.contains_key(name) {
-            self.error_unknown(span, format!("unknown shape '{name}'"), name);
+            self.error_unknown(
+                span,
+                format!("unknown shape '{name}'"),
+                name,
+                NameSpace::Type,
+            );
             for field in fields {
                 self.check_expr(&field.value);
             }
@@ -2083,7 +2122,12 @@ impl Checker {
         }
 
         let Some(signature) = self.functions.get(name).cloned() else {
-            self.error_unknown(callee.span, format!("unknown function '{name}'"), name);
+            self.error_unknown(
+                callee.span,
+                format!("unknown function '{name}'"),
+                name,
+                NameSpace::Function,
+            );
             for arg in args {
                 self.check_unmatched_arg(arg);
             }
@@ -2463,13 +2507,20 @@ impl Checker {
                     ty: info.ty.clone(),
                     root: Some(name.clone()),
                     path: Some(String::new()),
+                    poisoned: false,
                 },
                 None => {
-                    self.error_unknown(expr.span, format!("unknown variable '{name}'"), name);
+                    self.error_unknown(
+                        expr.span,
+                        format!("unknown variable '{name}'"),
+                        name,
+                        NameSpace::Variable,
+                    );
                     LvalueInfo {
                         ty: Ty::Error,
                         root: None,
                         path: None,
+                        poisoned: true,
                     }
                 }
             },
@@ -2480,6 +2531,7 @@ impl Checker {
                     ty,
                     root: base_info.root,
                     path: base_info.path.map(|path| append_path(&path, field)),
+                    poisoned: base_info.poisoned,
                 }
             }
             ExprKind::Index { base, index } => {
@@ -2490,6 +2542,7 @@ impl Checker {
                     ty,
                     root: base_info.root,
                     path: base_info.path.map(|path| append_path(&path, "[]")),
+                    poisoned: base_info.poisoned,
                 }
             }
             _ => {
@@ -2498,6 +2551,7 @@ impl Checker {
                     ty: Ty::Error,
                     root: None,
                     path: None,
+                    poisoned: true,
                 }
             }
         }
@@ -2555,6 +2609,9 @@ impl Checker {
     // Ownership, definite assignment and branch state
     // ------------------------------------------------------------------
     fn require_lvalue(&mut self, info: &LvalueInfo, span: Span) -> Option<(String, String)> {
+        if info.poisoned {
+            return None;
+        }
         let Some(name) = info.root.clone() else {
             self.error(span, "assignment target is not a variable");
             return None;

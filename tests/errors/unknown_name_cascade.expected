@@ -1,2 +1,1 @@
 tests/errors/unknown_name_cascade.loi:7:5: unknown variable 'cuonter'
-tests/errors/unknown_name_cascade.loi:7:5: assignment target is not a variable

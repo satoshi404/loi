@@ -606,20 +606,32 @@ pub fn suggest_name<'a>(
     best.map(|(_, candidate)| candidate)
 }
 
+/// Optimal-string-alignment distance: insertion, deletion, substitution and
+/// swapping two adjacent characters each cost one.
 fn edit_distance(left: &str, right: &str) -> usize {
+    let left = left.chars().collect::<Vec<_>>();
     let right = right.chars().collect::<Vec<_>>();
-    let mut previous = (0..=right.len()).collect::<Vec<_>>();
-    let mut current = vec![0; right.len() + 1];
-    for (left_index, left_character) in left.chars().enumerate() {
-        current[0] = left_index + 1;
-        for (right_index, right_character) in right.iter().enumerate() {
-            let substitution =
-                previous[right_index] + usize::from(left_character != *right_character);
-            let insertion = current[right_index] + 1;
-            let deletion = previous[right_index + 1] + 1;
-            current[right_index + 1] = substitution.min(insertion).min(deletion);
+    let mut older: Vec<usize> = Vec::new();
+    let mut previous: Vec<usize> = (0..=right.len()).collect();
+    for (row, left_character) in left.iter().enumerate() {
+        let index = row + 1;
+        let mut current = vec![index; right.len() + 1];
+        for (column, right_character) in right.iter().enumerate() {
+            let offset = column + 1;
+            let substitution = previous[column] + usize::from(left_character != right_character);
+            current[offset] = substitution
+                .min(current[column] + 1)
+                .min(previous[offset] + 1);
+            if index > 1
+                && column > 0
+                && left_character == &right[column - 1]
+                && left[index - 2] == *right_character
+            {
+                current[offset] = current[offset].min(older[column - 1] + 1);
+            }
         }
-        std::mem::swap(&mut previous, &mut current);
+        older = previous;
+        previous = current;
     }
     previous[right.len()]
 }
@@ -738,6 +750,8 @@ error: use of moved value 'SAMPLE'
         assert_eq!(suggest_name("SAMPEL", ["SAMPLE", "OTHER"]), Some("SAMPLE"));
         assert_eq!(suggest_name("name", ["name"]), None);
         assert_eq!(suggest_name("zzzz", ["SAMPLE"]), None);
+        assert_eq!(edit_distance("cuonter", "counter"), 1);
+        assert_eq!(suggest_name("cuonter", ["counter"]), Some("counter"));
     }
 
     #[test]
