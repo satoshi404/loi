@@ -768,6 +768,42 @@ extern flow SDL_DestroyWindow
           </div>
 
           <p>
+            The interactive examples add small hand-written shims:
+            <code>examples/editor_shim.c</code> turns a dynamic <code>[u8]</code> buffer into a
+            C string for <code>DrawText</code>, and <code>examples/sound_shim.c</code> hides
+            raylib's <code>Sound</code> record behind static state so Loi can play mathematically
+            generated samples. Build them like this:
+          </p>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
+            <pre><code>loi build examples/text_editor.loi -o editor \
+    --c-source examples/editor_shim.c \
+    --c-source vendor/raylib/raylib_shim.c \
+    --cc-flag -Ivendor/raylib/include \
+    --cc-flag -lraylib --cc-flag -lm
+
+loi build examples/sound_synth.loi -o synth \
+    --c-source examples/sound_shim.c \
+    --c-source vendor/raylib/raylib_shim.c \
+    --cc-flag -Ivendor/raylib/include \
+    --cc-flag -lraylib --cc-flag -lm</code></pre>
+          </div>
+
+          <p>
+            For the browser, <code>examples/build_web.sh</code> compiles the raylib demo to WebAssembly.
+            It needs Emscripten on <code>PATH</code> and a raylib build for
+            <code>PLATFORM_WEB</code>; <code>CC=emcc</code> makes the CLI call Emscripten instead of
+            the normal C compiler, and <code>-sASYNCIFY</code> keeps the blocking window loop working:
+          </p>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
+            <pre><code>RAYLIB_WEB=/caminho/raylib-5.5/src sh examples/build_web.sh examples/raylib_web.loi
+python3 -m http.server -d web 8000   # abra http://localhost:8000</code></pre>
+          </div>
+
+          <p>
             Generate bindings from a C header with the conservative binding generator:
           </p>
 
@@ -932,6 +968,18 @@ node website/server.mjs
               <h3>Systems I/O</h3>
               <p>Bit masks, shifts, file round-trips, stdin lines and numeric printing.</p>
             </a>
+            <a class="feature-card" href="examples/raylib_web.loi">
+              <h3>Raylib on the web</h3>
+              <p>An interactive raylib demo built for Emscripten with <code>examples/build_web.sh</code> (also runs natively).</p>
+            </a>
+            <a class="feature-card" href="examples/text_editor.loi">
+              <h3>Text editor</h3>
+              <p>A small graphical editor: keyboard input, a byte-slice buffer, a blinking cursor, save to file and a drawing shim.</p>
+            </a>
+            <a class="feature-card" href="examples/sound_synth.loi">
+              <h3>Sound synthesis</h3>
+              <p>Waves generated sample by sample with math, drawn as an oscilloscope and played through a small audio shim.</p>
+            </a>
           </div>
 
           <h3>Tic-tac-toe</h3>
@@ -988,6 +1036,17 @@ sealed flow winning_line
             <strong>Run it.</strong> <code>loi build examples/tictactoe.loi -o tictactoe &amp;&amp; ./tictactoe</code>.
             The output ends with a draw and then a scripted <code>X wins!</code>.
           </div>
+
+          <h3>Interactive and graphical examples</h3>
+          <p>
+            <code>examples/raylib_web.loi</code> is a bouncing-ball demo that compiles to WebAssembly
+            with Emscripten (see <code>examples/build_web.sh</code>).
+            <code>examples/text_editor.loi</code> edits a byte buffer with the keyboard and saves it
+            with <code>write_file</code>. <code>examples/sound_synth.loi</code> generates four wave
+            forms sample by sample, draws them like an oscilloscope and plays them via the audio
+            shim. These examples link small C shims with <code>--c-source</code>; their complete
+            build commands are in the source headers and in the C interop section above.
+          </p>
 
           <h3>Error examples</h3>
           <p>
@@ -1220,6 +1279,7 @@ cargo test --all-targets</code></pre>
             <li>Multi-file builds, incremental stamps and the <code>clean</code> command.</li>
             <li>Bitwise/shift operators, file/stdin I/O, numeric printing and comment-preserving <code>fmt</code>.</li>
             <li>Canonical Flow Syntax migration and legacy cleanup.</li>
+            <li>Interactive raylib examples: a web-ready demo, a text editor and mathematical sound synthesis with waveform display.</li>
           </ul>
 
           <h3>In progress</h3>

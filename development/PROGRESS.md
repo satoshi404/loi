@@ -4,7 +4,19 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Last completed task (2026-11-17):** expressions now carry full source
+- **Last completed task (2026-11-17):** added three interactive raylib examples
+  and an Emscripten build path. `examples/raylib_web.loi` is a bouncing-ball demo
+  that runs natively and compiles to WebAssembly with `examples/build_web.sh`
+  (`CC=emcc`, raylib built for `PLATFORM_WEB`, `-sASYNCIFY`).
+  `examples/text_editor.loi` edits a byte-slice buffer with the keyboard,
+  draws a blinking cursor through `examples/editor_shim.c` and saves with
+  `write_file`. `examples/sound_synth.loi` generates sine/square/saw/triangle
+  waves sample by sample with math intrinsics plus `extern flow c_sin as sin`,
+  draws them like an oscilloscope and plays them through `examples/sound_shim.c`
+  (which hides raylib's skipped `Sound` record behind static state). All three
+  pass `loi check`, generate C that passes `gcc -fsyntax-only`, and are mirrored
+  to `website/examples/`; the website documents their build commands.
+- **Previous task (2026-11-17):** expressions now carry full source
   spans from their first token through their last, including literals, calls,
   field/index chains, slice/shape literals, `give`/`clone`/`comptime`/`alloc`
   and multi-line expressions. Human diagnostics underline the whole first line
@@ -86,6 +98,12 @@ python3 tools/sync_examples.py --check
 - `cargo clippy --all-targets -- -D warnings`: exit 0.
 - `cargo test --all-targets`: **251 passed, 0 failed** (19+6+1+101+39+42+2+6+23+12 across all targets; compile-and-run tests run when `cc` is available).
 - `python3 tools/sync_examples.py --check`: `website/examples` is in sync.
+- New examples: `raylib_web.loi`, `text_editor.loi` and `sound_synth.loi`
+  (with `examples/editor_shim.c`, `examples/sound_shim.c` and
+  `examples/build_web.sh`), mirrored to `website/examples/` and documented in
+  `website/docs.html`. Each passes `loi check` and `loi gen` followed by
+  `gcc -std=c11 -fsyntax-only -Ivendor/raylib/include`; full link/run needs a
+  native raylib plus `-lraylib -lm` (unavailable locally).
 - New coverage: full expression span extents (literals, calls, field chains,
   multi-line spans), multi-line underlines with `...`, JSON end positions,
   tab/UTF-8 alignment, namespace-separated suggestions, transposition-aware edit

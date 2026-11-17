@@ -1,0 +1,167 @@
+// Sintese de som feita com matematica + visualizacao da onda.
+//
+// Quatro formatos de onda (seno, quadrada, serra, triangulo) sao gerados
+// amostra a amostra em Loi, desenhados na tela e tocados pelo shim de audio.
+// ESPACO toca; 1..4 trocam a onda; cima/baixo mudam a frequencia; ESC sai.
+//
+// Build:
+//   loi build examples/sound_synth.loi -o synth \
+//       --c-source examples/sound_shim.c \
+//       --c-source vendor/raylib/raylib_shim.c \
+//       --cc-flag -Ivendor/raylib/include \
+//       --cc-flag -lraylib --cc-flag -lm
+import "../vendor/raylib/raylib.loi"
+
+extern flow c_sin as sin
+    <- x: f64
+    => f64
+
+extern flow loi_play_samples
+    <- samples: [f32]
+    <- sample_rate: u32
+
+extern flow loi_stop_samples
+
+extern flow loi_samples_playing
+    => bool
+
+extern flow loi_audio_cleanup
+
+SAMPLE_RATE: u32 <- 22050
+TOTAL_SAMPLES: i32 <- 22050
+VIEW_SAMPLES: i32 <- 760
+
+sealed flow wave_name
+    <- kind: i32
+    => cstr
+{
+    if kind == 0 { => "seno" }
+    if kind == 1 { => "quadrada" }
+    if kind == 2 { => "serra" }
+    => "triangulo"
+}
+
+sealed flow sample_value
+    <- t: f64
+    <- kind: f64
+    <- freq: f64
+    => f32
+{
+    // fase em [0, 2*pi); cada formula e avaliada em f64 para evitar erro.
+    tau <- 6.283185307179586
+    mut raw: f64 <- fmod(t * freq * tau, tau)
+    if raw < 0.0 { raw += tau }
+    half <- raw / 3.141592653589793
+
+    if kind == 0.0 { => (c_sin(raw) * 0.85) as f32 }
+    if kind == 1.0 {
+        if c_sin(raw) >= 0.0 { => 0.85 as f32 }
+        => -0.85 as f32
+    }
+    if kind == 2.0 { => ((half - 1.0) * 0.85) as f32 }
+    => ((1.0 - 2.0 * fabs(half - 1.0)) * 0.85) as f32
+}
+
+open flow main
+    => i32
+{
+    InitAudioDevice()
+    InitWindow(900, 540, "Sintese matematica de som")
+    SetTargetFPS(60)
+
+    bg: Color <- Color[ r: 16, g: 18, b: 28, a: 255 ]
+    ink: Color <- Color[ r: 226, g: 232, b: 248, a: 255 ]
+    grid: Color <- Color[ r: 44, g: 50, b: 74, a: 255 ]
+    wave: Color <- Color[ r: 92, g: 214, b: 255, a: 255 ]
+    hot: Color <- Color[ r: 255, g: 129, b: 166, a: 255 ]
+
+    protect {
+        mut samples: [f32]
+        alloc(-> samples, f32, 22050)
+        mut kind: i32 <- 0
+        mut freq: f64 <- 220.0
+        mut dirty: bool <- true
+
+        while not WindowShouldClose() {
+            key <- GetKeyPressed()
+            if key == KEY_ESCAPE { break }
+            if key == KEY_ONE {
+                kind <- 0
+                dirty <- true
+            }
+            if key == KEY_TWO {
+                kind <- 1
+                dirty <- true
+            }
+            if key == KEY_THREE {
+                kind <- 2
+                dirty <- true
+            }
+            if key == KEY_FOUR {
+                kind <- 3
+                dirty <- true
+            }
+            if key == KEY_UP and freq < 1760.0 {
+                freq += 55.0
+                dirty <- true
+            }
+            if key == KEY_DOWN and freq > 55.0 {
+                freq -= 55.0
+                dirty <- true
+            }
+            if key == KEY_SPACE {
+                for i in 0..TOTAL_SAMPLES {
+                    t <- i as f64 / SAMPLE_RATE as f64
+                    samples[i] = sample_value(t, kind as f64, freq)
+                }
+                loi_play_samples(samples, SAMPLE_RATE)
+            }
+
+            // Recalcula o trecho visivel sempre que a forma ou a frequencia muda.
+            if dirty {
+                for i in 0..VIEW_SAMPLES {
+                    t <- i as f64 / SAMPLE_RATE as f64
+                    samples[i] = sample_value(t, kind as f64, freq)
+                }
+                dirty <- false
+            }
+
+            BeginDrawing()
+            ClearBackground(bg)
+
+            DrawText("Sintese de onda em Loi", 20, 16, 22, ink)
+            DrawText("1 seno  2 quadrada  3 serra  4 triangulo", 20, 46, 14, ink)
+            DrawText("cima/baixo: frequencia | espaco: tocar | ESC: sair", 20, 66, 14, ink)
+
+            // Malha de referencia: linha do zero e linhas verticais.
+            mid <- 300
+            DrawLine(40, mid, 860, mid, grid)
+            DrawLine(40, 150, 860, 150, grid)
+            DrawLine(40, 450, 860, 450, grid)
+
+            // Desenha a onda ligando amostras consecutivas.
+            mut px: i32 <- 40
+            mut py: i32 <- mid
+            for i in 0..VIEW_SAMPLES {
+                v <- samples[i]
+                y <- mid - (v * 140.0) as i32
+                if i > 0 { DrawLine(px - 1, py, px, y, wave) }
+                py <- y
+                px += 1
+            }
+
+            if loi_samples_playing() {
+                DrawText("tocando", 760, 16, 14, hot)
+            }
+            DrawText(wave_name(kind), 20, 500, 18, wave)
+            print_float(freq)
+            DrawFPS(10, 520)
+            EndDrawing()
+        }
+        loi_stop_samples()
+        loi_audio_cleanup()
+    }
+
+    CloseWindow()
+    => 0
+}

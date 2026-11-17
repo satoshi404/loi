@@ -1,0 +1,135 @@
+// Editor de texto simples com raylib.
+//
+// Demo de como usar GetKeyPressed, um buffer [u8] e um shim para desenhar
+// texto dinamico. F2 salva em editor.txt; ESC fecha a janela.
+//
+// Build:
+//   loi build examples/text_editor.loi -o editor \
+//       --c-source examples/editor_shim.c \
+//       --c-source vendor/raylib/raylib_shim.c \
+//       --cc-flag -Ivendor/raylib/include \
+//       --cc-flag -lraylib --cc-flag -lm
+import "../vendor/raylib/raylib.loi"
+
+// O shim converte o buffer em uma string C temporaria para DrawText.
+extern flow loi_draw_text_slice
+    <- text: [u8]
+    <- len: i32
+    <- x: i32
+    <- y: i32
+    <- size: i32
+    <- color: Color
+
+extern flow loi_measure_text_slice
+    <- text: [u8]
+    <- len: i32
+    <- size: i32
+    => i32
+
+open flow main
+    => i32
+{
+    InitWindow(800, 600, "Editor Loi")
+    SetTargetFPS(60)
+
+    bg: Color <- Color[ r: 24, g: 26, b: 38, a: 255 ]
+    ink: Color <- Color[ r: 232, g: 236, b: 248, a: 255 ]
+    accent: Color <- Color[ r: 120, g: 200, b: 255, a: 255 ]
+    hint: cstr <- "F2: salvar | ESC: sair | setas/backspace: editar"
+    path: [u8] <- "editor.txt"
+
+    protect {
+        mut buf: [u8]
+        alloc(-> buf, u8, 2048)
+        mut len: i32 <- 0
+        mut cursor: i32 <- 0
+        mut blink: f32 <- 0.0
+        mut saved: bool <- false
+
+        while not WindowShouldClose() {
+            dt <- GetFrameTime()
+            blink += dt
+            key <- GetKeyPressed()
+
+            if key == KEY_ESCAPE {
+                break
+            }
+            if key == KEY_F2 {
+                buf[len] = 0
+                saved <- write_file(path, buf)
+            }
+            if key == KEY_BACKSPACE and cursor > 0 {
+                mut i: i32 <- cursor - 1
+                while i < len - 1 {
+                    buf[i] = buf[i + 1]
+                    i += 1
+                }
+                len -= 1
+                cursor -= 1
+                saved <- false
+            }
+            if key == KEY_DELETE and cursor < len {
+                mut i: i32 <- cursor
+                while i < len - 1 {
+                    buf[i] = buf[i + 1]
+                    i += 1
+                }
+                len -= 1
+                saved <- false
+            }
+            if key == KEY_LEFT and cursor > 0 {
+                cursor -= 1
+            }
+            if key == KEY_RIGHT and cursor < len {
+                cursor += 1
+            }
+            if key == KEY_ENTER and len < 2047 {
+                mut i: i32 <- len
+                while i > cursor {
+                    buf[i] = buf[i - 1]
+                    i -= 1
+                }
+                buf[cursor] = 10
+                cursor += 1
+                len += 1
+                saved <- false
+            }
+            if key >= 32 and key <= 126 and len < 2047 {
+                mut i: i32 <- len
+                while i > cursor {
+                    buf[i] = buf[i - 1]
+                    i -= 1
+                }
+                buf[cursor] = key as u8
+                cursor += 1
+                len += 1
+                saved <- false
+            }
+
+            BeginDrawing()
+            ClearBackground(bg)
+            DrawText("Editor simples em Loi", 20, 16, 22, accent)
+            DrawText(hint, 20, 46, 14, ink)
+
+            // Fundo da area de texto e as linhas ate o cursor.
+            DrawRectangle(16, 76, 768, 460, Color[ r: 32, g: 35, b: 50, a: 255 ])
+            DrawRectangleLines(16, 76, 768, 460, Color[ r: 70, g: 78, b: 105, a: 255 ])
+            loi_draw_text_slice(buf, len, 28, 88, 18, ink)
+
+            // Cursor piscando na posicao correta da primeira linha.
+            if fmod(blink as f64, 1.0) < 0.5 {
+                before <- loi_measure_text_slice(buf, cursor, 18)
+                DrawRectangle(28 + before, 88, 2, 20, accent)
+            }
+
+            if saved {
+                DrawText("salvo", 700, 48, 14, accent)
+            }
+            DrawFPS(10, 570)
+            EndDrawing()
+        }
+    }
+
+    CloseWindow()
+    => 0
+}
