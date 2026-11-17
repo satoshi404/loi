@@ -527,7 +527,7 @@ impl Checker {
         self.functions.insert(
             name.to_string(),
             FunctionSig {
-                span: Span { line: 0, column: 0 },
+                span: Span::new(0, 0),
                 params: sig_params,
                 return_type,
             },

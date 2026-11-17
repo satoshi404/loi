@@ -10,6 +10,23 @@ fn reference_program() -> Program {
     parse_source(include_str!("../examples/particles.loi"))
 }
 
+#[test]
+fn spans_carry_the_token_extent() {
+    let program = parse_source("flow main => i32 {\n    => missing + 1\n}\n");
+    let Item::Function(function) = &program.items[0] else {
+        panic!("expected a function");
+    };
+
+    assert_eq!((function.span.line, function.span.column), (1, 1));
+    assert_eq!(function.span.end_column, Some(5), "the span covers 'flow'");
+
+    let StmtKind::Return(Some(value)) = &function.body.statements[0].kind else {
+        panic!("expected a return statement");
+    };
+    assert_eq!((value.span.line, value.span.column), (2, 8));
+    assert_eq!(value.span.end_column, Some(15), "the span covers 'missing'");
+}
+
 fn function<'a>(program: &'a Program, name: &str) -> &'a FunctionDecl {
     program
         .items

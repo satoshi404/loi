@@ -479,9 +479,12 @@ impl Painter {
 
 /// Number of characters to underline for `span` on `line`.
 ///
-/// Until spans carry an explicit end, the extent is recovered by scanning the
-/// source line from the start column.
+/// Parser-produced spans carry an exact end column. For synthetic or imported
+/// spans without one, recover the extent by scanning the source line.
 fn label_extent(line: &str, span: Span) -> usize {
+    if let Some(end) = span.end_column {
+        return end.saturating_sub(span.column).max(1);
+    }
     token_length(line, span.column)
 }
 
@@ -677,6 +680,16 @@ error: use of moved value 'SAMPLE'
         assert_eq!(token_length("x <- \"hello\"", 6), 7);
         assert_eq!(token_length("a < b", 3), 1);
         assert_eq!(token_length("a <- b", 3), 2);
+    }
+
+    #[test]
+    fn prefers_explicit_span_ends() {
+        let span = Span::new(1, 2).with_end_column(5);
+        assert_eq!(label_extent("abcdef", span), 3);
+
+        let lexeme = Span::new(1, 1).with_lexeme("héllo");
+        assert_eq!(lexeme.end_column, Some(6));
+        assert_eq!(label_extent("héllo rest", lexeme), 5);
     }
 
     #[test]

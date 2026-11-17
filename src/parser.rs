@@ -145,7 +145,8 @@ impl Parser {
     }
 
     fn span_here(&self) -> Span {
-        Span::new(self.current().line, self.current().column)
+        let token = self.current();
+        Span::new(token.line, token.column).with_lexeme(&token.lexeme)
     }
 
     // ------------------------------------------------------------------
@@ -1135,7 +1136,7 @@ impl Parser {
 
     fn parse_primary(&mut self) -> ParseResult<Expr> {
         let token = self.current().clone();
-        let span = Span::new(token.line, token.column);
+        let span = self.span_here();
 
         match token.kind {
             TokenKind::Integer => {

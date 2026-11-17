@@ -5,15 +5,35 @@
 //! later passes can report precise diagnostics.
 
 /// A 1-based source position.
+///
+/// `end_column` is the 1-based column just past the token when the parser
+/// knows it. Diagnostics use it to underline exactly the token instead of
+/// guessing the extent from the source line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Span {
     pub line: usize,
     pub column: usize,
+    pub end_column: Option<usize>,
 }
 
 impl Span {
     pub fn new(line: usize, column: usize) -> Self {
-        Self { line, column }
+        Self {
+            line,
+            column,
+            end_column: None,
+        }
+    }
+
+    pub fn with_end_column(mut self, end_column: usize) -> Self {
+        self.end_column = Some(end_column);
+        self
+    }
+
+    /// Attach the length of `lexeme` as this span's end position.
+    pub fn with_lexeme(mut self, lexeme: &str) -> Self {
+        self.end_column = Some(self.column + lexeme.chars().count());
+        self
     }
 }
 

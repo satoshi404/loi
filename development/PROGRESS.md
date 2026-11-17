@@ -10,7 +10,9 @@
   Existing message texts are unchanged; moved-value, protect/block escape and
   immutable-assignment errors now point at both the failing use and the
   originating declaration. `--error-format` and `--color` are available on
-  every mode, and the playground requests short, uncolored output.
+  every mode, and the playground requests short, uncolored output. Parser
+  spans now carry an exact end column, with source-line scanning retained for
+  synthetic and cross-file spans.
 - **Overall health:** good; the full test suite, `cargo fmt --check` and
   `cargo clippy --all-targets -- -D warnings` pass.
 - **Not done:** resources/`guard`, real module namespaces, growable collections
@@ -25,7 +27,7 @@
 | Pretty-printer | Working | Emits canonical Flow Syntax including generics and `comptime`; idempotent on all canonical files; `loi fmt` preserves `//` comments (`format_program` remains comment-free) |
 | Type checker | Working | Types, literals, directions, calls, globals, intrinsics, `opaque`/`cstr`, constant folding, shape-cycle detection, bitwise/shift rules, I/O intrinsic signatures and allocation effects; monomorphization feeds concrete declarations into the checker and diagnostics show source generic spellings |
 | Compile-time evaluation | Working | `src/const_eval.rs`: pure `comptime flow` interpreter with step/depth limits, constant globals and shape defaults, `comptime expr`, purity diagnostics |
-| Diagnostics | Working | `src/diagnostic.rs`: human output with source underlines, secondary labels and an error summary; `short` keeps `path:line:column: message`; `json` emits structured objects; ANSI colors honor `NO_COLOR`/`CLICOLOR_FORCE`; unknown names get edit-distance suggestions |
+| Diagnostics | Working | `src/diagnostic.rs`: human output with source underlines, secondary labels and an error summary; `short` keeps `path:line:column: message`; `json` emits structured objects; ANSI colors honor `NO_COLOR`/`CLICOLOR_FORCE`; unknown names get edit-distance suggestions; parser spans carry exact token ends with a line-scan fallback |
 | Ownership | Working | Give liveness, definite assignment/return, exclusive `->`/`<->`, cross-flow consumption, `protect` taints and lexical-block escape analysis for slice literals, `read_file`/`read_stdin`/`read_line`; gives from globals are rejected and move state is per function body |
 | C backend | Working | One C11 translation unit, ordered shape layouts, checked arithmetic, bitwise/shift helpers, growable arena, bounds checks, defaults, headers, source maps, multi-file objects, statics, file/stdin I/O and numeric printing |
 | C interop | Working | `opaque` → `void *`, `cstr` → `const char *`, bodyless `extern flow`, `--c-source`, `--cc-flag`; string literals coerce to `cstr` |
@@ -51,22 +53,23 @@ python3 tools/sync_examples.py --check
 
 - `cargo fmt --check`: exit 0.
 - `cargo clippy --all-targets -- -D warnings`: exit 0.
-- `cargo test --all-targets`: **239 passed, 0 failed** (16+6+1+99+37+42+6+20+12 across all targets; compile-and-run tests run when `cc` is available).
+- `cargo test --all-targets`: **241 passed, 0 failed** (17+6+1+99+37+42+6+21+12 across all targets; compile-and-run tests run when `cc` is available).
 - `python3 tools/sync_examples.py --check`: `website/examples` is in sync.
 - New coverage: diagnostic rendering to strings without colors (target layout,
-  token extent scanning, short and JSON formats, sorting/summary and
-  suggestions), CLI `--error-format` and `--color` behavior, generic shapes and
-  flows (including nested instantiations, `>>` token splitting and
-  backtracking, comparisons around `<`/`>`), monomorphized C symbols,
-  recursive-instantiation depth limits, generated-name collisions, validation
-  of unused templates, pure `comptime` flows and expressions with signed
-  overflow, unsigned wrap, cast and `f32` parity, `comptime`-initialized
-  globals, strict-C11 composite globals, formatter idempotence for generics and
-  `comptime`, global-`give` rejection for slices, fields, elements and strings,
-  per-function move state independent of declaration order, `clone`/reads of
-  globals, and source-spelling diagnostics for generic instantiations. The
-  previous bitwise/shift, file/stdin I/O, numeric printing and
-  comment-preserving `fmt` coverage still passes unchanged.
+  token extent scanning, exact span ends, short and JSON formats,
+  sorting/summary and suggestions), parser token extents, CLI `--error-format`
+  and `--color` behavior, generic shapes and flows (including nested
+  instantiations, `>>` token splitting and backtracking, comparisons around
+  `<`/`>`), monomorphized C symbols, recursive-instantiation depth limits,
+  generated-name collisions, validation of unused templates, pure `comptime`
+  flows and expressions with signed overflow, unsigned wrap, cast and `f32`
+  parity, `comptime`-initialized globals, strict-C11 composite globals,
+  formatter idempotence for generics and `comptime`, global-`give` rejection
+  for slices, fields, elements and strings, per-function move state independent
+  of declaration order, `clone`/reads of globals, and source-spelling
+  diagnostics for generic instantiations. The previous bitwise/shift,
+  file/stdin I/O, numeric printing and comment-preserving `fmt` coverage still
+  passes unchanged.
 - `examples/systems.loi` builds and runs (`2215315943 1193046 1.5`), and
   `loi check` passes on `examples/raylib_window.loi`.
 - `loi check vendor/sdl2/sdl2.loi` and `loi check vendor/raylib/raylib.loi`:
