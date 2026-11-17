@@ -13,6 +13,7 @@
 pub struct Span {
     pub line: usize,
     pub column: usize,
+    pub end_line: Option<usize>,
     pub end_column: Option<usize>,
 }
 
@@ -21,19 +22,36 @@ impl Span {
         Self {
             line,
             column,
+            end_line: None,
             end_column: None,
         }
     }
 
+    pub fn with_end(mut self, end_line: usize, end_column: usize) -> Self {
+        self.end_line = Some(end_line);
+        self.end_column = Some(end_column);
+        self
+    }
+
     pub fn with_end_column(mut self, end_column: usize) -> Self {
+        self.end_line.get_or_insert(self.line);
         self.end_column = Some(end_column);
         self
     }
 
     /// Attach the length of `lexeme` as this span's end position.
     pub fn with_lexeme(mut self, lexeme: &str) -> Self {
+        self.end_line = Some(self.line);
         self.end_column = Some(self.column + lexeme.chars().count());
         self
+    }
+
+    pub fn end_line(&self) -> usize {
+        self.end_line.unwrap_or(self.line)
+    }
+
+    pub fn end_column(&self) -> usize {
+        self.end_column.unwrap_or(self.column)
     }
 }
 

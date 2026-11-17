@@ -87,6 +87,16 @@ impl Parser {
         &self.tokens[self.position]
     }
 
+    fn previous(&self) -> &Token {
+        &self.tokens[self.position.saturating_sub(1)]
+    }
+
+    /// Extend `start` through the last token consumed so far.
+    fn through_last(&self, start: Span) -> Span {
+        let last = self.previous();
+        start.with_end(last.line, last.column + last.lexeme.chars().count())
+    }
+
     fn at(&self, kind: TokenKind) -> bool {
         self.current().kind == kind
     }
@@ -856,6 +866,7 @@ impl Parser {
                 },
                 span,
             );
+            expr.span = self.through_last(expr.span);
         }
         Ok(expr)
     }
@@ -873,6 +884,7 @@ impl Parser {
                 },
                 span,
             );
+            expr.span = self.through_last(expr.span);
         }
         Ok(expr)
     }
@@ -900,6 +912,7 @@ impl Parser {
                 },
                 span,
             );
+            expr.span = self.through_last(expr.span);
         }
         Ok(expr)
     }
@@ -917,6 +930,7 @@ impl Parser {
                 },
                 span,
             );
+            expr.span = self.through_last(expr.span);
         }
         Ok(expr)
     }
@@ -934,6 +948,7 @@ impl Parser {
                 },
                 span,
             );
+            expr.span = self.through_last(expr.span);
         }
         Ok(expr)
     }
@@ -951,6 +966,7 @@ impl Parser {
                 },
                 span,
             );
+            expr.span = self.through_last(expr.span);
         }
         Ok(expr)
     }
@@ -974,6 +990,7 @@ impl Parser {
                 },
                 span,
             );
+            expr.span = self.through_last(expr.span);
         }
         Ok(expr)
     }
@@ -997,6 +1014,7 @@ impl Parser {
                 },
                 span,
             );
+            expr.span = self.through_last(expr.span);
         }
         Ok(expr)
     }
@@ -1021,6 +1039,7 @@ impl Parser {
                 },
                 span,
             );
+            expr.span = self.through_last(expr.span);
         }
         Ok(expr)
     }
@@ -1037,41 +1056,38 @@ impl Parser {
                 },
                 span,
             );
+            expr.span = self.through_last(expr.span);
         }
         Ok(expr)
     }
 
     fn parse_unary(&mut self) -> ParseResult<Expr> {
+        let build = |this: &Self, op, operand, span: Span| {
+            let mut expr = Expr::new(
+                ExprKind::Unary {
+                    op,
+                    operand: Box::new(operand),
+                },
+                span,
+            );
+            expr.span = this.through_last(span);
+            expr
+        };
         if self.at(TokenKind::Minus) {
             let span = self.span_here();
             self.advance();
-            Ok(Expr::new(
-                ExprKind::Unary {
-                    op: UnaryOp::Neg,
-                    operand: Box::new(self.parse_unary()?),
-                },
-                span,
-            ))
+            let operand = self.parse_unary()?;
+            Ok(build(self, UnaryOp::Neg, operand, span))
         } else if self.at(TokenKind::Not) {
             let span = self.span_here();
             self.advance();
-            Ok(Expr::new(
-                ExprKind::Unary {
-                    op: UnaryOp::Not,
-                    operand: Box::new(self.parse_unary()?),
-                },
-                span,
-            ))
+            let operand = self.parse_unary()?;
+            Ok(build(self, UnaryOp::Not, operand, span))
         } else if self.at(TokenKind::Tilde) {
             let span = self.span_here();
             self.advance();
-            Ok(Expr::new(
-                ExprKind::Unary {
-                    op: UnaryOp::BitNot,
-                    operand: Box::new(self.parse_unary()?),
-                },
-                span,
-            ))
+            let operand = self.parse_unary()?;
+            Ok(build(self, UnaryOp::BitNot, operand, span))
         } else {
             self.parse_postfix()
         }
@@ -1093,6 +1109,7 @@ impl Parser {
                         },
                         span,
                     );
+                    expr.span = self.through_last(expr.span);
                     continue;
                 }
             }
@@ -1107,6 +1124,7 @@ impl Parser {
                     },
                     span,
                 );
+                expr.span = self.through_last(expr.span);
             } else if self.matches(TokenKind::Dot) {
                 let span = expr.span;
                 let field = self.parse_identifier("field name")?;
@@ -1117,6 +1135,7 @@ impl Parser {
                     },
                     span,
                 );
+                expr.span = self.through_last(expr.span);
             } else if self.matches(TokenKind::LBracket) {
                 let span = expr.span;
                 let index = self.parse_expression()?;
@@ -1128,6 +1147,7 @@ impl Parser {
                     },
                     span,
                 );
+                expr.span = self.through_last(expr.span);
             } else {
                 break;
             }
@@ -1183,8 +1203,9 @@ impl Parser {
             }
             TokenKind::LParen => {
                 self.advance();
-                let expr = self.parse_expression()?;
+                let mut expr = self.parse_expression()?;
                 self.expect(TokenKind::RParen, "')'")?;
+                expr.span = self.through_last(span);
                 Ok(expr)
             }
             TokenKind::Give => {
@@ -1192,21 +1213,28 @@ impl Parser {
                 self.expect(TokenKind::LParen, "'('")?;
                 let value = self.parse_expression()?;
                 self.expect(TokenKind::RParen, "')'")?;
-                Ok(Expr::new(ExprKind::Move(Box::new(value)), span))
+                Ok(Expr::new(
+                    ExprKind::Move(Box::new(value)),
+                    self.through_last(span),
+                ))
             }
             TokenKind::Clone => {
                 self.advance();
                 self.expect(TokenKind::LParen, "'('")?;
                 let value = self.parse_expression()?;
                 self.expect(TokenKind::RParen, "')'")?;
-                Ok(Expr::new(ExprKind::Copy(Box::new(value)), span))
+                Ok(Expr::new(
+                    ExprKind::Copy(Box::new(value)),
+                    self.through_last(span),
+                ))
             }
             TokenKind::Alloc => self.parse_alloc(span),
             TokenKind::Comptime => {
                 self.advance();
+                let inner = self.parse_unary()?;
                 Ok(Expr::new(
-                    ExprKind::Comptime(Box::new(self.parse_unary()?)),
-                    span,
+                    ExprKind::Comptime(Box::new(inner)),
+                    self.through_last(span),
                 ))
             }
             TokenKind::LBracket => self.parse_slice_literal(span),
@@ -1269,7 +1297,7 @@ impl Parser {
                     element_type: Some(element_type),
                     elements,
                 },
-                span,
+                self.through_last(span),
             ));
         }
         self.position = saved;
@@ -1280,7 +1308,7 @@ impl Parser {
                 element_type: None,
                 elements,
             },
-            span,
+            self.through_last(span),
         ))
     }
 
@@ -1352,7 +1380,7 @@ impl Parser {
                 type_args,
                 fields,
             },
-            span,
+            self.through_last(span),
         ))
     }
 
@@ -1435,7 +1463,7 @@ impl Parser {
                 element_type,
                 count: Box::new(count),
             },
-            span,
+            self.through_last(span),
         ))
     }
 }

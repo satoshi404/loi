@@ -144,7 +144,7 @@ impl<'a> ConstEvaluator<'a> {
             steps: 0,
             max_steps: 1_000_000,
             call_depth: 0,
-            max_call_depth: 128,
+            max_call_depth: 64,
             current_return: None,
         }
     }

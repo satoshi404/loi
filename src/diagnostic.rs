@@ -276,10 +276,9 @@ pub fn render_one(diagnostic: &Diagnostic, source: &str, file: &str, color: bool
             .get(label.span.line.saturating_sub(1))
             .copied()
             .unwrap_or("");
-        let length = label_extent(text, label.span);
         let padding = underline_padding(text, label.span.column);
         let marker = if label.primary { '^' } else { '-' };
-        let underline = marker.to_string().repeat(length);
+        let underline = underline_for(text, label.span, marker);
         let underline = painter.paint(severity.color(), &underline);
         match label.text.filter(|text| !text.is_empty()) {
             Some(text) => {
@@ -374,12 +373,14 @@ fn render_json(diagnostics: &[Diagnostic], file: &str) -> String {
         }
         let _ = write!(
             out,
-            "\n  {{\"severity\":\"{}\",\"message\":\"{}\",\"file\":\"{}\",\"line\":{},\"column\":{}",
+            "\n  {{\"severity\":\"{}\",\"message\":\"{}\",\"file\":\"{}\",\"line\":{},\"column\":{},\"end_line\":{},\"end_column\":{}",
             diagnostic.severity.as_str(),
             json_escape(&diagnostic.message),
             json_escape(file),
             diagnostic.span.line,
-            diagnostic.span.column
+            diagnostic.span.column,
+            diagnostic.span.end_line(),
+            diagnostic.span.end_column()
         );
         if let Some(label) = &diagnostic.label {
             let _ = write!(out, ",\"label\":\"{}\"", json_escape(label));
@@ -392,10 +393,12 @@ fn render_json(diagnostics: &[Diagnostic], file: &str) -> String {
                 }
                 let _ = write!(
                     out,
-                    "{{\"file\":\"{}\",\"line\":{},\"column\":{},\"label\":\"{}\"}}",
+                    "{{\"file\":\"{}\",\"line\":{},\"column\":{},\"end_line\":{},\"end_column\":{},\"label\":\"{}\"}}",
                     json_escape(file),
                     secondary.span.line,
                     secondary.span.column,
+                    secondary.span.end_line(),
+                    secondary.span.end_column(),
                     json_escape(&secondary.label)
                 );
             }
@@ -482,10 +485,26 @@ impl Painter {
 /// Parser-produced spans carry an exact end column. For synthetic or imported
 /// spans without one, recover the extent by scanning the source line.
 fn label_extent(line: &str, span: Span) -> usize {
-    if let Some(end) = span.end_column {
+    if span.end_line() == span.line
+        && let Some(end) = span.end_column
+    {
         return end.saturating_sub(span.column).max(1);
     }
     token_length(line, span.column)
+}
+
+/// Underline a span on its first line. Multi-line spans stop at the end of
+/// that line and get an ellipsis; the count is in characters so UTF-8 text and
+/// tabs keep their visual alignment through `underline_padding`.
+fn underline_for(line: &str, span: Span, marker: char) -> String {
+    if span.end_line() > span.line {
+        let first_line_length = line.chars().count();
+        let available = first_line_length
+            .saturating_sub(span.column.saturating_sub(1))
+            .max(1);
+        return format!("{}{}", marker.to_string().repeat(available), "...");
+    }
+    marker.to_string().repeat(label_extent(line, span))
 }
 
 /// Scan `line` starting at the 1-based `column` and return the token length.
@@ -697,11 +716,43 @@ error: use of moved value 'SAMPLE'
     #[test]
     fn prefers_explicit_span_ends() {
         let span = Span::new(1, 2).with_end_column(5);
+        assert_eq!(span.end_line(), 1);
         assert_eq!(label_extent("abcdef", span), 3);
 
         let lexeme = Span::new(1, 1).with_lexeme("héllo");
+        assert_eq!(lexeme.end_line, Some(1));
         assert_eq!(lexeme.end_column, Some(6));
         assert_eq!(label_extent("héllo rest", lexeme), 5);
+    }
+
+    #[test]
+    fn multi_line_spans_underline_the_first_line_and_ellipsis() {
+        let source = "flow main {\n    xs <- [1,\n           2]\n}\n";
+        let diagnostic = Diagnostic::from_error("bad slice", Span::new(2, 11).with_end(3, 14));
+        let rendered = render_one(&diagnostic, source, "file.loi", false);
+        assert!(
+            rendered.contains("2 |     xs <- [1,\n  |           ^^^...\n"),
+            "unexpected rendering: {rendered}"
+        );
+
+        let json = render_all(&[diagnostic], source, "file.loi", ErrorFormat::Json, false);
+        assert!(json.contains("\"line\":2,\"column\":11,\"end_line\":3,\"end_column\":14"));
+    }
+
+    #[test]
+    fn underlines_keep_tabs_and_utf8_columns() {
+        let source = "\t=> héllo + 1\n";
+        let span = Span::new(1, 5).with_end(1, 10);
+        let rendered = render_one(
+            &Diagnostic::from_error("bad name", span),
+            source,
+            "file.loi",
+            false,
+        );
+        assert!(
+            rendered.contains("\t=> héllo + 1") && rendered.contains("\t   ^^^^^"),
+            "unexpected rendering: {rendered}"
+        );
     }
 
     #[test]
@@ -724,7 +775,8 @@ error: use of moved value 'SAMPLE'
         assert!(rendered.starts_with('['));
         assert!(rendered.contains("\\\"name\\\""));
         assert!(rendered.contains("\\n"));
-        assert!(rendered.contains("\"secondary\":[{\"file\":\"a.loi\",\"line\":1,\"column\":1,\"label\":\"declared here\"}]"));
+        assert!(rendered.contains("\"end_line\":2") && rendered.contains("\"end_column\":3"));
+        assert!(rendered.contains("\"secondary\":[{\"file\":\"a.loi\",\"line\":1,\"column\":1,\"end_line\":1,\"end_column\":1,\"label\":\"declared here\"}]"));
         assert!(rendered.trim_end().ends_with(']'));
     }
 

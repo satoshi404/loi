@@ -4,7 +4,17 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Last completed task (2026-11-17):** made "did you mean" suggestions
+- **Last completed task (2026-11-17):** expressions now carry full source
+  spans from their first token through their last, including literals, calls,
+  field/index chains, slice/shape literals, `give`/`clone`/`comptime`/`alloc`
+  and multi-line expressions. Human diagnostics underline the whole first line
+  with `...` for multi-line spans (tabs and UTF-8 stay aligned), and JSON
+  includes `end_line`/`end_column` for primary and secondary labels. The
+  parser's `Span` records an explicit `end_line`; short-format output is
+  unchanged. Lowered the comptime call-depth limit from 128 to 64 because the
+  wider spans increased debug-build stack frames enough to overflow at 128 on
+  the recursive-comptime corpus case.
+- **Previous task (2026-11-17):** made "did you mean" suggestions
   namespace-aware (variables/parameters/globals for names, flows for calls,
   shapes for types) with adjacent transpositions costing one edit, and poisoned
   lvalues after an unknown name so one root cause produces one error.
@@ -48,7 +58,7 @@
 | Pretty-printer | Working | Emits canonical Flow Syntax including generics and `comptime`; idempotent on all canonical files; `loi fmt` preserves `//` comments (`format_program` remains comment-free) |
 | Type checker | Working | Types, literals, directions, calls, globals, intrinsics, `opaque`/`cstr`, constant folding, shape-cycle detection, bitwise/shift rules, I/O intrinsic signatures and allocation effects; monomorphization feeds concrete declarations into the checker and diagnostics show source generic spellings |
 | Compile-time evaluation | Working | `src/const_eval.rs`: pure `comptime flow` interpreter with step/depth limits, constant globals and shape defaults, `comptime expr`, purity diagnostics |
-| Diagnostics | Working | `src/diagnostic.rs`: human output with source underlines, secondary labels and an error summary; `short` keeps `path:line:column: message`; `json` emits structured objects; ANSI colors honor `NO_COLOR`/`CLICOLOR_FORCE`; unknown names get edit-distance suggestions; parser spans carry exact token ends with a line-scan fallback |
+| Diagnostics | Working | `src/diagnostic.rs`: human output with full source underlines (multi-line spans get `...`), secondary labels and an error summary; `short` keeps `path:line:column: message`; `json` emits structured objects with `end_line`/`end_column`; ANSI colors honor `NO_COLOR`/`CLICOLOR_FORCE`; unknown names get namespace-aware edit-distance suggestions; parser spans carry exact token ends and multi-line end lines with a line-scan fallback |
 | Ownership | Working | Give liveness, definite assignment/return, exclusive `->`/`<->`, cross-flow consumption, `protect` taints and lexical-block escape analysis for slice literals, `read_file`/`read_stdin`/`read_line`; gives from globals are rejected and move state is per function body |
 | C backend | Working | One C11 translation unit, ordered shape layouts, checked arithmetic, bitwise/shift helpers, growable arena, bounds checks, defaults, headers, source maps, multi-file objects, statics, file/stdin I/O and numeric printing |
 | C interop | Working | `opaque` → `void *`, `cstr` → `const char *`, bodyless `extern flow`, `--c-source`, `--cc-flag`; string literals coerce to `cstr` |
@@ -74,9 +84,11 @@ python3 tools/sync_examples.py --check
 
 - `cargo fmt --check`: exit 0.
 - `cargo clippy --all-targets -- -D warnings`: exit 0.
-- `cargo test --all-targets`: **247 passed, 0 failed** (17+6+1+101+37+39+42+2+6+21+12 across all targets; compile-and-run tests run when `cc` is available).
+- `cargo test --all-targets`: **251 passed, 0 failed** (19+6+1+101+39+42+2+6+23+12 across all targets; compile-and-run tests run when `cc` is available).
 - `python3 tools/sync_examples.py --check`: `website/examples` is in sync.
-- New coverage: namespace-separated suggestions, transposition-aware edit
+- New coverage: full expression span extents (literals, calls, field chains,
+  multi-line spans), multi-line underlines with `...`, JSON end positions,
+  tab/UTF-8 alignment, namespace-separated suggestions, transposition-aware edit
   distance and single-error cascade suppression for unknown names; all three
   diagnostic formats plus color for one lexer and one parser error, and 31 golden error cases (ownership, global give, aliasing,
   comptime, generics, lexer/parser errors, line-1/mid-file/last-line, UTF-8,

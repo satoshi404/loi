@@ -24,7 +24,52 @@ fn spans_carry_the_token_extent() {
         panic!("expected a return statement");
     };
     assert_eq!((value.span.line, value.span.column), (2, 8));
-    assert_eq!(value.span.end_column, Some(15), "the span covers 'missing'");
+    assert_eq!(
+        value.span.end_column,
+        Some(19),
+        "the span covers the whole 'missing + 1' expression"
+    );
+}
+
+#[test]
+fn expression_spans_cover_whole_expressions() {
+    let program = parse_source("flow main {\n    xs <- [1, 2, 3]\n    thing().field\n}\n");
+    let Item::Function(function) = &program.items[0] else {
+        panic!("expected a function");
+    };
+
+    let StmtKind::Let {
+        value: Some(value), ..
+    } = &function.body.statements[0].kind
+    else {
+        panic!("expected a binding with an initializer");
+    };
+    assert_eq!((value.span.line, value.span.column), (2, 11));
+    assert_eq!(value.span.end_line(), 2);
+    assert_eq!(value.span.end_column, Some(20), "covers '[1, 2, 3]'");
+
+    let StmtKind::Expr(expr) = &function.body.statements[1].kind else {
+        panic!("expected an expression statement");
+    };
+    assert_eq!((expr.span.line, expr.span.column), (3, 5));
+    assert_eq!(expr.span.end_column, Some(18), "covers 'thing().field'");
+}
+
+#[test]
+fn multi_line_expression_spans_record_the_end_line() {
+    let program = parse_source("flow main {\n    xs <- [1,\n           2]\n}\n");
+    let Item::Function(function) = &program.items[0] else {
+        panic!("expected a function");
+    };
+    let StmtKind::Let {
+        value: Some(value), ..
+    } = &function.body.statements[0].kind
+    else {
+        panic!("expected a binding with an initializer");
+    };
+    assert_eq!((value.span.line, value.span.column), (2, 11));
+    assert_eq!(value.span.end_line, Some(3));
+    assert_eq!(value.span.end_column, Some(14));
 }
 
 fn function<'a>(program: &'a Program, name: &str) -> &'a FunctionDecl {
