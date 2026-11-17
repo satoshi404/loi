@@ -1787,6 +1787,93 @@ fn lexer_errors_use_the_diagnostic_renderer() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+fn json_end_column(stderr: &str) -> usize {
+    let marker = "\"end_column\":";
+    let rest = stderr
+        .split(marker)
+        .nth(1)
+        .unwrap_or_else(|| panic!("JSON should carry end_column: {stderr}"));
+    let digits = rest
+        .chars()
+        .take_while(|character| character.is_ascii_digit())
+        .collect::<String>();
+    digits
+        .parse()
+        .unwrap_or_else(|_| panic!("invalid end_column in: {stderr}"))
+}
+
+fn human_underline_width(stderr: &str) -> usize {
+    stderr
+        .lines()
+        .find(|line| line.contains('^'))
+        .unwrap_or_else(|| panic!("human output should underline the span: {stderr}"))
+        .chars()
+        .filter(|character| *character == '^')
+        .count()
+}
+
+#[test]
+fn json_ranges_match_human_underlines() {
+    let dir = test_dir("diagnostic-ranges");
+    let cases = [
+        (
+            "slice",
+            "open flow main => i32 {\n    mut outer: [i32]\n    if true {\n        outer = [4]\n    } else {\n        outer = [4]\n    }\n    => 0\n}\n",
+            4,
+            17,
+            20,
+            3,
+        ),
+        (
+            "unterminated",
+            "flow main {\n    x <- \"abc\n}\n",
+            2,
+            10,
+            14,
+            4,
+        ),
+    ];
+
+    for (name, source, line, column, end_column, underline) in cases {
+        let input = dir.join(format!("{name}.loi"));
+        fs::write(&input, source).expect("input should be writable");
+
+        let json = Command::new(loi())
+            .arg("check")
+            .arg(&input)
+            .args(["--error-format=json", "--color=never"])
+            .output()
+            .expect("loi should run");
+        assert_eq!(json.status.code(), Some(1));
+        let json_stderr = String::from_utf8_lossy(&json.stderr);
+        assert!(
+            json_stderr.contains(&format!("\"line\":{line},\"column\":{column}")),
+            "{name}: unexpected JSON location: {json_stderr}"
+        );
+        assert_eq!(
+            json_end_column(&json_stderr),
+            end_column,
+            "{name}: JSON range should be exclusive: {json_stderr}"
+        );
+
+        let human = Command::new(loi())
+            .arg("check")
+            .arg(&input)
+            .args(["--error-format=human", "--color=never"])
+            .output()
+            .expect("loi should run");
+        assert_eq!(human.status.code(), Some(1));
+        let human_stderr = String::from_utf8_lossy(&human.stderr);
+        assert_eq!(
+            human_underline_width(&human_stderr),
+            underline,
+            "{name}: human underline should agree with JSON: {human_stderr}"
+        );
+    }
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn parser_errors_use_the_diagnostic_renderer() {
     let dir = test_dir("parser-diagnostic");

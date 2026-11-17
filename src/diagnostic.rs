@@ -586,7 +586,10 @@ fn underline_for(line: &str, span: Span, marker: char) -> String {
 }
 
 /// Scan `line` starting at the 1-based `column` and return the token length.
-fn token_length(line: &str, column: usize) -> usize {
+///
+/// `pub(crate)` so the lexer can give lex errors the same exclusive end column
+/// the human renderer derives; human and JSON ranges must stay in agreement.
+pub(crate) fn token_length(line: &str, column: usize) -> usize {
     let chars = line.chars().collect::<Vec<_>>();
     let start = column.saturating_sub(1);
     if start >= chars.len() {

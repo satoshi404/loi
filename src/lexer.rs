@@ -6,6 +6,7 @@
 
 use std::fmt;
 
+use crate::diagnostic::token_length;
 use crate::token::{Token, TokenKind};
 
 /// Raised when the source contains a character or literal Loi cannot lex.
@@ -15,6 +16,9 @@ pub struct LexError {
     pub filename: String,
     pub line: usize,
     pub column: usize,
+    /// Exclusive 1-based column just past the offending token, matching the
+    /// range the human diagnostic renderer underlines.
+    pub end_column: usize,
 }
 
 impl fmt::Display for LexError {
@@ -146,11 +150,18 @@ impl Lexer {
     }
 
     fn error(&self, message: impl Into<String>, line: usize, column: usize) -> LexError {
+        // Lex errors previously carried only their start position, so JSON
+        // reported a zero-width range while human output underlined the token.
+        // Reuse the renderer's token scan so both formats agree.
+        let source = self.source.iter().collect::<String>();
+        let line_text = source.split('\n').nth(line.saturating_sub(1)).unwrap_or("");
+        let end_column = column.saturating_add(token_length(line_text, column));
         LexError {
             message: message.into(),
             filename: self.filename.clone(),
             line,
             column,
+            end_column,
         }
     }
 

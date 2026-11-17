@@ -572,7 +572,10 @@ fn lex(source: &str, path: &Path, diagnostics: DiagnosticOptions) {
         Err(error) => report_one_diagnostic(
             path,
             source,
-            loi::Diagnostic::from_error(error.message, loi::Span::new(error.line, error.column)),
+            loi::Diagnostic::from_error(
+                error.message,
+                frontend_span(error.line, error.column, Some(error.end_column)),
+            ),
             diagnostics,
         ),
     }
@@ -590,7 +593,10 @@ fn format_source(source: &str, path: &Path, diagnostics: DiagnosticOptions) {
         Err(error) => report_one_diagnostic(
             path,
             source,
-            loi::Diagnostic::from_error(error.message, loi::Span::new(error.line, error.column)),
+            loi::Diagnostic::from_error(
+                error.message,
+                frontend_span(error.line, error.column, Some(error.end_column)),
+            ),
             diagnostics,
         ),
     };
@@ -1575,9 +1581,22 @@ fn load_program(source: &str, path: &Path, diagnostics: DiagnosticOptions) -> lo
         Err(error) => report_one_diagnostic(
             path,
             source,
-            loi::Diagnostic::from_error(error.message, loi::Span::new(error.line, error.column)),
+            loi::Diagnostic::from_error(
+                error.message,
+                frontend_span(error.line, error.column, error.end_column),
+            ),
             diagnostics,
         ),
+    }
+}
+
+/// A frontend span with an exact end for lex errors. Parser errors keep the
+/// line-scan fallback used by the human renderer until they carry their own end.
+fn frontend_span(line: usize, column: usize, end_column: Option<usize>) -> loi::Span {
+    let span = loi::Span::new(line, column);
+    match end_column {
+        Some(end) => span.with_end_column(end),
+        None => span,
     }
 }
 
@@ -1587,6 +1606,7 @@ struct FrontendError {
     message: String,
     line: usize,
     column: usize,
+    end_column: Option<usize>,
 }
 
 /// Lex and parse one file, keeping the source position of the first frontend
@@ -1597,11 +1617,13 @@ fn parse_source_program(source: &str, path: &Path) -> Result<loi::Program, Front
             message: error.message,
             line: error.line,
             column: error.column,
+            end_column: Some(error.end_column),
         })?;
     loi::parse(tokens).map_err(|error| FrontendError {
         message: error.message,
         line: error.line,
         column: error.column,
+        end_column: None,
     })
 }
 

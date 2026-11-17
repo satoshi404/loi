@@ -4,7 +4,17 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-17):** fixed trailing-comment placement in `loi fmt`.
+- **Current task (2026-11-17):** made lexer-error JSON ranges exclusive and
+  agree with human underlines. `LexError` now carries the exclusive
+  `end_column`, computed with the renderer's token-length scan, and the CLI
+  threads it into `lex`, `fmt` and `check` diagnostics. Parser errors keep the
+  existing line-scan fallback. A new failing-first `tests/cli.rs` case pins
+  `outer = [4]` at column 17 with `end_column` 20 and `x <- "abc` at column 10
+  with `end_column` 14, plus matching 3- and 4-caret underlines. Gate: `cargo
+  fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test
+  --all-targets` (**269 passed, 0 failed**: 22+6+1+102+42+43+2+6+7+23+15),
+  `python3 tools/sync_examples.py --check` all exit 0.
+- **Previous task (2026-11-17):** fixed trailing-comment placement in `loi fmt`.
   The pretty-printer now separates standalone and trailing comments up front,
   records the output line anchored to each source line, and appends trailing
   comments after all lines for that source line are emitted — so they follow the
