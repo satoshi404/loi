@@ -1271,6 +1271,211 @@ open flow main
 }
 
 #[test]
+fn crc32_library_matches_known_vectors_and_chunked_updates() {
+    assert_ok_with_c_variants(
+        "crc32-known",
+        &["crc32.loi"],
+        r#"
+open flow main
+    => i32
+{
+    if CRC32_POLY != 3988292384 or CRC32_INIT != 4294967295 { => 1 }
+    if CRC32_XOROUT != 4294967295 { => 2 }
+    if crc32_bytes("") != 0 { => 3 }
+    if crc32_bytes("a") != 3904355907 { => 4 }
+    if crc32_bytes("hello") != 907060870 { => 5 }
+    if crc32_bytes("123456789") != 3421780262 { => 6 }
+    if crc32_nibble(0) != 0 or crc32_nibble(1) != 498536548 { => 7 }
+    if crc32_nibble(15) != 3183342108 { => 8 }
+    if CRC32_TABLE.len != 8 { => 9 }
+
+    first <- crc32_update(CRC32_INIT, "1234")
+    chunked <- crc32_update(first, "56789") ^ CRC32_XOROUT
+    if chunked != 3421780262 { => 10 }
+    empty_first <- crc32_update(CRC32_INIT, "")
+    empty_final <- crc32_update(empty_first, "") ^ CRC32_XOROUT
+    if empty_final != 0 { => 11 }
+
+    print("crc32 ok\n")
+    => 0
+}
+"#,
+        &[],
+        "crc32 ok\n",
+    );
+}
+
+const CRC32_POLY: u32 = 0xedb8_8320;
+
+fn reference_crc32(data: &[u8]) -> u32 {
+    let mut crc = u32::MAX;
+    for byte in data {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 {
+                (crc >> 1) ^ CRC32_POLY
+            } else {
+                crc >> 1
+            };
+        }
+    }
+    crc ^ u32::MAX
+}
+
+#[test]
+fn seeded_crc32_matches_rust_and_c_bitwise_references() {
+    let shim = r#"
+#include <stddef.h>
+#include <stdint.h>
+
+typedef struct {
+    void* data;
+    size_t len;
+} LoiSlice;
+
+uint32_t loi_crc32_ref(LoiSlice* values) {
+    if (values == NULL || values->data == NULL) {
+        return 0;
+    }
+    const uint8_t* bytes = (const uint8_t*)values->data;
+    uint32_t crc = UINT32_MAX;
+    for (size_t i = 0; i < values->len; ++i) {
+        crc ^= (uint32_t)bytes[i];
+        for (int bit = 0; bit < 8; ++bit) {
+            crc = (crc & 1u) != 0u ? (crc >> 1) ^ UINT32_C(0xedb88320) : (crc >> 1);
+        }
+    }
+    return crc ^ UINT32_MAX;
+}
+"#;
+    let mut rng = SeededRng(0x8c32_5eed_c0ff_ee01);
+    let mut sizes = vec![0, 1, 2, 3, 15, 16, 17, 64];
+    sizes.extend((0..6).map(|_| rng.next_u64() as usize % 129));
+    let mut body = String::from(
+        "\nextern flow loi_crc32_ref\n    <-> data: [u8]\n    => u32\n\nopen flow main\n    => i32\n{\n",
+    );
+    let mut expected = String::new();
+    for (index, size) in sizes.iter().enumerate() {
+        let bytes: Vec<u8> = (0..*size).map(|_| rng.next_u64() as u8).collect();
+        let cut = size / 2;
+        let first_literal = loi_u8_slice(&bytes[..cut]);
+        let second_literal = loi_u8_slice(&bytes[cut..]);
+        body.push_str(&format!(
+            "    data{index}: [u8] <- {literal}\n\
+             \x20   mut c_ref{index}: [u8] <- {literal}\n\
+             \x20   printf(\"crc{index}:%llu\\n\", crc32_bytes(data{index}) as u64)\n\
+             \x20   printf(\"ref{index}:%llu\\n\", loi_crc32_ref(<-> c_ref{index}) as u64)\n\
+             \x20   first{index} <- crc32_update(4294967295, {first_literal})\n\
+             \x20   printf(\"chunk{index}:%llu\\n\", (crc32_update(first{index}, {second_literal}) ^ 4294967295) as u64)\n",
+            literal = loi_u8_slice(&bytes)
+        ));
+        let want = reference_crc32(&bytes);
+        expected.push_str(&format!(
+            "crc{index}:{want}\nref{index}:{want}\nchunk{index}:{want}\n"
+        ));
+    }
+    body.push_str("    print(\"crc32 properties ok\\n\")\n    => 0\n}\n");
+    expected.push_str("crc32 properties ok\n");
+
+    let dir = test_dir("crc32-reference");
+    let shim_path = write_source(&dir, "crc32_shim.c", shim);
+    let program = write_program(&dir, &["crc32.loi"], &body);
+    let checked = check(&program);
+    assert!(
+        checked.status.success(),
+        "check failed: {}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    if let Some((strict, ubsan)) = compile_c_variants(&dir, &program, &[shim_path]) {
+        for executable in [strict, ubsan] {
+            let run = Command::new(&executable)
+                .output()
+                .expect("C program should run");
+            assert_eq!(
+                run.status.code(),
+                Some(0),
+                "CRC32 comparison failed: {}",
+                String::from_utf8_lossy(&run.stderr)
+            );
+            assert_eq!(String::from_utf8_lossy(&run.stdout), expected);
+            assert!(run.stderr.is_empty());
+        }
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn crc32_imports_work_twice_and_across_libraries() {
+    assert_ok_with_c_variants(
+        "crc32-duplicate-imports",
+        &["crc32.loi", "crc32.loi"],
+        r#"
+open flow main
+    => i32
+{
+    if crc32_bytes("loi") == 0 or CRC32_TABLE.len != 8 { => 1 }
+    print("duplicate crc32 imports ok\n")
+    => 0
+}
+"#,
+        &[],
+        "duplicate crc32 imports ok\n",
+    );
+
+    let dir = test_dir("crc32-cross-library");
+    let crc_path = repo_root().join("lib").join("crc32.loi");
+    let a = write_source(
+        &dir,
+        "wrapper_a.loi",
+        &format!(
+            "import \"{}\"\n\nflow digest\n    <- data: [u8]\n    => u32\n{{\n    => crc32_bytes(data)\n}}\n",
+            crc_path.display()
+        ),
+    );
+    let b = write_source(
+        &dir,
+        "wrapper_b.loi",
+        &format!(
+            "import \"{}\"\n\nflow digest_twice\n    <- data: [u8]\n    => u32\n{{\n    => crc32_update(crc32_update(CRC32_INIT, data), data)\n}}\n",
+            crc_path.display()
+        ),
+    );
+    let program = write_source(
+        &dir,
+        "main.loi",
+        &format!(
+            "import \"{}\"\nimport \"{}\"\n\nopen flow main\n    => i32\n{{\n    a <- digest(\"abc\")\n    b <- digest_twice(\"abc\")\n    if a == 0 or b == 0 or a == b {{ => 1 }}\n    print(\"cross crc32 imports ok\\n\")\n    => 0\n}}\n",
+            a.display(),
+            b.display()
+        ),
+    );
+    let checked = check(&program);
+    assert!(
+        checked.status.success(),
+        "check failed: {}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    if let Some((strict, ubsan)) = compile_c_variants(&dir, &program, &[]) {
+        for executable in [strict, ubsan] {
+            let run = Command::new(&executable)
+                .output()
+                .expect("C program should run");
+            assert_eq!(
+                run.status.code(),
+                Some(0),
+                "cross-library crc32 import failed: {}",
+                String::from_utf8_lossy(&run.stderr)
+            );
+            assert_eq!(
+                String::from_utf8_lossy(&run.stdout),
+                "cross crc32 imports ok\n"
+            );
+        }
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn all_libraries_can_be_imported_together() {
     assert_ok(
         "all-libraries",
@@ -1282,6 +1487,7 @@ fn all_libraries_can_be_imported_together() {
             "slice.loi",
             "string.loi",
             "hash.loi",
+            "crc32.loi",
             "os.loi",
             "net.loi",
         ],
@@ -1296,6 +1502,7 @@ open flow main
     if os_pid() <= 0 { => 5 }
     if not net_port_is_valid(443) { => 6 }
     if hash_str("loi") == 0 or str_count("loi", 108) != 1 { => 7 }
+    if crc32_bytes("loi") == 0 { => 8 }
     mut ok: i32 <- 0
     if os_pid() > 0 {
         ok = 1

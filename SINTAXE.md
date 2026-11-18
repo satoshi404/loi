@@ -604,8 +604,8 @@ print("\n")
 
 Every library file is imported explicitly with the canonical `import` form.
 Names are prefixed by module (`math_*`, `ctype_*`, `vec_*`, `slice_*`, `str_*`,
-`hash_*`, `os_*`, `net_*`) because imports are textual and there are no
-namespaces yet.
+`hash_*`, `crc32_*`, `os_*`, `net_*`) because imports are textual and there are
+no namespaces yet.
 
 | File | Helpers | Needs a shim? |
 |---|---|---|
@@ -616,6 +616,7 @@ namespaces yet.
 | `lib/slice.loi` | `slice_len<T>`, `slice_is_empty<T>`, `slice_get<T>`, `slice_first<T>`, `slice_last<T>`, `slice_find<T>`, `slice_equals_u8`, `slice_clone<T>`, `slice_copy<T>`, `slice_reverse<T>` | no; allocators need `protect` |
 | `lib/string.loi` | `STRING_MAX_LEN`, `str_is_ascii_space`, `str_trim`, `str_concat`, `str_reverse`, `str_repeat`, `str_count`, `str_index_of`, `str_contains` | no; owned results need `protect` |
 | `lib/hash.loi` | `HASH_OFFSET`, `HASH_PRIME`, `hash_bytes_seeded`, `hash_bytes`, `hash_str`, `hash_u64_seeded`, `hash_u64`, `hash_pair_u64` | no |
+| `lib/crc32.loi` | `CRC32_POLY`, `CRC32_INIT`, `CRC32_XOROUT`, `CRC32_TABLE`, `crc32_update`, `crc32_bytes` | no |
 | `lib/os.loi` | `os_pid`, `os_unix_time`, `os_sleep`, `os_has_env`, `os_env_i32`, `os_errno`, `os_exit` | `lib/os_shim.c` |
 | `lib/net.loi` | `NetIpv4Result`, `net_ipv4`, `net_ipv4_octet`, `net_port_is_valid`, `net_parse_ipv4`, `net_tcp_connect`, `net_close`, `net_send`, `net_recv` | `lib/net_shim.c` |
 
@@ -628,7 +629,9 @@ without slice fields, and ordering/search flows accept numeric `T` only.
 `sealed` and need the caller's `protect`; its queries are `open`. `str_repeat`
 rejects an overflowing count with a flow-naming error. `lib/hash.loi` is pure:
 it implements 64-bit FNV-1a, hashes `u64` values as little-endian bytes, and
-needs no `protect`. Loi has no character literals, so byte queries use numeric
+needs no `protect`. `lib/crc32.loi` is also pure: `comptime` flows generate a
+16-entry reflected nibble table stored as a static slice, and `crc32_update`
+folds chunks incrementally. Loi has no character literals, so byte queries use numeric
 values while substring queries use string slices; see
 `development/FRICTION.md`.
 `lib/os.loi` and `lib/net.loi` are

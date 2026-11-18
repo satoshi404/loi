@@ -143,3 +143,48 @@ No Phase 2 flow was blocked. `str_repeat` checks multiplication overflow before
 allocating and calls `panic` with a literal, flow-naming message; `hash_*` flows
 are pure. The `if false { panic(name) }` placeholder initially written into
 `lib/string.loi` was dead code and was removed after the tests passed.
+
+## Phase 3 — `lib/crc32.loi`
+
+### Comptime flows cannot assign to shape fields
+
+Attempted design: build a packed shape of compile-time table words by mutating
+its fields in a `comptime flow`. The probe was
+`/tmp/opencode/loi-phase0/comptime_shape.loi`. An uninitialized local shape
+failed first:
+
+```text
+error: initializer for global 'PACK' must be a compile-time constant: comptime flow bindings require an initializer
+  --> /tmp/opencode/loi-phase0/comptime_shape.loi:22:15
+```
+
+Giving the local a shape literal and assigning fields then produced:
+
+```text
+error: initializer for global 'PACK' must be a compile-time constant: comptime flows can only assign to local bindings
+  --> /tmp/opencode/loi-phase0/comptime_shape.loi:22:15
+```
+
+Language requirement: permit field assignment on local composite bindings
+inside a `comptime flow`, or provide a compile-time builder form. Current
+workaround: compute each packed word in a scalar `comptime flow` and construct
+the table in a global slice literal whose elements are `comptime` calls; the
+C backend emits it as a static named array.
+
+### A 256-entry table cannot be packed into `u64` words
+
+Attempted design: pack eight 32-bit entries into each `u64` with shifts up to
+224 bits. The probe was `/tmp/opencode/loi-phase0/comptime_pack_shape.loi`.
+
+Exact diagnostic:
+
+```text
+error: initializer for global 'PACK' must be a compile-time constant: shift count is out of range
+  --> /tmp/opencode/loi-phase0/comptime_pack_shape.loi:45:15
+```
+
+Language requirement: a wider integer type or compile-time byte arrays so 256
+32-bit entries can be stored compactly. Current workaround: use the 16-entry
+reflected nibble table, pack two 32-bit entries per `u64`, and process two
+nibbles per input byte. It is still generated entirely by `comptime` flows and
+matches a bitwise reference on known vectors and seeded data.

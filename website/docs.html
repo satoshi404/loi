@@ -678,8 +678,8 @@ print(other.x)</code></pre>
             <code>import "lib/std.loi"</code>. Names are prefixed by module
             (<code>math_*</code>, <code>ctype_*</code>, <code>vec_*</code>,
             <code>slice_*</code>, <code>str_*</code>, <code>hash_*</code>,
-            <code>os_*</code>, <code>net_*</code>) because imports are
-            textual.</p>
+            <code>crc32_*</code>, <code>os_*</code>, <code>net_*</code>)
+            because imports are textual.</p>
 
           <table class="doc-table">
             <thead>
@@ -767,6 +767,13 @@ print(other.x)</code></pre>
                 <td>no</td>
               </tr>
               <tr>
+                <td><code>lib/crc32.loi</code></td>
+                <td><code>CRC32_POLY</code>, <code>CRC32_INIT</code>,
+                  <code>CRC32_XOROUT</code>, <code>CRC32_TABLE</code>,
+                  <code>crc32_update</code>, <code>crc32_bytes</code></td>
+                <td>no</td>
+              </tr>
+              <tr>
                 <td><code>lib/os.loi</code></td>
                 <td><code>os_pid</code>, <code>os_unix_time</code>,
                   <code>os_sleep</code>, <code>os_has_env</code>,
@@ -799,7 +806,10 @@ print(other.x)</code></pre>
             <code>str_repeat</code> rejects an overflowing count with a
             flow-naming error. <code>lib/hash.loi</code> is pure 64-bit FNV-1a:
             <code>u64</code> values are hashed as little-endian bytes and no
-            <code>protect</code> is needed. Loi has no character literals, so
+            <code>protect</code> is needed. <code>lib/crc32.loi</code> is also
+            pure: <code>comptime</code> flows generate a 16-entry reflected
+            nibble table stored as a static slice, and
+            <code>crc32_update</code> folds chunks incrementally. Loi has no character literals, so
             byte queries use numeric values while substring queries use string
             slices. <code>lib/os.loi</code> and
             <code>lib/net.loi</code> are thin POSIX bindings: compile their
