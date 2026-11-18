@@ -45,6 +45,16 @@ fn systems_example_type_checks() {
 }
 
 #[test]
+fn marks_example_type_checks() {
+    assert_clean(include_str!("../examples/marks.loi"));
+}
+
+#[test]
+fn choices_example_type_checks() {
+    assert_clean(include_str!("../examples/choices.loi"));
+}
+
+#[test]
 fn unsuffixed_literals_coerce_to_numeric_types() {
     assert_clean(
         "flow whole\n    => f64\n{\n    => 1\n}\n\nflow add\n    <- x: u32\n    => u32\n{\n    => x + 1\n}\n\nflow div\n    => f64\n{\n    => 1.0 / 60\n}\n",

@@ -225,6 +225,22 @@ fn tictactoe_example_compiles_and_runs() {
 }
 
 #[test]
+fn marks_example_compiles_and_runs() {
+    let c = generated(include_str!("../examples/marks.loi"));
+    assert_strict_c11("marks-example", &c);
+    assert_sanitizers_compile("marks-example", &c);
+    compile_and_run("marks-example", &c, "");
+}
+
+#[test]
+fn choices_example_compiles_and_runs() {
+    let c = generated(include_str!("../examples/choices.loi"));
+    assert_strict_c11("choices-example", &c);
+    assert_sanitizers_compile("choices-example", &c);
+    compile_and_run("choices-example", &c, "");
+}
+
+#[test]
 fn header_contains_visible_items_only() {
     let h = generated_header(
         "open shape Vec2 [\n    x: f64\n    y: f64\n]\n\nopen shape World [\n    gravity: Vec2\n]\n\nopen flow world_new\n    <- size: Vec2\n    -> w: World\n{\n    w.gravity = Vec2[ x: 0, y: 0 ]\n}\n\nflow secret\n    => i32\n{\n    => 1\n}\n\nflow main\n    => i32\n{\n    => 0\n}\n",

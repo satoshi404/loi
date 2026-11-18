@@ -99,9 +99,12 @@ cargo test --all-targets
   with POSIX shims.
 
 Start with [`SINTAXE.md`](SINTAXE.md) for the canonical surface and
-[`examples/flow_syntax.loi`](examples/flow_syntax.loi) for a complete tour. The
-raylib examples include an automatic sound synth and a C3-inspired audio
-visualizer; see [`website/docs.html`](website/docs.html) for their build commands.
+[`examples/flow_syntax.loi`](examples/flow_syntax.loi) for a complete tour.
+[`examples/marks.loi`](examples/marks.loi) and
+[`examples/choices.loi`](examples/choices.loi) show finite tag sets and checked
+tagged payloads. The raylib examples include an automatic sound synth and a
+C3-inspired audio visualizer; see [`website/docs.html`](website/docs.html) for
+their build commands.
 
 ## Repository layout
 
@@ -110,7 +113,7 @@ visualizer; see [`website/docs.html`](website/docs.html) for their build command
 | `src/` | Lexer, parser, type/ownership checker, C backend, draft IR/assembly |
 | `tests/` | Lexer/parser/checker/codegen/CLI/bindgen integration tests |
 | `lib/*.loi`, `lib/*_shim.c` | Modular library: pure Loi helpers plus POSIX shims for `os`/`net` |
-| `examples/` | Reference programs, including `flow_syntax.loi`, `systems.loi` and `tictactoe.loi` |
+| `examples/` | Reference programs, including `flow_syntax.loi`, `marks.loi`, `choices.loi`, `systems.loi` and `tictactoe.loi` |
 | `vendor/` | Generated Loi bindings for SDL2 and raylib 5.5, with shims and skip reports |
 | `tools/bindgen/` | Header-to-Loi binding generator |
 | `website/` | Static site, documentation and local playground |

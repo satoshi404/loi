@@ -4,32 +4,35 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-18):** Loi-native sum types. Added `mark` (payload-free
+- **Current task (2026-11-18):** expanded the canonical example set with two
+  runnable Flow Syntax programs: `examples/marks.loi` covers a finite tag set,
+  equality, state transitions and a mark stored in a shape; `examples/choices.loi`
+  covers tagged payloads, `is` tests, checked payload reads, a mark payload,
+  `give` into a shape and a nested choice field. Both are mirrored by
+  `website/examples/`, linked from `README.md` and `website/docs.html`, and
+  listed in `SINTAXE.md`. New checker and codegen tests type-check, generate,
+  strict-C11 check, sanitizer-compile and run both programs.
+- **Verification for the current task:** `loi check` passed on both examples;
+  `loi build` plus execution printed `marks ok` and `choices ok` with exit 0.
+  The generated C for both passed strict C11 and ASan+UBSan compile-only checks
+  in `cargo test`; no ASan execution is claimed in this PRoot container. Final
+  gate command:
+  `export PATH="/root/.cargo/bin:$PATH"; export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets && python3 tools/sync_examples.py --check && git diff --check`.
+  All five checks exited 0; `cargo test --all-targets` reported **320 passed,
+  0 failed** (22+6+1+113+42+51+2+8+32+26+17).
+- **Previous task (2026-11-18):** Loi-native sum types. Added `mark` (payload-free
   finite tag set), `choice` (tagged payload) and `is` (variant test) across the
   lexer, AST, parser, checker, formatter, monomorphization pass and C11 backend.
-  Surface: `mark Color [ Red, Green, Blue ]`,
-  `choice Result [ Ok: i32, Err: i64 ]`, `c <- Color.Green`,
-  `r <- Result.Ok(42)` and `r is Result.Ok`. Marks are scalar-like and compare
-  only with the same mark; choice constructors take exactly one `<-` payload;
-  `value.Variant` is a checked read that aborts with the declaration, variant
-  and source position. Payloads are limited to numeric scalars, `bool`, marks
-  and slice-free shapes. The C backend emits `uint32_t` marks with variant
-  macros, and choices as a tag plus C union with checked inline getters. Names,
-  rationale and binding rules are recorded in `SINTAXE.md`, `LOI_SPEC.md` and
-  `DECISIONS.md`; `website/docs.html`, `website/assets/highlight.js`,
-  `tools/bindgen/bindgen.py` and its fixture were updated in the same change.
+  Marks compare only with the same mark; choice constructors take exactly one
+  `<-` payload; `value.Variant` reads are checked at runtime and abort with the
+  declaration, variant and source position. Payloads are limited to numeric
+  scalars, `bool`, marks and slice-free shapes. The C backend emits `uint32_t`
+  marks with macros and choices as a tag plus C union with checked getters.
   Bindgen maps only zero-based contiguous C enums to marks through the C shim;
   sparse enums remain integer constants and arbitrary C unions remain skipped.
-- **Verification for the current task:** generated C for marks and choices was
-  compiled and run under `cc -std=c11 -pedantic-errors -Wall -Wextra -Werror`;
-  a wrong payload aborted with
-  `loi: choice 'Result' does not hold 'Err' at 20:8` and exit 1. The generated
-  translation unit also passed syntax-only strict C11 and ASan+UBSan
-  compile-only checks. ASan execution remains unavailable in this PRoot
-  container, so no ASan run is claimed. Final gate command:
-  `export PATH="/root/.cargo/bin:$PATH"; export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets && python3 tools/sync_examples.py --check && git diff --check`.
-  All five checks exited 0; `cargo test --all-targets` reported **316 passed,
-  0 failed** (22+6+1+111+42+49+2+8+32+26+17).
+  That task's gate also passed: 316 tests, strict C11, sanitizer compile-only
+  and a wrong-payload abort of
+  `loi: choice 'Result' does not hold 'Err' at 20:8` with exit 1.
 - **Previous task (2026-11-18):** LLVM optimization evaluation (analysis only;
   no compiler, language or CLI change). Confirmed that `clang 21.1.8`, `opt`,
   `llc`, `llvm-config`, `llvm-as`, `llvm-dis` and `lli` are available locally and
@@ -358,7 +361,7 @@
 
 ## Verification
 
-Last verified 2026-11-18 with:
+Last verified 2026-11-18 after the canonical example expansion with:
 
 ```sh
 export PATH=/root/.cargo/bin:$PATH
@@ -375,8 +378,11 @@ for f in lib/std.loi lib/math.loi lib/ctype.loi lib/os.loi lib/net.loi; do ./tar
 
 - `cargo fmt --check`: exit 0.
 - `cargo clippy --all-targets -- -D warnings`: exit 0.
-- `cargo test --all-targets`: **294 passed, 0 failed** (22+6+1+102+42+43+2+6+32+23+15 across all targets; compile-and-run tests run when `cc` is available).
+- `cargo test --all-targets`: **320 passed, 0 failed** (22+6+1+113+42+51+2+8+32+26+17 across all targets; compile-and-run tests run when `cc` is available).
 - `python3 tools/sync_examples.py --check`: `website/examples` is in sync.
+- `examples/marks.loi` and `examples/choices.loi`: `loi check` passed; built
+  executables printed `marks ok` and `choices ok` and exited 0. Their generated
+  C passed strict C11 and ASan+UBSan compile-only checks in `tests/codegen.rs`.
 - `git diff --check`, `node --check website/server.mjs`, both strict-C11 shim checks and `loi check` on every library file: exit 0.
 - `tests/lib.rs` builds and runs programs that import every module, including both shims, and checks that generic/comptime math, ASCII parsing, environment reads and IPv4/TCP helpers behave as documented. A local playground `/api/run` request importing `math.loi` and `os.loi` returned `ok:true` with `playground libs ok`.
 - `node --check website/web/*.js`: exit 0 for both generated demos;

@@ -961,5 +961,7 @@ Reference programs:
 - `examples/particles.loi` — same program, canonical output of `loi fmt`.
 - `examples/tictactoe.loi` — deterministic self-play.
 - `examples/language_basics.loi` — imports, globals, strings and slices.
+- `examples/marks.loi` — finite tag sets, equality and state transitions.
+- `examples/choices.loi` — tagged payloads, `is` tests and checked reads.
 - `examples/systems.loi` — bitwise flags, shifts and file/stdin I/O.
 - `lib/std.loi` — standard library written in canonical Loi.

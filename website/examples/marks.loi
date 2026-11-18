@@ -1,0 +1,73 @@
+// Finite state machines without a C-style `enum`: a mark is a payload-free
+// set of named tags. Build and run with:
+//     loi build examples/marks.loi -o marks
+//     ./marks
+
+open mark Signal [
+    Red
+    Green
+    Amber
+]
+
+shape Crossing [
+    light: Signal
+    cars_waiting: i32
+]
+
+sealed flow next_signal
+    <- current: Signal
+    => Signal
+{
+    if current == Signal.Red {
+        => Signal.Green
+    }
+    if current == Signal.Green {
+        => Signal.Amber
+    }
+    => Signal.Red
+}
+
+sealed flow can_pass
+    <- crossing: Crossing
+    => bool
+{
+    => crossing.light == Signal.Green and crossing.cars_waiting == 0
+}
+
+open flow main
+    => i32
+{
+    mut light: Signal <- Signal.Red
+    if light != Signal.Red {
+        => 1
+    }
+
+    light = next_signal(light)
+    if light != Signal.Green {
+        => 2
+    }
+
+    busy: Crossing <- Crossing[ light: light, cars_waiting: 1 ]
+    if can_pass(busy) {
+        => 3
+    }
+
+    ready: Crossing <- Crossing[ light: light, cars_waiting: 0 ]
+    if not can_pass(ready) {
+        => 4
+    }
+
+    light = next_signal(light)
+    amber: Crossing <- Crossing[ light: light, cars_waiting: 0 ]
+    if light != Signal.Amber or can_pass(amber) {
+        => 5
+    }
+
+    light = next_signal(light)
+    if light != Signal.Red {
+        => 6
+    }
+
+    print("marks ok\n")
+    => 0
+}

@@ -1,0 +1,82 @@
+// Tagged results without a C-style `union`: each choice variant carries one
+// payload, `is` tests the active variant, and payload reads are checked at
+// runtime. Build and run with:
+//     loi build examples/choices.loi -o choices
+//     ./choices
+
+open mark Priority [
+    Low
+    High
+]
+
+open choice JobResult [
+    Done: i32
+    Retry: i32
+    Failed: Priority
+]
+
+shape Job [
+    id: i32
+    result: JobResult
+]
+
+sealed flow result_code
+    <- result: JobResult
+    => i32
+{
+    if result is JobResult.Done {
+        => result.Done
+    }
+    if result is JobResult.Retry {
+        => -(result.Retry)
+    }
+    if result is JobResult.Failed {
+        if result.Failed == Priority.High {
+            => -3
+        }
+        => -4
+    }
+    => -5
+}
+
+open flow main
+    => i32
+{
+    done <- JobResult.Done(7)
+    if not (done is JobResult.Done) {
+        => 1
+    }
+    if result_code(done) != 7 {
+        => 2
+    }
+
+    retry <- JobResult.Retry(2)
+    if retry is JobResult.Done {
+        => 3
+    }
+    if result_code(retry) != -2 {
+        => 4
+    }
+
+    failed <- JobResult.Failed(Priority.High)
+    if not (failed is JobResult.Failed) {
+        => 5
+    }
+    if result_code(failed) != -3 {
+        => 6
+    }
+
+    job: Job <- Job[ id: 1, result: give(done) ]
+    if job.id != 1 {
+        => 7
+    }
+    if not (job.result is JobResult.Done) {
+        => 8
+    }
+    if job.result.Done != 7 {
+        => 9
+    }
+
+    print("choices ok\n")
+    => 0
+}
