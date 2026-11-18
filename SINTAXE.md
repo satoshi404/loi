@@ -604,8 +604,8 @@ print("\n")
 
 Every library file is imported explicitly with the canonical `import` form.
 Names are prefixed by module (`math_*`, `ctype_*`, `vec_*`, `slice_*`, `str_*`,
-`hash_*`, `crc32_*`, `map_*`, `os_*`, `net_*`) because imports are textual and
-there are no namespaces yet.
+`hash_*`, `crc32_*`, `map_*`, `rng_*`, `os_*`, `net_*`) because imports are
+textual and there are no namespaces yet.
 
 | File | Helpers | Needs a shim? |
 |---|---|---|
@@ -618,6 +618,7 @@ there are no namespaces yet.
 | `lib/hash.loi` | `HASH_OFFSET`, `HASH_PRIME`, `hash_bytes_seeded`, `hash_bytes`, `hash_str`, `hash_u64_seeded`, `hash_u64`, `hash_pair_u64` | no |
 | `lib/crc32.loi` | `CRC32_POLY`, `CRC32_INIT`, `CRC32_XOROUT`, `CRC32_TABLE`, `crc32_update`, `crc32_bytes` | no |
 | `lib/map.loi` | `IntMap<V>`, `StrMap<V>`, `map_int_new<V>`, `map_int_len<V>`, `map_int_capacity<V>`, `map_int_contains<V>`, `map_int_get<V>`, `map_int_set<V>`, `map_int_remove<V>`, `map_int_clear<V>`, and the matching `map_str_*` flows | no; mutators need `protect` |
+| `lib/random.loi` | `Rng`, `rng_new`, `rng_state`, `rng_next_u64`, `rng_next_u32`, `rng_below_u64`, `rng_pick<T>`, `rng_shuffle<T>` | no |
 | `lib/os.loi` | `os_pid`, `os_unix_time`, `os_sleep`, `os_has_env`, `os_env_i32`, `os_errno`, `os_exit` | `lib/os_shim.c` |
 | `lib/net.loi` | `NetIpv4Result`, `net_ipv4`, `net_ipv4_octet`, `net_port_is_valid`, `net_parse_ipv4`, `net_tcp_connect`, `net_close`, `net_send`, `net_recv` | `lib/net_shim.c` |
 
@@ -637,7 +638,10 @@ with linear scans and value-only generics: `V` must be cloneable without slice
 fields. `StrMap<V>` stores byte keys in one contiguous arena buffer, so no
 slice-of-slices value is formed. Mutations need the caller's `protect`, and a
 missing key in `map_int_get` / `map_str_get` aborts with a flow-naming message;
-use the `contains` flows first. Loi has no character literals, so byte queries use numeric
+use the `contains` flows first. `lib/random.loi` is a pure, seeded xorshift64*
+generator with `u64` / `u32` draws, bounded draws, picking and in-place
+Fisher–Yates shuffling; it needs no `protect` and is not cryptographically
+secure. Loi has no character literals, so byte queries use numeric
 values while substring queries use string slices; see
 `development/FRICTION.md`.
 `lib/os.loi` and `lib/net.loi` are

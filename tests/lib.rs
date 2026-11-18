@@ -1825,6 +1825,259 @@ open flow main
 }
 
 #[test]
+fn random_library_matches_known_vectors_and_shuffles_deterministically() {
+    assert_ok_with_c_variants(
+        "random-core",
+        &["random.loi"],
+        r#"
+shape Pair [
+    a: i32
+    b: i32
+]
+
+open flow main
+    => i32
+{
+    mut rng: Rng <- rng_new(1)
+    if rng_state(rng) != 1 { => 1 }
+    first <- rng_next_u64(<-> rng)
+    second <- rng_next_u64(<-> rng)
+    if first != 5180492295206395165 or second != 12380297144915551517 { => 2 }
+    if rng_state(rng) != 1126174793148417 { => 3 }
+    limited <- rng_below_u64(<-> rng, 10)
+    narrow <- rng_next_u32(<-> rng)
+    if limited != 3 or narrow != 1303648416 { => 4 }
+
+    mut other: Rng <- rng_new(831729)
+    again <- rng_next_u64(<-> other)
+    if again == 0 or rng_state(other) == 0 { => 5 }
+
+    mut left: Rng <- rng_new(42)
+    mut right: Rng <- rng_new(42)
+    mut a: [i32] <- [i32: 1, 2, 3, 4, 5, 6, 7, 8]
+    mut b: [i32] <- [i32: 1, 2, 3, 4, 5, 6, 7, 8]
+    rng_shuffle<i32>(<-> left, <-> a)
+    rng_shuffle<i32>(<-> right, <-> b)
+    for i in 0..8 {
+        if a[i] != b[i] { => 6 }
+    }
+
+    mut empty: [i32] <- [i32:]
+    mut single: [i32] <- [i32: 9]
+    rng_shuffle<i32>(<-> left, <-> empty)
+    rng_shuffle<i32>(<-> left, <-> single)
+    if empty.len != 0 or single[0] != 9 { => 7 }
+
+    mut pairs: [Pair] <- [Pair[ a: 1, b: 2 ], Pair[ a: 3, b: 4 ], Pair[ a: 5, b: 6 ]]
+    mut pair_rng: Rng <- rng_new(7)
+    rng_shuffle<Pair>(<-> pair_rng, <-> pairs)
+    if rng_pick<Pair>(<-> pair_rng, pairs).a < 1 { => 8 }
+
+    print("random ok\n")
+    => 0
+}
+"#,
+        &[],
+        "random ok\n",
+    );
+}
+
+struct Xorshift(u64);
+
+impl Xorshift {
+    fn next_u64(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        self.0 = x;
+        x.wrapping_mul(2685821657736338717)
+    }
+
+    fn below(&mut self, bound: u64) -> u64 {
+        self.next_u64() % bound
+    }
+}
+
+#[test]
+fn seeded_random_matches_rust_xorshift_reference() {
+    let mut body = String::from("\nopen flow main\n    => i32\n{\n");
+    let mut expected = String::new();
+
+    for (seed_index, seed) in [1_u64, 0x0123_4567_89ab_cdef].into_iter().enumerate() {
+        body.push_str(&format!(
+            "    mut rng{seed_index}: Rng <- rng_new({seed})\n"
+        ));
+        let mut reference = Xorshift(seed);
+        for step in 0..12 {
+            match step % 3 {
+                0 => {
+                    let value = reference.next_u64();
+                    body.push_str(&format!(
+                        "    printf(\"n{seed_index}_{step}:%llu\\n\", rng_next_u64(<-> rng{seed_index}))\n"
+                    ));
+                    expected.push_str(&format!("n{seed_index}_{step}:{value}\n"));
+                }
+                1 => {
+                    let value = reference.next_u64() >> 32;
+                    body.push_str(&format!(
+                        "    printf(\"u{seed_index}_{step}:%llu\\n\", rng_next_u32(<-> rng{seed_index}) as u64)\n"
+                    ));
+                    expected.push_str(&format!("u{seed_index}_{step}:{value}\n"));
+                }
+                _ => {
+                    let bound = (step as u64) + 3;
+                    let value = reference.below(bound);
+                    body.push_str(&format!(
+                        "    printf(\"b{seed_index}_{step}:%llu\\n\", rng_below_u64(<-> rng{seed_index}, {bound}))\n"
+                    ));
+                    expected.push_str(&format!("b{seed_index}_{step}:{value}\n"));
+                }
+            }
+        }
+    }
+
+    let seed = 0xfeed_5eed_1234_5678;
+    let values: Vec<i64> = (0..24).collect();
+    body.push_str(&format!("    mut rng: Rng <- rng_new({seed})\n"));
+    body.push_str("    mut shuffled: [i64] <- [i64: ");
+    body.push_str(
+        &values
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    body.push_str("]\n    rng_shuffle<i64>(<-> rng, <-> shuffled)\n");
+    let mut reference = Xorshift(seed);
+    let mut expected_values = values.clone();
+    let mut i = expected_values.len() - 1;
+    while i > 0 {
+        let j = reference.below((i + 1) as u64) as usize;
+        expected_values.swap(i, j);
+        i -= 1;
+    }
+    for (index, value) in expected_values.iter().enumerate() {
+        body.push_str(&format!(
+            "    printf(\"s{index}:%lld\\n\", shuffled[{index}])\n"
+        ));
+        expected.push_str(&format!("s{index}:{value}\n"));
+    }
+    body.push_str("    print(\"random properties ok\\n\")\n    => 0\n}\n");
+    expected.push_str("random properties ok\n");
+
+    assert_ok_with_c_variants("random-properties", &["random.loi"], &body, &[], &expected);
+}
+
+#[test]
+fn random_errors_name_the_flow() {
+    assert_runtime_error(
+        "random-bound-error",
+        &["random.loi"],
+        r#"
+open flow main
+    => i32
+{
+    mut rng: Rng <- rng_new(1)
+    value <- rng_below_u64(<-> rng, 0)
+    if value == 0 { print("unreachable\n") }
+    => 0
+}
+"#,
+        "rng_below_u64: bound is zero\n",
+    );
+
+    assert_runtime_error(
+        "random-pick-error",
+        &["random.loi"],
+        r#"
+open flow main
+    => i32
+{
+    mut rng: Rng <- rng_new(1)
+    empty: [i32] <- [i32:]
+    value <- rng_pick<i32>(<-> rng, empty)
+    if value == 0 { print("unreachable\n") }
+    => 0
+}
+"#,
+        "rng_pick: slice is empty\n",
+    );
+}
+
+#[test]
+fn random_imports_work_twice_and_across_libraries() {
+    assert_ok_with_c_variants(
+        "random-duplicate-imports",
+        &["random.loi", "random.loi"],
+        r#"
+open flow main
+    => i32
+{
+    mut rng: Rng <- rng_new(1)
+    if rng_state(rng) != 1 or rng_next_u64(<-> rng) == 0 { => 1 }
+    print("duplicate random imports ok\n")
+    => 0
+}
+"#,
+        &[],
+        "duplicate random imports ok\n",
+    );
+
+    let dir = test_dir("random-cross-library");
+    let random_path = repo_root().join("lib").join("random.loi");
+    let a = write_source(
+        &dir,
+        "wrapper_a.loi",
+        &format!(
+            "import \"{}\"\n\nflow mixed\n    <- seed: u64\n    => u64\n{{\n    mut rng: Rng <- rng_new(seed)\n    first <- rng_next_u64(<-> rng)\n    second <- rng_next_u64(<-> rng)\n    => first ^ second\n}}\n",
+            random_path.display()
+        ),
+    );
+    let b = write_source(
+        &dir,
+        "wrapper_b.loi",
+        &format!(
+            "import \"{}\"\n\nflow shuffled_first\n    <- seed: u64\n    => i32\n{{\n    mut rng: Rng <- rng_new(seed)\n    mut xs: [i32] <- [i32: 1, 2, 3, 4]\n    rng_shuffle<i32>(<-> rng, <-> xs)\n    => xs[0]\n}}\n",
+            random_path.display()
+        ),
+    );
+    let program = write_source(
+        &dir,
+        "main.loi",
+        &format!(
+            "import \"{}\"\nimport \"{}\"\n\nopen flow main\n    => i32\n{{\n    mixed_value <- mixed(5)\n    first <- shuffled_first(5)\n    if mixed_value == 0 or first < 1 or first > 4 {{ => 1 }}\n    print(\"cross random imports ok\\n\")\n    => 0\n}}\n",
+            a.display(),
+            b.display()
+        ),
+    );
+    let checked = check(&program);
+    assert!(
+        checked.status.success(),
+        "check failed: {}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    if let Some((strict, ubsan)) = compile_c_variants(&dir, &program, &[]) {
+        for executable in [strict, ubsan] {
+            let run = Command::new(&executable)
+                .output()
+                .expect("C program should run");
+            assert_eq!(
+                run.status.code(),
+                Some(0),
+                "cross-library random import failed: {}",
+                String::from_utf8_lossy(&run.stderr)
+            );
+            assert_eq!(
+                String::from_utf8_lossy(&run.stdout),
+                "cross random imports ok\n"
+            );
+        }
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn all_libraries_can_be_imported_together() {
     assert_ok(
         "all-libraries",
@@ -1838,6 +2091,7 @@ fn all_libraries_can_be_imported_together() {
             "hash.loi",
             "crc32.loi",
             "map.loi",
+            "random.loi",
             "os.loi",
             "net.loi",
         ],
@@ -1858,6 +2112,8 @@ open flow main
         map_int_new<i32>(-> m)
         map_int_set<i32>(<-> m, 1, 42)
         if map_int_get<i32>(m, 1) != 42 { => 9 }
+        mut rng: Rng <- rng_new(1)
+        if rng_next_u64(<-> rng) == 0 { => 10 }
     }
     mut ok: i32 <- 0
     if os_pid() > 0 {

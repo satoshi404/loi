@@ -4,7 +4,23 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-18):** Phase 4 standard-library expansion: maps.
+- **Current task (2026-11-18):** Phase 5 standard-library expansion: seeded
+  randomness. Added `lib/random.loi` test-first: four new `tests/lib.rs` cases
+  cover known xorshift64* vectors, `u64` / `u32` / bounded draws, state
+  progression, picking, deterministic in-place Fisher–Yates shuffling, exact
+  flow-naming runtime errors, seeded comparisons against a Rust reference,
+  duplicate imports, and two libraries importing the module. `Rng` is one
+  `u64` inout state, so all flows are pure and need no `protect`; the library is
+  explicitly not cryptographically secure. Public docs were updated in
+  `SINTAXE.md` and `website/docs.html`. Every test program's C was compiled with
+  `-std=c11 -pedantic-errors -Wall -Wextra` (warnings treated as failure),
+  UBSan-only builds were compiled and run clean, and ASan+UBSan builds were
+  compiled but not run because this PRoot container cannot map ASan shadow
+  memory. Gate: `cargo fmt --check`, `cargo clippy --all-targets -- -D
+  warnings`, `cargo test --all-targets` (**294 passed, 0 failed**:
+  22+6+1+102+42+43+2+6+32+23+15), `python3 tools/sync_examples.py --check`, and
+  `git diff --check` all exit 0. Next: Phase 6, measured benchmarks.
+- **Previous task (2026-11-18):** Phase 4 standard-library expansion: maps.
   Added `lib/map.loi` test-first: five new `tests/lib.rs` cases cover every
   `map_int_*` and `map_str_*` flow with runnable programs, growth from 8 to 32
   entries, composite values, exact missing-key errors, seeded comparisons

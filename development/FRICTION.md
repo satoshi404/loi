@@ -207,3 +207,11 @@ ever formed.
 
 No other Phase 4 design was blocked. `IntMap<V>` and `StrMap<V>` are generic
 only over `V`, which is documented as cloneable without slice fields.
+
+## Phase 5 — `lib/random.loi`
+
+No Phase 5 design was blocked. `Rng` is a single `u64` inout state; xorshift64*,
+bounded draws, picking and Fisher–Yates shuffling all fit in pure Loi without
+allocation. The only earlier test mistakes were ordinary language rules: a
+binding passed with `<->` must be declared `mut`, and two inout calls cannot be
+sequenced inside one expression. Neither is a blocked design.
