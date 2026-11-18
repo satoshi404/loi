@@ -270,6 +270,7 @@ protect {
 - `alloc` outside any `protect` is a compile error, so there is no manual `free`. **(provisional)**
 - Static and dynamic checks must prevent escape.
 - **Implementation:** `protect` is a bump arena that grows in chunks. `--arena-size BYTES` (default 64 MiB) sets the size of the first chunk, not a hard cap. Later chunks grow geometrically, and an allocation larger than the current chunk gets a dedicated chunk. Chunks are never moved or freed, so slices already handed out stay valid; leaving the block restores the arena offset. The arena is process-global and not thread-safe.
+- **Implementation:** the unguarded-allocation check treats only `main` as an entry point. An uncalled helper may rely on its caller's `protect` regardless of visibility, so exported library allocators can be `open`; Loi call sites are still checked through the call graph. A foreign caller must supply the `protect` region by contract.
 
 ### 4.6 Visibility
 

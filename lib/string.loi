@@ -6,11 +6,12 @@
 //! import "lib/string.loi"
 //! ```
 //!
-//! Strings are `[u8]`. Flow names with an owned result are `sealed` because
-//! they allocate in the caller's `protect` region; the query flows are `open`.
-//! Names avoid the helpers in `lib/std.loi` and `lib/ctype.loi`.
+//! Strings are `[u8]`. Transforming flows are `open` public APIs, but they
+//! still allocate in the caller's `protect` region; query flows are `open` and
+//! need no region. Names avoid the helpers in `lib/std.loi` and
+//! `lib/ctype.loi`.
 
-STRING_MAX_LEN: u64 <- 18446744073709551615
+open STRING_MAX_LEN: u64 <- 18446744073709551615
 
 open flow str_is_ascii_space
     <- byte: u8
@@ -19,7 +20,7 @@ open flow str_is_ascii_space
     => byte == 32 or byte == 9 or byte == 10 or byte == 13
 }
 
-sealed flow str_trim
+open flow str_trim
     <- text: [u8]
     => [u8]
 {
@@ -40,7 +41,7 @@ sealed flow str_trim
     => give(out)
 }
 
-sealed flow str_concat
+open flow str_concat
     <- left: [u8]
     <- right: [u8]
     => [u8]
@@ -60,7 +61,7 @@ sealed flow str_concat
     => give(out)
 }
 
-sealed flow str_reverse
+open flow str_reverse
     <- text: [u8]
     => [u8]
 {
@@ -72,7 +73,7 @@ sealed flow str_reverse
     => give(out)
 }
 
-sealed flow str_repeat
+open flow str_repeat
     <- text: [u8]
     <- count: u64
     => [u8]

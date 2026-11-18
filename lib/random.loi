@@ -10,9 +10,14 @@
 //! needed. The generator is xorshift64* with the standard multiplier. It is
 //! suitable for tests, simulations and reproducible shuffles, not for
 //! cryptography. All flows take the generator inout so the new state is always
-//! written back to the caller.
+//! written back to the caller. A zero seed is replaced by `RNG_FALLBACK_SEED`
+//! because xorshift64* would otherwise stay at zero forever.
 
-shape Rng [
+/// Nonzero replacement for `rng_new(0)`. The golden-ratio constant gives a
+/// deterministic, well-distributed state.
+RNG_FALLBACK_SEED: u64 <- 0x9e3779b97f4a7c15
+
+open shape Rng [
     state: u64
 ]
 
@@ -20,6 +25,9 @@ open flow rng_new
     <- seed: u64
     => Rng
 {
+    if seed == 0 {
+        => Rng[ state: RNG_FALLBACK_SEED ]
+    }
     => Rng[ state: seed ]
 }
 

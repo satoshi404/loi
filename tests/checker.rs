@@ -732,28 +732,34 @@ fn an_uncalled_hidden_allocator_may_rely_on_a_caller_protect() {
 }
 
 #[test]
-fn an_uncalled_visible_allocator_must_protect_its_allocations() {
-    assert_message(
+fn an_uncalled_visible_allocator_may_rely_on_a_caller_protect() {
+    // Exported library allocators are called from Loi under a caller's
+    // `protect`. An uncalled flow cannot run without such a caller, so it is
+    // not an entry point regardless of visibility.
+    assert_clean(
         "shape Particle [\n    mass: f64\n]\n\nopen flow fill\n    -> ps: [Particle]\n{\n    alloc(-> ps, Particle, 3)\n}\n\nflow main {\n}\n",
-        "function 'fill' can allocate outside a 'protect' block",
     );
 }
 
 #[test]
-fn an_uncalled_allocator_with_default_visibility_is_an_entry() {
-    // A function with no visibility keyword is `hidden` by default (spec
-    // question 3). Hidden functions that are not called by any other function
-    // are never called, so they can allocate outside a protect block without
-    // error. Only `main` and visible functions are entry points.
+fn an_uncalled_allocator_with_default_visibility_is_not_an_entry() {
+    // A function with no visibility keyword is `sealed` by default (spec
+    // question 3), but visibility no longer decides entry status. An uncalled
+    // allocator may rely on a caller's `protect`; `main` cannot.
     assert_clean(
         "shape Particle [\n    mass: f64\n]\n\nflow fill\n    -> ps: [Particle]\n{\n    alloc(-> ps, Particle, 3)\n}\n\nflow main {\n}\n",
     );
 
-    // A visible function that is not called by any other function IS an entry
-    // point and must protect its allocations.
-    assert_message(
+    assert_clean(
         "shape Particle [\n    mass: f64\n]\n\nopen flow fill\n    -> ps: [Particle]\n{\n    alloc(-> ps, Particle, 3)\n}\n\nflow main {\n}\n",
-        "function 'fill' can allocate outside a 'protect' block",
+    );
+}
+
+#[test]
+fn calling_an_open_allocator_without_a_protect_is_rejected() {
+    assert_message(
+        "shape Particle [\n    mass: f64\n]\n\nopen flow fill\n    -> ps: [Particle]\n{\n    alloc(-> ps, Particle, 3)\n}\n\nflow main {\n    mut ps: [Particle]\n    fill(-> ps)\n}\n",
+        "function 'main' can allocate outside a 'protect' block",
     );
 }
 

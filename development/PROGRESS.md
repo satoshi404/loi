@@ -4,22 +4,32 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-18):** expanded the canonical example set with two
+- **Current task (2026-11-18):** fixed the five reported library/runtime issues.
+  `main` is now the only allocation entry point for the checker, so documented
+  library flows and shapes are `open` and appear in generated C headers while
+  internal helpers remain `sealed`; Loi call sites are still checked. Random
+  zero seeds use the named nonzero `RNG_FALLBACK_SEED`. `crc32_extend` chains
+  finalized CRC values zlib-style. `map_*_get_or` and `map_*_lookup` return a
+  default or a `found` status in one scan. `vec_reserve` is exported and the
+  docs explain pre-sizing because the arena retains older growth blocks.
+- **Verification for the current task:** new runtime tests check the zero-seed
+  state `11400714819323198485` and first draw `973819730272012410`, chained
+  CRC chunks against `3421780262`, and status/default map lookups. A new test
+  generates a header containing the exported `Vec`, `Rng`, `IntMap` and
+  `StrMap` types plus the public flow prototypes. Library tests again passed
+  strict C11, UBSan execution and ASan+UBSan compile-only checks; no ASan
+  execution is claimed in this PRoot container. Final gate command:
+  `export PATH="/root/.cargo/bin:$PATH"; export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets && python3 tools/sync_examples.py --check && git diff --check`.
+  All five checks exited 0; `cargo test --all-targets` reported **322 passed,
+  0 failed** (22+6+1+114+42+51+2+8+33+26+17).
+- **Previous task (2026-11-18):** expanded the canonical example set with two
   runnable Flow Syntax programs: `examples/marks.loi` covers a finite tag set,
   equality, state transitions and a mark stored in a shape; `examples/choices.loi`
   covers tagged payloads, `is` tests, checked payload reads, a mark payload,
   `give` into a shape and a nested choice field. Both are mirrored by
   `website/examples/`, linked from `README.md` and `website/docs.html`, and
-  listed in `SINTAXE.md`. New checker and codegen tests type-check, generate,
-  strict-C11 check, sanitizer-compile and run both programs.
-- **Verification for the current task:** `loi check` passed on both examples;
-  `loi build` plus execution printed `marks ok` and `choices ok` with exit 0.
-  The generated C for both passed strict C11 and ASan+UBSan compile-only checks
-  in `cargo test`; no ASan execution is claimed in this PRoot container. Final
-  gate command:
-  `export PATH="/root/.cargo/bin:$PATH"; export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets && python3 tools/sync_examples.py --check && git diff --check`.
-  All five checks exited 0; `cargo test --all-targets` reported **320 passed,
-  0 failed** (22+6+1+113+42+51+2+8+32+26+17).
+  listed in `SINTAXE.md`; `loi build` plus execution printed `marks ok` and
+  `choices ok` with exit 0.
 - **Previous task (2026-11-18):** Loi-native sum types. Added `mark` (payload-free
   finite tag set), `choice` (tagged payload) and `is` (variant test) across the
   lexer, AST, parser, checker, formatter, monomorphization pass and C11 backend.

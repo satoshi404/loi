@@ -6,8 +6,9 @@
 //! import "lib/slice.loi"
 //! ```
 //!
-//! `slice_clone` and `slice_copy` allocate from the caller's `protect` arena.
-//! Values are cloned, so `T` must be cloneable by value. `slice_find` is
+//! `slice_get`, `slice_first`, `slice_last`, `slice_clone` and `slice_copy` are
+//! open public APIs. The copying flows allocate from the caller's `protect`
+//! arena. Values are cloned, so `T` must be cloneable by value. `slice_find` is
 //! numeric-only because Loi has no trait constraints; see
 //! `development/FRICTION.md`.
 
@@ -124,7 +125,7 @@ open flow slice_is_empty<T>
     => values.len == 0
 }
 
-sealed flow slice_get<T>
+open flow slice_get<T>
     <- values: [T]
     <- index: u64
     => T
@@ -135,7 +136,7 @@ sealed flow slice_get<T>
     => clone(values[index])
 }
 
-sealed flow slice_first<T>
+open flow slice_first<T>
     <- values: [T]
     => T
 {
@@ -145,7 +146,7 @@ sealed flow slice_first<T>
     => clone(values[0])
 }
 
-sealed flow slice_last<T>
+open flow slice_last<T>
     <- values: [T]
     => T
 {
@@ -180,7 +181,7 @@ open flow slice_equals_u8
 // Copying and mutation
 // ---------------------------------------------------------------------------
 
-sealed flow slice_clone<T>
+open flow slice_clone<T>
     <- values: [T]
     => [T]
 {
@@ -192,7 +193,7 @@ sealed flow slice_clone<T>
     => give(copy)
 }
 
-sealed flow slice_copy<T>
+open flow slice_copy<T>
     <- values: [T]
     -> out: [T]
 {

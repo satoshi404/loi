@@ -9,25 +9,27 @@
 //! `IntMap<V>` is keyed by `u64`; `StrMap<V>` is keyed by byte-slice keys. Both
 //! are generic only over the value type because Loi has no trait constraints:
 //! `V` must be cloneable by value (scalars and shapes without slice fields).
-//! Every flow that allocates is `sealed`, so callers must provide a `protect`
-//! region. Lookups are linear scans; this trades asymptotic speed for a small,
-//! fully checked implementation with no hidden hash collisions.
+//! Allocating flows are `open` public APIs, but callers must provide a
+//! `protect` region. Lookups are linear scans; this trades asymptotic speed
+//! for a small, fully checked implementation with no hidden hash collisions.
+//! `map_*_lookup` returns both a status and a caller-supplied default in one
+//! scan, and `map_*_get_or` is the value-only form.
 
-MAP_INITIAL_CAP: u64 <- 8
-MAP_INITIAL_KEY_BYTES: u64 <- 64
+open MAP_INITIAL_CAP: u64 <- 8
+open MAP_INITIAL_KEY_BYTES: u64 <- 64
 
 // ---------------------------------------------------------------------------
 // IntMap<V>
 // ---------------------------------------------------------------------------
 
-shape IntMap<V> [
+open shape IntMap<V> [
     keys: [u64]
     values: [V]
     len: u64
     cap: u64
 ]
 
-sealed flow map_int_new<V>
+open flow map_int_new<V>
     -> m: IntMap<V>
 {
     alloc(-> m.keys, u64, MAP_INITIAL_CAP)
@@ -83,6 +85,39 @@ open flow map_int_get<V>
     => clone(m.values[at as u64])
 }
 
+/// Return the stored value or `fallback` after a single scan.
+open flow map_int_get_or<V>
+    <- m: IntMap<V>
+    <- key: u64
+    <- fallback: V
+    => V
+{
+    at <- map_int_find<V>(m, key)
+    if at < 0 {
+        => clone(fallback)
+    }
+    => clone(m.values[at as u64])
+}
+
+/// Return presence and a value in one scan. Both outputs are always written:
+/// on a miss, `value` receives `fallback` and `found` is `false`.
+open flow map_int_lookup<V>
+    <- m: IntMap<V>
+    <- key: u64
+    <- fallback: V
+    -> found: bool
+    -> value: V
+{
+    at <- map_int_find<V>(m, key)
+    if at < 0 {
+        found = false
+        value = clone(fallback)
+        =>
+    }
+    found = true
+    value = clone(m.values[at as u64])
+}
+
 sealed flow map_int_grow<V>
     <-> m: IntMap<V>
 {
@@ -100,7 +135,7 @@ sealed flow map_int_grow<V>
     m.cap = new_cap
 }
 
-sealed flow map_int_set<V>
+open flow map_int_set<V>
     <-> m: IntMap<V>
     <- key: u64
     <- value: V
@@ -118,7 +153,7 @@ sealed flow map_int_set<V>
     m.len += 1
 }
 
-sealed flow map_int_remove<V>
+open flow map_int_remove<V>
     <-> m: IntMap<V>
     <- key: u64
     => bool
@@ -148,7 +183,7 @@ open flow map_int_clear<V>
 // StrMap<V>
 // ---------------------------------------------------------------------------
 
-shape StrMap<V> [
+open shape StrMap<V> [
     keys: [u8]
     starts: [u64]
     lengths: [u64]
@@ -159,7 +194,7 @@ shape StrMap<V> [
     key_cap: u64
 ]
 
-sealed flow map_str_new<V>
+open flow map_str_new<V>
     -> m: StrMap<V>
 {
     alloc(-> m.keys, u8, MAP_INITIAL_KEY_BYTES)
@@ -230,6 +265,39 @@ open flow map_str_get<V>
     => clone(m.values[at as u64])
 }
 
+/// Return the stored value or `fallback` after a single scan.
+open flow map_str_get_or<V>
+    <- m: StrMap<V>
+    <- key: [u8]
+    <- fallback: V
+    => V
+{
+    at <- map_str_find<V>(m, key)
+    if at < 0 {
+        => clone(fallback)
+    }
+    => clone(m.values[at as u64])
+}
+
+/// Return presence and a value in one scan. Both outputs are always written:
+/// on a miss, `value` receives `fallback` and `found` is `false`.
+open flow map_str_lookup<V>
+    <- m: StrMap<V>
+    <- key: [u8]
+    <- fallback: V
+    -> found: bool
+    -> value: V
+{
+    at <- map_str_find<V>(m, key)
+    if at < 0 {
+        found = false
+        value = clone(fallback)
+        =>
+    }
+    found = true
+    value = clone(m.values[at as u64])
+}
+
 sealed flow map_str_grow<V>
     <-> m: StrMap<V>
 {
@@ -269,7 +337,7 @@ sealed flow map_str_reserve_key<V>
     m.key_cap = new_cap
 }
 
-sealed flow map_str_set<V>
+open flow map_str_set<V>
     <-> m: StrMap<V>
     <- key: [u8]
     <- value: V
@@ -296,7 +364,7 @@ sealed flow map_str_set<V>
     m.key_bytes += key.len
 }
 
-sealed flow map_str_remove<V>
+open flow map_str_remove<V>
     <-> m: StrMap<V>
     <- key: [u8]
     => bool

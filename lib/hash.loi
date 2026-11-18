@@ -13,8 +13,8 @@
 //! `b`'s bytes.
 
 // FNV-1a 64-bit parameters.
-HASH_OFFSET: u64 <- 0xcbf29ce484222325
-HASH_PRIME: u64 <- 0x100000001b3
+open HASH_OFFSET: u64 <- 0xcbf29ce484222325
+open HASH_PRIME: u64 <- 0x100000001b3
 
 open flow hash_bytes_seeded
     <- data: [u8]

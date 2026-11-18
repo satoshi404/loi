@@ -14,7 +14,7 @@
 //! as integer descriptors, so no pointer types enter ordinary Loi values.
 
 /// Result of `net_parse_ipv4`: `ok` is false for malformed addresses.
-shape NetIpv4Result [
+open shape NetIpv4Result [
     ok: bool
     addr: u32
 ]

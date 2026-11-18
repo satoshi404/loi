@@ -1296,6 +1296,12 @@ open flow main
     empty_final <- crc32_update(empty_first, "") ^ CRC32_XOROUT
     if empty_final != 0 { => 11 }
 
+    zlib_first <- crc32_extend(0, "1234")
+    zlib_second <- crc32_extend(zlib_first, "56789")
+    if zlib_second != 3421780262 { => 12 }
+    if crc32_extend(zlib_second, "") != zlib_second { => 13 }
+    if crc32_extend(0, "123456789") != 3421780262 { => 14 }
+
     print("crc32 ok\n")
     => 0
 }
@@ -1499,6 +1505,13 @@ open flow main
         if map_int_len<i32>(ints) != 2 { => 2 }
         if map_int_get<i32>(ints, 10) != 111 or map_int_get<i32>(ints, 20) != 200 { => 3 }
         if not map_int_contains<i32>(ints, 10) or map_int_contains<i32>(ints, 99) { => 4 }
+        if map_int_get_or<i32>(ints, 10, -1) != 111 or map_int_get_or<i32>(ints, 99, -1) != -1 { => 101 }
+        mut found: bool
+        mut value: i32
+        map_int_lookup<i32>(ints, 20, -1, -> found, -> value)
+        if not found or value != 200 { => 102 }
+        map_int_lookup<i32>(ints, 99, -1, -> found, -> value)
+        if found or value != -1 { => 103 }
 
         if not map_int_remove<i32>(<-> ints, 10) { => 5 }
         if map_int_remove<i32>(<-> ints, 10) { => 6 }
@@ -1566,6 +1579,13 @@ open flow main
         if map_str_len<i32>(words) != 2 { => 2 }
         if map_str_get<i32>(words, "alpha") != 3 or map_str_get<i32>(words, "beta") != 2 { => 3 }
         if not map_str_contains<i32>(words, "alpha") or map_str_contains<i32>(words, "gamma") { => 4 }
+        if map_str_get_or<i32>(words, "alpha", -1) != 3 or map_str_get_or<i32>(words, "gamma", -1) != -1 { => 101 }
+        mut found: bool
+        mut value: i32
+        map_str_lookup<i32>(words, "beta", -1, -> found, -> value)
+        if not found or value != 2 { => 102 }
+        map_str_lookup<i32>(words, "gamma", -1, -> found, -> value)
+        if found or value != -1 { => 103 }
 
         if map_str_contains<i32>(words, "") { => 5 }
         map_str_set<i32>(<-> words, "", 7)
@@ -1848,9 +1868,15 @@ open flow main
     narrow <- rng_next_u32(<-> rng)
     if limited != 3 or narrow != 1303648416 { => 4 }
 
+    zero: Rng <- rng_new(0)
+    if rng_state(zero) != 11400714819323198485 { => 5 }
+    mut zero_draw: Rng <- rng_new(0)
+    first_zero <- rng_next_u64(<-> zero_draw)
+    if first_zero != 973819730272012410 { => 6 }
+
     mut other: Rng <- rng_new(831729)
     again <- rng_next_u64(<-> other)
-    if again == 0 or rng_state(other) == 0 { => 5 }
+    if again == 0 or rng_state(other) == 0 { => 7 }
 
     mut left: Rng <- rng_new(42)
     mut right: Rng <- rng_new(42)
@@ -1859,19 +1885,19 @@ open flow main
     rng_shuffle<i32>(<-> left, <-> a)
     rng_shuffle<i32>(<-> right, <-> b)
     for i in 0..8 {
-        if a[i] != b[i] { => 6 }
+        if a[i] != b[i] { => 8 }
     }
 
     mut empty: [i32] <- [i32:]
     mut single: [i32] <- [i32: 9]
     rng_shuffle<i32>(<-> left, <-> empty)
     rng_shuffle<i32>(<-> left, <-> single)
-    if empty.len != 0 or single[0] != 9 { => 7 }
+    if empty.len != 0 or single[0] != 9 { => 9 }
 
     mut pairs: [Pair] <- [Pair[ a: 1, b: 2 ], Pair[ a: 3, b: 4 ], Pair[ a: 5, b: 6 ]]
     mut pair_rng: Rng <- rng_new(7)
     rng_shuffle<Pair>(<-> pair_rng, <-> pairs)
-    if rng_pick<Pair>(<-> pair_rng, pairs).a < 1 { => 8 }
+    if rng_pick<Pair>(<-> pair_rng, pairs).a < 1 { => 10 }
 
     print("random ok\n")
     => 0
@@ -2125,4 +2151,96 @@ open flow main
 "#,
         "all ok 1\n",
     );
+}
+
+#[test]
+fn public_library_apis_are_declared_in_generated_headers() {
+    let dir = test_dir("public-header");
+    let program = write_program(
+        &dir,
+        &[
+            "vec.loi",
+            "string.loi",
+            "crc32.loi",
+            "map.loi",
+            "random.loi",
+        ],
+        r#"
+open flow main
+    => i32
+{
+    protect {
+        mut xs: Vec<i32>
+        vec_new<i32>(-> xs)
+        vec_reserve<i32>(<-> xs, 16)
+        seed <- vec_get<i32>(xs, 0)
+        vec_push<i32>(<-> xs, seed)
+
+        mut ints: IntMap<i32>
+        map_int_new<i32>(-> ints)
+        map_int_set<i32>(<-> ints, 1, seed)
+        if map_int_get_or<i32>(ints, 1, -1) != seed { => 1 }
+        mut found: bool
+        mut value: i32
+        map_int_lookup<i32>(ints, 1, -1, -> found, -> value)
+        if not found or value != seed { => 2 }
+
+        mut words: StrMap<i32>
+        map_str_new<i32>(-> words)
+        map_str_set<i32>(<-> words, "a", seed)
+        if map_str_get_or<i32>(words, "a", -1) != seed { => 3 }
+        map_str_lookup<i32>(words, "a", -1, -> found, -> value)
+        if not found or value != seed { => 4 }
+
+        trimmed <- str_trim(" a ")
+        checksum <- crc32_extend(0, trimmed)
+        mut rng: Rng <- rng_new(0)
+        draw <- rng_next_u64(<-> rng)
+        if checksum == draw as u32 { print("unreachable\n") }
+    }
+    => 0
+}
+"#,
+    );
+    let header = dir.join("public.h");
+    let generated = Command::new(loi())
+        .arg("gen")
+        .arg(&program)
+        .arg("-o")
+        .arg(dir.join("public.c"))
+        .arg("--emit-h")
+        .arg(&header)
+        .output()
+        .expect("loi gen should run");
+    assert!(
+        generated.status.success(),
+        "header generation failed: {}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+
+    let text = fs::read_to_string(&header).expect("header should be readable");
+    for needle in [
+        "typedef struct loi_t_Rng loi_t_Rng;",
+        "typedef struct loi_t_Vec__i32 loi_t_Vec__i32;",
+        "typedef struct loi_t_IntMap__i32 loi_t_IntMap__i32;",
+        "typedef struct loi_t_StrMap__i32 loi_t_StrMap__i32;",
+        "loi_fn_vec_new__i32(",
+        "loi_fn_vec_reserve__i32(",
+        "loi_fn_vec_get__i32(",
+        "loi_fn_vec_push__i32(",
+        "loi_fn_map_int_new__i32(",
+        "loi_fn_map_int_set__i32(",
+        "loi_fn_map_int_get_or__i32(",
+        "loi_fn_map_int_lookup__i32(",
+        "loi_fn_map_str_new__i32(",
+        "loi_fn_map_str_set__i32(",
+        "loi_fn_map_str_get_or__i32(",
+        "loi_fn_map_str_lookup__i32(",
+        "loi_fn_str_trim(",
+        "loi_fn_crc32_extend(",
+        "loi_fn_rng_new(",
+    ] {
+        assert!(text.contains(needle), "header missing {needle:?}");
+    }
+    let _ = fs::remove_dir_all(&dir);
 }

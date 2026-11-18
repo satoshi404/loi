@@ -1032,10 +1032,12 @@ impl Checker {
     ///
     /// Allocation: an allocation in a callee belongs to the nearest `protect`
     /// of its caller, so a non-entry function may contain an unguarded `alloc`
-    /// as long as every caller provides a region. Entry functions are `main`
-    /// and functions that no function calls, except uncalled `hidden` helpers,
-    /// which are only reachable through other Loi code and may rely on a
-    /// caller's `protect`.
+    /// as long as every caller provides a region. `main` is the only entry: an
+    /// uncalled helper may rely on its caller's region regardless of
+    /// visibility. This lets exported library allocators be `open` while Loi
+    /// callers are still checked: an unguarded call propagates the effect to
+    /// `main`, which is rejected. A foreign caller of an exported allocator
+    /// must provide the `protect` region by contract.
     ///
     /// Ownership: a parameter is *consumed* when the function moves from it,
     /// directly or through another call. At a call site a consumed `out` or
@@ -1043,7 +1045,7 @@ impl Checker {
     fn analyze_function_effects(&mut self, program: &Program) {
         let mut scans: HashMap<String, FunctionScan> = HashMap::new();
         let mut params: HashMap<String, Vec<(String, Direction)>> = HashMap::new();
-        let mut spans: Vec<(String, Span, Visibility)> = Vec::new();
+        let mut spans: Vec<(String, Span)> = Vec::new();
 
         for item in &program.items {
             let Item::Function(decl) = item else {
@@ -1066,7 +1068,7 @@ impl Checker {
                     .map(|param| (param.name.clone(), param.direction))
                     .collect(),
             );
-            spans.push((decl.name.clone(), decl.span, decl.visibility));
+            spans.push((decl.name.clone(), decl.span));
         }
 
         let mut direct = HashSet::new();
@@ -1097,12 +1099,11 @@ impl Checker {
             }
         }
 
-        for (name, span, visibility) in &spans {
-            // An entry point is main or any visible function that is not called
-            // by any other function. Hidden functions are internal and can only
-            // be called from within the same module.
-            let entry =
-                name == "main" || (*visibility == Visibility::Visible && !called.contains(name));
+        for (name, span) in &spans {
+            // `main` is the only entry point for this check. An uncalled helper
+            // can only run when another Loi function calls it, so its caller's
+            // `protect` is available even when the helper is exported.
+            let entry = name == "main";
             if entry && unguarded.contains(name) {
                 self.error(
                     *span,

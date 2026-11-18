@@ -104,7 +104,7 @@ flow ctype_hex_value
 }
 
 /// Result of `ctype_parse_u64`: `ok` is false on bad input or overflow.
-shape CTypeParseResult [
+open shape CTypeParseResult [
     ok: bool
     value: u64
     consumed: u64

@@ -802,7 +802,8 @@ print(other.x)</code></pre>
                 <td><code>lib/crc32.loi</code></td>
                 <td><code>CRC32_POLY</code>, <code>CRC32_INIT</code>,
                   <code>CRC32_XOROUT</code>, <code>CRC32_TABLE</code>,
-                  <code>crc32_update</code>, <code>crc32_bytes</code></td>
+                  <code>crc32_update</code>, <code>crc32_extend</code>,
+                  <code>crc32_bytes</code></td>
                 <td>no</td>
               </tr>
               <tr>
@@ -811,7 +812,8 @@ print(other.x)</code></pre>
                   <code>map_int_new</code> / <code>map_str_new</code>,
                   <code>len</code>, <code>capacity</code>,
                   <code>contains</code>, <code>get</code>,
-                  <code>set</code>, <code>remove</code>, <code>clear</code></td>
+                  <code>get_or</code>, <code>lookup</code>, <code>set</code>,
+                  <code>remove</code>, <code>clear</code></td>
                 <td>no; mutators need <code>protect</code></td>
               </tr>
               <tr>
@@ -820,7 +822,8 @@ print(other.x)</code></pre>
                   <code>rng_state</code>, <code>rng_next_u64</code>,
                   <code>rng_next_u32</code>, <code>rng_below_u64</code>,
                   <code>rng_pick&lt;T&gt;</code>,
-                  <code>rng_shuffle&lt;T&gt;</code></td>
+                  <code>rng_shuffle&lt;T&gt;</code>; a zero seed uses
+                  <code>RNG_FALLBACK_SEED</code></td>
                 <td>no</td>
               </tr>
               <tr>
@@ -844,36 +847,46 @@ print(other.x)</code></pre>
 
           <p><code>lib/math.loi</code> and <code>lib/ctype.loi</code> are pure
             Loi; the math module uses generic flows and a
-            <code>comptime flow</code>. <code>lib/vec.loi</code> and
-            <code>lib/slice.loi</code> are also pure Loi, but their allocator
-            flows are <code>sealed</code> and must be called from inside
-            <code>protect</code>. <code>Vec&lt;T&gt;</code> stores cloned
-            values, so <code>T</code> must be cloneable without slice fields,
-            and ordering/search flows accept numeric <code>T</code> only.
+            <code>comptime flow</code>. Documented library flows and their
+            shapes are <code>open</code> so generated headers can expose them;
+            internal helpers stay <code>sealed</code>. An exported allocator
+            still needs a caller's <code>protect</code> region — Loi callers
+            are checked, and foreign callers follow the same contract.
+            <code>lib/vec.loi</code> and <code>lib/slice.loi</code> are pure
+            Loi. <code>Vec&lt;T&gt;</code> stores cloned values, so
+            <code>T</code> must be cloneable without slice fields, and
+            ordering/search flows accept numeric <code>T</code> only. The arena
+            keeps older growth blocks until <code>protect</code> ends, so
+            pre-size with <code>vec_reserve&lt;T&gt;</code> when the final
+            length is known to avoid repeated growth and its peak memory.
             <code>lib/string.loi</code> returns owned <code>[u8]</code> values,
-            so its transforming flows are <code>sealed</code> and need the
-            caller's <code>protect</code>; its queries are <code>open</code>.
-            <code>str_repeat</code> rejects an overflowing count with a
-            flow-naming error. <code>lib/hash.loi</code> is pure 64-bit FNV-1a:
-            <code>u64</code> values are hashed as little-endian bytes and no
-            <code>protect</code> is needed. <code>lib/crc32.loi</code> is also
-            pure: <code>comptime</code> flows generate a 16-entry reflected
-            nibble table stored as a static slice, and
-            <code>crc32_update</code> folds chunks incrementally.
+            so its transforming flows need the caller's <code>protect</code>;
+            its queries do not. <code>str_repeat</code> rejects an overflowing
+            count with a flow-naming error. <code>lib/hash.loi</code> is pure
+            64-bit FNV-1a: <code>u64</code> values are hashed as little-endian
+            bytes and no <code>protect</code> is needed.
+            <code>lib/crc32.loi</code> is also pure: <code>comptime</code>
+            flows generate a 16-entry reflected nibble table stored as a static
+            slice. <code>crc32_update</code> folds raw chunk state, while
+            <code>crc32_extend</code> continues an already finalized CRC in the
+            same way as zlib's <code>crc32(crc, buf)</code>.
             <code>lib/map.loi</code> provides <code>IntMap&lt;V&gt;</code> and
             <code>StrMap&lt;V&gt;</code> with linear scans and value-only
             generics: <code>V</code> must be cloneable without slice fields.
             <code>StrMap&lt;V&gt;</code> stores byte keys in one contiguous
             arena buffer, so no slice-of-slices value is formed. Mutations need
-            the caller's <code>protect</code>, and a missing key in
-            <code>map_int_get</code> / <code>map_str_get</code> aborts with a
-            flow-naming message; use the <code>contains</code> flows first.
+            the caller's <code>protect</code>. <code>map_int_get</code> /
+            <code>map_str_get</code> abort on a missing key with a flow-naming
+            message; prefer <code>map_*_get_or</code> for a fallback value or
+            <code>map_*_lookup</code> for a <code>found</code> status plus a
+            default, both of which scan the map once.
             <code>lib/random.loi</code> is a pure, seeded xorshift64* generator
             with <code>u64</code> / <code>u32</code> draws, bounded draws,
             picking and in-place Fisher–Yates shuffling; it needs no
-            <code>protect</code> and is not cryptographically secure. Loi has no character literals, so
-            byte queries use numeric values while substring queries use string
-            slices. <code>lib/os.loi</code> and
+            <code>protect</code>, is not cryptographically secure, and replaces
+            a zero seed with the nonzero <code>RNG_FALLBACK_SEED</code>. Loi
+            has no character literals, so byte queries use numeric values while
+            substring queries use string slices. <code>lib/os.loi</code> and
             <code>lib/net.loi</code> are thin POSIX bindings: compile their
             shims with the program. Sockets are integer descriptors, so no
             foreign pointer enters ordinary Loi values.</p>

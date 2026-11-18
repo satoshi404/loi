@@ -679,34 +679,41 @@ textual and there are no namespaces yet.
 | `lib/slice.loi` | `slice_len<T>`, `slice_is_empty<T>`, `slice_get<T>`, `slice_first<T>`, `slice_last<T>`, `slice_find<T>`, `slice_equals_u8`, `slice_clone<T>`, `slice_copy<T>`, `slice_reverse<T>` | no; allocators need `protect` |
 | `lib/string.loi` | `STRING_MAX_LEN`, `str_is_ascii_space`, `str_trim`, `str_concat`, `str_reverse`, `str_repeat`, `str_count`, `str_index_of`, `str_contains` | no; owned results need `protect` |
 | `lib/hash.loi` | `HASH_OFFSET`, `HASH_PRIME`, `hash_bytes_seeded`, `hash_bytes`, `hash_str`, `hash_u64_seeded`, `hash_u64`, `hash_pair_u64` | no |
-| `lib/crc32.loi` | `CRC32_POLY`, `CRC32_INIT`, `CRC32_XOROUT`, `CRC32_TABLE`, `crc32_update`, `crc32_bytes` | no |
-| `lib/map.loi` | `IntMap<V>`, `StrMap<V>`, `map_int_new<V>`, `map_int_len<V>`, `map_int_capacity<V>`, `map_int_contains<V>`, `map_int_get<V>`, `map_int_set<V>`, `map_int_remove<V>`, `map_int_clear<V>`, and the matching `map_str_*` flows | no; mutators need `protect` |
-| `lib/random.loi` | `Rng`, `rng_new`, `rng_state`, `rng_next_u64`, `rng_next_u32`, `rng_below_u64`, `rng_pick<T>`, `rng_shuffle<T>` | no |
+| `lib/crc32.loi` | `CRC32_POLY`, `CRC32_INIT`, `CRC32_XOROUT`, `CRC32_TABLE`, `crc32_update`, `crc32_extend`, `crc32_bytes` | no |
+| `lib/map.loi` | `IntMap<V>`, `StrMap<V>`, `map_int_new<V>`, `map_int_len<V>`, `map_int_capacity<V>`, `map_int_contains<V>`, `map_int_get<V>`, `map_int_get_or<V>`, `map_int_lookup<V>`, `map_int_set<V>`, `map_int_remove<V>`, `map_int_clear<V>`, and the matching `map_str_*` flows | no; mutators need `protect` |
+| `lib/random.loi` | `Rng`, `rng_new`, `rng_state`, `rng_next_u64`, `rng_next_u32`, `rng_below_u64`, `rng_pick<T>`, `rng_shuffle<T>`; a zero seed uses `RNG_FALLBACK_SEED` | no |
 | `lib/os.loi` | `os_pid`, `os_unix_time`, `os_sleep`, `os_has_env`, `os_env_i32`, `os_errno`, `os_exit` | `lib/os_shim.c` |
 | `lib/net.loi` | `NetIpv4Result`, `net_ipv4`, `net_ipv4_octet`, `net_port_is_valid`, `net_parse_ipv4`, `net_tcp_connect`, `net_close`, `net_send`, `net_recv` | `lib/net_shim.c` |
 
 `lib/math.loi` and `lib/ctype.loi` are pure Loi: the math module uses generic
-flows and a `comptime flow` for factorials. `lib/vec.loi` and `lib/slice.loi`
-are also pure Loi, but their allocator flows are `sealed` and must be called
-from inside `protect`; `Vec<T>` stores cloned values, so `T` must be cloneable
-without slice fields, and ordering/search flows accept numeric `T` only.
-`lib/string.loi` returns owned `[u8]` values, so its transforming flows are
-`sealed` and need the caller's `protect`; its queries are `open`. `str_repeat`
-rejects an overflowing count with a flow-naming error. `lib/hash.loi` is pure:
-it implements 64-bit FNV-1a, hashes `u64` values as little-endian bytes, and
-needs no `protect`. `lib/crc32.loi` is also pure: `comptime` flows generate a
-16-entry reflected nibble table stored as a static slice, and `crc32_update`
-folds chunks incrementally. `lib/map.loi` provides `IntMap<V>` and `StrMap<V>`
-with linear scans and value-only generics: `V` must be cloneable without slice
-fields. `StrMap<V>` stores byte keys in one contiguous arena buffer, so no
-slice-of-slices value is formed. Mutations need the caller's `protect`, and a
-missing key in `map_int_get` / `map_str_get` aborts with a flow-naming message;
-use the `contains` flows first. `lib/random.loi` is a pure, seeded xorshift64*
+flows and a `comptime flow` for factorials. Documented library flows and their
+shapes are `open` so generated headers can expose them; internal helpers stay
+`sealed`. An exported allocator still needs a caller's `protect` region — Loi
+callers are checked, and foreign callers follow the same contract.
+`lib/vec.loi` and `lib/slice.loi` are pure Loi; `Vec<T>` stores cloned values,
+so `T` must be cloneable without slice fields, and ordering/search flows accept
+numeric `T` only. The arena keeps older growth blocks until `protect` ends, so
+pre-size with `vec_reserve<T>` when the final length is known to avoid repeated
+growth and its peak memory. `lib/string.loi` returns owned `[u8]` values, so
+its transforming flows need the caller's `protect`; its queries do not.
+`str_repeat` rejects an overflowing count with a flow-naming error.
+`lib/hash.loi` is pure: it implements 64-bit FNV-1a, hashes `u64` values as
+little-endian bytes, and needs no `protect`. `lib/crc32.loi` is also pure:
+`comptime` flows generate a 16-entry reflected nibble table stored as a static
+slice. `crc32_update` folds raw chunk state, while `crc32_extend` continues an
+already finalized CRC in the same way as zlib's `crc32(crc, buf)`.
+`lib/map.loi` provides `IntMap<V>` and `StrMap<V>` with linear scans and
+value-only generics: `V` must be cloneable without slice fields. `StrMap<V>`
+stores byte keys in one contiguous arena buffer, so no slice-of-slices value is
+formed. Mutations need the caller's `protect`. `map_int_get` / `map_str_get`
+abort on a missing key with a flow-naming message; prefer `map_*_get_or` for a
+fallback value or `map_*_lookup` for a `found` status plus a default, both of
+which scan the map once. `lib/random.loi` is a pure, seeded xorshift64*
 generator with `u64` / `u32` draws, bounded draws, picking and in-place
-Fisher–Yates shuffling; it needs no `protect` and is not cryptographically
-secure. Loi has no character literals, so byte queries use numeric
-values while substring queries use string slices; see
-`development/FRICTION.md`.
+Fisher–Yates shuffling; it needs no `protect`, is not cryptographically secure,
+and replaces a zero seed with the nonzero `RNG_FALLBACK_SEED`. Loi has no
+character literals, so byte queries use numeric values while substring queries
+use string slices; see `development/FRICTION.md`.
 `lib/os.loi` and `lib/net.loi` are
 thin POSIX bindings: their `extern flow` declarations call symbols defined in
 the matching C shim, so a program that imports them must compile the shim:

@@ -9,9 +9,9 @@
 //! Imports are textual, so names are prefixed (`math_*`, `MATH_*`) to avoid
 //! clashes with user code and with the other library files.
 
-MATH_PI: f64 <- 3.141592653589793
-MATH_E: f64 <- 2.718281828459045
-MATH_TAU: f64 <- comptime 2.0 * MATH_PI
+open MATH_PI: f64 <- 3.141592653589793
+open MATH_E: f64 <- 2.718281828459045
+open MATH_TAU: f64 <- comptime 2.0 * MATH_PI
 
 /// Compile-time factorial; usable in globals and `comptime` expressions.
 comptime flow math_factorial

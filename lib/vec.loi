@@ -10,7 +10,10 @@
 //! the storage lives until that block ends. `Vec<T>` stores cloned values, so
 //! `T` must be cloneable by value (scalars and shapes without slice fields).
 //! The ordering/search flows are numeric-only because Loi has no trait
-//! constraints; see `development/FRICTION.md`.
+//! constraints; see `development/FRICTION.md`. The arena keeps older growth
+//! blocks until the enclosing `protect` ends, so call `vec_reserve<T>` when the
+//! final size is known: pre-reserving once avoids the peak memory of repeated
+//! geometric growth.
 
 // ---------------------------------------------------------------------------
 // Runtime error formatting
@@ -111,13 +114,13 @@ sealed flow vec_fail_empty
 // Shape and capacity
 // ---------------------------------------------------------------------------
 
-shape Vec<T> [
+open shape Vec<T> [
     data: [T]
     len: u64
     cap: u64
 ]
 
-sealed flow vec_new<T>
+open flow vec_new<T>
     -> v: Vec<T>
 {
     alloc(-> v.data, T, 1)
@@ -146,7 +149,7 @@ open flow vec_is_empty<T>
     => v.len == 0
 }
 
-sealed flow vec_reserve<T>
+open flow vec_reserve<T>
     <-> v: Vec<T>
     <- capacity: u64
 {
@@ -179,7 +182,7 @@ open flow vec_clear<T>
 // Element access
 // ---------------------------------------------------------------------------
 
-sealed flow vec_get<T>
+open flow vec_get<T>
     <- v: Vec<T>
     <- index: u64
     => T
@@ -190,7 +193,7 @@ sealed flow vec_get<T>
     => clone(v.data[index])
 }
 
-sealed flow vec_set<T>
+open flow vec_set<T>
     <-> v: Vec<T>
     <- index: u64
     <- value: T
@@ -202,7 +205,7 @@ sealed flow vec_set<T>
     v.data[index] = clone(value)
 }
 
-sealed flow vec_push<T>
+open flow vec_push<T>
     <-> v: Vec<T>
     <- value: T
 {
@@ -214,7 +217,7 @@ sealed flow vec_push<T>
     v.len += 1
 }
 
-sealed flow vec_pop<T>
+open flow vec_pop<T>
     <-> v: Vec<T>
     => T
 {
@@ -238,7 +241,7 @@ open flow vec_find<T>
     => -1
 }
 
-sealed flow vec_from_slice<T>
+open flow vec_from_slice<T>
     <- values: [T]
     -> v: Vec<T>
 {
@@ -250,7 +253,7 @@ sealed flow vec_from_slice<T>
     v.cap = values.len
 }
 
-sealed flow vec_as_slice<T>
+open flow vec_as_slice<T>
     <- v: Vec<T>
     => [T]
 {
