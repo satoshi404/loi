@@ -1,0 +1,113 @@
+# Standard-library language friction
+
+This file records library designs that were tried and are blocked by the
+current Loi language/checker. It is updated in the phase where the friction is
+encountered. Each entry states what was attempted, the exact diagnostic, and
+the language requirement needed to implement the design without a workaround.
+
+## Phase 1 — `lib/vec.loi`
+
+### Slice-containing element types cannot be moved or cloned through a vector
+
+Attempted design: a generic `Vec<T>` whose `T` may itself be a slice, such as
+`Vec<[u8]>`. The move-oriented push copied existing elements with
+`grown[i] = give(v.data[i])` while growing and stored the argument with
+`v.data[i] = give(value)`. The source was `/tmp/opencode/loi-phase0/vec_move_proto.loi`.
+
+Resulting checker diagnostics included:
+
+```text
+error: cannot assign to immutable variable 'first'
+error: use of moved value 'xs'
+error: use of moved value 'xs'
+```
+
+The first diagnostic came from using `<-> first` for a value that the caller
+had declared immutable. Making the callers mutable and retrying the inout path
+still left the ownership problem: moving individual elements out of `v.data`
+consumes the vector, so the vector cannot be used again.
+
+The clone-based fallback prototype (`vec_proto2.loi`) uses
+`grown[i] = clone(v.data[i])` and `v.data[v.len] = clone(value)`. It works for
+scalars and composite shapes without slice fields, but the checker rejects
+cloning a slice-containing composite:
+
+```text
+error: cannot copy [u64] implicitly; use give(...) or clone(...)
+```
+
+That diagnostic was observed while trying to return a shape containing a
+slice from a `comptime flow` (`b_shape_slice.loi`), and the same limitation
+applies to cloning such a value inside a generic vector operation.
+
+Language requirement: support moving an element out of an inout composite
+field without consuming the whole composite, or provide a clone operation for
+composites that recursively clones slice fields. Until then `Vec<T>` is
+documented as requiring cloneable `T`: scalars and shapes whose fields are
+themselves cloneable without slices.
+
+### Borrowed slice views cannot escape a flow
+
+Attempted design: `vec_as_slice<T>(<- v: Vec<T>) => [T]` returning `v.data`
+directly. The source was `/tmp/opencode/loi-phase0/vec_as_slice_proto.loi`.
+
+Exact diagnostic:
+
+```text
+error: cannot return a value borrowed from '<-' parameter 'v'; use clone(...)
+  --> /tmp/opencode/loi-phase0/vec_as_slice_proto.loi:11:8
+   |
+11 |     => v.data
+   |        ^^^^^^
+```
+
+Language requirement: slice borrow lifetimes (or a borrow-safe view type) so a
+callee can return a slice that aliases storage owned by the caller for a
+statically bounded region. Current library workaround: `vec_as_slice<T>`
+allocates a new arena slice inside the caller's `protect` and copies the live
+prefix into it.
+
+### A generic slice literal cannot escape into an out-parameter
+
+Attempted design: initialize an empty vector with `v.data = [T:]` inside
+`vec_new<T>`. The source was `/tmp/opencode/loi-phase0/vec_proto.loi`.
+
+Exact diagnostic:
+
+```text
+error: slice literal storage escapes the block that created it; keep it in a variable declared in the same block
+  --> /tmp/opencode/loi-phase0/vec_proto.loi:10:14
+   |
+ 7 | flow vec_new<T>
+   | ---- allocated in this block
+10 |     v.data = [T:]
+   |              ^^^^ escapes here
+```
+
+Assigning a slice literal in the caller and passing it in was also tried; the
+callee cannot write the slice header's `len`, and the C backend rejects that
+assignment:
+
+```text
+error: lvalue required as left operand of assignment
+```
+
+Language requirement: either permit escaping slice literals into out-parameters
+with an explicit lifetime/arena region, or make slice length writable so a
+caller-owned buffer can be resized by the callee. Current workaround:
+`vec_new<T>` uses `alloc(-> v.data, T, 1)`, so an empty vector has capacity one.
+`alloc(..., 0)` was measured to work and produce length 0, but the allocator
+still has to be called from inside `protect`.
+
+### Generic comparisons fail for composite `T`
+
+Attempted design: generic ordering helpers (`math_min<T>`, `math_max<T>`) over
+arbitrary `T`. The Phase 0 probe `d_generic_cmp.loi` confirmed:
+
+```text
+error: operator requires numeric operands, found Bad and Bad
+```
+
+Language requirement: trait constraints/ord bounds on generic type parameters.
+Current workaround: document ordering/search/sort flows as numeric-only where
+needed, and avoid pretending that `T` is comparable.

@@ -603,19 +603,25 @@ print("\n")
 ### Library modules
 
 Every library file is imported explicitly with the canonical `import` form.
-Names are prefixed by module (`math_*`, `ctype_*`, `os_*`, `net_*`) because
-imports are textual and there are no namespaces yet.
+Names are prefixed by module (`math_*`, `ctype_*`, `vec_*`, `slice_*`, `os_*`,
+`net_*`) because imports are textual and there are no namespaces yet.
 
 | File | Helpers | Needs a shim? |
 |---|---|---|
 | `lib/std.loi` | `min_i32`, `max_i32`, `abs_i32`, `clamp_i32`, `min_f64`, `max_f64`, `abs_f64`, `clamp_f64`, `str_len`, `str_eq`, `str_starts_with`, `str_find` | no |
 | `lib/math.loi` | `MATH_PI`, `MATH_E`, `MATH_TAU`, `math_factorial`, generic `math_min<T>` / `math_max<T>` / `math_clamp<T>` / `math_sum<T>`, `math_lerp`, `math_smoothstep`, `math_deg_to_rad`, `math_rad_to_deg`, `math_hypot`, `math_near`, `math_sign_i32`, `math_gcd_u64`, `math_pow_u64`, `math_dot_f64` | no |
 | `lib/ctype.loi` | `ctype_is_digit`, `ctype_is_upper`, `ctype_is_lower`, `ctype_is_alpha`, `ctype_is_alnum`, `ctype_is_hex_digit`, `ctype_is_space`, `ctype_is_ascii`, `ctype_to_lower`, `ctype_to_upper`, `ctype_hex_value`, `ctype_parse_u64`, `ctype_count_digits`, `ctype_equals_ignore_case` | no |
+| `lib/vec.loi` | `Vec<T>`, `vec_new<T>`, `vec_len<T>`, `vec_capacity<T>`, `vec_is_empty<T>`, `vec_get<T>`, `vec_set<T>`, `vec_push<T>`, `vec_pop<T>`, `vec_find<T>`, `vec_from_slice<T>`, `vec_as_slice<T>`, `vec_reserve<T>`, `vec_clear<T>`, `vec_reverse<T>`, `vec_sort<T>`, `vec_binary_search<T>` | no; call inside `protect` |
+| `lib/slice.loi` | `slice_len<T>`, `slice_is_empty<T>`, `slice_get<T>`, `slice_first<T>`, `slice_last<T>`, `slice_find<T>`, `slice_equals_u8`, `slice_clone<T>`, `slice_copy<T>`, `slice_reverse<T>` | no; allocators need `protect` |
 | `lib/os.loi` | `os_pid`, `os_unix_time`, `os_sleep`, `os_has_env`, `os_env_i32`, `os_errno`, `os_exit` | `lib/os_shim.c` |
 | `lib/net.loi` | `NetIpv4Result`, `net_ipv4`, `net_ipv4_octet`, `net_port_is_valid`, `net_parse_ipv4`, `net_tcp_connect`, `net_close`, `net_send`, `net_recv` | `lib/net_shim.c` |
 
 `lib/math.loi` and `lib/ctype.loi` are pure Loi: the math module uses generic
-flows and a `comptime flow` for factorials. `lib/os.loi` and `lib/net.loi` are
+flows and a `comptime flow` for factorials. `lib/vec.loi` and `lib/slice.loi`
+are also pure Loi, but their allocator flows are `sealed` and must be called
+from inside `protect`; `Vec<T>` stores cloned values, so `T` must be cloneable
+without slice fields, and ordering/search flows accept numeric `T` only.
+`lib/os.loi` and `lib/net.loi` are
 thin POSIX bindings: their `extern flow` declarations call symbols defined in
 the matching C shim, so a program that imports them must compile the shim:
 

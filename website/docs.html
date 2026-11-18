@@ -676,8 +676,9 @@ print(other.x)</code></pre>
           <h3>Library modules</h3>
           <p>Every library file is imported explicitly, for example
             <code>import "lib/std.loi"</code>. Names are prefixed by module
-            (<code>math_*</code>, <code>ctype_*</code>, <code>os_*</code>,
-            <code>net_*</code>) because imports are textual.</p>
+            (<code>math_*</code>, <code>ctype_*</code>, <code>vec_*</code>,
+            <code>slice_*</code>, <code>os_*</code>, <code>net_*</code>)
+            because imports are textual.</p>
 
           <table class="doc-table">
             <thead>
@@ -716,6 +717,38 @@ print(other.x)</code></pre>
                 <td>no</td>
               </tr>
               <tr>
+                <td><code>lib/vec.loi</code></td>
+                <td><code>Vec&lt;T&gt;</code>, <code>vec_new&lt;T&gt;</code>,
+                  <code>vec_len&lt;T&gt;</code>,
+                  <code>vec_capacity&lt;T&gt;</code>,
+                  <code>vec_is_empty&lt;T&gt;</code>,
+                  <code>vec_get&lt;T&gt;</code>, <code>vec_set&lt;T&gt;</code>,
+                  <code>vec_push&lt;T&gt;</code>, <code>vec_pop&lt;T&gt;</code>,
+                  <code>vec_find&lt;T&gt;</code>,
+                  <code>vec_from_slice&lt;T&gt;</code>,
+                  <code>vec_as_slice&lt;T&gt;</code>,
+                  <code>vec_reserve&lt;T&gt;</code>,
+                  <code>vec_clear&lt;T&gt;</code>,
+                  <code>vec_reverse&lt;T&gt;</code>,
+                  <code>vec_sort&lt;T&gt;</code>,
+                  <code>vec_binary_search&lt;T&gt;</code></td>
+                <td>no; call inside <code>protect</code></td>
+              </tr>
+              <tr>
+                <td><code>lib/slice.loi</code></td>
+                <td><code>slice_len&lt;T&gt;</code>,
+                  <code>slice_is_empty&lt;T&gt;</code>,
+                  <code>slice_get&lt;T&gt;</code>,
+                  <code>slice_first&lt;T&gt;</code>,
+                  <code>slice_last&lt;T&gt;</code>,
+                  <code>slice_find&lt;T&gt;</code>,
+                  <code>slice_equals_u8</code>,
+                  <code>slice_clone&lt;T&gt;</code>,
+                  <code>slice_copy&lt;T&gt;</code>,
+                  <code>slice_reverse&lt;T&gt;</code></td>
+                <td>no; allocators need <code>protect</code></td>
+              </tr>
+              <tr>
                 <td><code>lib/os.loi</code></td>
                 <td><code>os_pid</code>, <code>os_unix_time</code>,
                   <code>os_sleep</code>, <code>os_has_env</code>,
@@ -736,7 +769,13 @@ print(other.x)</code></pre>
 
           <p><code>lib/math.loi</code> and <code>lib/ctype.loi</code> are pure
             Loi; the math module uses generic flows and a
-            <code>comptime flow</code>. <code>lib/os.loi</code> and
+            <code>comptime flow</code>. <code>lib/vec.loi</code> and
+            <code>lib/slice.loi</code> are also pure Loi, but their allocator
+            flows are <code>sealed</code> and must be called from inside
+            <code>protect</code>. <code>Vec&lt;T&gt;</code> stores cloned
+            values, so <code>T</code> must be cloneable without slice fields,
+            and ordering/search flows accept numeric <code>T</code> only.
+            <code>lib/os.loi</code> and
             <code>lib/net.loi</code> are thin POSIX bindings: compile their
             shims with the program. Sockets are integer descriptors, so no
             foreign pointer enters ordinary Loi values.</p>

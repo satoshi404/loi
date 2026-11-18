@@ -99,8 +99,168 @@ fn assert_ok(name: &str, imports: &[&str], body: &str, stdout: &str) {
     }
 }
 
+fn write_source(dir: &Path, name: &str, source: &str) -> PathBuf {
+    let path = dir.join(name);
+    fs::write(&path, source).expect("source file should be writable");
+    path
+}
+
+/// Compile the emitted C in the three requested modes. ASan+UBSan binaries are
+/// built but not executed: this PRoot container cannot map ASan's shadow
+/// memory. UBSan-only binaries are compiled and executed by the callers.
+fn compile_c_variants(
+    dir: &Path,
+    program: &Path,
+    extra_sources: &[PathBuf],
+) -> Option<(PathBuf, PathBuf)> {
+    if !has_c_compiler() {
+        return None;
+    }
+    let c = dir.join("main.c");
+    let generated = Command::new(loi())
+        .arg("gen")
+        .arg(program)
+        .arg("-o")
+        .arg(&c)
+        .output()
+        .expect("loi gen should run");
+    assert!(
+        generated.status.success(),
+        "loi gen failed: {}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+
+    let strict = dir.join("strict");
+    let strict_output = Command::new("cc")
+        .args(["-std=c11", "-pedantic-errors", "-Wall", "-Wextra"])
+        .arg(&c)
+        .args(extra_sources)
+        .arg("-o")
+        .arg(&strict)
+        .output()
+        .expect("cc should run");
+    assert!(
+        strict_output.status.success() && strict_output.stderr.is_empty(),
+        "strict C11 build failed: {}",
+        String::from_utf8_lossy(&strict_output.stderr)
+    );
+
+    let ubsan = dir.join("ubsan");
+    let ubsan_output = Command::new("cc")
+        .args([
+            "-std=c11",
+            "-fsanitize=undefined",
+            "-fno-omit-frame-pointer",
+            "-g",
+        ])
+        .arg(&c)
+        .args(extra_sources)
+        .arg("-o")
+        .arg(&ubsan)
+        .output()
+        .expect("cc should run");
+    assert!(
+        ubsan_output.status.success(),
+        "UBSan build failed: {}",
+        String::from_utf8_lossy(&ubsan_output.stderr)
+    );
+
+    let asan = dir.join("asan-ubsan");
+    let asan_output = Command::new("cc")
+        .args([
+            "-std=c11",
+            "-fsanitize=address,undefined",
+            "-fno-omit-frame-pointer",
+            "-g",
+        ])
+        .arg(&c)
+        .args(extra_sources)
+        .arg("-o")
+        .arg(&asan)
+        .output()
+        .expect("cc should run");
+    assert!(
+        asan_output.status.success(),
+        "ASan+UBSan build failed: {}",
+        String::from_utf8_lossy(&asan_output.stderr)
+    );
+    Some((strict, ubsan))
+}
+
+fn assert_ok_with_c_variants(
+    name: &str,
+    imports: &[&str],
+    body: &str,
+    extra_sources: &[PathBuf],
+    stdout: &str,
+) {
+    let dir = test_dir(name);
+    let program = write_program(&dir, imports, body);
+    let checked = check(&program);
+    assert!(
+        checked.status.success(),
+        "check failed: {}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+
+    if let Some((strict, ubsan)) = compile_c_variants(&dir, &program, extra_sources) {
+        for executable in [strict, ubsan] {
+            let run = Command::new(&executable)
+                .output()
+                .expect("C program should run");
+            assert_eq!(
+                run.status.code(),
+                Some(0),
+                "{name} failed: {}",
+                String::from_utf8_lossy(&run.stderr)
+            );
+            assert_eq!(String::from_utf8_lossy(&run.stdout), stdout);
+            assert!(
+                run.stderr.is_empty(),
+                "{name} wrote stderr: {}",
+                String::from_utf8_lossy(&run.stderr)
+            );
+        }
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+fn assert_runtime_error(name: &str, imports: &[&str], body: &str, stderr: &str) {
+    let dir = test_dir(name);
+    let program = write_program(&dir, imports, body);
+    let checked = check(&program);
+    assert!(
+        checked.status.success(),
+        "check failed: {}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    compile_c_variants(&dir, &program, &[]);
+
+    let executable = dir.join("program");
+    let built = Command::new(loi())
+        .arg("build")
+        .arg(&program)
+        .arg("-o")
+        .arg(&executable)
+        .output()
+        .expect("loi build should run");
+    assert!(
+        built.status.success(),
+        "build failed: {}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let run = Command::new(&executable)
+        .output()
+        .expect("built program should run");
+    assert_eq!(run.status.code(), Some(1));
+    assert_eq!(String::from_utf8_lossy(&run.stderr), stderr);
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn every_library_source_checks_cleanly() {
+    // Allocator-backed libraries are checked through the programs below: the
+    // checker only accepts their `alloc` calls when a caller uses `protect`.
     for name in ["std.loi", "math.loi", "ctype.loi", "os.loi", "net.loi"] {
         let path = repo_root().join("lib").join(name);
         let output = check(&path);
@@ -262,10 +422,626 @@ open flow main
 }
 
 #[test]
+fn vec_library_manages_growth_cloneable_elements_and_ordering() {
+    assert_ok_with_c_variants(
+        "vec-core",
+        &["vec.loi", "slice.loi"],
+        r#"
+shape Point [
+    x: i32
+    y: i32
+]
+
+open flow main
+    => i32
+{
+    protect {
+        mut xs: Vec<i32>
+        vec_new<i32>(-> xs)
+        if vec_len<i32>(xs) != 0 or vec_capacity<i32>(xs) != 1 { => 1 }
+        if not vec_is_empty<i32>(xs) { => 2 }
+
+        vec_push<i32>(<-> xs, 10)
+        vec_push<i32>(<-> xs, 20)
+        vec_push<i32>(<-> xs, 30)
+        if vec_len<i32>(xs) != 3 or vec_capacity<i32>(xs) != 4 { => 3 }
+        if vec_is_empty<i32>(xs) { => 4 }
+        if vec_get<i32>(xs, 1) != 20 { => 5 }
+
+        vec_set<i32>(<-> xs, 1, 21)
+        if vec_get<i32>(xs, 1) != 21 { => 6 }
+        if vec_find<i32>(xs, 30) != 2 or vec_find<i32>(xs, 99) != -1 { => 7 }
+
+        popped <- vec_pop<i32>(<-> xs)
+        if popped != 30 or vec_len<i32>(xs) != 2 { => 8 }
+        vec_reverse<i32>(<-> xs)
+        if vec_get<i32>(xs, 0) != 21 or vec_get<i32>(xs, 1) != 10 { => 9 }
+
+        view <- vec_as_slice<i32>(xs)
+        if slice_len<i32>(view) != 2 or slice_get<i32>(view, 1) != 10 { => 10 }
+
+        vec_reserve<i32>(<-> xs, 8)
+        if vec_capacity<i32>(xs) != 8 or vec_get<i32>(xs, 0) != 21 { => 11 }
+        vec_clear<i32>(<-> xs)
+        if vec_len<i32>(xs) != 0 or not vec_is_empty<i32>(xs) { => 12 }
+
+        source: [i32] <- [i32: 4, 5, 6]
+        mut made: Vec<i32>
+        vec_from_slice<i32>(source, -> made)
+        if vec_len<i32>(made) != 3 or vec_capacity<i32>(made) != 3 { => 13 }
+        if vec_get<i32>(made, 2) != 6 { => 14 }
+
+        unsorted: [i32] <- [i32: 5, -2, 9, 0, 5, 1]
+        mut sorted: Vec<i32>
+        vec_from_slice<i32>(unsorted, -> sorted)
+        vec_sort<i32>(<-> sorted)
+        if vec_get<i32>(sorted, 0) != -2 or vec_get<i32>(sorted, 1) != 0 { => 15 }
+        if vec_get<i32>(sorted, 2) != 1 or vec_get<i32>(sorted, 3) != 5 { => 16 }
+        if vec_get<i32>(sorted, 4) != 5 or vec_get<i32>(sorted, 5) != 9 { => 17 }
+        if vec_binary_search<i32>(sorted, 5) != 3 { => 18 }
+        if vec_binary_search<i32>(sorted, 4) != -1 { => 19 }
+
+        mut points: Vec<Point>
+        vec_new<Point>(-> points)
+        first <- Point[ x: 1, y: 2 ]
+        second <- Point[ x: 3, y: 4 ]
+        vec_push<Point>(<-> points, first)
+        vec_push<Point>(<-> points, second)
+        point <- vec_get<Point>(points, 1)
+        if point.x != 3 or point.y != 4 { => 20 }
+        replacement <- Point[ x: 9, y: 8 ]
+        vec_set<Point>(<-> points, 1, replacement)
+        vec_reverse<Point>(<-> points)
+        if vec_get<Point>(points, 0).x != 9 or vec_get<Point>(points, 1).x != 1 { => 21 }
+        point_view <- vec_as_slice<Point>(points)
+        if slice_len<Point>(point_view) != 2 { => 22 }
+        mut copied_points: Vec<Point>
+        vec_from_slice<Point>(point_view, -> copied_points)
+        vec_reserve<Point>(<-> copied_points, 5)
+        if vec_capacity<Point>(copied_points) != 5 { => 23 }
+        last_point <- vec_pop<Point>(<-> copied_points)
+        if last_point.x != 1 or vec_len<Point>(copied_points) != 1 { => 24 }
+        vec_clear<Point>(<-> copied_points)
+        if not vec_is_empty<Point>(copied_points) { => 25 }
+
+        print("vec ok\n")
+    }
+    => 0
+}
+"#,
+        &[],
+        "vec ok\n",
+    );
+}
+
+#[test]
+fn vec_library_covers_u8_and_f64_instantiations() {
+    assert_ok_with_c_variants(
+        "vec-numeric",
+        &["vec.loi"],
+        r#"
+open flow main
+    => i32
+{
+    protect {
+        mut bytes: Vec<u8>
+        vec_new<u8>(-> bytes)
+        vec_push<u8>(<-> bytes, 3)
+        vec_push<u8>(<-> bytes, 1)
+        vec_push<u8>(<-> bytes, 2)
+        vec_sort<u8>(<-> bytes)
+        if vec_get<u8>(bytes, 0) != 1 or vec_get<u8>(bytes, 2) != 3 { => 1 }
+        if vec_binary_search<u8>(bytes, 2) != 1 { => 2 }
+        if vec_find<u8>(bytes, 9) != -1 { => 3 }
+
+        mut floats: Vec<f64>
+        vec_new<f64>(-> floats)
+        vec_push<f64>(<-> floats, 2.5)
+        vec_push<f64>(<-> floats, 1.5)
+        vec_sort<f64>(<-> floats)
+        if vec_get<f64>(floats, 0) != 1.5 or vec_get<f64>(floats, 1) != 2.5 { => 4 }
+        if vec_binary_search<f64>(floats, 2.5) != 1 { => 5 }
+        popped <- vec_pop<f64>(<-> floats)
+        if popped != 2.5 { => 6 }
+
+        print("vec numeric ok\n")
+    }
+    => 0
+}
+"#,
+        &[],
+        "vec numeric ok\n",
+    );
+}
+
+#[test]
+fn slice_library_covers_every_flow_and_cloneable_elements() {
+    assert_ok_with_c_variants(
+        "slice-core",
+        &["slice.loi"],
+        r#"
+shape Point [
+    x: i32
+    y: i32
+]
+
+open flow main
+    => i32
+{
+    protect {
+        values: [i32] <- [i32: 4, 1, 3, 2]
+        if slice_len<i32>(values) != 4 or slice_is_empty<i32>(values) { => 1 }
+        if slice_get<i32>(values, 2) != 3 { => 2 }
+        if slice_first<i32>(values) != 4 or slice_last<i32>(values) != 2 { => 3 }
+        if slice_find<i32>(values, 3) != 2 or slice_find<i32>(values, 8) != -1 { => 4 }
+
+        cloned <- slice_clone<i32>(values)
+        if slice_len<i32>(cloned) != 4 or slice_get<i32>(cloned, 1) != 1 { => 5 }
+        mut copied: [i32]
+        slice_copy<i32>(values, -> copied)
+        if slice_len<i32>(copied) != 4 or slice_get<i32>(copied, 3) != 2 { => 6 }
+
+        mut reversed: [i32] <- [i32: 4, 1, 3, 2]
+        slice_reverse<i32>(<-> reversed)
+        if reversed[0] != 2 or reversed[1] != 3 or reversed[2] != 1 or reversed[3] != 4 { => 7 }
+
+        empty: [i32] <- [i32:]
+        if not slice_is_empty<i32>(empty) { => 8 }
+        empty_copy <- slice_clone<i32>(empty)
+        if slice_len<i32>(empty_copy) != 0 { => 9 }
+
+        bytes: [u8] <- [u8: 3, 1, 2]
+        if slice_get<u8>(bytes, 0) != 3 or slice_find<u8>(bytes, 2) != 2 { => 10 }
+        mut reversed_bytes: [u8] <- [u8: 3, 1, 2]
+        slice_reverse<u8>(<-> reversed_bytes)
+        if reversed_bytes[0] != 2 or reversed_bytes[2] != 3 { => 11 }
+
+        fractions: [f64] <- [f64: 1.5, 2.5, 3.5]
+        if slice_get<f64>(fractions, 1) != 2.5 or slice_find<f64>(fractions, 3.5) != 2 { => 12 }
+        mut reversed_fractions: [f64] <- [f64: 1.5, 2.5, 3.5]
+        slice_reverse<f64>(<-> reversed_fractions)
+        if reversed_fractions[0] != 3.5 or reversed_fractions[2] != 1.5 { => 13 }
+
+        points: [Point] <- [Point[ x: 1, y: 2 ], Point[ x: 3, y: 4 ]]
+        if slice_get<Point>(points, 1).x != 3 { => 14 }
+        cloned_points <- slice_clone<Point>(points)
+        if slice_len<Point>(cloned_points) != 2 { => 15 }
+        mut copied_points: [Point]
+        slice_copy<Point>(points, -> copied_points)
+        if slice_get<Point>(copied_points, 0).y != 2 { => 16 }
+        mut reversed_points: [Point] <- [Point[ x: 1, y: 2 ], Point[ x: 3, y: 4 ]]
+        slice_reverse<Point>(<-> reversed_points)
+        if slice_get<Point>(reversed_points, 0).x != 3 { => 17 }
+
+        if not slice_equals_u8("abc", "abc") or slice_equals_u8("abc", "abd") { => 18 }
+        print("slice ok\n")
+    }
+    => 0
+}
+"#,
+        &[],
+        "slice ok\n",
+    );
+}
+
+#[test]
+fn vector_and_slice_errors_name_the_flow() {
+    assert_runtime_error(
+        "vec-get-error",
+        &["vec.loi"],
+        r#"
+open flow main
+    => i32
+{
+    protect {
+        values <- vec_from_slice_error_input()
+        bad <- vec_get<i32>(values, 7)
+        if bad == 0 { print("unreachable\n") }
+    }
+    => 0
+}
+
+flow vec_from_slice_error_input
+    => Vec<i32>
+{
+    mut made: Vec<i32>
+    vec_new<i32>(-> made)
+    vec_push<i32>(<-> made, 1)
+    vec_push<i32>(<-> made, 2)
+    => give(made)
+}
+"#,
+        "vec_get: index 7 out of range (len 2)\n",
+    );
+
+    assert_runtime_error(
+        "vec-set-error",
+        &["vec.loi"],
+        r#"
+open flow main
+    => i32
+{
+    protect {
+        mut values: Vec<i32>
+        vec_new<i32>(-> values)
+        vec_push<i32>(<-> values, 1)
+        vec_set<i32>(<-> values, 7, 9)
+        print("unreachable\n")
+    }
+    => 0
+}
+"#,
+        "vec_set: index 7 out of range (len 1)\n",
+    );
+
+    assert_runtime_error(
+        "vec-pop-error",
+        &["vec.loi"],
+        r#"
+open flow main
+    => i32
+{
+    protect {
+        mut values: Vec<i32>
+        vec_new<i32>(-> values)
+        popped <- vec_pop<i32>(<-> values)
+        if popped == 0 { print("unreachable\n") }
+    }
+    => 0
+}
+"#,
+        "vec_pop: vector is empty (len 0)\n",
+    );
+
+    assert_runtime_error(
+        "slice-get-error",
+        &["slice.loi"],
+        r#"
+open flow main
+    => i32
+{
+    protect {
+        values: [i32] <- [i32: 1, 2]
+        bad <- slice_get<i32>(values, 7)
+        if bad == 0 { print("unreachable\n") }
+    }
+    => 0
+}
+"#,
+        "slice_get: index 7 out of range (len 2)\n",
+    );
+
+    assert_runtime_error(
+        "slice-first-error",
+        &["slice.loi"],
+        r#"
+open flow main
+    => i32
+{
+    protect {
+        empty: [i32] <- [i32:]
+        bad <- slice_first<i32>(empty)
+        if bad == 0 { print("unreachable\n") }
+    }
+    => 0
+}
+"#,
+        "slice_first: slice is empty (len 0)\n",
+    );
+
+    assert_runtime_error(
+        "slice-last-error",
+        &["slice.loi"],
+        r#"
+open flow main
+    => i32
+{
+    protect {
+        empty: [i32] <- [i32:]
+        bad <- slice_last<i32>(empty)
+        if bad == 0 { print("unreachable\n") }
+    }
+    => 0
+}
+"#,
+        "slice_last: slice is empty (len 0)\n",
+    );
+}
+
+#[test]
+fn duplicate_library_imports_are_deduplicated() {
+    assert_ok_with_c_variants(
+        "duplicate-imports",
+        &["vec.loi", "vec.loi", "slice.loi", "slice.loi"],
+        r#"
+open flow main
+    => i32
+{
+    protect {
+        mut values: Vec<i32>
+        vec_new<i32>(-> values)
+        vec_push<i32>(<-> values, 3)
+        view <- vec_as_slice<i32>(values)
+        if slice_len<i32>(view) != 1 or vec_get<i32>(values, 0) != 3 { => 1 }
+        print("duplicate imports ok\n")
+    }
+    => 0
+}
+"#,
+        &[],
+        "duplicate imports ok\n",
+    );
+}
+
+#[test]
+fn two_libraries_can_import_vec_and_slice() {
+    let dir = test_dir("cross-library-imports");
+    let vec_path = repo_root().join("lib").join("vec.loi");
+    let slice_path = repo_root().join("lib").join("slice.loi");
+    let a = write_source(
+        &dir,
+        "wrapper_a.loi",
+        &format!(
+            "import \"{}\"\n\nflow sum_i32\n    <- values: [i32]\n    => i32\n{{\n    mut total: i32 <- 0\n    for i in 0..values.len {{\n        total += values[i]\n    }}\n    => total\n}}\n",
+            vec_path.display()
+        ),
+    );
+    let b = write_source(
+        &dir,
+        "wrapper_b.loi",
+        &format!(
+            "import \"{}\"\n\nflow count_i32\n    <- values: [i32]\n    => u64\n{{\n    => slice_len<i32>(values)\n}}\n",
+            slice_path.display()
+        ),
+    );
+    let program = write_source(
+        &dir,
+        "main.loi",
+        &format!(
+            "import \"{}\"\nimport \"{}\"\n\nopen flow main\n    => i32\n{{\n    protect {{\n        mut values: Vec<i32>\n        vec_new<i32>(-> values)\n        vec_push<i32>(<-> values, 2)\n        vec_push<i32>(<-> values, 4)\n        view <- vec_as_slice<i32>(values)\n        if sum_i32(view) != 6 or count_i32(view) != 2 {{ => 1 }}\n        print(\"cross library ok\\n\")\n    }}\n    => 0\n}}\n",
+            a.display(),
+            b.display()
+        ),
+    );
+    let checked = check(&program);
+    assert!(
+        checked.status.success(),
+        "check failed: {}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    if let Some((strict, ubsan)) = compile_c_variants(&dir, &program, &[]) {
+        for executable in [strict, ubsan] {
+            let run = Command::new(&executable)
+                .output()
+                .expect("C program should run");
+            assert_eq!(
+                run.status.code(),
+                Some(0),
+                "cross-library import failed: {}",
+                String::from_utf8_lossy(&run.stderr)
+            );
+            assert_eq!(String::from_utf8_lossy(&run.stdout), "cross library ok\n");
+        }
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+struct SeededRng(u64);
+
+impl SeededRng {
+    fn next_u64(&mut self) -> u64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        self.0 >> 33
+    }
+
+    fn next_i32(&mut self, low: i32, high: i32) -> i32 {
+        low + (self.next_u64() % (high - low + 1) as u64) as i32
+    }
+}
+
+fn loi_i32_slice(values: &[i32]) -> String {
+    let items = values
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[i32: {items}]")
+}
+
+#[test]
+fn seeded_sort_and_find_match_known_vectors_and_naive_lists() {
+    let mut rng = SeededRng(0x5eed_1234_5678_9abc);
+    let mut cases: Vec<Vec<i32>> = vec![
+        vec![],
+        vec![7],
+        vec![3, 3, 3, 3],
+        vec![-5, 4, -3, 2, -1, 0],
+        vec![9, 8, 7, 6, 5, 4, 3, 2, 1, 0],
+    ];
+    for size in [1, 2, 5, 11, 23] {
+        cases.push((0..size).map(|_| rng.next_i32(-50, 50)).collect::<Vec<_>>());
+    }
+
+    let mut body = String::from("\nopen flow main\n    => i32\n{\n    protect {\n");
+    let mut expected = String::new();
+    for (index, values) in cases.iter().enumerate() {
+        let literal = loi_i32_slice(values);
+        let length = values.len();
+        let guard = 100 + index;
+        body.push_str(&format!(
+            "        source{index}: [i32] <- {literal}\n\
+             \x20       mut vector{index}: Vec<i32>\n\
+             \x20       vec_from_slice<i32>(source{index}, -> vector{index})\n\
+             \x20       vec_sort<i32>(<-> vector{index})\n\
+             \x20       sorted{index} <- vec_as_slice<i32>(vector{index})\n\
+             \x20       if slice_len<i32>(sorted{index}) != {length} {{ => {guard} }}\n\
+             \x20       print(\"sort{index}:\")\n"
+        ));
+        for at in 0..values.len() {
+            body.push_str(&format!(
+                "        printf(\" %d\", slice_get<i32>(sorted{index}, {at}))\n"
+            ));
+        }
+        body.push_str("        print(\"\\n\")\n");
+
+        let mut sorted = values.clone();
+        sorted.sort_unstable();
+        let joined = sorted
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(" ");
+        if joined.is_empty() {
+            expected.push_str(&format!("sort{index}:\n"));
+        } else {
+            expected.push_str(&format!("sort{index}: {joined}\n"));
+        }
+    }
+
+    for (index, values) in cases.iter().enumerate() {
+        let mut sorted_values = values.clone();
+        sorted_values.sort_unstable();
+        let needle = if index % 3 == 0 {
+            sorted_values.first().copied().unwrap_or(0)
+        } else {
+            rng.next_i32(-50, 50)
+        };
+        let expected_index = sorted_values.iter().position(|value| *value == needle);
+        body.push_str(&format!(
+            "        found{index} <- vec_find<i32>(vector{index}, {needle})\n\
+             \x20       printf(\"find{index}:%d\\n\", found{index})\n"
+        ));
+        expected.push_str(&format!(
+            "find{index}:{}\n",
+            expected_index.map_or(-1, |at| at as i32)
+        ));
+    }
+
+    body.push_str("        print(\"properties ok\\n\")\n    }\n    => 0\n}\n");
+    expected.push_str("properties ok\n");
+
+    assert_ok_with_c_variants(
+        "seeded-properties",
+        &["vec.loi", "slice.loi"],
+        &body,
+        &[],
+        &expected,
+    );
+}
+
+#[test]
+fn seeded_sort_matches_c_qsort() {
+    let shim = r#"
+#include <stddef.h>
+#include <stdint.h>
+#include <stdlib.h>
+
+typedef struct {
+    void* data;
+    size_t len;
+} LoiSlice;
+
+static int compare_i32(const void* left, const void* right) {
+    int32_t a = *(const int32_t*)left;
+    int32_t b = *(const int32_t*)right;
+    if (a < b) {
+        return -1;
+    }
+    if (a > b) {
+        return 1;
+    }
+    return 0;
+}
+
+void loi_qsort_i32_ref(LoiSlice* values) {
+    if (values != NULL && values->data != NULL && values->len > 1) {
+        qsort(values->data, values->len, sizeof(int32_t), compare_i32);
+    }
+}
+"#;
+    let mut rng = SeededRng(0xc0ff_ee01_2345_6789);
+    let cases: Vec<Vec<i32>> = [0, 1, 2, 7, 19]
+        .into_iter()
+        .map(|size| (0..size).map(|_| rng.next_i32(-100, 100)).collect())
+        .collect();
+
+    let mut body = String::from(
+        "\nextern flow loi_qsort_i32_ref\n    <-> values: [i32]\n\nopen flow main\n    => i32\n{\n    protect {\n",
+    );
+    for (index, values) in cases.iter().enumerate() {
+        let literal = loi_i32_slice(values);
+        body.push_str(&format!(
+            "        source{index}: [i32] <- {literal}\n\
+             \x20       mut vector{index}: Vec<i32>\n\
+             \x20       vec_from_slice<i32>(source{index}, -> vector{index})\n\
+             \x20       vec_sort<i32>(<-> vector{index})\n\
+             \x20       sorted{index} <- vec_as_slice<i32>(vector{index})\n\
+             \x20       mut reference{index}: [i32] <- {literal}\n\
+             \x20       loi_qsort_i32_ref(<-> reference{index})\n\
+             \x20       mut same{index}: bool <- true\n\
+             \x20       if slice_len<i32>(sorted{index}) != reference{index}.len {{\n\
+             \x20           same{index} = false\n\
+             \x20       }}\n\
+             \x20       if same{index} {{\n\
+             \x20           for i in 0..reference{index}.len {{\n\
+             \x20               if slice_get<i32>(sorted{index}, i) != reference{index}[i] {{\n\
+             \x20                   same{index} = false\n\
+             \x20               }}\n\
+             \x20           }}\n\
+             \x20       }}\n\
+             \x20       if same{index} {{\n\
+             \x20           print(\"qsort{index}:ok\\n\")\n\
+             \x20       }} else {{\n\
+             \x20           print(\"qsort{index}:bad\\n\")\n\
+             \x20       }}\n"
+        ));
+    }
+    body.push_str("        print(\"qsort ok\\n\")\n    }\n    => 0\n}\n");
+
+    let dir = test_dir("qsort-reference");
+    let shim_path = write_source(&dir, "qsort_shim.c", shim);
+    let program = write_program(&dir, &["vec.loi", "slice.loi"], &body);
+    let checked = check(&program);
+    assert!(
+        checked.status.success(),
+        "check failed: {}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    let expected = "qsort0:ok\nqsort1:ok\nqsort2:ok\nqsort3:ok\nqsort4:ok\nqsort ok\n".to_string();
+    if let Some((strict, ubsan)) = compile_c_variants(&dir, &program, &[shim_path]) {
+        for executable in [strict, ubsan] {
+            let run = Command::new(&executable)
+                .output()
+                .expect("C program should run");
+            assert_eq!(
+                run.status.code(),
+                Some(0),
+                "qsort comparison failed: {}",
+                String::from_utf8_lossy(&run.stderr)
+            );
+            assert_eq!(String::from_utf8_lossy(&run.stdout), expected);
+            assert!(run.stderr.is_empty());
+        }
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn all_libraries_can_be_imported_together() {
     assert_ok(
         "all-libraries",
-        &["std.loi", "math.loi", "ctype.loi", "os.loi", "net.loi"],
+        &[
+            "std.loi",
+            "math.loi",
+            "ctype.loi",
+            "vec.loi",
+            "slice.loi",
+            "os.loi",
+            "net.loi",
+        ],
         r#"
 open flow main
     => i32
