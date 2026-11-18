@@ -677,8 +677,9 @@ print(other.x)</code></pre>
           <p>Every library file is imported explicitly, for example
             <code>import "lib/std.loi"</code>. Names are prefixed by module
             (<code>math_*</code>, <code>ctype_*</code>, <code>vec_*</code>,
-            <code>slice_*</code>, <code>os_*</code>, <code>net_*</code>)
-            because imports are textual.</p>
+            <code>slice_*</code>, <code>str_*</code>, <code>hash_*</code>,
+            <code>os_*</code>, <code>net_*</code>) because imports are
+            textual.</p>
 
           <table class="doc-table">
             <thead>
@@ -749,6 +750,23 @@ print(other.x)</code></pre>
                 <td>no; allocators need <code>protect</code></td>
               </tr>
               <tr>
+                <td><code>lib/string.loi</code></td>
+                <td><code>STRING_MAX_LEN</code>,
+                  <code>str_is_ascii_space</code>, <code>str_trim</code>,
+                  <code>str_concat</code>, <code>str_reverse</code>,
+                  <code>str_repeat</code>, <code>str_count</code>,
+                  <code>str_index_of</code>, <code>str_contains</code></td>
+                <td>no; owned results need <code>protect</code></td>
+              </tr>
+              <tr>
+                <td><code>lib/hash.loi</code></td>
+                <td><code>HASH_OFFSET</code>, <code>HASH_PRIME</code>,
+                  <code>hash_bytes_seeded</code>, <code>hash_bytes</code>,
+                  <code>hash_str</code>, <code>hash_u64_seeded</code>,
+                  <code>hash_u64</code>, <code>hash_pair_u64</code></td>
+                <td>no</td>
+              </tr>
+              <tr>
                 <td><code>lib/os.loi</code></td>
                 <td><code>os_pid</code>, <code>os_unix_time</code>,
                   <code>os_sleep</code>, <code>os_has_env</code>,
@@ -775,7 +793,15 @@ print(other.x)</code></pre>
             <code>protect</code>. <code>Vec&lt;T&gt;</code> stores cloned
             values, so <code>T</code> must be cloneable without slice fields,
             and ordering/search flows accept numeric <code>T</code> only.
-            <code>lib/os.loi</code> and
+            <code>lib/string.loi</code> returns owned <code>[u8]</code> values,
+            so its transforming flows are <code>sealed</code> and need the
+            caller's <code>protect</code>; its queries are <code>open</code>.
+            <code>str_repeat</code> rejects an overflowing count with a
+            flow-naming error. <code>lib/hash.loi</code> is pure 64-bit FNV-1a:
+            <code>u64</code> values are hashed as little-endian bytes and no
+            <code>protect</code> is needed. Loi has no character literals, so
+            byte queries use numeric values while substring queries use string
+            slices. <code>lib/os.loi</code> and
             <code>lib/net.loi</code> are thin POSIX bindings: compile their
             shims with the program. Sockets are integer descriptors, so no
             foreign pointer enters ordinary Loi values.</p>

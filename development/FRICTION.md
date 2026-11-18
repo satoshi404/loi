@@ -111,3 +111,35 @@ error: operator requires numeric operands, found Bad and Bad
 Language requirement: trait constraints/ord bounds on generic type parameters.
 Current workaround: document ordering/search/sort flows as numeric-only where
 needed, and avoid pretending that `T` is comparable.
+
+## Phase 2 — `lib/string.loi` and `lib/hash.loi`
+
+### Character literals do not exist
+
+Attempted design: write byte-oriented tests with character literals, for
+example `str_contains("banana", 'n')` and `c: u8 <- 'n'`. The probe was
+`/tmp/opencode/loi-phase0/char_literal.loi`.
+
+Exact diagnostic:
+
+```text
+error: unexpected character '''
+ --> /tmp/opencode/loi-phase0/char_literal.loi:4:14
+  |
+4 |     c: u8 <- 'n'
+  |              ^
+
+1 error
+```
+
+Language requirement: a `u8` character-literal form with escapes. Current
+workaround: pass the numeric byte value (`110` for `n`) to `str_count`, or pass
+a one-byte string slice (`"n"`) to `str_index_of` and `str_contains`. The
+library APIs themselves are not blocked; only the test spelling changed.
+
+### No allocation-free dynamic error formatting was needed
+
+No Phase 2 flow was blocked. `str_repeat` checks multiplication overflow before
+allocating and calls `panic` with a literal, flow-naming message; `hash_*` flows
+are pure. The `if false { panic(name) }` placeholder initially written into
+`lib/string.loi` was dead code and was removed after the tests passed.

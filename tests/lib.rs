@@ -1030,6 +1030,247 @@ void loi_qsort_i32_ref(LoiSlice* values) {
 }
 
 #[test]
+fn string_library_trims_concatenates_reverses_and_repeats_bytes() {
+    assert_ok_with_c_variants(
+        "string-core",
+        &["std.loi", "string.loi"],
+        r#"
+open flow main
+    => i32
+{
+    protect {
+        trimmed <- str_trim("  hi\n\t")
+        if not str_eq(trimmed, "hi") { => 1 }
+        already <- str_trim("plain")
+        if not str_eq(already, "plain") { => 2 }
+        blank <- str_trim("   \n\t ")
+        if str_len(blank) != 0 { => 3 }
+
+        joined <- str_concat("foo", "bar")
+        if not str_eq(joined, "foobar") { => 4 }
+        empty_join <- str_concat("", "tail")
+        if not str_eq(empty_join, "tail") { => 5 }
+
+        reversed <- str_reverse("abcdef")
+        if not str_eq(reversed, "fedcba") { => 6 }
+        empty_reverse <- str_reverse("")
+        if str_len(empty_reverse) != 0 { => 7 }
+
+        repeated <- str_repeat("ab", 3)
+        if not str_eq(repeated, "ababab") { => 8 }
+        empty_repeat <- str_repeat("x", 0)
+        if str_len(empty_repeat) != 0 { => 9 }
+        single <- str_repeat("loi", 1)
+        if not str_eq(single, "loi") { => 10 }
+
+        if str_count("banana", 97) != 3 or str_count("banana", 120) != 0 { => 11 }
+        if str_index_of("", "") != 0 or str_index_of("abc", "abcd") != -1 { => 12 }
+        if str_index_of("banana", "n") != 2 or str_index_of("banana", "x") != -1 { => 13 }
+        if not str_contains("banana", "n") or str_contains("banana", "x") { => 14 }
+        if not str_contains("", "") { => 15 }
+
+        print("string ok\n")
+    }
+    => 0
+}
+"#,
+        &[],
+        "string ok\n",
+    );
+}
+
+#[test]
+fn hash_library_matches_known_vectors() {
+    assert_ok_with_c_variants(
+        "hash-known",
+        &["hash.loi"],
+        r#"
+open flow main
+    => i32
+{
+    if HASH_OFFSET != 14695981039346656037 { => 1 }
+    if HASH_PRIME != 1099511628211 { => 2 }
+    if hash_bytes("") != HASH_OFFSET { => 3 }
+    if hash_str("a") != 12638187200555641996 { => 4 }
+    if hash_str("hello") != 11831194018420276491 { => 5 }
+    if hash_u64(0) != 12161962213042174405 { => 6 }
+    if hash_u64(1) != 9929646806074584996 { => 7 }
+    if hash_u64(0x0102030405060708) != 895447315735140821 { => 8 }
+    if hash_bytes_seeded("abc", 42) != 9828954460287139422 { => 9 }
+    if hash_pair_u64(7, 9) != 12823680747875972811 { => 10 }
+    if hash_u64_seeded(1, 42) != 3755842131058586507 { => 11 }
+    if hash_u64_seeded(0x0102030405060708, 99) != 16797047285318259627 { => 12 }
+    print("hash ok\n")
+    => 0
+}
+"#,
+        &[],
+        "hash ok\n",
+    );
+}
+
+fn loi_u8_slice(values: &[u8]) -> String {
+    let items = values
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[u8: {items}]")
+}
+
+const HASH_OFFSET: u64 = 0xcbf29ce484222325;
+const HASH_PRIME: u64 = 0x100000001b3;
+
+fn reference_hash_bytes(data: &[u8]) -> u64 {
+    let mut hash = HASH_OFFSET;
+    for byte in data {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(HASH_PRIME);
+    }
+    hash
+}
+
+fn reference_hash_u64(value: u64) -> u64 {
+    reference_hash_bytes(&value.to_le_bytes())
+}
+
+fn reference_hash_seeded(data: &[u8], seed: u64) -> u64 {
+    let mut hash = seed;
+    for byte in data {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(HASH_PRIME);
+    }
+    hash
+}
+
+#[test]
+fn seeded_hashes_match_the_fnv_reference() {
+    let mut rng = SeededRng(0xf1a7_5eed_0bad_c0de);
+    let mut body = String::from("\nopen flow main\n    => i32\n{\n");
+    let mut expected = String::new();
+    for index in 0..8 {
+        let size = (index * 3) % 17;
+        let bytes: Vec<u8> = (0..size).map(|_| rng.next_u64() as u8).collect();
+        let seed = rng.next_u64();
+        let value = rng.next_u64();
+        body.push_str(&format!(
+            "    data{index}: [u8] <- {literal}\n\
+             \x20   printf(\"bytes{index}:%llu\\n\", hash_bytes(data{index}))\n\
+             \x20   printf(\"seeded{index}:%llu\\n\", hash_bytes_seeded(data{index}, {seed}))\n\
+             \x20   printf(\"u64_{index}:%llu\\n\", hash_u64({value}))\n\
+             \x20   printf(\"seedu64_{index}:%llu\\n\", hash_u64_seeded({value}, {seed}))\n",
+            literal = loi_u8_slice(&bytes)
+        ));
+        expected.push_str(&format!(
+            "bytes{index}:{}\nseeded{index}:{}\nu64_{index}:{}\nseedu64_{index}:{}\n",
+            reference_hash_bytes(&bytes),
+            reference_hash_seeded(&bytes, seed),
+            reference_hash_u64(value),
+            reference_hash_seeded(&value.to_le_bytes(), seed)
+        ));
+    }
+    body.push_str("    print(\"hash properties ok\\n\")\n    => 0\n}\n");
+    expected.push_str("hash properties ok\n");
+
+    assert_ok_with_c_variants("hash-properties", &["hash.loi"], &body, &[], &expected);
+}
+
+#[test]
+fn string_and_hash_imports_work_twice_and_across_libraries() {
+    assert_ok_with_c_variants(
+        "string-hash-duplicate-imports",
+        &["string.loi", "string.loi", "hash.loi", "hash.loi"],
+        r#"
+open flow main
+    => i32
+{
+    protect {
+        value <- str_trim("  loi  ")
+        if str_count(value, 108) != 1 or hash_str(value) == 0 { => 1 }
+        print("duplicate string imports ok\n")
+    }
+    => 0
+}
+"#,
+        &[],
+        "duplicate string imports ok\n",
+    );
+
+    let dir = test_dir("string-hash-cross-library");
+    let string_path = repo_root().join("lib").join("string.loi");
+    let hash_path = repo_root().join("lib").join("hash.loi");
+    let a = write_source(
+        &dir,
+        "wrapper_a.loi",
+        &format!(
+            "import \"{}\"\n\nflow clean_word\n    <- text: [u8]\n    => [u8]\n{{\n    => str_trim(text)\n}}\n",
+            string_path.display()
+        ),
+    );
+    let b = write_source(
+        &dir,
+        "wrapper_b.loi",
+        &format!(
+            "import \"{}\"\n\nflow word_hash\n    <- text: [u8]\n    => u64\n{{\n    => hash_str(text)\n}}\n",
+            hash_path.display()
+        ),
+    );
+    let program = write_source(
+        &dir,
+        "main.loi",
+        &format!(
+            "import \"{}\"\nimport \"{}\"\n\nopen flow main\n    => i32\n{{\n    protect {{\n        word <- clean_word(\"  hash  \")\n        if word_hash(word) == 0 {{ => 1 }}\n        print(\"cross string imports ok\\n\")\n    }}\n    => 0\n}}\n",
+            a.display(),
+            b.display()
+        ),
+    );
+    let checked = check(&program);
+    assert!(
+        checked.status.success(),
+        "check failed: {}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    if let Some((strict, ubsan)) = compile_c_variants(&dir, &program, &[]) {
+        for executable in [strict, ubsan] {
+            let run = Command::new(&executable)
+                .output()
+                .expect("C program should run");
+            assert_eq!(
+                run.status.code(),
+                Some(0),
+                "cross-library string import failed: {}",
+                String::from_utf8_lossy(&run.stderr)
+            );
+            assert_eq!(
+                String::from_utf8_lossy(&run.stdout),
+                "cross string imports ok\n"
+            );
+        }
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn str_repeat_rejects_an_overflowing_count() {
+    assert_runtime_error(
+        "str-repeat-overflow",
+        &["string.loi"],
+        r#"
+open flow main
+    => i32
+{
+    protect {
+        repeated <- str_repeat("ab", 18446744073709551615)
+        if repeated.len == 0 { print("unreachable\n") }
+    }
+    => 0
+}
+"#,
+        "str_repeat: count is too large\n",
+    );
+}
+
+#[test]
 fn all_libraries_can_be_imported_together() {
     assert_ok(
         "all-libraries",
@@ -1039,6 +1280,8 @@ fn all_libraries_can_be_imported_together() {
             "ctype.loi",
             "vec.loi",
             "slice.loi",
+            "string.loi",
+            "hash.loi",
             "os.loi",
             "net.loi",
         ],
@@ -1052,6 +1295,7 @@ open flow main
     if not ctype_is_alnum(90) { => 4 }
     if os_pid() <= 0 { => 5 }
     if not net_port_is_valid(443) { => 6 }
+    if hash_str("loi") == 0 or str_count("loi", 108) != 1 { => 7 }
     mut ok: i32 <- 0
     if os_pid() > 0 {
         ok = 1

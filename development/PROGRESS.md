@@ -4,23 +4,32 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-18):** Phase 1 standard-library expansion. Added
+- **Current task (2026-11-18):** Phase 2 standard-library expansion: strings
+  and hashing. Added `lib/string.loi` and `lib/hash.loi` test-first: five new
+  `tests/lib.rs` cases cover every flow with runnable programs, known FNV-1a
+  vectors, seeded properties against a Rust reference, duplicate imports, two
+  libraries importing the new modules, and the exact `str_repeat` overflow
+  error. `str_*` transforming flows are `sealed` and need the caller's
+  `protect`; queries are `open`. `hash_*` flows are pure 64-bit FNV-1a and hash
+  `u64` values as little-endian bytes. Loi has no character literals; the probe
+  and exact diagnostic are in `development/FRICTION.md`. Public docs were
+  updated in `SINTAXE.md` and `website/docs.html`. Every test program's C was
+  compiled with `-std=c11 -pedantic-errors -Wall -Wextra` (warnings treated as
+  failure), UBSan-only builds were compiled and run clean, and ASan+UBSan builds
+  were compiled but not run because this PRoot container cannot map ASan shadow
+  memory. Gate: `cargo fmt --check`, `cargo clippy --all-targets -- -D
+  warnings`, `cargo test --all-targets` (**282 passed, 0 failed**:
+  22+6+1+102+42+43+2+6+20+23+15), `python3 tools/sync_examples.py --check`, and
+  `git diff --check` all exit 0. Next: Phase 3, CRC32 with a `comptime` table.
+- **Previous task (2026-11-18):** Phase 1 standard-library expansion. Added
   `lib/vec.loi` and `lib/slice.loi` test-first: eight new `tests/lib.rs` cases
   cover every flow with runnable programs, exact flow-naming runtime errors,
   seeded sort/find properties against Rust references and C `qsort`, duplicate
   imports, and two libraries importing the new modules. `Vec<T>` stores cloned
   values; allocator flows are `sealed` and require the caller's `protect`;
   `vec_sort` is heapsort (worst-case O(n log n)). Blocked designs are recorded
-  in `development/FRICTION.md`. Public docs were updated in `SINTAXE.md` and
-  `website/docs.html`. Every test program's C was compiled with
-  `-std=c11 -pedantic-errors -Wall -Wextra` (warnings treated as failure),
-  UBSan-only builds were compiled and run clean, and ASan+UBSan builds were
-  compiled but not run because this PRoot container cannot map ASan shadow
-  memory. Gate: `cargo fmt --check`, `cargo clippy --all-targets -- -D
-  warnings`, `cargo test --all-targets` (**277 passed, 0 failed**:
-  22+6+1+102+42+43+2+6+15+23+15), `python3 tools/sync_examples.py --check`, and
-  `git diff --check` all exit 0. Next: Phase 2, continued standard-library
-  expansion.
+  in `development/FRICTION.md`. Gate: **277 passed, 0 failed**
+  (22+6+1+102+42+43+2+6+15+23+15). Committed as `2fda361`.
 - **Previous task (2026-11-17):** made lexer-error JSON ranges exclusive and
   agree with human underlines. `LexError` now carries the exclusive
   `end_column`, computed with the renderer's token-length scan, and the CLI

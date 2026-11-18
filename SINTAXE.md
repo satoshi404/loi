@@ -603,8 +603,9 @@ print("\n")
 ### Library modules
 
 Every library file is imported explicitly with the canonical `import` form.
-Names are prefixed by module (`math_*`, `ctype_*`, `vec_*`, `slice_*`, `os_*`,
-`net_*`) because imports are textual and there are no namespaces yet.
+Names are prefixed by module (`math_*`, `ctype_*`, `vec_*`, `slice_*`, `str_*`,
+`hash_*`, `os_*`, `net_*`) because imports are textual and there are no
+namespaces yet.
 
 | File | Helpers | Needs a shim? |
 |---|---|---|
@@ -613,6 +614,8 @@ Names are prefixed by module (`math_*`, `ctype_*`, `vec_*`, `slice_*`, `os_*`,
 | `lib/ctype.loi` | `ctype_is_digit`, `ctype_is_upper`, `ctype_is_lower`, `ctype_is_alpha`, `ctype_is_alnum`, `ctype_is_hex_digit`, `ctype_is_space`, `ctype_is_ascii`, `ctype_to_lower`, `ctype_to_upper`, `ctype_hex_value`, `ctype_parse_u64`, `ctype_count_digits`, `ctype_equals_ignore_case` | no |
 | `lib/vec.loi` | `Vec<T>`, `vec_new<T>`, `vec_len<T>`, `vec_capacity<T>`, `vec_is_empty<T>`, `vec_get<T>`, `vec_set<T>`, `vec_push<T>`, `vec_pop<T>`, `vec_find<T>`, `vec_from_slice<T>`, `vec_as_slice<T>`, `vec_reserve<T>`, `vec_clear<T>`, `vec_reverse<T>`, `vec_sort<T>`, `vec_binary_search<T>` | no; call inside `protect` |
 | `lib/slice.loi` | `slice_len<T>`, `slice_is_empty<T>`, `slice_get<T>`, `slice_first<T>`, `slice_last<T>`, `slice_find<T>`, `slice_equals_u8`, `slice_clone<T>`, `slice_copy<T>`, `slice_reverse<T>` | no; allocators need `protect` |
+| `lib/string.loi` | `STRING_MAX_LEN`, `str_is_ascii_space`, `str_trim`, `str_concat`, `str_reverse`, `str_repeat`, `str_count`, `str_index_of`, `str_contains` | no; owned results need `protect` |
+| `lib/hash.loi` | `HASH_OFFSET`, `HASH_PRIME`, `hash_bytes_seeded`, `hash_bytes`, `hash_str`, `hash_u64_seeded`, `hash_u64`, `hash_pair_u64` | no |
 | `lib/os.loi` | `os_pid`, `os_unix_time`, `os_sleep`, `os_has_env`, `os_env_i32`, `os_errno`, `os_exit` | `lib/os_shim.c` |
 | `lib/net.loi` | `NetIpv4Result`, `net_ipv4`, `net_ipv4_octet`, `net_port_is_valid`, `net_parse_ipv4`, `net_tcp_connect`, `net_close`, `net_send`, `net_recv` | `lib/net_shim.c` |
 
@@ -621,6 +624,13 @@ flows and a `comptime flow` for factorials. `lib/vec.loi` and `lib/slice.loi`
 are also pure Loi, but their allocator flows are `sealed` and must be called
 from inside `protect`; `Vec<T>` stores cloned values, so `T` must be cloneable
 without slice fields, and ordering/search flows accept numeric `T` only.
+`lib/string.loi` returns owned `[u8]` values, so its transforming flows are
+`sealed` and need the caller's `protect`; its queries are `open`. `str_repeat`
+rejects an overflowing count with a flow-naming error. `lib/hash.loi` is pure:
+it implements 64-bit FNV-1a, hashes `u64` values as little-endian bytes, and
+needs no `protect`. Loi has no character literals, so byte queries use numeric
+values while substring queries use string slices; see
+`development/FRICTION.md`.
 `lib/os.loi` and `lib/net.loi` are
 thin POSIX bindings: their `extern flow` declarations call symbols defined in
 the matching C shim, so a program that imports them must compile the shim:
