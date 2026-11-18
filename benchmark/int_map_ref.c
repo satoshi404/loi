@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #define KEYS 128u
 #define STEPS 200000u
@@ -23,6 +24,10 @@ static void set_entry(Entry *entries, size_t *len, uint64_t key, uint64_t value)
     if (at >= 0) {
         entries[(size_t)at].value = value;
         return;
+    }
+    if (*len >= KEYS) {
+        fprintf(stderr, "int_map_ref: key capacity exceeded\n");
+        exit(1);
     }
     entries[*len].key = key;
     entries[*len].value = value;

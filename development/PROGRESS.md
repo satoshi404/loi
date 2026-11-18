@@ -4,14 +4,32 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-18):** Phase 6, final measured benchmarks and report.
+- **Current task (2026-11-18):** safety/regression review of the shipping
+  libraries and benchmark harness. The requested `ocr_review` tool is not
+  installed as a skill, command or plugin in this environment, so the review was
+  manual. Corrected `development/FINAL_REPORT.md`: 30 of 32 `tests/lib.rs`
+  cases run a Loi program, and C variants are checked only where the helpers
+  emit them. Hardened `benchmark/run.py` to derive the pin CPU from the current
+  `taskset` affinity (preferring CPU 6), use a unique temporary build directory,
+  split `CC` with shell-like rules and fall back from `lscpu` to
+  `/proc/cpuinfo`; added key-capacity guards to the two map C references. The
+  suspected `sort_ref.c` signed-conversion issue was checked and is defined
+  because the modulus bounds values to 1,000,002. An accidental untracked `~/`
+  npm-artifact directory created during this session was moved out of the repo
+  to `/tmp/opencode/`. Re-measured minimum-of-nine ratios: `hash 1.001`,
+  `crc32 1.108`, `sort 1.399`, `int_map 1.184`, `str_map 0.842`,
+  `random 1.016`; none exceeded 1.5×. Final gate: `cargo fmt --check`,
+  `cargo clippy --all-targets -- -D warnings`, `cargo test --all-targets`
+  (**294 passed, 0 failed**: 22+6+1+102+42+43+2+6+32+23+15),
+  `python3 tools/sync_examples.py --check`, and `git diff --check` all exit 0.
+- **Previous task (2026-11-18):** Phase 6, final measured benchmarks and report.
   Added six paired Loi/C workloads in `benchmark/`: FNV-1a hashing, CRC-32,
   heapsort, `IntMap<u64>`, `StrMap<u64>` and xorshift64*. `benchmark/run.py`
   rebuilds both sides, verifies identical checksums, pins every run to CPU 6,
   and times nine runs per binary. Exact command: `export CC=gcc; python3
   benchmark/run.py --output benchmark/results.json`. Result: Loi/C minimum
-  ratios were `hash 1.000`, `crc32 1.115`, `sort 1.366`, `int_map 1.091`,
-  `str_map 0.874`, `random 1.005`; none exceeded 1.5×, so no ranked
+  ratios were `hash 1.001`, `crc32 1.108`, `sort 1.399`, `int_map 1.184`,
+  `str_map 0.842`, `random 1.016`; none exceeded 1.5×, so no ranked
   generated-C cause analysis was required. All six benchmark programs' emitted
   C compiled with `-std=c11 -pedantic-errors -Wall -Wextra` with empty stderr;
   all six UBSan binaries ran with matching output; all six ASan+UBSan binaries
@@ -293,7 +311,7 @@
 
 ## Verification
 
-Last verified 2026-11-17 with:
+Last verified 2026-11-18 with:
 
 ```sh
 export PATH=/root/.cargo/bin:$PATH
@@ -310,7 +328,7 @@ for f in lib/std.loi lib/math.loi lib/ctype.loi lib/os.loi lib/net.loi; do ./tar
 
 - `cargo fmt --check`: exit 0.
 - `cargo clippy --all-targets -- -D warnings`: exit 0.
-- `cargo test --all-targets`: **263 passed, 0 failed** (22+6+1+102+39+43+2+6+7+23+12 across all targets; compile-and-run tests run when `cc` is available).
+- `cargo test --all-targets`: **294 passed, 0 failed** (22+6+1+102+42+43+2+6+32+23+15 across all targets; compile-and-run tests run when `cc` is available).
 - `python3 tools/sync_examples.py --check`: `website/examples` is in sync.
 - `git diff --check`, `node --check website/server.mjs`, both strict-C11 shim checks and `loi check` on every library file: exit 0.
 - `tests/lib.rs` builds and runs programs that import every module, including both shims, and checks that generic/comptime math, ASCII parsing, environment reads and IPv4/TCP helpers behave as documented. A local playground `/api/run` request importing `math.loi` and `os.loi` returned `ok:true` with `playground libs ok`.

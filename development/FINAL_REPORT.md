@@ -55,14 +55,20 @@ The committed library phases were `a5c427a` (reconnaissance), `2fda361`
 
 ## Library tests and emitted-C checks
 
-All 32 `tests/lib.rs` cases compile and run a Loi program and check its result.
-Every success-program case also emits C and checks it in three modes. Strict C11
-uses `-std=c11 -pedantic-errors -Wall -Wextra` and requires empty compiler
-stderr; UBSan uses `-fsanitize=undefined -fno-omit-frame-pointer -g` and the
-binary is run; ASan+UBSan uses `-fsanitize=address,undefined
--fno-omit-frame-pointer -g` and the binary is compiled but not run in this
-container. Runtime-error cases compile the same three C variants and then run
-the Loi binary to check the exact flow-naming message.
+Of the 32 `tests/lib.rs` cases, 30 build and run at least one Loi program and
+check its output or exact error. The other two
+(`every_library_source_checks_cleanly` and
+`library_shims_compile_as_strict_c11`) check library sources and compile the C
+shims without running a Loi program. Success cases that call
+`assert_ok_with_c_variants` emit C and check it in three modes: strict C11 uses
+`-std=c11 -pedantic-errors -Wall -Wextra` and requires empty compiler stderr;
+UBSan uses `-fsanitize=undefined -fno-omit-frame-pointer -g` and the binary is
+run; ASan+UBSan uses `-fsanitize=address,undefined -fno-omit-frame-pointer -g`
+and the binary is compiled but not run in this container. The five remaining
+success cases (`math`, `ctype`, `os`, `net` and `all-libraries`) use `assert_ok`,
+which checks, builds and runs the Loi program but does not emit C variants.
+Runtime-error cases compile the same three C variants without executing them,
+then run the Loi binary to check the exact flow-naming message.
 
 | Library | New runnable test cases | Strict C11 | UBSan run | ASan+UBSan build |
 |---|---:|---|---|---|
@@ -107,14 +113,14 @@ python3 benchmark/run.py --output benchmark/results.json
 
 | Workload | Operation count | Loi min (s) | C min (s) | Loi / C |
 |---|---|---:|---:|---:|
-| `hash` | 2048 × 64 KiB FNV-1a bytes (134,217,728 bytes) | 0.611239 | 0.611136 | 1.000 |
-| `crc32` | 1024 × 64 KiB reflected-nibble CRC-32 | 0.826410 | 0.741043 | 1.115 |
-| `sort` | 16 heapsorts of 65,536 fresh `i32` values | 0.252801 | 0.185046 | 1.366 |
-| `int_map` | 128 keys, 200,000 get/set pairs | 0.076661 | 0.070294 | 1.091 |
-| `str_map` | 8 byte-string keys, 100,000 get/set pairs | 0.027966 | 0.032000 | 0.874 |
-| `random` | 100,000,000 xorshift64* draws | 0.496545 | 0.494034 | 1.005 |
+| `hash` | 2048 × 64 KiB FNV-1a bytes (134,217,728 bytes) | 0.612530 | 0.611861 | 1.001 |
+| `crc32` | 1024 × 64 KiB reflected-nibble CRC-32 | 0.815954 | 0.736577 | 1.108 |
+| `sort` | 16 heapsorts of 65,536 fresh `i32` values | 0.251604 | 0.179833 | 1.399 |
+| `int_map` | 128 keys, 200,000 get/set pairs | 0.073027 | 0.061657 | 1.184 |
+| `str_map` | 8 byte-string keys, 100,000 get/set pairs | 0.031253 | 0.037120 | 0.842 |
+| `random` | 100,000,000 xorshift64* draws | 0.503028 | 0.495317 | 1.016 |
 
-The largest measured slowdown is `sort` at **1.366×**, below the 1.5×
+The largest measured slowdown is `sort` at **1.399×**, below the 1.5×
 threshold, so no ranked generated-C cause analysis was triggered. The `str_map`
 Loi workload was faster than its C reference in this measurement; no claim is
 made that this generalizes to other key sets or machines.

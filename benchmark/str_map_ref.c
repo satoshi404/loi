@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define KEYS 8u
@@ -30,6 +31,10 @@ static void set_entry(
     if (at >= 0) {
         entries[(size_t)at].value = value;
         return;
+    }
+    if (*len >= KEYS) {
+        fprintf(stderr, "str_map_ref: key capacity exceeded\n");
+        exit(1);
     }
     entries[*len].key = key;
     entries[*len].value = value;
