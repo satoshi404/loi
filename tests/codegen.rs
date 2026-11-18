@@ -34,6 +34,86 @@ fn has_c_compiler() -> bool {
         .unwrap_or(false)
 }
 
+/// Compile the generated translation unit with strict C11 warnings promoted to
+/// errors. This is intentionally stronger than the link-and-run helper: it
+/// verifies the generated C itself, independently of any test harness.
+fn assert_strict_c11(name: &str, source: &str) {
+    if !has_c_compiler() {
+        eprintln!("skipping {name}: no C compiler found");
+        return;
+    }
+
+    let dir = PathBuf::from("/tmp/opencode")
+        .join(format!("loi-codegen-{}-{name}-strict", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("test directory should be creatable");
+    let path = dir.join("generated.c");
+    fs::write(&path, source).expect("generated C should be writable");
+
+    let output = Command::new("cc")
+        .arg("-std=c11")
+        .arg("-pedantic-errors")
+        .arg("-Wall")
+        .arg("-Wextra")
+        .arg("-Werror")
+        .arg("-fsyntax-only")
+        .arg(&path)
+        .output()
+        .expect("cc should run");
+    let _ = fs::remove_dir_all(&dir);
+    assert!(
+        output.status.success(),
+        "strict C11 rejected {name}:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Compile (but do not link) the generated C with ASan and UBSan enabled.
+/// ASan cannot run in every container, so unsupported sanitizer flags are
+/// recorded as a skip; real generated-code errors still fail the test.
+fn assert_sanitizers_compile(name: &str, source: &str) {
+    if !has_c_compiler() {
+        eprintln!("skipping {name}: no C compiler found");
+        return;
+    }
+
+    let dir = PathBuf::from("/tmp/opencode")
+        .join(format!("loi-codegen-{}-{name}-san", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("test directory should be creatable");
+    let path = dir.join("generated.c");
+    let object = dir.join("generated.o");
+    fs::write(&path, source).expect("generated C should be writable");
+
+    let output = Command::new("cc")
+        .arg("-std=c11")
+        .arg("-pedantic-errors")
+        .arg("-Wall")
+        .arg("-Wextra")
+        .arg("-Werror")
+        .arg("-fsanitize=address,undefined")
+        .arg("-fno-omit-frame-pointer")
+        .arg("-c")
+        .arg(&path)
+        .arg("-o")
+        .arg(&object)
+        .output()
+        .expect("cc should run");
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let _ = fs::remove_dir_all(&dir);
+    if !output.status.success() {
+        let unsupported = stderr.contains("unrecognized command line option")
+            || stderr.contains("unsupported option")
+            || stderr.contains("unknown argument")
+            || stderr.contains("unable to find");
+        if unsupported {
+            eprintln!("skipping {name}: sanitizer flags unavailable: {stderr}");
+            return;
+        }
+        panic!("sanitizer compile rejected {name}:\n{stderr}");
+    }
+}
+
 /// Compile the generated C together with a C harness that calls into it.
 ///
 /// The harness `#include`s the generated translation unit so it can reach the
@@ -63,6 +143,7 @@ fn compile_and_run_output(name: &str, source: &str, harness: &str) -> Option<std
 
     let compile = Command::new("cc")
         .arg("-std=c11")
+        .arg("-pedantic-errors")
         .arg("-Wall")
         .arg("-Wextra")
         .arg("-o")
@@ -972,5 +1053,133 @@ int main(void) {
     assert_eq!(
         String::from_utf8_lossy(&run.stdout),
         "n=42 big=9000000000 u=7 f=0.10 s=ok pct=100%\n"
+    );
+}
+
+const MARK_CHOICE_SOURCE: &str = "mark Color [ Red, Green, Blue ]\n\nchoice Result [ Ok: i32, Err: i64 ]\n\nflow classify\n    <- c: Color\n    <- r: Result\n    => i32\n{\n    if c == Color.Green and r is Result.Ok {\n        => r.Ok\n    }\n    => -1\n}\n\nflow wrong\n    => i64\n{\n    r <- Result.Ok(7)\n    => r.Err\n}\n";
+
+#[test]
+fn mark_and_choice_generate_c_representations() {
+    let c = generated(MARK_CHOICE_SOURCE);
+
+    // A mark is a scalar tag set with one macro per variant.
+    assert!(c.contains("typedef uint32_t loi_t_Color;"), "{c}");
+    assert!(
+        c.contains("#define loi_m_Color_Green ((loi_t_Color)1u)"),
+        "{c}"
+    );
+
+    // A choice is a tagged union with checked readers.
+    assert!(
+        c.contains("typedef struct loi_t_Result loi_t_Result;"),
+        "{c}"
+    );
+    assert!(c.contains("struct loi_t_Result {"), "{c}");
+    assert!(c.contains("uint32_t loi_f_tag;"), "{c}");
+    assert!(c.contains("int32_t loi_p_Ok;"), "{c}");
+    assert!(c.contains("int64_t loi_p_Err;"), "{c}");
+    assert!(
+        c.contains("static inline int32_t loi_get_Result_Ok(loi_t_Result value, size_t line, size_t column)"),
+        "{c}"
+    );
+    assert!(
+        c.contains("loi_runtime_fail(\"choice 'Result' does not hold 'Ok'\", line, column);"),
+        "{c}"
+    );
+
+    // Constructors, `is` and payload reads lower to plain C.
+    assert!(
+        c.contains("((loi_t_Result){ 0u, { .loi_p_Ok = (int32_t)(7) } })"),
+        "{c}"
+    );
+    assert!(c.contains("((loi_v_r).loi_f_tag == 0u)"), "{c}");
+    assert!(c.contains("loi_get_Result_Ok(loi_v_r, 11, 12)"), "{c}");
+    assert!(c.contains("loi_get_Result_Err(loi_v_r, 20, 8)"), "{c}");
+}
+
+#[test]
+fn compiled_marks_and_choices_run() {
+    let harness = r#"
+int main(void) {
+    loi_t_Result ok = { 0u, { .loi_p_Ok = 42 } };
+    loi_t_Result err = { 1u, { .loi_p_Err = 9 } };
+
+    if (loi_fn_classify(loi_m_Color_Green, ok) != 42) return 1;
+    if (loi_fn_classify(loi_m_Color_Red, ok) != -1) return 2;
+    if (loi_fn_classify(loi_m_Color_Green, err) != -1) return 3;
+    return 0;
+}
+"#;
+    compile_and_run("mark-choice", &generated(MARK_CHOICE_SOURCE), harness);
+}
+
+#[test]
+fn mark_and_choice_generated_c_is_strict_c11_and_sanitizer_clean() {
+    let c = generated(MARK_CHOICE_SOURCE);
+    assert_strict_c11("mark-choice", &c);
+    assert_sanitizers_compile("mark-choice", &c);
+}
+
+#[test]
+fn wrong_choice_payload_aborts_with_declaration_and_position() {
+    let Some(run) = compile_and_run_output(
+        "choice-payload-abort",
+        &generated(MARK_CHOICE_SOURCE),
+        "int main(void) { return (int)loi_fn_wrong(); }",
+    ) else {
+        return;
+    };
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert_eq!(
+        run.status.code(),
+        Some(1),
+        "wrong payload should abort with exit 1:\nstdout: {}\nstderr: {stderr}",
+        String::from_utf8_lossy(&run.stdout)
+    );
+    assert!(
+        stderr.contains("loi: choice 'Result' does not hold 'Err' at 20:8"),
+        "expected the declaration, variant and source position in the abort message, got: {stderr}"
+    );
+}
+
+#[test]
+fn headers_expose_visible_marks_and_choices_only() {
+    let h = generated_header(
+        "open mark Color [ Red, Green ]\n\nopen choice Result [ Ok: i32, Err: i64 ]\n\nmark HiddenMark [ Only ]\n\nchoice HiddenChoice [ H: bool ]\n\nflow main\n    => i32\n{\n    => 0\n}\n",
+    );
+
+    assert!(h.contains("typedef uint32_t loi_t_Color;"), "{h}");
+    assert!(
+        h.contains("#define loi_m_Color_Red ((loi_t_Color)0u)"),
+        "{h}"
+    );
+    assert!(
+        h.contains("typedef struct loi_t_Result loi_t_Result;"),
+        "{h}"
+    );
+    assert!(h.contains("struct loi_t_Result {"), "{h}");
+    assert!(h.contains("uint32_t loi_f_tag;"), "{h}");
+    assert!(h.contains("int32_t loi_p_Ok;"), "{h}");
+    assert!(h.contains("int64_t loi_p_Err;"), "{h}");
+
+    assert!(!h.contains("loi_t_HiddenMark"), "{h}");
+    assert!(!h.contains("loi_t_HiddenChoice"), "{h}");
+}
+
+#[test]
+fn choices_and_shapes_share_the_by_value_layout_order() {
+    let c = generated(
+        "shape Wrapper [\n    inner: Result\n]\n\nchoice Result [\n    Ok: i32,\n    Err: i64\n]\n",
+    );
+
+    let choice = c
+        .find("struct loi_t_Result {")
+        .expect("choice struct should be emitted");
+    let wrapper = c
+        .find("struct loi_t_Wrapper {")
+        .expect("shape struct should be emitted");
+    assert!(
+        choice < wrapper,
+        "the shape embeds the choice, so the choice layout must come first:\n{c}"
     );
 }

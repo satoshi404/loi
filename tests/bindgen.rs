@@ -86,6 +86,16 @@ open flow main
 
     init <- sample_init(SAMPLE_FLAG + (SAMPLE_SHIFT as u32))
     if init != 8 { => 10 }
+
+    if MODE_A != 0 { => 11 }
+    if MODE_B != 1 { => 12 }
+    if SPARSE_B != 2 { => 13 }
+    m <- Mode.MODE_A
+    if m != Mode.MODE_A { => 14 }
+    n <- sample_next_mode(m)
+    if n != Mode.MODE_B { => 15 }
+    mode_code <- sample_mode_code(n)
+    if mode_code != 1 { => 16 }
     => 0
 }
 "#;
@@ -129,6 +139,18 @@ fn bindgen_generates_buildable_bindings() {
         "struct pointer conversion should use the shim symbol:\n{bindings}"
     );
     assert!(
+        bindings.contains("mark Mode [\n    MODE_A\n    MODE_B\n]"),
+        "a zero-based contiguous C enum should become a mark:\n{bindings}"
+    );
+    assert!(
+        bindings.contains("extern flow sample_next_mode as loi_bind_sample_sample_next_mode"),
+        "enum marks should use the shim for exact C enum types:\n{bindings}"
+    );
+    assert!(
+        bindings.contains("SPARSE_B: i32 <- 2") && !bindings.contains("mark SparseMode"),
+        "a sparse C enum should keep integer constants without a mark:\n{bindings}"
+    );
+    assert!(
         !bindings.contains("__clang__"),
         "compiler predefined macros must not leak into bindings:\n{bindings}"
     );
@@ -156,6 +178,14 @@ fn bindgen_generates_buildable_bindings() {
         .arg(dir.join("sample.c"))
         .arg("--cc-flag")
         .arg("-I.")
+        .arg("--cc-flag")
+        .arg("-std=c11")
+        .arg("--cc-flag")
+        .arg("-pedantic-errors")
+        .arg("--cc-flag")
+        .arg("-Wall")
+        .arg("--cc-flag")
+        .arg("-Wextra")
         .current_dir(&dir)
         .output()
         .expect("loi build should run");

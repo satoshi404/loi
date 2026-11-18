@@ -53,3 +53,15 @@ int sample_fill(char *buf, int len) {
 int sample_varargs(const char *fmt, ...) {
     return (int)strlen(fmt);
 }
+
+Mode sample_next_mode(Mode mode) {
+    return mode == MODE_A ? MODE_B : MODE_A;
+}
+
+int sample_mode_code(Mode mode) {
+    return (int)mode;
+}
+
+int sample_sparse_code(SparseMode mode) {
+    return (int)mode;
+}

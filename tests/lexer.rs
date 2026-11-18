@@ -102,6 +102,37 @@ fn flow_syntax_keywords_are_recognized() {
 }
 
 #[test]
+fn mark_choice_and_is_are_keywords() {
+    let source = "mark choice is";
+    let tokens = tokenize(source, "<test>").unwrap();
+    let kinds: Vec<TokenKind> = tokens.into_iter().map(|token| token.kind).collect();
+
+    assert_eq!(
+        kinds,
+        vec![
+            TokenKind::Mark,
+            TokenKind::Choice,
+            TokenKind::Is,
+            TokenKind::Eof,
+        ]
+    );
+    assert_eq!(TokenKind::Mark.name(), "mark");
+    assert_eq!(TokenKind::Choice.name(), "choice");
+    assert_eq!(TokenKind::Is.name(), "is");
+}
+
+#[test]
+fn mark_choice_and_is_can_be_part_of_longer_identifiers() {
+    let source = "marker chosen island";
+    let tokens = tokenize(source, "<test>").unwrap();
+    assert!(
+        tokens[..tokens.len() - 1]
+            .iter()
+            .all(|token| token.kind == TokenKind::Identifier)
+    );
+}
+
+#[test]
 fn decodes_string_literal_escapes() {
     let tokens = tokenize("\"a\\n\\t\\r\\0\\\\\\\"\\x41\"", "<test>").unwrap();
     assert_eq!(tokens[0].kind, TokenKind::String);

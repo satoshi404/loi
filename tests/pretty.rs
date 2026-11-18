@@ -22,6 +22,35 @@ fn reference_program_round_trips() {
 }
 
 #[test]
+fn formats_mark_choice_and_is_stably() {
+    let source = "mark Color [ Red, Green, Blue ]\nchoice Result [ Ok: i32, Err: i64 ]\nflow main {\n    c <- Color.Green\n    r <- Result.Ok(42)\n    if r is Result.Ok {\n        print_int(r.Ok)\n    }\n}\n";
+    let formatted = assert_format_stable(source);
+    let lines: Vec<&str> = formatted.lines().filter(|line| !line.is_empty()).collect();
+
+    assert_eq!(lines[0], "mark Color [ Red, Green, Blue ]");
+    assert_eq!(lines[1], "choice Result [ Ok: i32, Err: i64 ]");
+    assert!(formatted.contains("if r is Result.Ok {"));
+    assert!(formatted.contains("print_int(r.Ok)"));
+}
+
+#[test]
+fn formats_mark_and_choice_declarations_stably() {
+    // Short declarations collapse to one line; `sealed` prints no prefix.
+    let source = "open mark Flag [\n    On\n    Off\n]\nsealed choice Maybe [\n    Some: i32,\n    None: bool,\n]\n";
+    let formatted = assert_format_stable(source);
+    assert!(formatted.contains("open mark Flag [ On, Off ]"));
+    assert!(formatted.contains("choice Maybe [ Some: i32, None: bool ]"));
+
+    // Long declarations use one line per variant.
+    let long = "mark Long [ Alpha, Beta, Gamma, Delta, Epsilon, Zeta, Eta, Theta, Iota, Kappa, Lambda, Mu, Nu, Xi, Omicron, Pi, Rho, Sigma, Tau, Upsilon ]\n";
+    let formatted = assert_format_stable(long);
+    assert!(formatted.contains("mark Long ["));
+    assert!(formatted.contains("    Alpha"));
+    assert!(formatted.contains("    Mu"));
+    assert!(formatted.trim_end().ends_with(']'));
+}
+
+#[test]
 fn canonical_flow_syntax_round_trips_unchanged() {
     let source = "open flow add\n    <- a: i32\n    <- b: i32\n    => i32\n{\n    mut total: i32 <- a + b\n    => total\n}\n";
     assert_eq!(assert_format_stable(source), source);

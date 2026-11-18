@@ -3,10 +3,10 @@
   "use strict";
 
   const KEYWORDS = new Set([
-    "shape", "flow", "open", "sealed", "extern", "opaque", "mut", "in",
-    "give", "clone", "protect", "alloc", "import", "comptime", "if", "else",
-    "while", "for", "continue", "break", "and", "or", "not", "as", "true",
-    "false",
+    "shape", "mark", "choice", "flow", "open", "sealed", "extern", "opaque",
+    "mut", "in", "give", "clone", "protect", "alloc", "import", "comptime",
+    "if", "else", "while", "for", "continue", "break", "and", "or", "not",
+    "is", "as", "true", "false",
   ]);
 
   const TYPES = new Set([

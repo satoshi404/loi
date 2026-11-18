@@ -4,7 +4,53 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-18):** safety/regression review of the shipping
+- **Current task (2026-11-18):** Loi-native sum types. Added `mark` (payload-free
+  finite tag set), `choice` (tagged payload) and `is` (variant test) across the
+  lexer, AST, parser, checker, formatter, monomorphization pass and C11 backend.
+  Surface: `mark Color [ Red, Green, Blue ]`,
+  `choice Result [ Ok: i32, Err: i64 ]`, `c <- Color.Green`,
+  `r <- Result.Ok(42)` and `r is Result.Ok`. Marks are scalar-like and compare
+  only with the same mark; choice constructors take exactly one `<-` payload;
+  `value.Variant` is a checked read that aborts with the declaration, variant
+  and source position. Payloads are limited to numeric scalars, `bool`, marks
+  and slice-free shapes. The C backend emits `uint32_t` marks with variant
+  macros, and choices as a tag plus C union with checked inline getters. Names,
+  rationale and binding rules are recorded in `SINTAXE.md`, `LOI_SPEC.md` and
+  `DECISIONS.md`; `website/docs.html`, `website/assets/highlight.js`,
+  `tools/bindgen/bindgen.py` and its fixture were updated in the same change.
+  Bindgen maps only zero-based contiguous C enums to marks through the C shim;
+  sparse enums remain integer constants and arbitrary C unions remain skipped.
+- **Verification for the current task:** generated C for marks and choices was
+  compiled and run under `cc -std=c11 -pedantic-errors -Wall -Wextra -Werror`;
+  a wrong payload aborted with
+  `loi: choice 'Result' does not hold 'Err' at 20:8` and exit 1. The generated
+  translation unit also passed syntax-only strict C11 and ASan+UBSan
+  compile-only checks. ASan execution remains unavailable in this PRoot
+  container, so no ASan run is claimed. Final gate command:
+  `export PATH="/root/.cargo/bin:$PATH"; export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets && python3 tools/sync_examples.py --check && git diff --check`.
+  All five checks exited 0; `cargo test --all-targets` reported **316 passed,
+  0 failed** (22+6+1+111+42+49+2+8+32+26+17).
+- **Previous task (2026-11-18):** LLVM optimization evaluation (analysis only;
+  no compiler, language or CLI change). Confirmed that `clang 21.1.8`, `opt`,
+  `llc`, `llvm-config`, `llvm-as`, `llvm-dis` and `lli` are available locally and
+  that `Cargo.toml` still has no dependencies. `src/ir.rs` is a diagnostic
+  three-address draft, not LLVM IR: it uses `ptr<T>` / `slice<T>` / `jump` /
+  `imm`, has no SSA or globals, defaults inferred types to `i32`, lowers
+  `ForRange` only partially and skips `ForEach`. Recommendation: keep the C11
+  backend as the default and semantic oracle; prototype an **opt-in** textual
+  LLVM lowering of the same checked, monomorphized AST, drive external
+  `clang`/`opt` through `std::process::Command` to preserve the dependency-free
+  Cargo policy, and link the existing runtime through exported C wrappers rather
+  than reimplementing `loi_runtime_fail`, `loi_alloc_slice`, `loi_index` and
+  `loi_slice_eq`. Gate any build-mode switch on stdout/stderr/exit parity. A
+  local, non-committed probe compiled the same generated C with gcc 15.2.0 and
+  clang 21.1.8, minimum of 5 pinned runs on CPU 6: `hash 0.6130/0.5623` (clang
+  1.090× faster), `sort 0.2556/0.2644` (0.967×), `int_map 0.0729/0.1112`
+  (0.655×), `random 0.4967/0.5316` (0.934×); outputs matched. Clang also emits
+  `-Wparentheses-equality` warnings on generated C, so replacing `CC` is not a
+  valid optimization strategy. No backend decision is recorded yet; see
+  "Open Design Questions".
+- **Previous task (2026-11-18):** safety/regression review of the shipping
   libraries and benchmark harness. The requested `ocr_review` tool is not
   installed as a skill, command or plugin in this environment, so the review was
   manual. Corrected `development/FINAL_REPORT.md`: 30 of 32 `tests/lib.rs`
@@ -38,7 +84,8 @@
   `cargo clippy --all-targets -- -D warnings`, `cargo test --all-targets`
   (**294 passed, 0 failed**: 22+6+1+102+42+43+2+6+32+23+15),
   `python3 tools/sync_examples.py --check`, and `git diff --check` all exit 0.
-  No further phase is planned.
+  No further standard-library phase is planned; the LLVM evaluation is recorded
+  in this section.
 - **Previous task (2026-11-18):** Phase 5 standard-library expansion: seeded
   randomness. Added `lib/random.loi` test-first: four new `tests/lib.rs` cases
   cover known xorshift64* vectors, `u64` / `u32` / bounded draws, state
@@ -512,9 +559,10 @@ Remaining implementation or secondary choices:
   and namespace design.
 - Define structural equality for shapes, or keep the current field-by-field
   rule permanently.
-- Decide whether callbacks, user-declared variadics, safe unions or fixed arrays
-  deserve first-class Loi syntax or remain shim-only (`printf` is already a
-  variadic intrinsic).
+- Decide whether callbacks, user-declared variadics, arbitrary C unions or fixed
+  arrays deserve first-class support or remain shim-only. Loi `choice` already
+  covers tagged unions with safe payloads (`printf` is already a variadic
+  intrinsic).
 - Define the byte-slice/`cstr` conversion surface beyond string literals.
 - Extend escape analysis beyond lexical blocks if programs need block-local
   slices to outlive their block without `alloc`.
@@ -523,6 +571,10 @@ Remaining implementation or secondary choices:
   read-only use.
 - Finish or remove the IR/ASM drafts. Until then `--emit-ir` stays diagnostic
   and `--emit-asm` stays rejected.
+- Adopt the opt-in LLVM path evaluated above, or stay C-only? If adopted, decide
+  the staged CLI surface (`--emit-llvm` before any `--backend llvm`), the
+  stdout/stderr/exit parity corpus and whether the C backend remains the
+  permanent semantic oracle. No language syntax is involved.
 
 ## Next Steps
 
@@ -535,7 +587,11 @@ Remaining implementation or secondary choices:
 4. Extend the binding generator for the C constructs that still require
    hand-written shims, and add window/render examples for SDL2 and raylib on a
    machine with the runtimes installed.
-5. Finish IR/ASM or remove them from the published CLI surface.
-6. Keep the docs in sync: `SINTAXE.md` is canonical, `website/docs.html`
+5. Evaluate the opt-in LLVM lowering from the new Open Design Question: start
+   with scalar IR plus exported C runtime wrappers, keep the C backend default,
+   and require parity on the existing runnable test corpus before any build-mode
+   switch.
+6. Finish IR/ASM or remove them from the published CLI surface.
+7. Keep the docs in sync: `SINTAXE.md` is canonical, `website/docs.html`
    mirrors it, and `python3 tools/sync_examples.py --check` guards the example
    mirror.

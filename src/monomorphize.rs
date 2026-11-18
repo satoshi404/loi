@@ -115,6 +115,8 @@ fn run(
                 pass.rewrite_expr(&mut decl.value, &empty);
                 items.push(Item::Global(decl));
             }
+            Item::Mark(decl) => items.push(Item::Mark(decl.clone())),
+            Item::Choice(decl) => items.push(Item::Choice(decl.clone())),
             Item::Opaque(decl) => items.push(Item::Opaque(decl.clone())),
             Item::Import(decl) => items.push(Item::Import(decl.clone())),
         }

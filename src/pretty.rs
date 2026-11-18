@@ -201,6 +201,8 @@ impl PrettyPrinter {
                 format!("import \"{}\"", escape_string(&import.path)),
             ),
             Item::Interface(interface) => self.interface(interface),
+            Item::Mark(mark) => self.mark(mark),
+            Item::Choice(choice) => self.choice(choice),
             Item::Opaque(opaque) => self.opaque(opaque),
             Item::Global(global) => self.global(global),
             Item::Function(function) => self.function(function),
@@ -225,6 +227,70 @@ impl PrettyPrinter {
                 format_expr(&global.value)
             ),
         );
+    }
+
+    fn mark(&mut self, mark: &MarkDecl) {
+        let prefix = visibility_prefix(mark.visibility);
+        let inner = mark
+            .variants
+            .iter()
+            .map(|variant| variant.name.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let header = if mark.variants.is_empty() {
+            format!("{prefix}mark {} []", mark.name)
+        } else {
+            format!("{prefix}mark {} [ {inner} ]", mark.name)
+        };
+
+        if header.len() <= 100 {
+            self.line_at(mark.span.line, header);
+            // A trailing comment after `]` belongs to this single output line
+            // even when the closing bracket was on another source line.
+            self.anchor(mark.close_line);
+        } else {
+            self.line_at(mark.span.line, format!("{prefix}mark {} [", mark.name));
+            self.indent += 1;
+            for variant in &mark.variants {
+                self.line_at(variant.span.line, &variant.name);
+            }
+            self.indent -= 1;
+            self.line_at(mark.close_line, "]");
+        }
+    }
+
+    fn choice(&mut self, choice: &ChoiceDecl) {
+        let prefix = visibility_prefix(choice.visibility);
+        let inner = choice
+            .variants
+            .iter()
+            .map(|variant| format!("{}: {}", variant.name, format_type(&variant.ty)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let header = if choice.variants.is_empty() {
+            format!("{prefix}choice {} []", choice.name)
+        } else {
+            format!("{prefix}choice {} [ {inner} ]", choice.name)
+        };
+
+        if header.len() <= 100 {
+            self.line_at(choice.span.line, header);
+            self.anchor(choice.close_line);
+        } else {
+            self.line_at(
+                choice.span.line,
+                format!("{prefix}choice {} [", choice.name),
+            );
+            self.indent += 1;
+            for variant in &choice.variants {
+                self.line_at(
+                    variant.span.line,
+                    format!("{}: {}", variant.name, format_type(&variant.ty)),
+                );
+            }
+            self.indent -= 1;
+            self.line_at(choice.close_line, "]");
+        }
     }
 
     fn opaque(&mut self, opaque: &OpaqueDecl) {
@@ -577,6 +643,7 @@ fn binary_op_name(op: BinaryOp) -> &'static str {
     match op {
         BinaryOp::Or => "or",
         BinaryOp::And => "and",
+        BinaryOp::Is => "is",
         BinaryOp::Eq => "==",
         BinaryOp::Neq => "!=",
         BinaryOp::Lt => "<",
@@ -600,7 +667,8 @@ fn binary_op_precedence(op: BinaryOp) -> u8 {
     match op {
         BinaryOp::Or => PREC_OR,
         BinaryOp::And => PREC_AND,
-        BinaryOp::Eq
+        BinaryOp::Is
+        | BinaryOp::Eq
         | BinaryOp::Neq
         | BinaryOp::Lt
         | BinaryOp::Lte

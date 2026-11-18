@@ -203,6 +203,37 @@ mut p: Particle &lt;- Particle[
             be omitted. <code>shape Name []</code> is the empty shape.
           </p>
 
+          <h3>Marks and choices</h3>
+          <p>
+            A <code>mark</code> is a payload-free finite tag set. A <code>choice</code> is a
+            tagged union with one payload per variant. These are the Loi sum types; Loi has
+            no C-style <code>enum</code> or <code>union</code> keywords.
+          </p>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>sum-types.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-loi">mark Color [ Red, Green, Blue ]
+
+choice Result [ Ok: i32, Err: i64 ]
+
+c &lt;- Color.Green
+r &lt;- Result.Ok(42)
+
+if c == Color.Green and r is Result.Ok {
+    print_int(r.Ok)
+}</code></pre>
+          </div>
+
+          <p>
+            Marks copy like scalars and compare with <code>==</code> / <code>!=</code> only
+            against the same mark. Choice constructors require exactly one payload argument.
+            <code>value is Name.Variant</code> tests the active variant; <code>value.Variant</code>
+            reads its payload and aborts with the declaration, variant and source position if
+            the wrong variant is active. Payloads may be numeric scalars, <code>bool</code>,
+            marks or slice-free shapes. Slices, nested choices, <code>cstr</code> and
+            <code>opaque</code> handles are rejected.
+          </p>
+
           <h3>Generics</h3>
           <p>
             Shapes and flows may declare type parameters. Every use supplies its type arguments
@@ -1305,13 +1336,14 @@ sealed flow winning_line
 
           <h3>Keywords</h3>
           <p>
-            <code>shape</code>, <code>flow</code>, <code>open</code>, <code>sealed</code>,
-            <code>extern</code>, <code>opaque</code>,
+            <code>shape</code>, <code>mark</code>, <code>choice</code>, <code>flow</code>,
+            <code>open</code>, <code>sealed</code>, <code>extern</code>, <code>opaque</code>,
             <code>mut</code>, <code>give</code>, <code>clone</code>, <code>protect</code>,
             <code>alloc</code>, <code>import</code>, <code>comptime</code>, <code>if</code>,
             <code>else</code>, <code>while</code>, <code>for</code>, <code>in</code>,
             <code>continue</code>, <code>break</code>, <code>and</code>, <code>or</code>,
-            <code>not</code>, <code>as</code>, <code>true</code>, <code>false</code>.
+            <code>not</code>, <code>is</code>, <code>as</code>, <code>true</code>,
+            <code>false</code>.
           </p>
           <p>
             <code>in</code> is only the separator in <code>for i in a..b</code> and
@@ -1329,7 +1361,7 @@ sealed flow winning_line
               <tr><td><code>f32</code>, <code>f64</code></td><td>Floating point. Unsuffixed float literals default to <code>f64</code>.</td></tr>
               <tr><td><code>bool</code></td><td><code>true</code> / <code>false</code>.</td></tr>
               <tr><td><code>[T]</code></td><td>A slice of <code>T</code>.</td></tr>
-              <tr><td><code>Name</code></td><td>A declared <code>shape</code> or <code>opaque</code> handle.</td></tr>
+              <tr><td><code>Name</code></td><td>A declared <code>shape</code>, <code>mark</code>, <code>choice</code> or <code>opaque</code> handle.</td></tr>
               <tr><td><code>Name&lt;T, ...&gt;</code></td><td>An instantiation of a generic shape.</td></tr>
               <tr><td><code>cstr</code></td><td>An FFI-only NUL-terminated C string handle.</td></tr>
             </tbody>
@@ -1342,6 +1374,10 @@ sealed flow winning_line
             </thead>
             <tbody>
               <tr><td>Shape</td><td><code>shape Vec2 [ x: f64, y: f64 ]</code></td></tr>
+              <tr><td>Mark</td><td><code>mark Color [ Red, Green, Blue ]</code></td></tr>
+              <tr><td>Choice</td><td><code>choice Result [ Ok: i32, Err: i64 ]</code></td></tr>
+              <tr><td>Choice constructor</td><td><code>Result.Ok(42)</code></td></tr>
+              <tr><td>Variant test</td><td><code>result is Result.Ok</code></td></tr>
               <tr><td>Generic shape</td><td><code>shape Vec&lt;T&gt; [ data: [T], len: u64 ]</code></td></tr>
               <tr><td>Flow with result</td><td><code>flow f &lt;- x: i32 =&gt; i32 { =&gt; x }</code></td></tr>
               <tr><td>Generic flow</td><td><code>flow f&lt;T&gt; &lt;- x: T =&gt; T { =&gt; x }</code>, called as <code>f&lt;i32&gt;(x)</code></td></tr>
@@ -1388,6 +1424,8 @@ sealed flow winning_line
             <li>No <code>fun</code>, <code>interface</code>, <code>let</code>, <code>var</code>,
               <code>return</code>, <code>move</code>, <code>copy</code>, <code>visible</code> or
               <code>hidden</code>.</li>
+            <li>No C-style <code>enum</code> or <code>union</code>; use <code>mark</code> and
+              <code>choice</code>.</li>
             <li>No address-of (<code>&amp;x</code>) or dereference (<code>*p</code>) operators and no
               pointers. <code>&amp;</code> is only bitwise AND.</li>
             <li>No brace shape literals (<code>Vec2{ ... }</code>) and no <code>[]T{ ... }</code>
@@ -1517,6 +1555,7 @@ cargo test --all-targets</code></pre>
             <li>Multi-file builds, incremental stamps and the <code>clean</code> command.</li>
             <li>Bitwise/shift operators, file/stdin I/O, numeric printing and comment-preserving <code>fmt</code>.</li>
             <li>Canonical Flow Syntax migration and legacy cleanup.</li>
+            <li><code>mark</code> tag sets and <code>choice</code> tagged payloads with checked reads.</li>
             <li>Interactive raylib examples: a web-ready demo, a text editor and mathematical sound synthesis with waveform display.</li>
           </ul>
 

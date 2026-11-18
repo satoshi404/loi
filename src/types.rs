@@ -25,6 +25,11 @@ pub enum Ty {
     Bool,
     /// A user-declared `shape`.
     Named(String),
+    /// A user-declared `mark`: a finite, payload-free tag set. It is a scalar.
+    Mark(String),
+    /// A user-declared `choice`: a tagged union with one payload per variant.
+    /// It is a composite value and follows the ownership rules of shapes.
+    Choice(String),
     /// A foreign handle declared with `opaque Name`.
     Opaque(String),
     /// A NUL-terminated C string handle. Constructed from a string literal or
@@ -127,7 +132,7 @@ impl fmt::Display for Ty {
             Ty::F32 => write!(f, "f32"),
             Ty::F64 => write!(f, "f64"),
             Ty::Bool => write!(f, "bool"),
-            Ty::Named(name) => write!(f, "{name}"),
+            Ty::Named(name) | Ty::Mark(name) | Ty::Choice(name) => write!(f, "{name}"),
             Ty::Opaque(name) => write!(f, "{name}"),
             Ty::CStr => write!(f, "cstr"),
             Ty::Slice(element) => write!(f, "[{element}]"),

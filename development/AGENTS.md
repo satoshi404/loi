@@ -33,10 +33,10 @@ surface disagree, fix the compiler or record the change explicitly.
   `pretty.rs`, `types.rs`, `checker.rs`, `codegen.rs`, plus the draft `ir.rs`
   and `asm.rs`. Integration tests live in `tests/`.
 - Runtime library: `lib/std.loi` — canonical Loi, explicitly imported.
-- Canonical words: `shape`, `flow`, `open`, `sealed`, `<-`, `->`, `<->`, `=>`,
-  `mut`, `give`, `clone`. Do not reintroduce `interface`, `fun`, `let`, `var`,
-  `visible`, `hidden`, `out`, `inout`, `move`, `copy`, `return`, `[]T` or
-  `Name { ... }`.
+- Canonical words: `shape`, `mark`, `choice`, `flow`, `open`, `sealed`, `<-`,
+  `->`, `<->`, `=>`, `mut`, `give`, `clone`, `is`. Do not reintroduce
+  `interface`, `enum`, `union`, `fun`, `let`, `var`, `visible`, `hidden`, `out`,
+  `inout`, `move`, `copy`, `return`, `[]T` or `Name { ... }`.
 
 ### CLI
 

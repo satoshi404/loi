@@ -21,9 +21,9 @@ lives in [`development/PROGRESS.md`](development/PROGRESS.md).
 - Keywords (the complete set):
 
   ```text
-  alloc  and  as  break  clone  comptime  continue  else  extern  false
-  flow   for  give  if     import  in      mut       not   opaque
-  open   or   protect  sealed  shape  true  while
+  alloc  and  as  break  choice  clone  comptime  continue  else  extern
+  false  flow   for  give   if      import  in   is    mark    mut
+  not    opaque open or     protect sealed  shape   true  while
   ```
 
 - Direction glyphs: `<-` (read), `->` (write), `<->` (read/write), `=>` (result).
@@ -52,7 +52,7 @@ lives in [`development/PROGRESS.md`](development/PROGRESS.md).
 | `f32 f64` | floating point |
 | `bool` | `true` / `false` |
 | `[T]` | slice: pointer + length, bounds checked |
-| `Name` | a declared `shape` |
+| `Name` | a declared `shape`, `mark` or `choice` |
 | `Name<T, ...>` | an instantiation of a generic shape |
 | `Name` | a declared `opaque` foreign handle |
 | `cstr` | NUL-terminated C string handle (FFI only) |
@@ -70,7 +70,9 @@ with no `=> T` returns nothing.
 
 ---
 
-## 3. Shapes — data only
+## 3. Declared data types
+
+### 3.1 Shapes — product types
 
 ```loi
 shape Vec2 [ x: f64, y: f64 ]
@@ -101,7 +103,64 @@ shape Particle [
   default is applied. `-> shaped` out-parameters are initialized from their
   defaults by the backend before the body runs.
 
-### 3.1 Generic shapes
+### 3.2 Marks — finite tag sets
+
+```loi
+mark Color [ Red, Green, Blue ]
+
+open mark Flag [
+    On
+    Off
+]
+
+c <- Color.Green
+if c != Color.Red { ... }
+```
+
+- `mark Name [ ... ]` declares a payload-free finite tag set. It is Loi's
+  enum-like sum type; there is no C-style `enum` keyword.
+- Variants are `Name.Variant` values, separated by commas or newlines; the
+  trailing comma is optional. A bare variant name is not a value.
+- Visibility follows the usual rule: `open mark ...` exports it, the default is
+  `sealed`, and `sealed mark ...` is allowed for emphasis.
+- Marks are scalar-like values. `==` and `!=` are defined only between two
+  values of the **same** mark; ordering and arithmetic are not.
+- A mark may be stored in a flow parameter, a shape field or a `choice` payload.
+  It copies like a scalar.
+
+### 3.3 Choices — tagged payloads
+
+```loi
+choice Result [ Ok: i32, Err: i64 ]
+
+r <- Result.Ok(42)
+if r is Result.Ok {
+    print_int(r.Ok)
+}
+```
+
+- `choice Name [ Variant: Type, ... ]` declares a tagged union. It is Loi's
+  union-like sum type; there is no C-style `union` keyword.
+- Each variant declares exactly one payload type, separated by commas or
+  newlines; the trailing comma is optional. Visibility is `open` or `sealed`
+  (the default).
+- `Name.Variant(value)` constructs a value with exactly one `<-` argument whose
+  type matches the declared payload. A bare `Name.Variant` is not a value.
+- `value is Name.Variant` tests the active variant and produces `bool`. The
+  right operand must be a variant of the same choice.
+- `value.Variant` reads the payload. It is **checked at runtime** against the
+  active tag; a wrong read aborts with
+  `loi: choice 'Name' does not hold 'Variant' at <line>:<column>`. `is` does not
+  statically narrow the type, so the same check applies even inside a matching
+  branch. Payload reads are values; assigning to `value.Variant` is rejected.
+- Payload types are restricted to numeric scalars, `bool`, `mark` and
+  slice-free shapes. Slices, shapes containing slices, nested choices, `cstr`
+  and `opaque` handles are rejected because they would make the generated C
+  union unsafe. There are no generic choices.
+- Choice names and mark names share the type namespace with shapes, opaque
+  handles, flows and globals; duplicates are compile errors.
+
+### 3.4 Generic shapes
 
 ```loi
 shape Vec<T> [
@@ -394,8 +453,9 @@ break
 - `for <-> x in xs` mutably aliases each element in turn.
 - Conditions are `bool`; there is no truthiness.
 - `and`, `or`, `not` are the logical operators. `&&`, `||`, `!` are invalid.
-- Equality `==` / `!=` works for scalars, `bool`, and `[u8]` (byte-wise).
-  Shapes and other slices must be compared field by field.
+- Equality `==` / `!=` works for scalars, `bool`, values of the same `mark`,
+  and `[u8]` (byte-wise). Shapes, choices and other slices must be compared by
+  testing fields, variants and payloads explicitly.
 
 ---
 
@@ -405,6 +465,7 @@ break
 a + b   a - b   a * b   a / b   a % b
 -a      not flag
 a < b   a <= b   a > b   a >= b   a == b   a != b
+value is Name.Variant
 a and b   a or b
 a & b   a | b   a ^ b   ~a
 a << n  a >> n
@@ -432,9 +493,11 @@ xs.len         // u64
 - Compound assignments follow the binary rules, including `%=`, `&=`, `|=`,
   `^=`, `<<=` and `>>=`; `as` remains an unchecked truncating cast and is the
   explicit way to wrap a value.
+- `value is Name.Variant` tests a `choice` tag and yields `bool`. Its right
+  operand is variant syntax, not a general expression.
 - `as` is the only cast form. No `(T)x`.
 - Precedence, from lowest to highest:
-  `or` → `and` → comparisons → `|` → `^` → `&` → shifts → `+` `-` →
+  `or` → `and` → comparisons (including `is`) → `|` → `^` → `&` → shifts → `+` `-` →
   `*` `/` `%` → `as` → unary `-` `~` `not`. When in doubt, use parentheses;
   the formatter preserves them. Bitwise and shift operators do not accept
   `bool`; use an integer type.
@@ -791,8 +854,8 @@ build instructions.
 
 - 4-space indentation, no tabs.
 - One statement per line.
-- Shape bodies and flow signatures are vertical when they do not fit on one
-  line; `loi fmt` chooses the canonical layout.
+- Shape, mark and choice bodies and flow signatures are vertical when they do
+  not fit on one line; `loi fmt` chooses the canonical layout.
 - Shape literals keep their single-line form when written that way.
 - The formatter emits Flow Syntax only. Running `loi fmt` twice must be
   byte-identical (idempotent).
@@ -815,6 +878,8 @@ examples, docs or generated bindings:
 |---|---|
 | `fun f(...)` | `flow f ...` |
 | `interface Name { ... }` | `shape Name [ ... ]` |
+| `enum Name { ... }` | `mark Name [ ... ]` |
+| `union Name { ... }` | `choice Name [ Variant: T, ... ]` |
 | `let x = v` | `x <- v` |
 | `var x = v` | `mut x <- v` |
 | `in x: T` | `<- x: T` |

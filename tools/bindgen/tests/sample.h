@@ -13,7 +13,8 @@ typedef struct { int w; int h; } Rect;
 
 typedef struct Opaque Opaque;
 
-typedef enum { MODE_A = 0, MODE_B = 2 } Mode;
+typedef enum { MODE_A = 0, MODE_B = 1 } Mode;
+typedef enum { SPARSE_A = 0, SPARSE_B = 2 } SparseMode;
 
 Uint32 sample_init(Uint32 flags);
 Thing sample_make(int x, double y);
@@ -24,5 +25,8 @@ void sample_close(Opaque *handle);
 void sample_copy_rect(const Rect *src, Rect *dst);
 int sample_fill(char *buf, int len);
 int sample_varargs(const char *fmt, ...);
+Mode sample_next_mode(Mode mode);
+int sample_mode_code(Mode mode);
+int sample_sparse_code(SparseMode mode);
 
 #endif

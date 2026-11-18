@@ -5,7 +5,8 @@ The generator asks clang for a JSON AST, maps the declarations that live in
 the bound header(s) to Loi, and writes:
 
 * a vendored ``.loi`` file with ``opaque`` handles, ``shape`` definitions,
-  integer constants and ``extern flow`` declarations;
+  ``mark`` declarations for zero-based contiguous C enums, integer constants
+  and ``extern flow`` declarations;
 * optionally a C shim (``--shim``) for calls whose C types cannot be passed
   directly from Loi (structs by value, struct pointers, out parameters);
 * optionally a ``skipped.txt`` report explaining every declaration that was
@@ -52,10 +53,10 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 LOI_KEYWORDS = {
-    "alloc", "and", "as", "break", "clone", "comptime", "continue", "else",
-    "extern", "false", "flow", "for", "give", "if", "import", "in", "mut",
-    "not", "opaque", "open", "or", "protect", "sealed", "shape", "true",
-    "while",
+    "alloc", "and", "as", "break", "choice", "clone", "comptime", "continue",
+    "else", "extern", "false", "flow", "for", "give", "if", "import", "in",
+    "is", "mark", "mut", "not", "opaque", "open", "or", "protect", "sealed",
+    "shape", "true", "while",
 }
 
 PRIMITIVES = {
@@ -251,6 +252,8 @@ class Enum:
     tag: str
     c_name: str = ""
     constants: list[tuple[str, int]] = field(default_factory=list)
+    loi_name: Optional[str] = None
+    mark_variants: Optional[list[str]] = None
 
 
 @dataclass
@@ -323,6 +326,7 @@ class Bindgen:
         self.used_shapes: list[Record] = []
         self.used_opaque: dict[str, Record | None] = {}
         self.constants: list[tuple[str, str, int]] = []
+        self.used_marks: list[Enum] = []
         self.skips: list[str] = []
         self.void_ptr_name: Optional[str] = None
 
@@ -545,6 +549,39 @@ class Bindgen:
         if record.shape_state == 2 and record not in self.used_shapes:
             self.used_shapes.append(record)
 
+    @staticmethod
+    def mark_variants(enum: Enum) -> Optional[list[str]]:
+        """Return mark variants when the C enum is exactly 0..n-1."""
+        if not enum.constants or not enum.c_name:
+            return None
+        variants: list[str] = []
+        used: set[str] = set()
+        for index, (name, value) in enumerate(enum.constants):
+            if value != index or value < 0 or value > C_UINT_MAX:
+                return None
+            variant = sanitize(name, used)
+            if variant == "_":
+                return None
+            variants.append(variant)
+        return variants
+
+    def map_enum_value(self, enum: Enum) -> Optional[Mapped]:
+        """Map a zero-based contiguous enum to a Loi ``mark``.
+
+        The shim converts between the generated ``uint32_t`` mark representation
+        and the C enum type, so the C ABI type is preserved at the boundary.
+        """
+        if enum.loi_name is None:
+            variants = self.mark_variants(enum)
+            if variants is None:
+                return None
+            enum.loi_name = sanitize(
+                enum.c_name or enum.tag or "Enum", self.used_names
+            )
+            enum.mark_variants = variants
+            self.used_marks.append(enum)
+        return Mapped("mark", enum.loi_name or "", "uint32_t", enum.c_name)
+
     # ------------------------------------------------------------------
     # Type mapping
     # ------------------------------------------------------------------
@@ -725,7 +762,7 @@ class Bindgen:
             return None
 
         params: list[BoundParam] = []
-        needs_shim = result.kind == "shape"
+        needs_shim = result.kind in ("shape", "mark")
         used_params: set[str] = set()
         for index, param in enumerate(function.params):
             qual = param.get("type", {}).get("qualType", "")
@@ -887,6 +924,10 @@ class Bindgen:
             loi, c = value  # type: ignore[misc]
             return ("<-", Mapped("scalar", loi, c, c), False, False)
         if kind == "enum":
+            enum: Enum = value  # type: ignore[assignment]
+            mark = self.map_enum_value(enum)
+            if mark is not None:
+                return ("<-", mark, True, False)
             return ("<-", Mapped("enum", "i32", "int32_t", "int32_t"), False, False)
         if kind == "record":
             record: Record = value  # type: ignore[assignment]
@@ -957,6 +998,10 @@ class Bindgen:
             loi, c = value  # type: ignore[misc]
             return Mapped("scalar", loi, c, c)
         if kind == "enum":
+            enum: Enum = value  # type: ignore[assignment]
+            mark = self.map_enum_value(enum)
+            if mark is not None:
+                return mark
             return Mapped("enum", "i32", "int32_t", "int32_t")
         if kind == "record":
             record: Record = value  # type: ignore[assignment]
@@ -1049,6 +1094,13 @@ class Bindgen:
             lines.append(f"shape {record.loi_name} [")
             for field_name, mapped in fields:
                 lines.append(f"    {field_name}: {mapped.loi}")
+            lines.append("]")
+            lines.append("")
+
+        for enum in self.used_marks:
+            lines.append(f"mark {enum.loi_name} [")
+            for variant in enum.mark_variants or []:
+                lines.append(f"    {variant}")
             lines.append("]")
             lines.append("")
 
@@ -1181,6 +1233,9 @@ class Bindgen:
                     post.append(
                         f"    memcpy({param.name}, &{temp}, sizeof({temp}));"
                     )
+            elif mapped.kind == "mark":
+                c_type = mapped.c_orig or "int"
+                args.append(f"({c_type}){param.name}")
             elif mapped.kind == "out_scalar":
                 temp = local(f"c_{param.name}")
                 temp_type = mapped.c_orig or "int32_t"
@@ -1270,6 +1325,8 @@ def loi_c_type(loi_type: str) -> str:
 
 def shim_param_type(param: BoundParam) -> str:
     mapped = param.mapped
+    if mapped.kind == "mark":
+        return "uint32_t"
     if mapped.kind in ("scalar", "enum"):
         return loi_c_type(mapped.loi)
     if mapped.kind == "cstr":
@@ -1290,6 +1347,8 @@ def shim_param_type(param: BoundParam) -> str:
 def shim_return_type(mapped: Mapped) -> str:
     if mapped.kind == "void":
         return "void"
+    if mapped.kind == "mark":
+        return "uint32_t"
     if mapped.kind in ("scalar", "enum"):
         return loi_c_type(mapped.loi)
     if mapped.kind == "cstr":

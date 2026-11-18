@@ -42,6 +42,7 @@ pub fn check(program: &Program) -> Vec<Diagnostic> {
     let mut checker = Checker::new();
     checker.collect_names(&program);
     checker.resolve_interfaces(&program);
+    checker.resolve_marks_and_choices(&program);
     checker.check_interface_value_cycles(&program);
     checker.resolve_functions(&program);
     checker.analyze_function_effects(&program);
@@ -128,6 +129,23 @@ struct InterfaceInfo {
     span: Span,
     fields: Vec<FieldInfo>,
     field_index: HashMap<String, usize>,
+}
+
+/// A `mark` declaration after variant resolution.
+#[derive(Debug, Clone)]
+struct MarkInfo {
+    variants: HashMap<String, Span>,
+}
+
+/// A `choice` declaration after variant resolution.
+#[derive(Debug, Clone)]
+struct ChoiceInfo {
+    variants: HashMap<String, ChoiceVariantInfo>,
+}
+
+#[derive(Debug, Clone)]
+struct ChoiceVariantInfo {
+    ty: Ty,
 }
 
 #[derive(Debug, Clone)]
@@ -228,6 +246,10 @@ struct ControlState {
 
 struct Checker {
     interfaces: HashMap<String, InterfaceInfo>,
+    /// Payload-free tag sets declared with `mark`.
+    marks: HashMap<String, MarkInfo>,
+    /// Tagged unions declared with `choice`.
+    choices: HashMap<String, ChoiceInfo>,
     /// Foreign handle names declared with `opaque`.
     opaques: HashSet<String>,
     functions: HashMap<String, FunctionSig>,
@@ -261,6 +283,8 @@ impl Checker {
     fn new() -> Self {
         Self {
             interfaces: HashMap::new(),
+            marks: HashMap::new(),
+            choices: HashMap::new(),
             opaques: HashSet::new(),
             functions: HashMap::new(),
             // Index 0 is the global scope; function bodies push on top of it.
@@ -316,7 +340,14 @@ impl Checker {
                 .map(String::as_str)
                 .collect(),
             NameSpace::Function => self.functions.keys().map(String::as_str).collect(),
-            NameSpace::Type => self.interfaces.keys().map(String::as_str).collect(),
+            NameSpace::Type => self
+                .interfaces
+                .keys()
+                .chain(self.marks.keys())
+                .chain(self.choices.keys())
+                .chain(self.opaques.iter())
+                .map(String::as_str)
+                .collect(),
         };
         crate::diagnostic::suggest_name(name, candidates).map(str::to_string)
     }
@@ -432,6 +463,8 @@ impl Checker {
                         );
                     } else if self.opaques.contains(&decl.name)
                         || self.interfaces.contains_key(&decl.name)
+                        || self.marks.contains_key(&decl.name)
+                        || self.choices.contains_key(&decl.name)
                         || self.functions.contains_key(&decl.name)
                         || self.global_names.contains(&decl.name)
                     {
@@ -457,6 +490,16 @@ impl Checker {
                             ),
                         );
                     }
+                    if self.marks.contains_key(&decl.name) || self.choices.contains_key(&decl.name)
+                    {
+                        self.error(
+                            decl.span,
+                            format!(
+                                "global '{}' conflicts with a type of the same name",
+                                decl.name
+                            ),
+                        );
+                    }
                     if !self.global_names.insert(decl.name.clone()) {
                         self.error(decl.span, format!("duplicate global '{}'", decl.name));
                     }
@@ -474,6 +517,8 @@ impl Checker {
                     if self.interfaces.contains_key(&decl.name) {
                         self.error(decl.span, format!("duplicate shape '{}'", decl.name));
                     } else if self.opaques.contains(&decl.name)
+                        || self.marks.contains_key(&decl.name)
+                        || self.choices.contains_key(&decl.name)
                         || self.functions.contains_key(&decl.name)
                         || self.global_names.contains(&decl.name)
                     {
@@ -489,6 +534,12 @@ impl Checker {
                         );
                     }
                 }
+                Item::Mark(decl) => {
+                    self.register_sum_type_name(&decl.name, decl.span, "mark");
+                }
+                Item::Choice(decl) => {
+                    self.register_sum_type_name(&decl.name, decl.span, "choice");
+                }
                 Item::Function(decl) => {
                     if is_intrinsic_name(&decl.name) {
                         self.error(
@@ -500,6 +551,16 @@ impl Checker {
                             decl.span,
                             format!(
                                 "function '{}' conflicts with an opaque type of the same name",
+                                decl.name
+                            ),
+                        );
+                    } else if self.marks.contains_key(&decl.name)
+                        || self.choices.contains_key(&decl.name)
+                    {
+                        self.error(
+                            decl.span,
+                            format!(
+                                "function '{}' conflicts with a type of the same name",
                                 decl.name
                             ),
                         );
@@ -526,6 +587,36 @@ impl Checker {
                     }
                 }
             }
+        }
+    }
+
+    /// Register a `mark` or `choice` name during `collect_names`. Variant
+    /// bodies are resolved later, after `shape` fields are known.
+    fn register_sum_type_name(&mut self, name: &str, span: Span, keyword: &str) {
+        if is_intrinsic_name(name) {
+            self.error(span, format!("intrinsic '{name}' cannot be redeclared"));
+        } else if self.interfaces.contains_key(name)
+            || self.marks.contains_key(name)
+            || self.choices.contains_key(name)
+            || self.opaques.contains(name)
+            || self.functions.contains_key(name)
+            || self.global_names.contains(name)
+        {
+            self.error(span, format!("duplicate type '{name}'"));
+        } else if keyword == "mark" {
+            self.marks.insert(
+                name.to_string(),
+                MarkInfo {
+                    variants: HashMap::new(),
+                },
+            );
+        } else {
+            self.choices.insert(
+                name.to_string(),
+                ChoiceInfo {
+                    variants: HashMap::new(),
+                },
+            );
         }
     }
 
@@ -599,6 +690,90 @@ impl Checker {
                     field_index,
                 },
             );
+        }
+    }
+
+    /// Resolve the variants of every `mark` and `choice` declaration. Names are
+    /// registered in `collect_names` so shape fields may already refer to them;
+    /// this pass fills in the variant tables and validates choice payloads.
+    fn resolve_marks_and_choices(&mut self, program: &Program) {
+        for item in &program.items {
+            let Item::Mark(decl) = item else {
+                continue;
+            };
+            let Some(mut info) = self.marks.get(&decl.name).cloned() else {
+                continue;
+            };
+            for variant in &decl.variants {
+                if info.variants.contains_key(&variant.name) {
+                    self.error(
+                        variant.span,
+                        format!(
+                            "duplicate variant '{}' in mark '{}'",
+                            variant.name, decl.name
+                        ),
+                    );
+                } else {
+                    info.variants.insert(variant.name.clone(), variant.span);
+                }
+            }
+            self.marks.insert(decl.name.clone(), info);
+        }
+
+        for item in &program.items {
+            let Item::Choice(decl) = item else {
+                continue;
+            };
+            let Some(mut info) = self.choices.get(&decl.name).cloned() else {
+                continue;
+            };
+            for variant in &decl.variants {
+                let ty = self.resolve_type(&variant.ty);
+                if !ty.is_error() && !self.valid_choice_payload(&ty) {
+                    self.error(
+                        variant.ty.span(),
+                        format!(
+                            "choice '{}' variant '{}' cannot hold {ty}; payloads must be scalars, marks or slice-free shapes",
+                            decl.name, variant.name
+                        ),
+                    );
+                }
+                if info.variants.contains_key(&variant.name) {
+                    self.error(
+                        variant.span,
+                        format!(
+                            "duplicate variant '{}' in choice '{}'",
+                            variant.name, decl.name
+                        ),
+                    );
+                } else {
+                    info.variants
+                        .insert(variant.name.clone(), ChoiceVariantInfo { ty });
+                }
+            }
+            self.choices.insert(decl.name.clone(), info);
+        }
+    }
+
+    /// Whether `ty` may be stored in a choice payload. Slices and nested
+    /// choices would add ownership and layout complexity to the C union, so
+    /// they are rejected until a dedicated design exists.
+    fn valid_choice_payload(&self, ty: &Ty) -> bool {
+        match ty {
+            Ty::I8
+            | Ty::I16
+            | Ty::I32
+            | Ty::I64
+            | Ty::U8
+            | Ty::U16
+            | Ty::U32
+            | Ty::U64
+            | Ty::F32
+            | Ty::F64
+            | Ty::Bool
+            | Ty::Mark(_) => true,
+            Ty::Named(name) => self.interfaces.contains_key(name) && !self.type_contains_slice(ty),
+            _ => false,
         }
     }
 
@@ -807,6 +982,10 @@ impl Checker {
                     Ty::CStr
                 } else if self.interfaces.contains_key(name) {
                     Ty::Named(name.clone())
+                } else if self.marks.contains_key(name) {
+                    Ty::Mark(name.clone())
+                } else if self.choices.contains_key(name) {
+                    Ty::Choice(name.clone())
                 } else if self.opaques.contains(name) {
                     Ty::Opaque(name.clone())
                 } else {
@@ -1539,6 +1718,14 @@ impl Checker {
     }
 
     fn check_assignment(&mut self, target: &Expr, op: AssignOp, value: &Expr) {
+        if self.is_choice_payload_place(target) {
+            self.error(
+                target.span,
+                "cannot assign to a choice payload; construct a new value with Name.Variant(value)",
+            );
+            self.check_expr(value);
+            return;
+        }
         let info = self.lvalue_info(target);
         let value_ty = self.check_expr(value);
 
@@ -1721,6 +1908,9 @@ impl Checker {
                 }
             },
             ExprKind::Binary { op, left, right } => {
+                if *op == BinaryOp::Is {
+                    return self.check_is_expr(left, right);
+                }
                 let left_ty = self.check_expr(left);
                 let right_ty = self.check_expr(right);
                 if matches!(op, BinaryOp::Div | BinaryOp::Mod) && const_int(right) == Some(0) {
@@ -1768,6 +1958,27 @@ impl Checker {
             ExprKind::Copy(value) => self.check_copy(value),
             ExprKind::Comptime(inner) => self.check_expr(inner),
             ExprKind::Member { base, field } => {
+                // `Name.Variant` is a variant reference, not a field access.
+                // Marks use it as a value; choice variants are only valid as
+                // constructors (`Name.Variant(value)`) or `is` operands.
+                if let ExprKind::Ident(name) = &base.kind {
+                    if let Some(info) = self.marks.get(name) {
+                        if info.variants.contains_key(field) {
+                            return Ty::Mark(name.clone());
+                        }
+                        self.error(expr.span, format!("mark '{name}' has no variant '{field}'"));
+                        return Ty::Error;
+                    }
+                    if self.choices.contains_key(name) {
+                        self.error(
+                            expr.span,
+                            format!(
+                                "choice variant '{name}.{field}' must be constructed with a value: {name}.{field}(value)"
+                            ),
+                        );
+                        return Ty::Error;
+                    }
+                }
                 let base_ty = self.check_base_type(base);
                 let ty = self.member_type(&base_ty, field, expr.span);
                 self.check_place_state(expr, expr.span);
@@ -1954,8 +2165,66 @@ impl Checker {
         }
     }
 
+    /// Check `value is Name.Variant`. The right operand is a variant reference,
+    /// not an expression that can be evaluated on its own, so it is inspected
+    /// directly instead of going through `check_expr`.
+    fn check_is_expr(&mut self, left: &Expr, right: &Expr) -> Ty {
+        let left_ty = self.check_expr(left);
+
+        let ExprKind::Member { base, field } = &right.kind else {
+            self.error(
+                right.span,
+                "'is' expects a choice variant on the right, such as 'Result.Ok'",
+            );
+            self.check_expr(right);
+            return Ty::Bool;
+        };
+        let ExprKind::Ident(choice_name) = &base.kind else {
+            self.error(
+                right.span,
+                "'is' expects a choice variant on the right, such as 'Result.Ok'",
+            );
+            self.check_expr(right);
+            return Ty::Bool;
+        };
+
+        let Ty::Choice(actual) = &left_ty else {
+            if !left_ty.is_error() {
+                self.error(
+                    left.span,
+                    format!("'is' requires a choice value on the left, found {left_ty}"),
+                );
+            }
+            return Ty::Bool;
+        };
+        if actual != choice_name {
+            self.error(
+                right.span,
+                format!("variant '{choice_name}.{field}' does not belong to choice '{actual}'"),
+            );
+            return Ty::Bool;
+        }
+        let Some(info) = self.choices.get(actual) else {
+            return Ty::Bool;
+        };
+        if !info.variants.contains_key(field) {
+            self.error(
+                right.span,
+                format!("choice '{actual}' has no variant '{field}'"),
+            );
+        }
+        Ty::Bool
+    }
+
     fn check_binary(&mut self, op: BinaryOp, left: &Ty, right: &Ty, span: Span) -> Ty {
         match op {
+            // `is` is checked by `check_is_expr`, which needs the right-hand
+            // expression to find the choice variant. This arm is unreachable
+            // for well-formed ASTs.
+            BinaryOp::Is => {
+                self.error(span, "'is' expects a choice variant on the right");
+                Ty::Bool
+            }
             BinaryOp::Or | BinaryOp::And => {
                 if !matches!(left, Ty::Bool | Ty::Error) {
                     self.error(
@@ -1981,10 +2250,12 @@ impl Checker {
                 // `==`.
                 let byte_slice = |ty: &Ty| matches!(ty, Ty::Slice(element) if **element == Ty::U8);
                 let scalar = |ty: &Ty| ty.is_numeric() || matches!(ty, Ty::Bool);
+                let same_mark = matches!((left, right), (Ty::Mark(a), Ty::Mark(b)) if a == b);
                 let comparable = (scalar(left)
                     && scalar(right)
                     && (left == right || types::common_numeric(left, right).is_some()))
-                    || (byte_slice(left) && byte_slice(right));
+                    || (byte_slice(left) && byte_slice(right))
+                    || same_mark;
                 if !comparable {
                     self.error(
                         span,
@@ -2067,6 +2338,15 @@ impl Checker {
     }
 
     fn check_call(&mut self, callee: &Expr, args: &[CallArg], span: Span) -> Ty {
+        // `Name.Variant(value)` constructs a choice value. It is not a call to
+        // a named flow, so handle it before the ordinary call rules.
+        if let ExprKind::Member { base, field } = &callee.kind
+            && let ExprKind::Ident(choice_name) = &base.kind
+            && self.choices.contains_key(choice_name)
+        {
+            return self.check_choice_constructor(choice_name, field, args, span);
+        }
+
         let ExprKind::Ident(name) = &callee.kind else {
             self.error(callee.span, "only named functions can be called");
             for arg in args {
@@ -2178,6 +2458,64 @@ impl Checker {
         self.propagate_call_regions(name, args, &signature, &out_targets);
 
         signature.return_type
+    }
+
+    /// Check `Name.Variant(value)`, the constructor of a `choice`. Exactly one
+    /// `<-` argument is required and its type must match the variant payload.
+    fn check_choice_constructor(
+        &mut self,
+        choice_name: &str,
+        variant_name: &str,
+        args: &[CallArg],
+        span: Span,
+    ) -> Ty {
+        let Some(info) = self.choices.get(choice_name).cloned() else {
+            return Ty::Error;
+        };
+        let Some(variant) = info.variants.get(variant_name) else {
+            self.error(
+                span,
+                format!("choice '{choice_name}' has no variant '{variant_name}'"),
+            );
+            for arg in args {
+                self.check_unmatched_arg(arg);
+            }
+            return Ty::Error;
+        };
+
+        if args.len() != 1 {
+            self.error(
+                span,
+                format!(
+                    "choice variant '{choice_name}.{variant_name}' expects 1 argument, found {}",
+                    args.len()
+                ),
+            );
+            for arg in args {
+                self.check_unmatched_arg(arg);
+            }
+            return Ty::Choice(choice_name.to_string());
+        }
+
+        let arg = &args[0];
+        if arg.direction != Direction::In {
+            self.error(
+                arg.value.span,
+                format!("choice variant '{choice_name}.{variant_name}' expects a '<-' argument"),
+            );
+        }
+        let actual = self.check_expr(&arg.value);
+        if !self.assignable_expr(&variant.ty, &actual, &arg.value) {
+            self.error(
+                arg.value.span,
+                format!(
+                    "argument of '{choice_name}.{variant_name}' has type {actual}, expected {}",
+                    variant.ty
+                ),
+            );
+        }
+        self.check_literal_range(&arg.value, &variant.ty);
+        Ty::Choice(choice_name.to_string())
     }
 
     /// Check a variadic `printf(...)` call.
@@ -2603,6 +2941,44 @@ impl Checker {
     // ------------------------------------------------------------------
     // Lvalues, members and indexes
     // ------------------------------------------------------------------
+    /// Type of a place computed without mutating checker state. Used to detect
+    /// writes into a choice payload before `lvalue_info` would accept them.
+    fn static_place_ty(&self, expr: &Expr) -> Option<Ty> {
+        match &expr.kind {
+            ExprKind::Ident(name) => self.lookup(name).map(|info| info.ty.clone()),
+            ExprKind::Member { base, field } => {
+                let base_ty = self.static_place_ty(base)?;
+                match &base_ty {
+                    Ty::Named(name) => self.interfaces.get(name).and_then(|info| {
+                        info.field_index
+                            .get(field)
+                            .map(|&index| info.fields[index].ty.clone())
+                    }),
+                    Ty::Choice(name) => self.choices.get(name).and_then(|info| {
+                        info.variants.get(field).map(|variant| variant.ty.clone())
+                    }),
+                    Ty::Slice(_) if field == "len" => Some(Ty::U64),
+                    _ => None,
+                }
+            }
+            ExprKind::Index { base, .. } => match self.static_place_ty(base)? {
+                Ty::Slice(element) => Some(*element),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Whether `expr` reads the payload of a choice, as in `result.Ok`. Such a
+    /// place is a checked read-only view: assigning to it would bypass the
+    /// runtime variant check, so the checker rejects it.
+    fn is_choice_payload_place(&self, expr: &Expr) -> bool {
+        let ExprKind::Member { base, .. } = &expr.kind else {
+            return false;
+        };
+        matches!(self.static_place_ty(base), Some(Ty::Choice(_)))
+    }
+
     fn lvalue_info(&mut self, expr: &Expr) -> LvalueInfo {
         match &expr.kind {
             ExprKind::Ident(name) => match self.lookup(name) {
@@ -2668,6 +3044,16 @@ impl Checker {
                     Some(&index) => info.fields[index].ty.clone(),
                     None => {
                         self.error(span, format!("shape '{name}' has no field '{field}'"));
+                        Ty::Error
+                    }
+                },
+                None => Ty::Error,
+            },
+            Ty::Choice(name) => match self.choices.get(name) {
+                Some(info) => match info.variants.get(field) {
+                    Some(variant) => variant.ty.clone(),
+                    None => {
+                        self.error(span, format!("choice '{name}' has no variant '{field}'"));
                         Ty::Error
                     }
                 },
@@ -3605,7 +3991,7 @@ fn place_path(expr: &Expr) -> Option<String> {
 }
 
 fn is_composite(ty: &Ty) -> bool {
-    matches!(ty, Ty::Named(_) | Ty::Slice(_))
+    matches!(ty, Ty::Named(_) | Ty::Choice(_) | Ty::Slice(_))
 }
 
 /// Collect the places read by an expression as `(root variable, relative path)`.

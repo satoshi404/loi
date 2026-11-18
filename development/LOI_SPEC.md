@@ -48,7 +48,7 @@ The goal is that any new model can open `development/PROGRESS.md` and immediatel
 
 | Feature              | Decision                                                                 |
 |----------------------|--------------------------------------------------------------------------|
-| Composite types      | Only `shape`: a named set of fields, data only, no methods                |
+| Composite types      | `shape` for products; `mark` and `choice` for sums; data only, no methods |
 | Visibility           | `open` exports; `sealed` is the default                                  |
 | Parameters           | Direction is mandatory: `<-`, `->`, `<->`                                |
 | Results              | `->` parameters and/or a single `=> T`                                   |
@@ -67,7 +67,7 @@ The goal is that any new model can open `development/PROGRESS.md` and immediatel
 | Slice literals       | `[a, b]` (inferred) or `[T: a, b]` (explicit)                           |
 | Length               | `len(xs)` and `xs.len`, both `u64`                                       |
 | Imports              | `import "path.loi"` textual inclusion, resolved by the driver (provisional) |
-| Operators            | `and`, `or`, `not`, `as`, bitwise `&` `\|` `^` `~`, shifts `<<` `>>`, compound `+=` and friends |
+| Operators            | `and`, `or`, `not`, `is`, `as`, bitwise `&` `\|` `^` `~`, shifts `<<` `>>`, compound `+=` and friends |
 
 ---
 
@@ -190,6 +190,33 @@ open flow main
 - `name <- value` creates an immutable binding; `mut name <- value` creates a mutable one. A declaration without a value (`mut w: World`) is uninitialized and can only be passed as `->`.
 - Control flow: `if` / `else`, `while`, `for i in a..b`, `for <- p in xs` (read), `for <-> p in xs` (mutate), `continue`, `break`, and `=> value` for returns.
 
+### 4.1a Sum types: `mark` and `choice`
+
+- `mark Name [ A, B, ... ]` declares a payload-free finite tag set. A value is
+  written `Name.A`. Marks are scalar-like: they copy implicitly and `==` / `!=`
+  are defined only between two values of the same mark. Ordering and arithmetic
+  are not defined.
+- `choice Name [ A: T, B: U, ... ]` declares a tagged union with one payload per
+  variant. `Name.A(value)` constructs a value; the constructor requires exactly
+  one `<-` argument whose type matches the declared payload. Bare
+  `Name.A` is only valid as the right operand of `is`, never as a value.
+- `value is Name.A` tests the active variant and yields `bool`. The left operand
+  must have that choice type and the variant must belong to it. `is` does not
+  change the static type of `value`.
+- `value.A` reads the active payload. The checker verifies that `A` is a variant
+  of the value's choice, but the tag is checked at runtime because there is no
+  static narrowing. A wrong read aborts with
+  `loi: choice 'Name' does not hold 'A' at <line>:<column>`, using the read's
+  source position. Payload reads are not assignable: construct a new choice
+  value instead.
+- Payloads may be numeric scalars, `bool`, marks or slice-free shapes. Slices,
+  shapes containing slices, nested choices, `cstr` and `opaque` handles are
+  rejected so the C union remains a fixed-size, ownership-free value. Choices
+  are not generic.
+- Marks and choices use `open` / `sealed` visibility like shapes and share the
+  type namespace with shapes, opaque handles, flows and globals. Variants are
+  scoped to their declaration; duplicate variant names are errors.
+
 ### 4.2 Parameter directions
 
 Every parameter declares its direction. The direction is mandatory.
@@ -296,8 +323,8 @@ These rules were added to unblock real programs and are implemented and tested. 
 **Equality**
 
 - `==` and `!=` are defined for scalar numeric types and `bool`, with the usual literal coercion rules.
-- They are also defined for `[u8]` values and compare bytes structurally (equal length and equal contents), not by pointer identity.
-- Other shapes and slices cannot be compared with `==`/`!=`; compare their fields explicitly. This avoids emitting invalid C struct comparisons.
+- They are also defined between two values of the same `mark`, and for `[u8]` values, which compare bytes structurally (equal length and equal contents), not by pointer identity.
+- Other shapes, choices and slices cannot be compared with `==`/`!=`; compare their fields, variants and payloads explicitly. This avoids emitting invalid C struct comparisons.
 
 **Builtin intrinsics and standard library**
 

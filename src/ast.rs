@@ -139,6 +139,11 @@ pub struct Program {
 pub enum Item {
     Import(ImportDecl),
     Interface(InterfaceDecl),
+    /// `mark Name [ A, B ]`: a finite set of payload-free tags.
+    Mark(MarkDecl),
+    /// `choice Name [ A: T, B: U ]`: a tagged union with one payload per
+    /// variant.
+    Choice(ChoiceDecl),
     Opaque(OpaqueDecl),
     Global(GlobalDecl),
     Function(FunctionDecl),
@@ -153,6 +158,8 @@ impl Item {
         match self {
             Item::Import(_) => None,
             Item::Interface(decl) => Some(&decl.name),
+            Item::Mark(decl) => Some(&decl.name),
+            Item::Choice(decl) => Some(&decl.name),
             Item::Opaque(decl) => Some(&decl.name),
             Item::Global(decl) => Some(&decl.name),
             Item::Function(decl) => Some(&decl.name),
@@ -197,6 +204,45 @@ pub struct FieldDecl {
     pub name: String,
     pub ty: Type,
     pub default: Option<Expr>,
+}
+
+/// `mark Name [ A, B ]` declares a finite set of payload-free tags. A mark is
+/// a scalar: it can be bound, copied, passed to flows and compared with
+/// `==`/`!=`. Variants are referenced as `Name.Variant`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkDecl {
+    pub span: Span,
+    /// Source line of the closing `]`, used to place trailing comments.
+    pub close_line: usize,
+    pub visibility: Visibility,
+    pub name: String,
+    pub variants: Vec<MarkVariant>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkVariant {
+    pub span: Span,
+    pub name: String,
+}
+
+/// `choice Name [ A: T, B: U ]` declares a tagged union. Each variant carries
+/// exactly one payload. A value is built with `Name.Variant(value)`, tested with
+/// `value is Name.Variant`, and read with `value.Variant` (checked at runtime).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChoiceDecl {
+    pub span: Span,
+    /// Source line of the closing `]`, used to place trailing comments.
+    pub close_line: usize,
+    pub visibility: Visibility,
+    pub name: String,
+    pub variants: Vec<ChoiceVariant>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChoiceVariant {
+    pub span: Span,
+    pub name: String,
+    pub ty: Type,
 }
 
 /// A foreign handle. `opaque Name` is a distinct, copyable scalar that the
@@ -414,6 +460,8 @@ pub enum UnaryOp {
 pub enum BinaryOp {
     Or,
     And,
+    /// `is`: tests which variant a `choice` value holds.
+    Is,
     Eq,
     Neq,
     Lt,

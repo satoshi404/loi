@@ -108,6 +108,8 @@ fn parses_the_reference_program() {
         .iter()
         .filter_map(|item| match item {
             Item::Interface(interface) => Some(interface.name.as_str()),
+            Item::Mark(mark) => Some(mark.name.as_str()),
+            Item::Choice(choice) => Some(choice.name.as_str()),
             Item::Opaque(opaque) => Some(opaque.name.as_str()),
             Item::Function(function) => Some(function.name.as_str()),
             Item::Global(global) => Some(global.name.as_str()),
@@ -878,6 +880,90 @@ fn comparisons_and_shifts_do_not_consume_generic_angle_brackets() {
     for op in [BinaryOp::Lt, BinaryOp::Gt] {
         assert!(seen.contains(&op), "missing {op:?} in {seen:?}");
     }
+}
+
+#[test]
+fn parses_mark_and_choice_declarations() {
+    let program =
+        parse_source("mark Color [ Red, Green, Blue ]\nchoice Result [ Ok: i32, Err: i64 ]\n");
+
+    let Item::Mark(mark) = &program.items[0] else {
+        panic!("expected a mark declaration");
+    };
+    assert_eq!(mark.name, "Color");
+    assert_eq!(mark.visibility, Visibility::Hidden);
+    assert_eq!(
+        mark.variants
+            .iter()
+            .map(|v| v.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Red", "Green", "Blue"]
+    );
+
+    let Item::Choice(choice) = &program.items[1] else {
+        panic!("expected a choice declaration");
+    };
+    assert_eq!(choice.name, "Result");
+    assert_eq!(choice.variants.len(), 2);
+    assert_eq!(choice.variants[0].name, "Ok");
+    assert_eq!(choice.variants[0].ty, Type::named("i32"));
+    assert_eq!(choice.variants[1].name, "Err");
+    assert_eq!(choice.variants[1].ty, Type::named("i64"));
+}
+
+#[test]
+fn parses_mark_and_choice_with_newlines_and_visibility() {
+    let program = parse_source(
+        "open mark Flag [\n    On\n    Off\n]\nsealed choice Maybe [\n    Some: i32,\n    None: bool,\n]\n",
+    );
+    let Item::Mark(mark) = &program.items[0] else {
+        panic!("expected mark");
+    };
+    assert_eq!(mark.visibility, Visibility::Visible);
+    assert_eq!(mark.variants.len(), 2);
+    let Item::Choice(choice) = &program.items[1] else {
+        panic!("expected choice");
+    };
+    assert_eq!(choice.visibility, Visibility::Hidden);
+    assert_eq!(choice.variants.len(), 2);
+}
+
+#[test]
+fn parses_variant_reference_constructor_and_is() {
+    let program = parse_source(
+        "flow main {\n    c <- Color.Green\n    r <- Result.Ok(42)\n    if r is Result.Ok {\n        print_int(r.Ok)\n    }\n}\n",
+    );
+    let main = function(&program, "main");
+
+    let StmtKind::Let {
+        value: Some(value), ..
+    } = &main.body.statements[0].kind
+    else {
+        panic!("expected binding");
+    };
+    assert!(matches!(
+        kind(value),
+        ExprKind::Member { field, .. } if field == "Green"
+    ));
+
+    let StmtKind::Let {
+        value: Some(value), ..
+    } = &main.body.statements[1].kind
+    else {
+        panic!("expected binding");
+    };
+    assert!(matches!(kind(value), ExprKind::Call { .. }));
+
+    let StmtKind::If { condition, .. } = &main.body.statements[2].kind else {
+        panic!("expected if");
+    };
+    assert!(matches!(
+        kind(condition),
+        ExprKind::Binary {
+            op: BinaryOp::Is,
+            ..
+        }
+    ));
 }
 
 fn collect_binary_ops(expr: &Expr, ops: &mut Vec<BinaryOp>) {

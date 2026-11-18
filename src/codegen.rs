@@ -550,6 +550,23 @@ enum Repr {
     Pointer,
 }
 
+/// A by-value type declaration that needs C layout. Marks are simple scalar
+/// typedefs emitted separately; shapes and choices can embed each other and
+/// therefore share one topological order.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum TypeDecl {
+    Shape(String),
+    Choice(String),
+}
+
+impl TypeDecl {
+    fn name(&self) -> &str {
+        match self {
+            TypeDecl::Shape(name) | TypeDecl::Choice(name) => name,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct VarInfo {
     ty: Ty,
@@ -570,6 +587,8 @@ struct SourceMapEntry {
 struct Generator<'a> {
     program: &'a Program,
     interfaces: HashMap<String, &'a InterfaceDecl>,
+    marks: HashMap<String, &'a MarkDecl>,
+    choices: HashMap<String, &'a ChoiceDecl>,
     /// Foreign handle names declared with `opaque`.
     opaques: HashSet<String>,
     functions: HashMap<String, &'a FunctionDecl>,
@@ -590,6 +609,10 @@ struct Generator<'a> {
     string_order: Vec<String>,
     intrinsic_return_ty: HashMap<String, Ty>,
     interface_order: Vec<String>,
+    mark_order: Vec<String>,
+    choice_order: Vec<String>,
+    /// Shapes and choices in dependency order.
+    type_order: Vec<TypeDecl>,
     function_order: Vec<String>,
     out: String,
     depth: usize,
@@ -609,12 +632,16 @@ impl<'a> Generator<'a> {
         defined: Option<std::collections::HashSet<String>>,
     ) -> Self {
         let mut interfaces = HashMap::new();
+        let mut marks = HashMap::new();
+        let mut choices = HashMap::new();
         let mut opaques = HashSet::new();
         let mut functions = HashMap::new();
         let mut globals = HashMap::new();
         let mut global_order = Vec::new();
         let mut intrinsic_return_ty = HashMap::new();
         let mut interface_order = Vec::new();
+        let mut mark_order = Vec::new();
+        let mut choice_order = Vec::new();
         let mut function_order = Vec::new();
 
         // Intrinsics map to C library calls; they are not user functions and
@@ -644,6 +671,18 @@ impl<'a> Generator<'a> {
                     if !interfaces.contains_key(&decl.name) {
                         interfaces.insert(decl.name.clone(), decl);
                         interface_order.push(decl.name.clone());
+                    }
+                }
+                Item::Mark(decl) => {
+                    if !marks.contains_key(&decl.name) {
+                        marks.insert(decl.name.clone(), decl);
+                        mark_order.push(decl.name.clone());
+                    }
+                }
+                Item::Choice(decl) => {
+                    if !choices.contains_key(&decl.name) {
+                        choices.insert(decl.name.clone(), decl);
+                        choice_order.push(decl.name.clone());
                     }
                 }
                 Item::Opaque(decl) => {
@@ -683,6 +722,8 @@ impl<'a> Generator<'a> {
         Self {
             program,
             interfaces,
+            marks,
+            choices,
             opaques,
             functions,
             globals,
@@ -695,6 +736,9 @@ impl<'a> Generator<'a> {
             string_order,
             intrinsic_return_ty,
             interface_order,
+            mark_order,
+            choice_order,
+            type_order: Vec::new(),
             function_order,
             out: String::new(),
             depth: 0,
@@ -725,7 +769,7 @@ impl<'a> Generator<'a> {
             }
         }
 
-        self.interface_order = self.compute_interface_order()?;
+        self.type_order = self.compute_type_order()?;
 
         self.out.push_str(PRELUDE);
         self.out.push('\n');
@@ -764,7 +808,7 @@ impl<'a> Generator<'a> {
 
     /// Emit only declarations for `visible` items into a C header.
     fn generate_header(mut self) -> Result<String, CodegenError> {
-        self.interface_order = self.compute_interface_order()?;
+        self.type_order = self.compute_type_order()?;
 
         let header_name = self
             .functions
@@ -892,6 +936,10 @@ impl<'a> Generator<'a> {
                     primitive
                 } else if name == "cstr" {
                     Ty::CStr
+                } else if self.marks.contains_key(name) {
+                    Ty::Mark(name.clone())
+                } else if self.choices.contains_key(name) {
+                    Ty::Choice(name.clone())
                 } else if self.opaques.contains(name) {
                     Ty::Opaque(name.clone())
                 } else {
@@ -916,7 +964,7 @@ impl<'a> Generator<'a> {
             Ty::F32 => "float".to_string(),
             Ty::F64 => "double".to_string(),
             Ty::Bool => "bool".to_string(),
-            Ty::Named(name) => self.c_interface(name),
+            Ty::Named(name) | Ty::Mark(name) | Ty::Choice(name) => self.c_interface(name),
             Ty::Opaque(_) => "void *".to_string(),
             Ty::CStr => "const char *".to_string(),
             Ty::Slice(_) => "LoiSlice".to_string(),
@@ -927,80 +975,266 @@ impl<'a> Generator<'a> {
         }
     }
 
-    fn compute_interface_order(&self) -> Result<Vec<String>, CodegenError> {
+    /// Shapes and choices in dependency order. A by-value cycle between the
+    /// two kinds has no C layout, so it is rejected here.
+    fn compute_type_order(&self) -> Result<Vec<TypeDecl>, CodegenError> {
         let mut order = Vec::new();
-        let mut state: HashMap<String, u8> = HashMap::new();
-        for name in &self.interface_order {
-            self.visit_interface(name, &mut state, &mut order)?;
+        let mut state: HashMap<TypeDecl, u8> = HashMap::new();
+        let mut decls = Vec::new();
+        decls.extend(
+            self.interface_order
+                .iter()
+                .map(|name| TypeDecl::Shape(name.clone())),
+        );
+        decls.extend(
+            self.choice_order
+                .iter()
+                .map(|name| TypeDecl::Choice(name.clone())),
+        );
+        for decl in &decls {
+            self.visit_type_decl(decl, &mut state, &mut order)?;
         }
         Ok(order)
     }
 
-    fn visit_interface(
+    fn visit_type_decl(
         &self,
-        name: &str,
-        state: &mut HashMap<String, u8>,
-        order: &mut Vec<String>,
+        decl: &TypeDecl,
+        state: &mut HashMap<TypeDecl, u8>,
+        order: &mut Vec<TypeDecl>,
     ) -> Result<(), CodegenError> {
-        match state.get(name).copied().unwrap_or(0) {
+        match state.get(decl).copied().unwrap_or(0) {
             2 => return Ok(()),
             1 => {
                 return Err(CodegenError::new(format!(
-                    "shape '{name}' contains itself by value"
+                    "type '{}' contains itself by value",
+                    decl.name()
                 )));
             }
             _ => {}
         }
 
-        state.insert(name.to_string(), 1);
-        if let Some(decl) = self.interfaces.get(name).copied() {
-            for field in &decl.fields {
-                if let Type::Named(dependency, _) = &field.ty
-                    && self.interfaces.contains_key(dependency)
-                {
-                    self.visit_interface(dependency, state, order)?;
-                }
-            }
+        state.insert(decl.clone(), 1);
+        for dependency in self.type_dependencies(decl) {
+            self.visit_type_decl(&dependency, state, order)?;
         }
-        state.insert(name.to_string(), 2);
-        order.push(name.to_string());
+        state.insert(decl.clone(), 2);
+        order.push(decl.clone());
         Ok(())
     }
 
-    fn emit_interfaces(&mut self) {
-        let order = self.interface_order.clone();
-
-        for name in &order {
-            let Some(decl) = self.interfaces.get(name).copied() else {
-                continue;
-            };
-            let ty = self.c_interface(name);
-            self.emit_with_span(format!("typedef struct {ty} {ty};"), decl.span, "interface");
-        }
-        self.emit("");
-
-        for name in &order {
-            let Some(decl) = self.interfaces.get(name).copied() else {
-                continue;
-            };
-            let ty = self.c_interface(name);
-            self.emit_with_span(format!("struct {ty} {{"), decl.span, "interface");
-            self.depth += 1;
-            if decl.fields.is_empty() {
-                self.emit("unsigned char loi_f_empty;");
+    fn type_dependencies(&self, decl: &TypeDecl) -> Vec<TypeDecl> {
+        let types: Vec<&Type> = match decl {
+            TypeDecl::Shape(name) => self
+                .interfaces
+                .get(name)
+                .map(|decl| decl.fields.iter().map(|field| &field.ty).collect())
+                .unwrap_or_default(),
+            TypeDecl::Choice(name) => self
+                .choices
+                .get(name)
+                .map(|decl| decl.variants.iter().map(|variant| &variant.ty).collect())
+                .unwrap_or_default(),
+        };
+        let mut dependencies = Vec::new();
+        for ty in types {
+            if let Type::Named(name, _) = ty {
+                if self.interfaces.contains_key(name) {
+                    dependencies.push(TypeDecl::Shape(name.clone()));
+                } else if self.choices.contains_key(name) {
+                    dependencies.push(TypeDecl::Choice(name.clone()));
+                }
             }
-            for field in &decl.fields {
-                let field_ty = self.resolve_type(&field.ty);
+        }
+        dependencies
+    }
+
+    fn c_mark_variant(&self, mark: &str, variant: &str) -> String {
+        format!("loi_m_{mark}_{variant}")
+    }
+
+    fn c_choice_payload(&self, variant: &str) -> String {
+        format!("loi_p_{variant}")
+    }
+
+    fn c_choice_getter(&self, choice: &str, variant: &str) -> String {
+        format!("loi_get_{choice}_{variant}")
+    }
+
+    fn choice_variant_index(&self, choice: &str, variant: &str) -> Option<usize> {
+        self.choices
+            .get(choice)?
+            .variants
+            .iter()
+            .position(|candidate| candidate.name == variant)
+    }
+
+    fn choice_variant_ty(&self, choice: &str, variant: &str) -> Option<Ty> {
+        self.choices
+            .get(choice)?
+            .variants
+            .iter()
+            .find_map(|candidate| {
+                (candidate.name == variant).then(|| self.resolve_type(&candidate.ty))
+            })
+    }
+
+    fn emit_marks(&mut self, visible_only: bool) {
+        let names = self.mark_order.clone();
+        for name in names {
+            let Some(decl) = self.marks.get(&name).copied() else {
+                continue;
+            };
+            if visible_only && decl.visibility != Visibility::Visible {
+                continue;
+            }
+            let c_name = self.c_interface(&name);
+            self.emit_with_span(format!("typedef uint32_t {c_name};"), decl.span, "mark");
+            for (index, variant) in decl.variants.iter().enumerate() {
+                self.emit_with_span(
+                    format!(
+                        "#define {} (({c_name}){index}u)",
+                        self.c_mark_variant(&name, &variant.name)
+                    ),
+                    variant.span,
+                    "mark variant",
+                );
+            }
+            self.emit("");
+        }
+    }
+
+    fn emit_shape_definition(&mut self, name: &str, visible_only: bool) {
+        let Some(decl) = self.interfaces.get(name).copied() else {
+            return;
+        };
+        if visible_only && decl.visibility != Visibility::Visible {
+            return;
+        }
+        let ty = self.c_interface(name);
+        self.emit_with_span(format!("struct {ty} {{"), decl.span, "interface");
+        self.depth += 1;
+        if decl.fields.is_empty() {
+            self.emit("unsigned char loi_f_empty;");
+        }
+        for field in &decl.fields {
+            let field_ty = self.resolve_type(&field.ty);
+            self.emit(format!(
+                "{} {};",
+                self.c_type(&field_ty),
+                self.c_field(&field.name)
+            ));
+        }
+        self.depth -= 1;
+        self.emit("};");
+        self.emit("");
+    }
+
+    fn emit_choice_definition(&mut self, name: &str, visible_only: bool) {
+        let Some(decl) = self.choices.get(name).copied() else {
+            return;
+        };
+        if visible_only && decl.visibility != Visibility::Visible {
+            return;
+        }
+        let ty = self.c_interface(name);
+        self.emit_with_span(format!("struct {ty} {{"), decl.span, "choice");
+        self.depth += 1;
+        self.emit("uint32_t loi_f_tag;");
+        if decl.variants.is_empty() {
+            self.emit("unsigned char loi_u_payload;");
+        } else {
+            self.emit("union {");
+            self.depth += 1;
+            for variant in &decl.variants {
+                let payload_ty = self.resolve_type(&variant.ty);
                 self.emit(format!(
                     "{} {};",
-                    self.c_type(&field_ty),
-                    self.c_field(&field.name)
+                    self.c_type(&payload_ty),
+                    self.c_choice_payload(&variant.name)
                 ));
             }
             self.depth -= 1;
-            self.emit("};");
-            self.emit("");
+            self.emit("} loi_u_payload;");
         }
+        self.depth -= 1;
+        self.emit("};");
+        self.emit("");
+    }
+
+    /// Checked payload readers. Each reader is parameterized by the source
+    /// position of the access so an invalid read reports the exact place that
+    /// caused the abort.
+    fn emit_choice_getters(&mut self) {
+        let names = self.choice_order.clone();
+        for name in names {
+            let Some(decl) = self.choices.get(&name).copied() else {
+                continue;
+            };
+            let choice_c = self.c_interface(&name);
+            for (index, variant) in decl.variants.iter().enumerate() {
+                let payload_ty = self.resolve_type(&variant.ty);
+                let payload_c = self.c_type(&payload_ty);
+                let helper = self.c_choice_getter(&name, &variant.name);
+                self.emit(format!(
+                    "static inline {payload_c} {helper}({choice_c} value, size_t line, size_t column) {{"
+                ));
+                self.depth += 1;
+                self.emit(format!("if (value.loi_f_tag != {index}u) {{"));
+                self.depth += 1;
+                self.emit(format!(
+                    "loi_runtime_fail(\"choice '{name}' does not hold '{}'\", line, column);",
+                    variant.name
+                ));
+                self.depth -= 1;
+                self.emit("}");
+                self.emit(format!(
+                    "return value.loi_u_payload.{};",
+                    self.c_choice_payload(&variant.name)
+                ));
+                self.depth -= 1;
+                self.emit("}");
+            }
+            if !decl.variants.is_empty() {
+                self.emit("");
+            }
+        }
+    }
+
+    fn emit_interfaces(&mut self) {
+        self.emit_marks(false);
+
+        let order = self.type_order.clone();
+        for decl in &order {
+            let c_name = self.c_interface(decl.name());
+            let (span, kind) = match decl {
+                TypeDecl::Shape(name) => (
+                    self.interfaces
+                        .get(name)
+                        .map(|decl| decl.span)
+                        .unwrap_or_default(),
+                    "interface",
+                ),
+                TypeDecl::Choice(name) => (
+                    self.choices
+                        .get(name)
+                        .map(|decl| decl.span)
+                        .unwrap_or_default(),
+                    "choice",
+                ),
+            };
+            self.emit_with_span(format!("typedef struct {c_name} {c_name};"), span, kind);
+        }
+        self.emit("");
+
+        for decl in &order {
+            match decl {
+                TypeDecl::Shape(name) => self.emit_shape_definition(name, false),
+                TypeDecl::Choice(name) => self.emit_choice_definition(name, false),
+            }
+        }
+
+        self.emit_choice_getters();
     }
 
     /// Emit static byte arrays for every string literal in the program.
@@ -1202,45 +1436,35 @@ impl<'a> Generator<'a> {
             .expect("string literal should have been collected")
     }
 
-    /// Emit interface declarations for `visible` interfaces only.
+    /// Emit declarations for `visible` marks, choices and shapes only.
     fn emit_interfaces_visible(&mut self) {
-        let order = self.interface_order.clone();
-        for name in &order {
-            let Some(decl) = self.interfaces.get(name).copied() else {
-                continue;
+        self.emit_marks(true);
+
+        let order = self.type_order.clone();
+        for decl in &order {
+            let visible = match decl {
+                TypeDecl::Shape(name) => self
+                    .interfaces
+                    .get(name)
+                    .is_some_and(|decl| decl.visibility == Visibility::Visible),
+                TypeDecl::Choice(name) => self
+                    .choices
+                    .get(name)
+                    .is_some_and(|decl| decl.visibility == Visibility::Visible),
             };
-            if decl.visibility != Visibility::Visible {
+            if !visible {
                 continue;
             }
-            let ty = self.c_interface(name);
-            self.emit_with_span(format!("typedef struct {ty} {ty};"), decl.span, "interface");
+            let c_name = self.c_interface(decl.name());
+            self.emit(format!("typedef struct {c_name} {c_name};"));
         }
         self.emit("");
 
-        for name in &order {
-            let Some(decl) = self.interfaces.get(name).copied() else {
-                continue;
-            };
-            if decl.visibility != Visibility::Visible {
-                continue;
+        for decl in &order {
+            match decl {
+                TypeDecl::Shape(name) => self.emit_shape_definition(name, true),
+                TypeDecl::Choice(name) => self.emit_choice_definition(name, true),
             }
-            let ty = self.c_interface(name);
-            self.emit_with_span(format!("struct {ty} {{"), decl.span, "interface");
-            self.depth += 1;
-            if decl.fields.is_empty() {
-                self.emit("unsigned char loi_f_empty;");
-            }
-            for field in &decl.fields {
-                let field_ty = self.resolve_type(&field.ty);
-                self.emit(format!(
-                    "{} {};",
-                    self.c_type(&field_ty),
-                    self.c_field(&field.name)
-                ));
-            }
-            self.depth -= 1;
-            self.emit("};");
-            self.emit("");
         }
     }
 
@@ -1836,7 +2060,8 @@ impl<'a> Generator<'a> {
                 UnaryOp::BitNot => self.ty_of(operand),
             },
             ExprKind::Binary { op, left, right } => match op {
-                BinaryOp::Or
+                BinaryOp::Is
+                | BinaryOp::Or
                 | BinaryOp::And
                 | BinaryOp::Eq
                 | BinaryOp::Neq
@@ -1855,19 +2080,30 @@ impl<'a> Generator<'a> {
                 BinaryOp::Shl | BinaryOp::Shr => self.ty_of(left),
             },
             ExprKind::Cast { ty, .. } => self.resolve_type(ty),
-            ExprKind::Call { callee, .. } => {
-                if let ExprKind::Ident(name) = &callee.kind {
-                    self.function_return_ty(name)
-                } else {
-                    Ty::Error
+            ExprKind::Call { callee, .. } => match &callee.kind {
+                ExprKind::Ident(name) => self.function_return_ty(name),
+                ExprKind::Member { base, field }
+                    if let ExprKind::Ident(choice) = &base.kind
+                        && self.choices.contains_key(choice) =>
+                {
+                    self.choice_variant_ty(choice, field)
+                        .map(|_| Ty::Choice(choice.clone()))
+                        .unwrap_or(Ty::Error)
                 }
-            }
+                _ => Ty::Error,
+            },
             ExprKind::Alloc { .. } => Ty::Void,
             ExprKind::Move(value) | ExprKind::Copy(value) => self.ty_of(value),
-            ExprKind::Member { base, field } => match self.ty_of(base) {
-                Ty::Named(interface) => self.field_ty(&interface, field).unwrap_or(Ty::Error),
-                Ty::Slice(_) if field == "len" => Ty::U64,
-                _ => Ty::Error,
+            ExprKind::Member { base, field } => match &base.kind {
+                ExprKind::Ident(name) if self.marks.contains_key(name) => Ty::Mark(name.clone()),
+                _ => match self.ty_of(base) {
+                    Ty::Named(interface) => self.field_ty(&interface, field).unwrap_or(Ty::Error),
+                    Ty::Choice(choice) => {
+                        self.choice_variant_ty(&choice, field).unwrap_or(Ty::Error)
+                    }
+                    Ty::Slice(_) if field == "len" => Ty::U64,
+                    _ => Ty::Error,
+                },
             },
             ExprKind::Index { base, .. } => match self.ty_of(base) {
                 Ty::Slice(element) => *element,
@@ -1943,6 +2179,9 @@ impl<'a> Generator<'a> {
                 }
             }
             ExprKind::Binary { op, left, right } => {
+                if *op == BinaryOp::Is {
+                    return self.gen_is_expr(left, right);
+                }
                 let left_ty = self.ty_of(left);
                 let right_ty = self.ty_of(right);
                 let left = self.gen_expr(left);
@@ -1956,6 +2195,7 @@ impl<'a> Generator<'a> {
                     };
                 }
                 let operator = match op {
+                    BinaryOp::Is => "==",
                     BinaryOp::Or => "||",
                     BinaryOp::And => "&&",
                     BinaryOp::Eq => "==",
@@ -1992,6 +2232,7 @@ impl<'a> Generator<'a> {
                     );
                 }
                 let helper = match op {
+                    BinaryOp::Is => None,
                     BinaryOp::Add => Some("add"),
                     BinaryOp::Sub => Some("sub"),
                     BinaryOp::Mul => Some("mul"),
@@ -2052,9 +2293,19 @@ impl<'a> Generator<'a> {
             }
             ExprKind::Move(value) | ExprKind::Copy(value) => self.gen_expr(value),
             ExprKind::Member { base, field } => {
+                if let ExprKind::Ident(name) = &base.kind
+                    && self.marks.contains_key(name)
+                {
+                    return self.c_mark_variant(name, field);
+                }
                 if field == "len" && matches!(self.ty_of(base), Ty::Slice(_)) {
                     let base = self.gen_expr(base);
                     return format!("((uint64_t)({base}).len)");
+                }
+                if let Ty::Choice(choice) = self.ty_of(base) {
+                    let base = self.gen_expr(base);
+                    let helper = self.c_choice_getter(&choice, field);
+                    return format!("{helper}({base}, {}, {})", expr.span.line, expr.span.column);
                 }
                 let base = self.gen_expr(base);
                 format!("({base}).{}", self.c_field(field))
@@ -2077,6 +2328,21 @@ impl<'a> Generator<'a> {
                 None => self.gen_expr(inner),
             },
         }
+    }
+
+    /// `value is Name.Variant` compares the choice tag with the variant index.
+    fn gen_is_expr(&mut self, left: &Expr, right: &Expr) -> String {
+        let left_code = self.gen_expr(left);
+        let ExprKind::Member { base, field } = &right.kind else {
+            return "0".to_string();
+        };
+        let ExprKind::Ident(choice) = &base.kind else {
+            return "0".to_string();
+        };
+        let Some(index) = self.choice_variant_index(choice, field) else {
+            return "0".to_string();
+        };
+        format!("(({left_code}).loi_f_tag == {index}u)")
     }
 
     /// Evaluate an expression at compile time against the program's globals.
@@ -2103,6 +2369,14 @@ impl<'a> Generator<'a> {
     }
 
     fn gen_call(&mut self, callee: &Expr, args: &[CallArg]) -> String {
+        // `Name.Variant(value)` is a constructor, not a flow call.
+        if let ExprKind::Member { base, field } = &callee.kind
+            && let ExprKind::Ident(choice) = &base.kind
+            && self.choices.contains_key(choice)
+        {
+            return self.choice_constructor_code(choice, field, args);
+        }
+
         let ExprKind::Ident(name) = &callee.kind else {
             return "/* unsupported call target */ 0".to_string();
         };
@@ -2139,6 +2413,24 @@ impl<'a> Generator<'a> {
         }
 
         format!("{}({})", self.c_func(name), lowered.join(", "))
+    }
+
+    /// Emit `Name.Variant(value)` as a tagged C compound literal.
+    fn choice_constructor_code(&mut self, choice: &str, variant: &str, args: &[CallArg]) -> String {
+        let Some(index) = self.choice_variant_index(choice, variant) else {
+            return "/* unknown choice variant */ 0".to_string();
+        };
+        let Some(expected) = self.choice_variant_ty(choice, variant) else {
+            return "/* unknown choice variant */ 0".to_string();
+        };
+        let Some(arg) = args.first() else {
+            return "/* missing choice payload */ 0".to_string();
+        };
+        let value = self.gen_coerced_expr(&arg.value, &expected);
+        let payload_c = self.c_type(&expected);
+        let choice_c = self.c_interface(choice);
+        let payload_field = self.c_choice_payload(variant);
+        format!("(({choice_c}){{ {index}u, {{ .{payload_field} = ({payload_c})({value}) }} }})")
     }
 
     /// Generate C for a built-in intrinsic call. Returns `None` for user
@@ -2301,7 +2593,7 @@ fn collect_program_strings(
                     }
                 }
             }
-            Item::Opaque(_) => {}
+            Item::Mark(_) | Item::Choice(_) | Item::Opaque(_) => {}
             Item::Global(decl) => collect_expr_strings(&decl.value, indices, order),
             Item::Function(decl) => collect_block_strings(&decl.body, indices, order),
         }

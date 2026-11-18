@@ -183,6 +183,10 @@ impl Parser {
             Ok(Item::Function(decl))
         } else if self.at(TokenKind::Shape) {
             Ok(Item::Interface(self.parse_interface(visibility, span)?))
+        } else if self.at(TokenKind::Mark) {
+            Ok(Item::Mark(self.parse_mark(visibility, span)?))
+        } else if self.at(TokenKind::Choice) {
+            Ok(Item::Choice(self.parse_choice(visibility, span)?))
         } else if self.at(TokenKind::Opaque) {
             Ok(Item::Opaque(self.parse_opaque(visibility, span)?))
         } else if self.at(TokenKind::Extern) {
@@ -198,7 +202,7 @@ impl Parser {
             Ok(Item::Global(self.parse_flow_global(visibility, span)?))
         } else {
             Err(self.error_current(format!(
-                "expected 'import', 'shape', 'opaque', 'extern flow', 'flow' or a global binding, found {}",
+                "expected 'import', 'shape', 'mark', 'choice', 'opaque', 'extern flow', 'flow' or a global binding, found {}",
                 self.describe_current()
             )))
         }
@@ -304,6 +308,78 @@ impl Parser {
             name,
             type_params,
             fields,
+        })
+    }
+
+    /// `mark Name [ A, B ]` declares a payload-free tag set.
+    fn parse_mark(&mut self, visibility: Visibility, span: Span) -> ParseResult<MarkDecl> {
+        self.expect(TokenKind::Mark, "'mark'")?;
+        let name = self.parse_identifier("mark name")?;
+        self.expect(TokenKind::LBracket, "'[' to open a mark body")?;
+        self.skip_newlines();
+
+        let mut variants = Vec::new();
+        while !self.at(TokenKind::RBracket) {
+            if self.at(TokenKind::Eof) {
+                return Err(self.error_current("unterminated mark body"));
+            }
+            let variant_span = self.span_here();
+            let variant_name = self.parse_identifier("mark variant name")?;
+            variants.push(MarkVariant {
+                span: variant_span,
+                name: variant_name,
+            });
+            self.skip_newlines();
+            if self.matches(TokenKind::Comma) {
+                self.skip_newlines();
+            }
+        }
+
+        let close_token = self.expect(TokenKind::RBracket, "']' to close a mark body")?;
+        Ok(MarkDecl {
+            span,
+            close_line: close_token.line,
+            visibility,
+            name,
+            variants,
+        })
+    }
+
+    /// `choice Name [ A: T, B: U ]` declares a tagged union with one payload
+    /// per variant.
+    fn parse_choice(&mut self, visibility: Visibility, span: Span) -> ParseResult<ChoiceDecl> {
+        self.expect(TokenKind::Choice, "'choice'")?;
+        let name = self.parse_identifier("choice name")?;
+        self.expect(TokenKind::LBracket, "'[' to open a choice body")?;
+        self.skip_newlines();
+
+        let mut variants = Vec::new();
+        while !self.at(TokenKind::RBracket) {
+            if self.at(TokenKind::Eof) {
+                return Err(self.error_current("unterminated choice body"));
+            }
+            let variant_span = self.span_here();
+            let variant_name = self.parse_identifier("choice variant name")?;
+            self.expect(TokenKind::Colon, "':' after a choice variant name")?;
+            let ty = self.parse_type()?;
+            variants.push(ChoiceVariant {
+                span: variant_span,
+                name: variant_name,
+                ty,
+            });
+            self.skip_newlines();
+            if self.matches(TokenKind::Comma) {
+                self.skip_newlines();
+            }
+        }
+
+        let close_token = self.expect(TokenKind::RBracket, "']' to close a choice body")?;
+        Ok(ChoiceDecl {
+            span,
+            close_line: close_token.line,
+            visibility,
+            name,
+            variants,
         })
     }
 
@@ -897,6 +973,7 @@ impl Parser {
             let op = match self.current().kind {
                 TokenKind::EqEq => BinaryOp::Eq,
                 TokenKind::Neq => BinaryOp::Neq,
+                TokenKind::Is => BinaryOp::Is,
                 TokenKind::Lt => BinaryOp::Lt,
                 TokenKind::Lte => BinaryOp::Lte,
                 TokenKind::Gt => BinaryOp::Gt,

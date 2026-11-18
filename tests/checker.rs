@@ -1387,3 +1387,133 @@ fn printf_format_arguments_are_checked() {
         "printf format must be a string literal",
     );
 }
+
+#[test]
+fn mark_and_choice_program_type_checks() {
+    assert_clean(
+        "mark Color [ Red, Green, Blue ]\nchoice Result [ Ok: i32, Err: i64 ]\nflow main {\n    c <- Color.Green\n    r <- Result.Ok(42)\n    if c == Color.Green and r is Result.Ok {\n        print_int(r.Ok)\n    }\n    if r is Result.Err {\n        print_int(r.Err)\n    }\n}\n",
+    );
+}
+
+#[test]
+fn mark_variant_names_are_checked() {
+    assert_message(
+        "mark Color [ Red ]\nflow main {\n    c <- Color.Blue\n}\n",
+        "mark 'Color' has no variant 'Blue'",
+    );
+    assert_message(
+        "mark Color [ Red, Red ]\n",
+        "duplicate variant 'Red' in mark 'Color'",
+    );
+}
+
+#[test]
+fn marks_are_only_comparable_to_the_same_mark() {
+    assert_clean("mark A [ X ]\nmark B [ Y ]\nflow main {\n    a <- A.X\n    if a == A.X { }\n}\n");
+    assert_message(
+        "mark A [ X ]\nmark B [ Y ]\nflow main {\n    a <- A.X\n    b <- B.Y\n    if a == b { }\n}\n",
+        "cannot compare A with B",
+    );
+    assert_message(
+        "mark A [ X ]\nflow main {\n    a <- A.X\n    if a < A.X { }\n}\n",
+        "operator requires numeric operands",
+    );
+}
+
+#[test]
+fn choice_constructor_arguments_are_checked() {
+    assert_message(
+        "choice R [ Ok: i32 ]\nflow main {\n    r <- R.Ok(\"hi\")\n}\n",
+        "argument of 'R.Ok' has type [u8], expected i32",
+    );
+    assert_message(
+        "choice R [ Ok: i32 ]\nflow main {\n    r <- R.Ok()\n}\n",
+        "choice variant 'R.Ok' expects 1 argument, found 0",
+    );
+    assert_message(
+        "choice R [ Ok: i32 ]\nflow main {\n    mut x: i32\n    r <- R.Ok(-> x)\n}\n",
+        "expects a '<-' argument",
+    );
+    assert_message(
+        "choice R [ Ok: i32 ]\nflow main {\n    r <- R.Missing(1)\n}\n",
+        "choice 'R' has no variant 'Missing'",
+    );
+    assert_message(
+        "choice R [ Ok: i32 ]\nflow main {\n    v <- R.Ok\n}\n",
+        "must be constructed with a value",
+    );
+    assert_message(
+        "choice R [ Ok: i32, Ok: i64 ]\n",
+        "duplicate variant 'Ok' in choice 'R'",
+    );
+}
+
+#[test]
+fn is_requires_a_choice_and_a_matching_variant() {
+    assert_message(
+        "choice R [ Ok: i32 ]\nflow main {\n    n: i32 <- 1\n    if n is R.Ok { }\n}\n",
+        "'is' requires a choice value on the left, found i32",
+    );
+    assert_message(
+        "choice R [ Ok: i32 ]\nchoice S [ Yes: bool ]\nflow main {\n    r <- R.Ok(1)\n    if r is S.Yes { }\n}\n",
+        "variant 'S.Yes' does not belong to choice 'R'",
+    );
+    assert_message(
+        "choice R [ Ok: i32 ]\nflow main {\n    r <- R.Ok(1)\n    if r is R.Nope { }\n}\n",
+        "choice 'R' has no variant 'Nope'",
+    );
+    assert_message(
+        "choice R [ Ok: i32 ]\nflow main {\n    r <- R.Ok(1)\n    if r is 1 { }\n}\n",
+        "'is' expects a choice variant on the right",
+    );
+}
+
+#[test]
+fn choice_payload_reads_are_checked_but_not_statically_narrowed() {
+    assert_clean(
+        "choice R [ Ok: i32, Err: i64 ]\nflow main {\n    r <- R.Ok(1)\n    print_int(r.Err)\n}\n",
+    );
+    assert_message(
+        "choice R [ Ok: i32 ]\nflow main {\n    r <- R.Ok(1)\n    print_int(r.Nope)\n}\n",
+        "choice 'R' has no variant 'Nope'",
+    );
+    assert_message(
+        "choice R [ Ok: i32 ]\nflow main {\n    r <- R.Ok(1)\n    r.Ok = 2\n}\n",
+        "cannot assign to a choice payload",
+    );
+}
+
+#[test]
+fn choice_payload_types_are_restricted() {
+    assert_clean("shape Point [ x: i32, y: i32 ]\nchoice R [ P: Point ]\n");
+
+    assert_message(
+        "choice R [ Bytes: [u8] ]\n",
+        "choice 'R' variant 'Bytes' cannot hold [u8]",
+    );
+    assert_message(
+        "choice R [ Nested: S ]\nchoice S [ Yes: bool ]\n",
+        "choice 'R' variant 'Nested' cannot hold S",
+    );
+    assert_message(
+        "shape WithSlice [ data: [u8] ]\nchoice R [ P: WithSlice ]\n",
+        "cannot hold WithSlice",
+    );
+}
+
+#[test]
+fn mark_and_choice_names_cannot_collide() {
+    assert_message("mark A [ X ]\nshape A []\n", "duplicate type 'A'");
+    assert_message("choice A [ X: i32 ]\nmark A [ Y ]\n", "duplicate type 'A'");
+    assert_message("mark A [ X ]\nflow A { }\n", "conflicts with a type");
+}
+
+#[test]
+fn choices_can_flow_through_flows_and_shapes() {
+    assert_clean(
+        "choice R [ Ok: i32, Err: i64 ]\nflow take\n    <- r: R\n    => i32\n{\n    => r.Ok\n}\nflow main {\n    r <- R.Ok(3)\n    print_int(take(r))\n}\n",
+    );
+    assert_clean(
+        "choice R [ Ok: i32, Err: i64 ]\nshape Box [ value: R ]\nflow main {\n    r <- R.Ok(3)\n    b: Box <- Box[ value: give(r) ]\n    if b.value is R.Ok {\n        print_int(b.value.Ok)\n    }\n}\n",
+    );
+}
