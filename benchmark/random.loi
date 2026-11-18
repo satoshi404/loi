@@ -1,0 +1,16 @@
+import "../lib/random.loi"
+
+// One hundred million xorshift64* draws folded into a checksum.
+open flow main
+    => i32
+{
+    mut rng: Rng <- rng_new(0x0123_4567_89ab_cdef)
+    mut checksum: u64 <- 0
+    for i in 0..100000000 {
+        value <- rng_next_u64(<-> rng)
+        checksum ^= value
+        checksum = checksum * 31 + (value >> 32)
+    }
+    printf("random %llu %llu\n", checksum, rng_state(rng))
+    => 0
+}

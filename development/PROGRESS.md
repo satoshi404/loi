@@ -4,7 +4,24 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-18):** Phase 5 standard-library expansion: seeded
+- **Current task (2026-11-18):** Phase 6, final measured benchmarks and report.
+  Added six paired Loi/C workloads in `benchmark/`: FNV-1a hashing, CRC-32,
+  heapsort, `IntMap<u64>`, `StrMap<u64>` and xorshift64*. `benchmark/run.py`
+  rebuilds both sides, verifies identical checksums, pins every run to CPU 6,
+  and times nine runs per binary. Exact command: `export CC=gcc; python3
+  benchmark/run.py --output benchmark/results.json`. Result: Loi/C minimum
+  ratios were `hash 1.000`, `crc32 1.115`, `sort 1.366`, `int_map 1.091`,
+  `str_map 0.874`, `random 1.005`; none exceeded 1.5×, so no ranked
+  generated-C cause analysis was required. All six benchmark programs' emitted
+  C compiled with `-std=c11 -pedantic-errors -Wall -Wextra` with empty stderr;
+  all six UBSan binaries ran with matching output; all six ASan+UBSan binaries
+  built but were not run for the recorded PRoot shadow-memory reason. The full
+  report is `development/FINAL_REPORT.md`. Final gate: `cargo fmt --check`,
+  `cargo clippy --all-targets -- -D warnings`, `cargo test --all-targets`
+  (**294 passed, 0 failed**: 22+6+1+102+42+43+2+6+32+23+15),
+  `python3 tools/sync_examples.py --check`, and `git diff --check` all exit 0.
+  No further phase is planned.
+- **Previous task (2026-11-18):** Phase 5 standard-library expansion: seeded
   randomness. Added `lib/random.loi` test-first: four new `tests/lib.rs` cases
   cover known xorshift64* vectors, `u64` / `u32` / bounded draws, state
   progression, picking, deterministic in-place Fisher–Yates shuffling, exact

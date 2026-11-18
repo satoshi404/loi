@@ -1,0 +1,28 @@
+import "../lib/map.loi"
+
+// 128 integer keys with 200,000 get/set pairs through linear scans.
+open flow main
+    => i32
+{
+    protect {
+        mut m: IntMap<u64>
+        map_int_new<u64>(-> m)
+        for i in 0..128 {
+            k <- i as u64
+            map_int_set<u64>(<-> m, k, k * 7 + 11)
+        }
+
+        mut state: u64 <- 0x8817_2645_4633_2525
+        mut sum: u64 <- 0
+        for step in 0..200000 {
+            state ^= state << 13
+            state ^= state >> 7
+            state ^= state << 17
+            key <- state % 128
+            sum += map_int_get<u64>(m, key)
+            map_int_set<u64>(<-> m, key, sum)
+        }
+        printf("int_map %llu %llu\n", sum, state)
+    }
+    => 0
+}

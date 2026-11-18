@@ -1,0 +1,48 @@
+import "../lib/map.loi"
+
+// Eight byte-string keys with 100,000 get/set pairs through linear scans.
+open flow main
+    => i32
+{
+    protect {
+        mut m: StrMap<u64>
+        map_str_new<u64>(-> m)
+        map_str_set<u64>(<-> m, "", 1)
+        map_str_set<u64>(<-> m, "a", 2)
+        map_str_set<u64>(<-> m, "ab", 3)
+        map_str_set<u64>(<-> m, "abc", 4)
+        map_str_set<u64>(<-> m, "abcd", 5)
+        map_str_set<u64>(<-> m, "abcde", 6)
+        map_str_set<u64>(<-> m, "abcdef", 7)
+        map_str_set<u64>(<-> m, "abcdefg", 8)
+
+        mut state: u64 <- 0x9e37_79b9_7f4a_7c15
+        mut sum: u64 <- 0
+        for step in 0..100000 {
+            state ^= state << 13
+            state ^= state >> 7
+            state ^= state << 17
+            key <- state % 8
+            mut selected: [u8] <- "abcdefg"
+            if key == 0 {
+                selected = ""
+            } else if key == 1 {
+                selected = "a"
+            } else if key == 2 {
+                selected = "ab"
+            } else if key == 3 {
+                selected = "abc"
+            } else if key == 4 {
+                selected = "abcd"
+            } else if key == 5 {
+                selected = "abcde"
+            } else if key == 6 {
+                selected = "abcdef"
+            }
+            sum += map_str_get<u64>(m, selected)
+            map_str_set<u64>(<-> m, selected, sum)
+        }
+        printf("str_map %llu %llu\n", sum, state)
+    }
+    => 0
+}
