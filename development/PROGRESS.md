@@ -4,7 +4,24 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-18):** Phase 3 standard-library expansion: CRC-32.
+- **Current task (2026-11-18):** Phase 4 standard-library expansion: maps.
+  Added `lib/map.loi` test-first: five new `tests/lib.rs` cases cover every
+  `map_int_*` and `map_str_*` flow with runnable programs, growth from 8 to 32
+  entries, composite values, exact missing-key errors, seeded comparisons
+  against Rust `HashMap`, duplicate imports, and two libraries importing the
+  module. `IntMap<V>` is keyed by `u64`; `StrMap<V>` stores byte keys in one
+  contiguous arena buffer with `starts` / `lengths` arrays, avoiding
+  slice-of-slices ownership. Mutators are `sealed` and need the caller's
+  `protect`. Public docs were updated in `SINTAXE.md` and `website/docs.html`.
+  Every test program's C was compiled with `-std=c11 -pedantic-errors -Wall
+  -Wextra` (warnings treated as failure), UBSan-only builds were compiled and
+  run clean, and ASan+UBSan builds were compiled but not run because this PRoot
+  container cannot map ASan shadow memory. Gate: `cargo fmt --check`, `cargo
+  clippy --all-targets -- -D warnings`, `cargo test --all-targets` (**290
+  passed, 0 failed**: 22+6+1+102+42+43+2+6+28+23+15),
+  `python3 tools/sync_examples.py --check`, and `git diff --check` all exit 0.
+  Next: Phase 5, continued standard-library expansion.
+- **Previous task (2026-11-18):** Phase 3 standard-library expansion: CRC-32.
   Added `lib/crc32.loi` test-first: three new `tests/lib.rs` cases cover known
   vectors, `crc32_update` chunking, seeded data against both a Rust bitwise
   reference and an independent C shim, duplicate imports, and two libraries

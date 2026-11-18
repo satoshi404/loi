@@ -678,8 +678,8 @@ print(other.x)</code></pre>
             <code>import "lib/std.loi"</code>. Names are prefixed by module
             (<code>math_*</code>, <code>ctype_*</code>, <code>vec_*</code>,
             <code>slice_*</code>, <code>str_*</code>, <code>hash_*</code>,
-            <code>crc32_*</code>, <code>os_*</code>, <code>net_*</code>)
-            because imports are textual.</p>
+            <code>crc32_*</code>, <code>map_*</code>, <code>os_*</code>,
+            <code>net_*</code>) because imports are textual.</p>
 
           <table class="doc-table">
             <thead>
@@ -774,6 +774,15 @@ print(other.x)</code></pre>
                 <td>no</td>
               </tr>
               <tr>
+                <td><code>lib/map.loi</code></td>
+                <td><code>IntMap&lt;V&gt;</code>, <code>StrMap&lt;V&gt;</code>,
+                  <code>map_int_new</code> / <code>map_str_new</code>,
+                  <code>len</code>, <code>capacity</code>,
+                  <code>contains</code>, <code>get</code>,
+                  <code>set</code>, <code>remove</code>, <code>clear</code></td>
+                <td>no; mutators need <code>protect</code></td>
+              </tr>
+              <tr>
                 <td><code>lib/os.loi</code></td>
                 <td><code>os_pid</code>, <code>os_unix_time</code>,
                   <code>os_sleep</code>, <code>os_has_env</code>,
@@ -809,7 +818,15 @@ print(other.x)</code></pre>
             <code>protect</code> is needed. <code>lib/crc32.loi</code> is also
             pure: <code>comptime</code> flows generate a 16-entry reflected
             nibble table stored as a static slice, and
-            <code>crc32_update</code> folds chunks incrementally. Loi has no character literals, so
+            <code>crc32_update</code> folds chunks incrementally.
+            <code>lib/map.loi</code> provides <code>IntMap&lt;V&gt;</code> and
+            <code>StrMap&lt;V&gt;</code> with linear scans and value-only
+            generics: <code>V</code> must be cloneable without slice fields.
+            <code>StrMap&lt;V&gt;</code> stores byte keys in one contiguous
+            arena buffer, so no slice-of-slices value is formed. Mutations need
+            the caller's <code>protect</code>, and a missing key in
+            <code>map_int_get</code> / <code>map_str_get</code> aborts with a
+            flow-naming message; use the <code>contains</code> flows first. Loi has no character literals, so
             byte queries use numeric values while substring queries use string
             slices. <code>lib/os.loi</code> and
             <code>lib/net.loi</code> are thin POSIX bindings: compile their

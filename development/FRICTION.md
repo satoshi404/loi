@@ -188,3 +188,22 @@ Language requirement: a wider integer type or compile-time byte arrays so 256
 reflected nibble table, pack two 32-bit entries per `u64`, and process two
 nibbles per input byte. It is still generated entirely by `comptime` flows and
 matches a bitwise reference on known vectors and seeded data.
+
+## Phase 4 — `lib/map.loi`
+
+### Slice keys are stored in a contiguous buffer
+
+Attempted design: `StrMap<V>` with a `keys: [[u8]]` field so each entry owns its
+key slice directly. This is the same slice-containing-composite limitation
+already recorded in Phase 1: slices cannot be cloned recursively and moving one
+out of an inout composite consumes the map. No new diagnostic was needed for
+this phase; the Phase 1 record applies unchanged.
+
+Language requirement: recursive clone for slice fields, or moving a single
+element out of an inout composite without consuming the owner. Current
+workaround: store all key bytes in one `keys: [u8]` arena buffer and keep
+`starts` / `lengths` arrays describing each key. No slice-of-slices value is
+ever formed.
+
+No other Phase 4 design was blocked. `IntMap<V>` and `StrMap<V>` are generic
+only over `V`, which is documented as cloneable without slice fields.

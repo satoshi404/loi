@@ -1476,6 +1476,355 @@ open flow main
 }
 
 #[test]
+fn map_int_library_covers_all_flows_and_growth() {
+    assert_ok_with_c_variants(
+        "map-int-core",
+        &["map.loi"],
+        r#"
+shape Point [
+    x: i32
+    y: i32
+]
+
+open flow main
+    => i32
+{
+    protect {
+        mut ints: IntMap<i32>
+        map_int_new<i32>(-> ints)
+        if map_int_len<i32>(ints) != 0 or map_int_capacity<i32>(ints) != 8 { => 1 }
+        map_int_set<i32>(<-> ints, 10, 100)
+        map_int_set<i32>(<-> ints, 20, 200)
+        map_int_set<i32>(<-> ints, 10, 111)
+        if map_int_len<i32>(ints) != 2 { => 2 }
+        if map_int_get<i32>(ints, 10) != 111 or map_int_get<i32>(ints, 20) != 200 { => 3 }
+        if not map_int_contains<i32>(ints, 10) or map_int_contains<i32>(ints, 99) { => 4 }
+
+        if not map_int_remove<i32>(<-> ints, 10) { => 5 }
+        if map_int_remove<i32>(<-> ints, 10) { => 6 }
+        if map_int_contains<i32>(ints, 10) or map_int_len<i32>(ints) != 1 { => 7 }
+        map_int_set<i32>(<-> ints, 20, 222)
+        if map_int_get<i32>(ints, 20) != 222 { => 8 }
+
+        mut i: u64 <- 0
+        while i < 20 {
+            map_int_set<i32>(<-> ints, i, i as i32 * 3)
+            i += 1
+        }
+        if map_int_len<i32>(ints) != 21 or map_int_capacity<i32>(ints) != 32 { => 9 }
+        if map_int_get<i32>(ints, 19) != 57 or map_int_get<i32>(ints, 0) != 0 { => 10 }
+        if map_int_get<i32>(ints, 20) != 222 { => 11 }
+
+        map_int_clear<i32>(<-> ints)
+        if map_int_len<i32>(ints) != 0 or map_int_contains<i32>(ints, 19) { => 12 }
+
+        mut points: IntMap<Point>
+        map_int_new<Point>(-> points)
+        first <- Point[ x: 1, y: 2 ]
+        second <- Point[ x: 3, y: 4 ]
+        map_int_set<Point>(<-> points, 1, first)
+        map_int_set<Point>(<-> points, 2, second)
+        if map_int_get<Point>(points, 1).x != 1 or map_int_get<Point>(points, 2).y != 4 { => 13 }
+        replacement <- Point[ x: 9, y: 8 ]
+        map_int_set<Point>(<-> points, 1, replacement)
+        if map_int_get<Point>(points, 1).x != 9 { => 14 }
+        if not map_int_remove<Point>(<-> points, 1) or map_int_len<Point>(points) != 1 { => 15 }
+        map_int_clear<Point>(<-> points)
+        if map_int_len<Point>(points) != 0 { => 16 }
+
+        print("map int ok\n")
+    }
+    => 0
+}
+"#,
+        &[],
+        "map int ok\n",
+    );
+}
+
+#[test]
+fn map_str_library_covers_all_flows_and_growth() {
+    assert_ok_with_c_variants(
+        "map-str-core",
+        &["map.loi"],
+        r#"
+shape Point [
+    x: i32
+    y: i32
+]
+
+open flow main
+    => i32
+{
+    protect {
+        mut words: StrMap<i32>
+        map_str_new<i32>(-> words)
+        if map_str_len<i32>(words) != 0 or map_str_capacity<i32>(words) != 8 { => 1 }
+        map_str_set<i32>(<-> words, "alpha", 1)
+        map_str_set<i32>(<-> words, "beta", 2)
+        map_str_set<i32>(<-> words, "alpha", 3)
+        if map_str_len<i32>(words) != 2 { => 2 }
+        if map_str_get<i32>(words, "alpha") != 3 or map_str_get<i32>(words, "beta") != 2 { => 3 }
+        if not map_str_contains<i32>(words, "alpha") or map_str_contains<i32>(words, "gamma") { => 4 }
+
+        if map_str_contains<i32>(words, "") { => 5 }
+        map_str_set<i32>(<-> words, "", 7)
+        if map_str_get<i32>(words, "") != 7 { => 6 }
+        if not map_str_remove<i32>(<-> words, "alpha") { => 7 }
+        if map_str_contains<i32>(words, "alpha") or map_str_get<i32>(words, "beta") != 2 { => 8 }
+
+        map_str_set<i32>(<-> words, "k0", 0)
+        map_str_set<i32>(<-> words, "k1", 1)
+        map_str_set<i32>(<-> words, "k2", 2)
+        map_str_set<i32>(<-> words, "k3", 3)
+        map_str_set<i32>(<-> words, "k4", 4)
+        map_str_set<i32>(<-> words, "k5", 5)
+        map_str_set<i32>(<-> words, "k6", 6)
+        map_str_set<i32>(<-> words, "k7", 7)
+        map_str_set<i32>(<-> words, "k8", 8)
+        if map_str_capacity<i32>(words) != 16 { => 9 }
+        if map_str_get<i32>(words, "k8") != 8 or map_str_get<i32>(words, "") != 7 { => 10 }
+
+        long <- "0123456789012345678901234567890123456789012345678901234567890123456789"
+        map_str_set<i32>(<-> words, long, 999)
+        if map_str_get<i32>(words, long) != 999 { => 11 }
+        if map_str_len<i32>(words) != 12 { => 12 }
+
+        map_str_clear<i32>(<-> words)
+        if map_str_len<i32>(words) != 0 or map_str_contains<i32>(words, long) { => 13 }
+        map_str_set<i32>(<-> words, "fresh", 1)
+        if map_str_get<i32>(words, "fresh") != 1 { => 14 }
+
+        mut points: StrMap<Point>
+        map_str_new<Point>(-> points)
+        p <- Point[ x: 4, y: 5 ]
+        map_str_set<Point>(<-> points, "point", p)
+        if map_str_get<Point>(points, "point").y != 5 { => 15 }
+        replacement <- Point[ x: 8, y: 9 ]
+        map_str_set<Point>(<-> points, "point", replacement)
+        if map_str_get<Point>(points, "point").x != 8 { => 16 }
+        if not map_str_remove<Point>(<-> points, "point") or map_str_len<Point>(points) != 0 { => 17 }
+
+        print("map str ok\n")
+    }
+    => 0
+}
+"#,
+        &[],
+        "map str ok\n",
+    );
+}
+
+#[test]
+fn map_missing_key_errors_name_the_flow() {
+    assert_runtime_error(
+        "map-int-get-error",
+        &["map.loi"],
+        r#"
+open flow main
+    => i32
+{
+    protect {
+        mut m: IntMap<i32>
+        map_int_new<i32>(-> m)
+        bad <- map_int_get<i32>(m, 7)
+        if bad == 0 { print("unreachable\n") }
+    }
+    => 0
+}
+"#,
+        "map_int_get: missing key\n",
+    );
+
+    assert_runtime_error(
+        "map-str-get-error",
+        &["map.loi"],
+        r#"
+open flow main
+    => i32
+{
+    protect {
+        mut m: StrMap<i32>
+        map_str_new<i32>(-> m)
+        bad <- map_str_get<i32>(m, "missing")
+        if bad == 0 { print("unreachable\n") }
+    }
+    => 0
+}
+"#,
+        "map_str_get: missing key\n",
+    );
+}
+
+#[test]
+fn seeded_maps_match_rust_hashmaps() {
+    use std::collections::HashMap;
+
+    let mut rng = SeededRng(0x11a7_5eed_0a0b_1234);
+    let int_keys: Vec<u64> = (0..12).collect();
+    let str_keys: Vec<String> = vec![
+        String::new(),
+        "a".to_string(),
+        "b".to_string(),
+        "ab".to_string(),
+        "ba".to_string(),
+        "long-key".to_string(),
+    ];
+
+    let mut body = String::from("\nopen flow main\n    => i32\n{\n    protect {\n");
+    body.push_str("        mut ints: IntMap<i32>\n        map_int_new<i32>(-> ints)\n");
+    let mut expected = String::new();
+    let mut int_ref: HashMap<u64, i32> = HashMap::new();
+    for step in 0..48 {
+        let key = int_keys[rng.next_u64() as usize % int_keys.len()];
+        let value = rng.next_i32(-50, 50);
+        body.push_str(&format!(
+            "        map_int_set<i32>(<-> ints, {key}, {value})\n"
+        ));
+        int_ref.insert(key, value);
+        if step == 17 || step == 41 {
+            body.push_str(&format!(
+                "        if map_int_len<i32>(ints) != {} {{ => {} }}\n",
+                int_ref.len(),
+                100 + step
+            ));
+        }
+    }
+    body.push_str("        printf(\"ilen:%llu\\n\", map_int_len<i32>(ints))\n");
+    expected.push_str(&format!("ilen:{}\n", int_ref.len()));
+    for (index, key) in int_keys.iter().enumerate() {
+        let present = int_ref.contains_key(key);
+        body.push_str(&format!(
+            "        if map_int_contains<i32>(ints, {key}) {{ print(\"icontains{index}:1\\n\") }} else {{ print(\"icontains{index}:0\\n\") }}\n"
+        ));
+        expected.push_str(&format!("icontains{index}:{}\n", u8::from(present)));
+        if let Some(value) = int_ref.get(key) {
+            body.push_str(&format!(
+                "        printf(\"ival{index}:%d\\n\", map_int_get<i32>(ints, {key}))\n"
+            ));
+            expected.push_str(&format!("ival{index}:{value}\n"));
+        }
+    }
+
+    body.push_str("        mut words: StrMap<i32>\n        map_str_new<i32>(-> words)\n");
+    let mut str_ref: HashMap<String, i32> = HashMap::new();
+    for step in 0..48 {
+        let key = &str_keys[rng.next_u64() as usize % str_keys.len()];
+        let value = rng.next_i32(-50, 50);
+        body.push_str(&format!(
+            "        map_str_set<i32>(<-> words, \"{key}\", {value})\n"
+        ));
+        str_ref.insert(key.clone(), value);
+        if step == 19 || step == 43 {
+            body.push_str(&format!(
+                "        if map_str_len<i32>(words) != {} {{ => {} }}\n",
+                str_ref.len(),
+                200 + step
+            ));
+        }
+    }
+    body.push_str("        printf(\"slen:%llu\\n\", map_str_len<i32>(words))\n");
+    expected.push_str(&format!("slen:{}\n", str_ref.len()));
+    for (index, key) in str_keys.iter().enumerate() {
+        let present = str_ref.contains_key(key);
+        body.push_str(&format!(
+            "        if map_str_contains<i32>(words, \"{key}\") {{ print(\"scontains_{index}:1\\n\") }} else {{ print(\"scontains_{index}:0\\n\") }}\n"
+        ));
+        expected.push_str(&format!("scontains_{index}:{}\n", u8::from(present)));
+        if let Some(value) = str_ref.get(key) {
+            body.push_str(&format!(
+                "        printf(\"svalue_{index}:%d\\n\", map_str_get<i32>(words, \"{key}\"))\n"
+            ));
+            expected.push_str(&format!("svalue_{index}:{value}\n"));
+        }
+    }
+
+    body.push_str("        print(\"map properties ok\\n\")\n    }\n    => 0\n}\n");
+    expected.push_str("map properties ok\n");
+
+    assert_ok_with_c_variants("map-properties", &["map.loi"], &body, &[], &expected);
+}
+
+#[test]
+fn map_imports_work_twice_and_across_libraries() {
+    assert_ok_with_c_variants(
+        "map-duplicate-imports",
+        &["map.loi", "map.loi"],
+        r#"
+open flow main
+    => i32
+{
+    protect {
+        mut m: IntMap<i32>
+        map_int_new<i32>(-> m)
+        map_int_set<i32>(<-> m, 1, 2)
+        mut s: StrMap<i32>
+        map_str_new<i32>(-> s)
+        map_str_set<i32>(<-> s, "one", 2)
+        if map_int_get<i32>(m, 1) != map_str_get<i32>(s, "one") { => 1 }
+        print("duplicate map imports ok\n")
+    }
+    => 0
+}
+"#,
+        &[],
+        "duplicate map imports ok\n",
+    );
+
+    let dir = test_dir("map-cross-library");
+    let map_path = repo_root().join("lib").join("map.loi");
+    let a = write_source(
+        &dir,
+        "wrapper_a.loi",
+        &format!(
+            "import \"{}\"\n\nflow int_digest\n    <- values: [i64]\n    => i64\n{{\n    protect {{\n        mut m: IntMap<i64>\n        map_int_new<i64>(-> m)\n        mut i: u64 <- 0\n        while i < values.len {{\n            map_int_set<i64>(<-> m, i, values[i])\n            i += 1\n        }}\n        mut total: i64 <- 0\n        i = 0\n        while i < values.len {{\n            total += map_int_get<i64>(m, i)\n            i += 1\n        }}\n        => total\n    }}\n}}\n",
+            map_path.display()
+        ),
+    );
+    let b = write_source(
+        &dir,
+        "wrapper_b.loi",
+        &format!(
+            "import \"{}\"\n\nflow str_digest\n    <- keys: [u8]\n    => i64\n{{\n    protect {{\n        mut m: StrMap<i64>\n        map_str_new<i64>(-> m)\n        map_str_set<i64>(<-> m, keys, 7)\n        => map_str_get<i64>(m, keys)\n    }}\n}}\n",
+            map_path.display()
+        ),
+    );
+    let program = write_source(
+        &dir,
+        "main.loi",
+        &format!(
+            "import \"{}\"\nimport \"{}\"\n\nopen flow main\n    => i32\n{{\n    protect {{\n        if int_digest([i64: 1, 2, 3]) != 6 or str_digest(\"key\") != 7 {{ => 1 }}\n        print(\"cross map imports ok\\n\")\n    }}\n    => 0\n}}\n",
+            a.display(),
+            b.display()
+        ),
+    );
+    let checked = check(&program);
+    assert!(
+        checked.status.success(),
+        "check failed: {}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    if let Some((strict, ubsan)) = compile_c_variants(&dir, &program, &[]) {
+        for executable in [strict, ubsan] {
+            let run = Command::new(&executable)
+                .output()
+                .expect("C program should run");
+            assert_eq!(
+                run.status.code(),
+                Some(0),
+                "cross-library map import failed: {}",
+                String::from_utf8_lossy(&run.stderr)
+            );
+            assert_eq!(
+                String::from_utf8_lossy(&run.stdout),
+                "cross map imports ok\n"
+            );
+        }
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn all_libraries_can_be_imported_together() {
     assert_ok(
         "all-libraries",
@@ -1488,6 +1837,7 @@ fn all_libraries_can_be_imported_together() {
             "string.loi",
             "hash.loi",
             "crc32.loi",
+            "map.loi",
             "os.loi",
             "net.loi",
         ],
@@ -1503,6 +1853,12 @@ open flow main
     if not net_port_is_valid(443) { => 6 }
     if hash_str("loi") == 0 or str_count("loi", 108) != 1 { => 7 }
     if crc32_bytes("loi") == 0 { => 8 }
+    protect {
+        mut m: IntMap<i32>
+        map_int_new<i32>(-> m)
+        map_int_set<i32>(<-> m, 1, 42)
+        if map_int_get<i32>(m, 1) != 42 { => 9 }
+    }
     mut ok: i32 <- 0
     if os_pid() > 0 {
         ok = 1
