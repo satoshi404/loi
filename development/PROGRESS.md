@@ -4,7 +4,26 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-17):** made lexer-error JSON ranges exclusive and
+- **Current task (2026-11-18):** Phase 0 reconnaissance for the standard-library
+  expansion. Wrote `development/PROBES.md` from tiny programs run under
+  `/tmp/opencode/loi-phase0/`; no library or compiler code was added. Measured
+  answers: all six bitwise operators work on all eight integer widths;
+  `comptime` supports loops/recursion/locals and returns scalars and slice-free
+  shapes but not slices; ownership moves with `give(x)` / `f<T>(give(x))`;
+  generic `<` fails at numeric-only instantiation; arena allocations in helpers
+  stay live to the end of the enclosing `protect`; arena growth for 102,400,000
+  bytes in 1 KiB chunks took min 0.054048 s (default) and 0.053278 s
+  (`--arena-size 1024`) over 9 runs; the generic instantiation depth limit is
+  64 and 20 instantiations produced 26,994 bytes of C (one produced 15,642).
+  Duplicate and cross-library imports work. All emitted probe C passed
+  `-std=c11 -pedantic-errors -Wall -Wextra`; ASan+UBSan binaries could not run
+  in this PRoot container (shadow-memory mapping error), while UBSan-only runs
+  were clean. Gate: `cargo fmt --check`, `cargo clippy --all-targets -- -D
+  warnings`, `cargo test --all-targets` (**269 passed, 0 failed**:
+  22+6+1+102+42+43+2+6+7+23+15), `python3 tools/sync_examples.py --check`, and
+  `git diff --check` all exit 0. Next: Phase 1, test-first `lib/vec.loi` and
+  `lib/slice.loi`.
+- **Previous task (2026-11-17):** made lexer-error JSON ranges exclusive and
   agree with human underlines. `LexError` now carries the exclusive
   `end_column`, computed with the renderer's token-length scan, and the CLI
   threads it into `lex`, `fmt` and `check` diagnostics. Parser errors keep the
