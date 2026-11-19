@@ -420,6 +420,21 @@ count &lt;- total as i32         // numeric cast with `as`</code></pre>
             at compile time. <code>as</code> remains an unchecked truncating cast.
           </p>
 
+          <h3>Evaluation order</h3>
+          <p>
+            Loi evaluates operands strictly left to right: operator operands, call and intrinsic
+            arguments, literal elements, an assignment target before its value, an index base
+            before its index, and a range start before its end. An earlier operand's value is
+            captured before a later operand can change it, so programs that would depend on C's
+            argument order are well defined rather than rejected.
+          </p>
+          <p>
+            <code>and</code> and <code>or</code> still short-circuit; their right operand runs only
+            when the left one does not decide the result. Compound assignment evaluates its target
+            place first and captures the old value before an effectful right operand runs. The C
+            backend performs this ordering with generated temporaries; no source syntax changes.
+          </p>
+
           <h3>Number and string literals</h3>
           <div class="doc-code">
             <div class="doc-code-bar"><span>literals.loi</span><button type="button" data-copy>copy</button></div>

@@ -418,6 +418,26 @@ each failure prints `loi: <message> at <line>:<column>` and exits with status 1.
   zero. Non-constant failures are runtime traps.
 - **`float` arithmetic** follows C/IEEE-754 and is not trapped.
 
+### 4.11 Evaluation order
+
+Loi, not the C compiler, defines when operands run. Every expression is
+evaluated strictly left to right: operator operands, call and intrinsic
+arguments, literal elements, an assignment target before its value, an index
+base before its index, and a range start before its end. A value read for an
+earlier operand is captured before a later operand can change it.
+
+`and` and `or` are the single exception to "all operands run": their right
+operand is evaluated only when the left one does not already decide the result.
+Within an evaluated operand the same left-to-right rule applies. Compound
+assignment evaluates its target place first and captures the old value before an
+effectful right operand runs.
+
+This rule makes previously ambiguous programs well defined rather than illegal;
+the checker does not reject multiple side effects in one expression. The C
+backend must sequence with generated temporaries instead of relying on C's
+unspecified evaluation order. The canonical spelling is in `SINTAXE.md` under
+"Evaluation order".
+
 ---
 
 ## 5. Design Decisions (formerly Open Questions)

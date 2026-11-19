@@ -508,6 +508,22 @@ xs.len         // u64
   `bool`; use an integer type.
 - Slice indexing is bounds checked at runtime and panics on failure.
 
+### Evaluation order
+
+- Operands are evaluated left to right. This covers binary operators, call and
+  intrinsic arguments, slice and shape literal elements, an assignment target
+  before its value, an index base before its index, and a range start before its
+  end.
+- Each operand's value is captured before a later operand runs. A program whose
+  result would depend on C's unspecified operand or argument order is therefore
+  well defined, not rejected.
+- `and` and `or` still short-circuit: the right operand runs only when the left
+  one does not decide the result.
+- A compound assignment evaluates its target place first; when the right operand
+  has effects, the target's old value is captured before that operand runs.
+- The C backend uses generated temporaries for this order. No source syntax
+  changes: `xs[first()] = second()` always calls `first()` before `second()`.
+
 ---
 
 ## 11. Ownership

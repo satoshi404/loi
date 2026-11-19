@@ -4,7 +4,20 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-19, item 4):** mark variants and choice constructors
+- **Current task (2026-11-19, item 1):** Loi now defines strict left-to-right
+  evaluation rather than rejecting ambiguous programs. The C backend sequences
+  operator operands, call/intrinsic arguments, literal elements, assignment
+  target before value, index base before index and range start before end with
+  named temporaries joined by the comma operator; even a plain read is captured
+  when a sibling operand has effects. `and`/`or` stay native C `&&`/`||` so the
+  right operand remains lazy. Compound assignment snapshots the target's old
+  value before an effectful right operand. `else if` now emits braces because a
+  condition may declare sequencing temporaries. Plain lvalue out-arguments and
+  pure range starts stay inline to avoid needless temporaries. The repro
+  `xs[first()] = second()` prints `5007` under both GCC and clang; 320 generated
+  differential programs match a left-to-right oracle. Rules are documented in
+  `SINTAXE.md` ("Evaluation order"), `LOI_SPEC.md` §4.11 and `website/docs.html`.
+- **Previous task (2026-11-19, item 4):** mark variants and choice constructors
   now work in global, shape-default, slice and `comptime` constant contexts.
   `ConstValue` carries marks and choices; the evaluator handles `is`, equality,
   payload reads and coercion, and preserves step/depth limits. Generated C uses
@@ -29,16 +42,19 @@
   finalized CRC values zlib-style. `map_*_get_or` and `map_*_lookup` return a
   default or a `found` status in one scan. `vec_reserve` is exported and the
   docs explain pre-sizing because the arena retains older growth blocks.
-- **Verification for the current task:** new runtime tests check the zero-seed
-  state `11400714819323198485` and first draw `973819730272012410`, chained
-  CRC chunks against `3421780262`, and status/default map lookups. A new test
-  generates a header containing the exported `Vec`, `Rng`, `IntMap` and
-  `StrMap` types plus the public flow prototypes. Library tests again passed
-  strict C11, UBSan execution and ASan+UBSan compile-only checks; no ASan
-  execution is claimed in this PRoot container. Final gate command:
+- **Verification for the current task:** `tests/order.rs` was written before
+  the fix and initially failed 3/5 tests; after the fix all 6 pass, including
+  the 320-program differential suite and a short-circuit regression. The `5007`
+  repro was checked with GCC 15.2.0 (`cc`) and clang 21.1.8. No ASan execution
+  is claimed in this PRoot container. Final gate command:
   `export PATH="/root/.cargo/bin:$PATH"; export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets && python3 tools/sync_examples.py --check && git diff --check`.
-  All five checks exited 0; `cargo test --all-targets` reported **322 passed,
-  0 failed** (22+6+1+114+42+51+2+8+33+26+17).
+  All five checks exited 0; `cargo test --all-targets` reported **338 passed,
+  0 failed** (lib 22 + main 6 + bindgen 1 + checker 114 + cli 42 + codegen 51 +
+  const_values 5 + errors 2 + header 4 + lexer 8 + lib-integration 33 + msrv 1 +
+  order 6 + parser 26 + pretty 17). `benchmark/run.py` (min of 9, pinned CPU 6)
+  before/after ratios: hash 0.994→0.991, crc32 1.120→1.113, sort 1.380→1.382,
+  int_map 1.285→1.247, str_map 0.763→0.757, random 0.992→0.991; no ratio
+  worsened by more than 3%.
 - **Previous task (2026-11-18):** expanded the canonical example set with two
   runnable Flow Syntax programs: `examples/marks.loi` covers a finite tag set,
   equality, state transitions and a mark stored in a shape; `examples/choices.loi`

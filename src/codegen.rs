@@ -947,6 +947,242 @@ impl<'a> Generator<'a> {
         format!("loi_tmp_{hint}_{}", self.temp_counter)
     }
 
+    /// Declare an unnamed temporary at the current C scope. The declaration has
+    /// no runtime effect; assignments are emitted into the enclosing expression
+    /// so conditional operators keep their short-circuit behavior.
+    fn declare_temp(&mut self, ty: &Ty, hint: &str) -> String {
+        let c_type = self.c_type(&ty.concretize());
+        self.declare_temp_typed(&c_type, hint)
+    }
+
+    fn declare_temp_typed(&mut self, c_type: &str, hint: &str) -> String {
+        let name = self.fresh(hint);
+        self.emit(format!("{c_type} {name};"));
+        name
+    }
+
+    /// Literals, compile-time values and mark variants have no runtime side
+    /// effects. Reads and calls do: another operand may mutate the same state.
+    fn is_order_pure(&self, expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::String(_)
+            | ExprKind::Comptime(_) => true,
+            ExprKind::Member { base, .. } => {
+                matches!(&base.kind, ExprKind::Ident(name) if self.marks.contains_key(name))
+            }
+            _ => false,
+        }
+    }
+
+    /// Join ordered steps into one C expression. Every assignment before the
+    /// comma is sequenced, and the final expression uses only temporaries.
+    fn with_order(prefix: Vec<String>, expr: String) -> String {
+        if prefix.is_empty() {
+            expr
+        } else {
+            format!("({}, {expr})", prefix.join(", "))
+        }
+    }
+
+    /// Emit raw code for `expr` with its children already ordered. The caller
+    /// decides whether the result itself needs a temporary.
+    fn gen_value(&mut self, expr: &Expr, expected: Option<&Ty>) -> String {
+        if matches!(expected, Some(Ty::CStr))
+            && let ExprKind::String(text) = &expr.kind
+        {
+            let index = self.string_index(text);
+            return format!("((const char*)loi_str_{index})");
+        }
+        self.gen_expr(expr)
+    }
+
+    fn ordered_temp_ty(&self, expr: &Expr, expected: Option<&Ty>) -> Ty {
+        match expected {
+            Some(Ty::Error) | None => self.ty_of(expr).concretize(),
+            Some(ty) => ty.clone(),
+        }
+    }
+
+    /// Whether evaluating `expr` can change observable state or trap. Calls,
+    /// allocations, indexes and checked choice reads qualify; plain variable
+    /// reads and literals do not.
+    fn expr_has_side_effect(&self, expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::String(_)
+            | ExprKind::Ident(_)
+            | ExprKind::Comptime(_) => false,
+            ExprKind::Member { base, .. } => {
+                if matches!(&base.kind, ExprKind::Ident(name) if self.marks.contains_key(name)) {
+                    false
+                } else {
+                    self.expr_has_side_effect(base) || matches!(self.ty_of(base), Ty::Choice(_))
+                }
+            }
+            ExprKind::Index { .. } | ExprKind::Call { .. } | ExprKind::Alloc { .. } => true,
+            ExprKind::Unary { operand, .. } => self.expr_has_side_effect(operand),
+            ExprKind::Binary { left, right, .. } => {
+                self.expr_has_side_effect(left) || self.expr_has_side_effect(right)
+            }
+            ExprKind::Cast { expr, .. } | ExprKind::Move(expr) | ExprKind::Copy(expr) => {
+                self.expr_has_side_effect(expr)
+            }
+            ExprKind::SliceLiteral { elements, .. } => elements
+                .iter()
+                .any(|element| self.expr_has_side_effect(element)),
+            ExprKind::InterfaceLiteral { fields, .. } => fields
+                .iter()
+                .any(|field| self.expr_has_side_effect(&field.value)),
+        }
+    }
+
+    /// Sequence `expr` into a temporary so its value is fixed before a later
+    /// operand runs. `force_snapshot` is set by operand lists containing side
+    /// effects, where even a plain read must capture its earlier value.
+    fn ordered_expr(
+        &mut self,
+        expr: &Expr,
+        expected: Option<&Ty>,
+        force_snapshot: bool,
+    ) -> (Vec<String>, String) {
+        if matches!(expected, Some(Ty::CStr))
+            && let ExprKind::String(text) = &expr.kind
+        {
+            let index = self.string_index(text);
+            return (Vec::new(), format!("((const char*)loi_str_{index})"));
+        }
+        let raw = self.gen_value(expr, expected);
+        if self.is_order_pure(expr) || (!force_snapshot && !self.expr_has_side_effect(expr)) {
+            return (Vec::new(), raw);
+        }
+        let ty = self.ordered_temp_ty(expr, expected);
+        if matches!(ty, Ty::Void | Ty::Error) {
+            return (Vec::new(), raw);
+        }
+        let temp = self.declare_temp(&ty, "order");
+        (vec![format!("{temp} = {raw}")], temp)
+    }
+
+    /// Order a list of operands from left to right. Each side effect is placed
+    /// into a separate comma step before the consuming expression is evaluated.
+    fn order_values(&mut self, items: Vec<(&Expr, Option<&Ty>)>) -> (Vec<String>, Vec<String>) {
+        let snapshot = items
+            .iter()
+            .any(|(expr, _)| self.expr_has_side_effect(expr));
+        let mut steps = Vec::new();
+        let mut values = Vec::new();
+        for (expr, expected) in items {
+            let (mut item_steps, value) = self.ordered_expr(expr, expected, snapshot);
+            steps.append(&mut item_steps);
+            values.push(value);
+        }
+        (steps, values)
+    }
+
+    fn is_place(&self, expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Ident(_) | ExprKind::Index { .. } => true,
+            ExprKind::Member { base, .. } => {
+                !matches!(&base.kind, ExprKind::Ident(name) if self.marks.contains_key(name))
+                    && self.is_place(base)
+            }
+            _ => false,
+        }
+    }
+
+    fn place_from_value(&mut self, expr: &Expr) -> (Vec<String>, String) {
+        let (mut steps, value) = self.ordered_expr(expr, None, false);
+        if self.is_order_pure(expr) {
+            let ty = self.ty_of(expr).concretize();
+            if !matches!(ty, Ty::Void | Ty::Error) {
+                let temp = self.declare_temp(&ty, "place");
+                steps.push(format!("{temp} = {value}"));
+                return (steps, temp);
+            }
+        }
+        (steps, value)
+    }
+
+    /// Generate a C lvalue for a place, returning the sequencing steps that
+    /// must run before the lvalue is read, written or addressed. The returned
+    /// code is always a plain lvalue, never a top-level comma expression.
+    fn gen_place(&mut self, expr: &Expr) -> (Vec<String>, String) {
+        match &expr.kind {
+            ExprKind::Ident(name) => (Vec::new(), self.var_ref(name)),
+            ExprKind::Member { base, field } => {
+                if !self.is_place(base) {
+                    return self.place_from_value(expr);
+                }
+                let (steps, base_place) = self.gen_place(base);
+                (steps, format!("({base_place}).{}", self.c_field(field)))
+            }
+            ExprKind::Index { base, index } => {
+                let element_ty = match self.ty_of(base) {
+                    Ty::Slice(element) => *element,
+                    _ => Ty::Error,
+                };
+                let element_c = self.c_type(&element_ty);
+                let (mut steps, values) = self.order_values(vec![(base, None), (index, None)]);
+                let base_value = &values[0];
+                let index_value = &values[1];
+                let pointer = self.declare_temp_typed(&format!("{element_c}*"), "place");
+                steps.push(format!(
+                    "{pointer} = ({element_c}*)loi_index(({base_value}), (size_t)({index_value}), sizeof({element_c}), {}, {})",
+                    expr.span.line, expr.span.column
+                ));
+                (steps, format!("*{pointer}"))
+            }
+            _ => self.place_from_value(expr),
+        }
+    }
+
+    /// Sequence all call arguments, including `out`/`inout` addresses, from
+    /// left to right.
+    fn order_call_args(
+        &mut self,
+        args: &[CallArg],
+        params: &[(Direction, Ty)],
+    ) -> (Vec<String>, Vec<String>) {
+        let snapshot = args.iter().any(|arg| self.expr_has_side_effect(&arg.value));
+        let mut steps = Vec::new();
+        let mut values = Vec::new();
+        for (index, arg) in args.iter().enumerate() {
+            let (direction, expected) = params
+                .get(index)
+                .cloned()
+                .unwrap_or((arg.direction, Ty::Error));
+            if direction == Direction::In {
+                let (mut arg_steps, value) =
+                    self.ordered_expr(&arg.value, Some(&expected), snapshot);
+                steps.append(&mut arg_steps);
+                values.push(value);
+            } else {
+                let (mut arg_steps, place) = self.gen_place(&arg.value);
+                if arg_steps.is_empty() {
+                    // A plain lvalue needs no snapshot: its address is the
+                    // same before and after the other arguments run.
+                    values.push(format!("&({place})"));
+                    continue;
+                }
+                let ty = match expected {
+                    Ty::Error => self.ty_of(&arg.value).concretize(),
+                    ty => ty,
+                };
+                let c_type = self.c_type(&ty);
+                let pointer = self.declare_temp_typed(&format!("{c_type}*"), "arg_ptr");
+                arg_steps.push(format!("{pointer} = &({place})"));
+                steps.extend(arg_steps);
+                values.push(pointer);
+            }
+        }
+        (steps, values)
+    }
+
     // ------------------------------------------------------------------
     // Names
     // ------------------------------------------------------------------
@@ -1832,10 +2068,29 @@ impl<'a> Generator<'a> {
             }
             StmtKind::Assign { target, op, value } => {
                 let target_ty = self.ty_of(target);
-                let target = self.gen_expr(target);
-                let value = self.gen_coerced_expr(value, &target_ty);
+                let (target_steps, target_place) = self.gen_place(target);
+                for step in target_steps {
+                    self.emit(format!("{step};"));
+                }
+                let (value_steps, value) = self.ordered_expr(value, Some(&target_ty), false);
+
+                // A compound assignment reads its left operand. Snapshot that
+                // value before an effectful right operand can change it.
+                let mut lhs_expr = target_place.clone();
+                if !matches!(op, AssignOp::Assign)
+                    && !value_steps.is_empty()
+                    && !matches!(target_ty, Ty::Void | Ty::Error)
+                {
+                    let lhs_temp = self.declare_temp(&target_ty, "lhs");
+                    self.emit(format!("{lhs_temp} = {target_place};"));
+                    lhs_expr = lhs_temp;
+                }
+                for step in value_steps {
+                    self.emit(format!("{step};"));
+                }
+
                 if matches!(op, AssignOp::Assign) {
-                    self.emit(format!("{target} = {value};"));
+                    self.emit(format!("{target_place} = {value};"));
                 } else {
                     let result_ty = target_ty.concretize();
                     let call = match op {
@@ -1858,15 +2113,15 @@ impl<'a> Generator<'a> {
                                         || is_signed_integer(&result_ty) =>
                                 {
                                     format!(
-                                        "loi_{helper}_{suffix}({target}, {value}, {}, {})",
+                                        "loi_{helper}_{suffix}({lhs_expr}, {value}, {}, {})",
                                         statement.span.line, statement.span.column
                                     )
                                 }
                                 Some(_) => {
                                     let c_type = self.c_type(&result_ty);
-                                    format!("(({c_type})(({target}) {operator} ({value})))")
+                                    format!("(({c_type})(({lhs_expr}) {operator} ({value})))")
                                 }
-                                None => format!("({target} {operator} {value})"),
+                                None => format!("({lhs_expr} {operator} {value})"),
                             }
                         }
                         AssignOp::Shl | AssignOp::Shr => {
@@ -1877,10 +2132,10 @@ impl<'a> Generator<'a> {
                             };
                             match integer_suffix(&result_ty) {
                                 Some(suffix) => format!(
-                                    "loi_{helper}_{suffix}({target}, {value}, {}, {})",
+                                    "loi_{helper}_{suffix}({lhs_expr}, {value}, {}, {})",
                                     statement.span.line, statement.span.column
                                 ),
-                                None => format!("({target} {helper} {value})"),
+                                None => format!("({lhs_expr} {helper} {value})"),
                             }
                         }
                         AssignOp::BitAnd | AssignOp::BitOr | AssignOp::BitXor => {
@@ -1891,11 +2146,11 @@ impl<'a> Generator<'a> {
                                 _ => unreachable!(),
                             };
                             let c_type = self.c_type(&result_ty);
-                            format!("(({c_type})(({target}) {operator} ({value})))")
+                            format!("(({c_type})(({lhs_expr}) {operator} ({value})))")
                         }
                         AssignOp::Assign => unreachable!(),
                     };
-                    self.emit(format!("{target} = {call};"));
+                    self.emit(format!("{target_place} = {call};"));
                 }
             }
             StmtKind::Expr(expr) => {
@@ -1920,10 +2175,20 @@ impl<'a> Generator<'a> {
                 self.emit(format!("if ({condition})"));
                 self.gen_block(then_block);
                 if let Some(else_branch) = else_branch {
-                    self.emit("else");
                     match else_branch {
-                        ElseBranch::Block(block) => self.gen_block(block),
-                        ElseBranch::If(inner) => self.gen_stmt(inner),
+                        ElseBranch::Block(block) => {
+                            self.emit("else");
+                            self.gen_block(block);
+                        }
+                        ElseBranch::If(inner) => {
+                            // A nested `if` may declare sequencing temporaries
+                            // for its condition, so it needs an `else` block.
+                            self.emit("else {");
+                            self.depth += 1;
+                            self.gen_stmt(inner);
+                            self.depth -= 1;
+                            self.emit("}");
+                        }
                     }
                 }
             }
@@ -1953,10 +2218,15 @@ impl<'a> Generator<'a> {
                 } else {
                     "int64_t"
                 };
-                let start = self.gen_expr(start);
+                self.emit_open("");
+                // Evaluate `start` before `end`. A pure start stays inline in
+                // the loop header; only an effectful start needs a snapshot.
+                let (start_steps, start_value) = self.ordered_expr(start, None, false);
+                for step in start_steps {
+                    self.emit(format!("{step};"));
+                }
                 let end = self.gen_expr(end);
                 let end_temp = self.fresh("end");
-                self.emit_open("");
                 self.emit(format!("{index_c} {end_temp} = ({index_c})({end});"));
 
                 let c_var = if variable.as_str() == "_" {
@@ -1965,7 +2235,7 @@ impl<'a> Generator<'a> {
                     self.c_local(variable)
                 };
                 self.emit(format!(
-                    "for ({index_c} {c_var} = ({index_c})({start}); {c_var} < {end_temp}; {c_var}++) {{"
+                    "for ({index_c} {c_var} = ({index_c})({start_value}); {c_var} < {end_temp}; {c_var}++) {{"
                 ));
                 self.depth += 1;
                 self.scopes.push(HashMap::new());
@@ -2093,11 +2363,14 @@ impl<'a> Generator<'a> {
         // Sequence the operands explicitly instead of relying on C's
         // unspecified evaluation order: capture the target address first, then
         // evaluate the count exactly once, then allocate and store.
-        let target_ty = self.ty_of(target);
+        let (target_steps, target_place) = self.gen_place(target);
+        for step in target_steps {
+            self.emit(format!("{step};"));
+        }
+        let target_ty = self.ty_of(target).concretize();
         let target_c = self.c_type(&target_ty);
-        let target = self.gen_expr(target);
         let target_ptr = self.fresh("alloc_target");
-        self.emit(format!("{target_c}* {target_ptr} = &({target});"));
+        self.emit(format!("{target_c}* {target_ptr} = &({target_place});"));
 
         let count = self.gen_expr(count);
         let count_temp = self.fresh("alloc_count");
@@ -2248,15 +2521,17 @@ impl<'a> Generator<'a> {
                     "(LoiSlice){ NULL, 0 }".to_string()
                 } else {
                     let element_c = self.c_type(&element_ty);
-                    let values = elements
+                    let items = elements
                         .iter()
-                        .map(|element| self.gen_expr(element))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    format!(
-                        "(LoiSlice){{ (void*)({element_c}[]){{ {values} }}, {} }}",
+                        .map(|element| (element, Some(&element_ty)))
+                        .collect();
+                    let (steps, values) = self.order_values(items);
+                    let code = format!(
+                        "(LoiSlice){{ (void*)({element_c}[]){{ {} }}, {} }}",
+                        values.join(", "),
                         elements.len()
-                    )
+                    );
+                    Self::with_order(steps, code)
                 }
             }
             ExprKind::Ident(name) => self.var_ref(name),
@@ -2265,8 +2540,9 @@ impl<'a> Generator<'a> {
             }
             ExprKind::Unary { op, operand } => {
                 let operand_ty = self.ty_of(operand).concretize();
-                let operand = self.gen_expr(operand);
-                match op {
+                let (steps, values) = self.order_values(vec![(operand, None)]);
+                let operand = &values[0];
+                let code = match op {
                     UnaryOp::Neg => {
                         if let Some(suffix) = integer_suffix(&operand_ty) {
                             if is_signed_integer(&operand_ty) {
@@ -2287,106 +2563,114 @@ impl<'a> Generator<'a> {
                         let c_type = self.c_type(&operand_ty);
                         format!("(({c_type})(~({operand})))")
                     }
-                }
+                };
+                Self::with_order(steps, code)
             }
             ExprKind::Binary { op, left, right } => {
                 if *op == BinaryOp::Is {
                     return self.gen_is_expr(left, right);
                 }
+                // C's `&&` and `||` already sequence their left operand and
+                // short-circuit the right one. Their children are generated as
+                // expressions with internal comma steps, so no RHS work is
+                // hoisted out of the conditional.
+                if matches!(op, BinaryOp::And | BinaryOp::Or) {
+                    let left = self.gen_expr(left);
+                    let right = self.gen_expr(right);
+                    let operator = if *op == BinaryOp::And { "&&" } else { "||" };
+                    return format!("({left} {operator} {right})");
+                }
                 let left_ty = self.ty_of(left);
                 let right_ty = self.ty_of(right);
-                let left = self.gen_expr(left);
-                let right = self.gen_expr(right);
-                if matches!(op, BinaryOp::Eq | BinaryOp::Neq) && matches!(left_ty, Ty::Slice(_)) {
+                let (steps, values) = self.order_values(vec![(left, None), (right, None)]);
+                let left = &values[0];
+                let right = &values[1];
+                let code = if matches!(op, BinaryOp::Eq | BinaryOp::Neq)
+                    && matches!(left_ty, Ty::Slice(_))
+                {
                     let call = format!("loi_slice_eq({left}, {right})");
-                    return if *op == BinaryOp::Eq {
+                    if *op == BinaryOp::Eq {
                         call
                     } else {
                         format!("(!{call})")
-                    };
-                }
-                let operator = match op {
-                    BinaryOp::Is => "==",
-                    BinaryOp::Or => "||",
-                    BinaryOp::And => "&&",
-                    BinaryOp::Eq => "==",
-                    BinaryOp::Neq => "!=",
-                    BinaryOp::Lt => "<",
-                    BinaryOp::Lte => "<=",
-                    BinaryOp::Gt => ">",
-                    BinaryOp::Gte => ">=",
-                    BinaryOp::Add => "+",
-                    BinaryOp::Sub => "-",
-                    BinaryOp::Mul => "*",
-                    BinaryOp::Div => "/",
-                    BinaryOp::Mod => "%",
-                    BinaryOp::BitOr => "|",
-                    BinaryOp::BitXor => "^",
-                    BinaryOp::BitAnd => "&",
-                    BinaryOp::Shl => "<<",
-                    BinaryOp::Shr => ">>",
-                };
-                let result_ty = if matches!(op, BinaryOp::Shl | BinaryOp::Shr) {
-                    left_ty.concretize()
+                    }
                 } else {
-                    types::common_numeric(&left_ty, &right_ty)
-                        .unwrap_or(Ty::Error)
-                        .concretize()
-                };
-                if matches!(op, BinaryOp::Shl | BinaryOp::Shr)
-                    && let Some(suffix) = integer_suffix(&result_ty)
-                {
-                    let helper = if *op == BinaryOp::Shl { "shl" } else { "shr" };
-                    return format!(
-                        "loi_{helper}_{suffix}({left}, {right}, {}, {})",
-                        expr.span.line, expr.span.column
-                    );
-                }
-                let helper = match op {
-                    BinaryOp::Is => None,
-                    BinaryOp::Add => Some("add"),
-                    BinaryOp::Sub => Some("sub"),
-                    BinaryOp::Mul => Some("mul"),
-                    BinaryOp::Div => Some("div"),
-                    BinaryOp::Mod => Some("rem"),
-                    BinaryOp::Or
-                    | BinaryOp::And
-                    | BinaryOp::Eq
-                    | BinaryOp::Neq
-                    | BinaryOp::Lt
-                    | BinaryOp::Lte
-                    | BinaryOp::Gt
-                    | BinaryOp::Gte
-                    | BinaryOp::BitOr
-                    | BinaryOp::BitXor
-                    | BinaryOp::BitAnd
-                    | BinaryOp::Shl
-                    | BinaryOp::Shr => None,
-                };
-                if let Some(helper) = helper
-                    && let Some(suffix) = integer_suffix(&result_ty)
-                {
-                    let checked = matches!(op, BinaryOp::Div | BinaryOp::Mod)
-                        || is_signed_integer(&result_ty);
-                    if checked {
-                        return format!(
+                    let operator = match op {
+                        BinaryOp::Is => "==",
+                        BinaryOp::Eq => "==",
+                        BinaryOp::Neq => "!=",
+                        BinaryOp::Lt => "<",
+                        BinaryOp::Lte => "<=",
+                        BinaryOp::Gt => ">",
+                        BinaryOp::Gte => ">=",
+                        BinaryOp::Add => "+",
+                        BinaryOp::Sub => "-",
+                        BinaryOp::Mul => "*",
+                        BinaryOp::Div => "/",
+                        BinaryOp::Mod => "%",
+                        BinaryOp::BitOr => "|",
+                        BinaryOp::BitXor => "^",
+                        BinaryOp::BitAnd => "&",
+                        BinaryOp::Shl => "<<",
+                        BinaryOp::Shr => ">>",
+                        BinaryOp::And | BinaryOp::Or => unreachable!(),
+                    };
+                    let result_ty = if matches!(op, BinaryOp::Shl | BinaryOp::Shr) {
+                        left_ty.concretize()
+                    } else {
+                        types::common_numeric(&left_ty, &right_ty)
+                            .unwrap_or(Ty::Error)
+                            .concretize()
+                    };
+                    if matches!(op, BinaryOp::Shl | BinaryOp::Shr)
+                        && let Some(suffix) = integer_suffix(&result_ty)
+                    {
+                        let helper = if *op == BinaryOp::Shl { "shl" } else { "shr" };
+                        format!(
                             "loi_{helper}_{suffix}({left}, {right}, {}, {})",
                             expr.span.line, expr.span.column
-                        );
+                        )
+                    } else {
+                        let helper = match op {
+                            BinaryOp::Add => Some("add"),
+                            BinaryOp::Sub => Some("sub"),
+                            BinaryOp::Mul => Some("mul"),
+                            BinaryOp::Div => Some("div"),
+                            BinaryOp::Mod => Some("rem"),
+                            _ => None,
+                        };
+                        if let Some(helper) = helper
+                            && let Some(suffix) = integer_suffix(&result_ty)
+                        {
+                            let checked = matches!(op, BinaryOp::Div | BinaryOp::Mod)
+                                || is_signed_integer(&result_ty);
+                            if checked {
+                                format!(
+                                    "loi_{helper}_{suffix}({left}, {right}, {}, {})",
+                                    expr.span.line, expr.span.column
+                                )
+                            } else {
+                                let c_type = self.c_type(&result_ty);
+                                format!("(({c_type})(({left}) {operator} ({right})))")
+                            }
+                        } else if matches!(
+                            op,
+                            BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::BitAnd
+                        ) {
+                            let c_type = self.c_type(&result_ty);
+                            format!("(({c_type})(({left}) {operator} ({right})))")
+                        } else {
+                            format!("({left} {operator} {right})")
+                        }
                     }
-                    let c_type = self.c_type(&result_ty);
-                    return format!("(({c_type})(({left}) {operator} ({right})))");
-                }
-                if matches!(op, BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::BitAnd) {
-                    let c_type = self.c_type(&result_ty);
-                    return format!("(({c_type})(({left}) {operator} ({right})))");
-                }
-                format!("({left} {operator} {right})")
+                };
+                Self::with_order(steps, code)
             }
             ExprKind::Cast { expr: inner, ty } => {
-                let inner = self.gen_expr(inner);
+                let (steps, values) = self.order_values(vec![(inner, None)]);
                 let ty = self.c_type(&self.resolve_type(ty));
-                format!("(({ty}){inner})")
+                let code = format!("(({ty}){})", values[0]);
+                Self::with_order(steps, code)
             }
             ExprKind::Call { callee, args, .. } => self.gen_call(callee, args),
             ExprKind::Alloc {
@@ -2394,13 +2678,19 @@ impl<'a> Generator<'a> {
                 element_type,
                 count,
             } => {
-                let target = self.gen_expr(target);
                 let element_c = self.c_type(&self.resolve_type(element_type));
-                let count = self.gen_expr(count);
-                format!(
-                    "(({target}) = loi_alloc_slice((size_t)({count}), sizeof({element_c}), {}, {}))",
+                let (mut steps, target_place) = self.gen_place(target);
+                let target_ty = self.ty_of(target).concretize();
+                let c_type = self.c_type(&target_ty);
+                let target_ptr = self.declare_temp_typed(&format!("{c_type}*"), "alloc_target");
+                steps.push(format!("{target_ptr} = &({target_place})"));
+                let (count_steps, count_value) = self.ordered_expr(count, None, false);
+                steps.extend(count_steps);
+                let code = format!(
+                    "(*{target_ptr} = loi_alloc_slice((size_t)({count_value}), sizeof({element_c}), {}, {}))",
                     expr.span.line, expr.span.column
-                )
+                );
+                Self::with_order(steps, code)
             }
             ExprKind::Move(value) | ExprKind::Copy(value) => self.gen_expr(value),
             ExprKind::Member { base, field } => {
@@ -2409,17 +2699,24 @@ impl<'a> Generator<'a> {
                 {
                     return self.c_mark_variant(name, field);
                 }
-                if field == "len" && matches!(self.ty_of(base), Ty::Slice(_)) {
-                    let base = self.gen_expr(base);
-                    return format!("((uint64_t)({base}).len)");
+                let base_ty = self.ty_of(base);
+                if field == "len" && matches!(base_ty, Ty::Slice(_)) {
+                    let (steps, values) = self.order_values(vec![(base, None)]);
+                    let code = format!("((uint64_t)({}).len)", values[0]);
+                    return Self::with_order(steps, code);
                 }
-                if let Ty::Choice(choice) = self.ty_of(base) {
-                    let base = self.gen_expr(base);
+                if let Ty::Choice(choice) = base_ty {
+                    let (steps, values) = self.order_values(vec![(base, None)]);
                     let helper = self.c_choice_getter(&choice, field);
-                    return format!("{helper}({base}, {}, {})", expr.span.line, expr.span.column);
+                    let code = format!(
+                        "{helper}({}, {}, {})",
+                        values[0], expr.span.line, expr.span.column
+                    );
+                    return Self::with_order(steps, code);
                 }
-                let base = self.gen_expr(base);
-                format!("({base}).{}", self.c_field(field))
+                let (steps, values) = self.order_values(vec![(base, None)]);
+                let code = format!("({}).{}", values[0], self.c_field(field));
+                Self::with_order(steps, code)
             }
             ExprKind::Index { base, index } => {
                 let element_ty = match self.ty_of(base) {
@@ -2427,12 +2724,12 @@ impl<'a> Generator<'a> {
                     _ => Ty::Error,
                 };
                 let element_c = self.c_type(&element_ty);
-                let base = self.gen_expr(base);
-                let index = self.gen_expr(index);
-                format!(
-                    "(*({element_c}*)loi_index(({base}), (size_t)({index}), sizeof({element_c}), {}, {}))",
-                    expr.span.line, expr.span.column
-                )
+                let (steps, values) = self.order_values(vec![(base, None), (index, None)]);
+                let code = format!(
+                    "(*({element_c}*)loi_index(({}), (size_t)({}), sizeof({element_c}), {}, {}))",
+                    values[0], values[1], expr.span.line, expr.span.column
+                );
+                Self::with_order(steps, code)
             }
             ExprKind::Comptime(inner) => match self.const_expr_value(inner) {
                 Some(value) => self.const_value_code(&value),
@@ -2443,7 +2740,6 @@ impl<'a> Generator<'a> {
 
     /// `value is Name.Variant` compares the choice tag with the variant index.
     fn gen_is_expr(&mut self, left: &Expr, right: &Expr) -> String {
-        let left_code = self.gen_expr(left);
         let ExprKind::Member { base, field } = &right.kind else {
             return "0".to_string();
         };
@@ -2453,7 +2749,9 @@ impl<'a> Generator<'a> {
         let Some(index) = self.choice_variant_index(choice, field) else {
             return "0".to_string();
         };
-        format!("(({left_code}).loi_f_tag == {index}u)")
+        let (steps, left_code) = self.ordered_expr(left, None, false);
+        let code = format!("(({left_code}).loi_f_tag == {index}u)");
+        Self::with_order(steps, code)
     }
 
     /// Evaluate an expression at compile time against the program's globals.
@@ -2510,20 +2808,9 @@ impl<'a> Generator<'a> {
             })
             .unwrap_or_default();
 
-        let mut lowered = Vec::new();
-        for (index, arg) in args.iter().enumerate() {
-            let (direction, expected) = params
-                .get(index)
-                .cloned()
-                .unwrap_or((arg.direction, Ty::Error));
-            let value = self.gen_coerced_expr(&arg.value, &expected);
-            match direction {
-                Direction::In => lowered.push(value),
-                Direction::Out | Direction::Inout => lowered.push(format!("&({value})")),
-            }
-        }
-
-        format!("{}({})", self.c_func(name), lowered.join(", "))
+        let (steps, lowered) = self.order_call_args(args, &params);
+        let call = format!("{}({})", self.c_func(name), lowered.join(", "));
+        Self::with_order(steps, call)
     }
 
     /// Emit `Name.Variant(value)` as a tagged C compound literal.
@@ -2586,9 +2873,11 @@ impl<'a> Generator<'a> {
                 Some(format!("{name}({value})"))
             }
             "pow" | "fmod" => {
-                let left = self.gen_expr(&args.first()?.value);
-                let right = self.gen_expr(&args.get(1)?.value);
-                Some(format!("{name}({left}, {right})"))
+                args.get(1)?;
+                let items = args.iter().take(2).map(|arg| (&arg.value, None)).collect();
+                let (steps, values) = self.order_values(items);
+                let call = format!("{name}({}, {})", values[0], values[1]);
+                Some(Self::with_order(steps, call))
             }
             "read_file" => {
                 let path = self.gen_expr(&args.first()?.value);
@@ -2598,12 +2887,14 @@ impl<'a> Generator<'a> {
                 ))
             }
             "write_file" => {
-                let path = self.gen_expr(&args.first()?.value);
-                let data = self.gen_expr(&args.get(1)?.value);
-                Some(format!(
-                    "loi_write_file({path}, {data}, {}, {})",
-                    _span.line, _span.column
-                ))
+                args.get(1)?;
+                let items = args.iter().take(2).map(|arg| (&arg.value, None)).collect();
+                let (steps, values) = self.order_values(items);
+                let call = format!(
+                    "loi_write_file({}, {}, {}, {})",
+                    values[0], values[1], _span.line, _span.column
+                );
+                Some(Self::with_order(steps, call))
             }
             "read_stdin" => Some(format!("loi_read_stdin({}, {})", _span.line, _span.column)),
             "read_line" => Some(format!("loi_read_line({}, {})", _span.line, _span.column)),
@@ -2627,27 +2918,39 @@ impl<'a> Generator<'a> {
                     return None;
                 };
                 let pieces = crate::format::parse_format(text).ok()?;
-                let specs = pieces.iter().filter_map(|piece| match piece {
-                    crate::format::FormatPiece::Spec(spec) => Some(spec),
-                    crate::format::FormatPiece::Text(_) => None,
-                });
-                let mut lowered = Vec::new();
+                let specs = pieces
+                    .iter()
+                    .filter_map(|piece| match piece {
+                        crate::format::FormatPiece::Spec(spec) => Some(spec),
+                        crate::format::FormatPiece::Text(_) => None,
+                    })
+                    .collect::<Vec<_>>();
+                let cstr_ty = Ty::CStr;
+                let items = specs
+                    .iter()
+                    .zip(args.iter().skip(1))
+                    .map(|(spec, arg)| {
+                        if spec.kind() == Some(crate::format::FormatKind::Str) {
+                            (&arg.value, Some(&cstr_ty))
+                        } else {
+                            (&arg.value, None)
+                        }
+                    })
+                    .collect();
+                let (steps, values) = self.order_values(items);
                 // The literal already has a trailing NUL, so it is safe as a C
                 // string without creating another static array.
                 let index = self.string_index(text);
-                lowered.push(format!("((const char*)loi_str_{index})"));
-                for (spec, arg) in specs.zip(args.iter().skip(1)) {
-                    let value = if spec.kind() == Some(crate::format::FormatKind::Str) {
-                        // A string literal is a `[u8]` slice in Loi; reuse the
-                        // existing NUL-terminated `cstr` coercion for `%s`.
-                        self.gen_coerced_expr(&arg.value, &Ty::CStr)
+                let mut lowered = vec![format!("((const char*)loi_str_{index})")];
+                for (spec, value) in specs.iter().zip(values) {
+                    if spec.kind() == Some(crate::format::FormatKind::Str) {
+                        lowered.push(value);
                     } else {
-                        let value = self.gen_expr(&arg.value);
-                        format!("(({})( {value} ))", spec.c_cast())
-                    };
-                    lowered.push(value);
+                        lowered.push(format!("(({})( {value} ))", spec.c_cast()));
+                    }
                 }
-                Some(format!("printf({})", lowered.join(", ")))
+                let call = format!("printf({})", lowered.join(", "));
+                Some(Self::with_order(steps, call))
             }
             _ => None,
         }
@@ -2659,28 +2962,45 @@ impl<'a> Generator<'a> {
             .get(name)
             .map(|decl| decl.fields.clone())
             .unwrap_or_default();
-        let mut initializers = Vec::new();
-        for field in &declared {
-            let field_ty = self.resolve_type(&field.ty);
-            let value = if let Some(init) = fields.iter().find(|init| init.name == field.name) {
-                Some(self.gen_coerced_expr(&init.value, &field_ty))
-            } else {
-                field
-                    .default
-                    .as_ref()
-                    .map(|value| self.gen_coerced_expr(value, &field_ty))
+        let mut entries: Vec<(String, &Expr, Ty)> = Vec::new();
+        let mut supplied = std::collections::HashSet::new();
+
+        // Designated initializers may appear in any order in C, so evaluate
+        // explicit fields in source order and append defaults afterwards.
+        for init in fields {
+            let Some(field) = declared.iter().find(|field| field.name == init.name) else {
+                continue;
             };
-            if let Some(value) = value {
-                initializers.push(format!(".{} = {value}", self.c_field(&field.name)));
-            }
+            entries.push((init.name.clone(), &init.value, self.resolve_type(&field.ty)));
+            supplied.insert(init.name.clone());
         }
+        for field in &declared {
+            if supplied.contains(&field.name) {
+                continue;
+            }
+            let Some(default) = &field.default else {
+                continue;
+            };
+            entries.push((field.name.clone(), default, self.resolve_type(&field.ty)));
+        }
+        let items = entries
+            .iter()
+            .map(|(_, expr, ty)| (*expr, Some(ty)))
+            .collect();
+        let (steps, values) = self.order_values(items);
+        let initializers = entries
+            .iter()
+            .zip(values)
+            .map(|((field_name, _, _), value)| format!(".{} = {value}", self.c_field(field_name)))
+            .collect::<Vec<_>>();
 
         let ty = self.c_interface(name);
-        if initializers.is_empty() {
+        let literal = if initializers.is_empty() {
             format!("({ty}){{0}}")
         } else {
             format!("({ty}){{ {} }}", initializers.join(", "))
-        }
+        };
+        Self::with_order(steps, literal)
     }
 
     fn default_interface_literal(&mut self, name: &str) -> String {
