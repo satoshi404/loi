@@ -9,6 +9,9 @@ Items marked **(provisional)** are temporary decisions made to close a gap. They
 
 The canonical surface reference is [`SINTAXE.md`](../SINTAXE.md). This file defines the language rules; when a syntax example here and `SINTAXE.md` disagree, `SINTAXE.md` wins for the surface form and both must be corrected in the same change.
 
+The implementation requires Rust 1.88 or newer (the verified MSRV declared in
+`Cargo.toml`) and a C11 compiler for the production backend.
+
 ---
 
 ## 1. Purpose of this Document

@@ -7,7 +7,9 @@ in the same change.
 
 The language specification and rationale live in
 [`development/LOI_SPEC.md`](development/LOI_SPEC.md). Current compiler state
-lives in [`development/PROGRESS.md`](development/PROGRESS.md).
+lives in [`development/PROGRESS.md`](development/PROGRESS.md). Building the
+compiler requires Rust 1.88 or newer, as declared by `rust-version` in
+`Cargo.toml`.
 
 **Rule of thumb:** *braces are scopes, brackets are data, arrows are movement.*
 

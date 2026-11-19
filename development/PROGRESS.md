@@ -4,6 +4,11 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
+- **Current task (2026-11-18, item 3):** declared and verified Rust 1.88 as the
+  MSRV. Replaced the single `if let` guard with a nested check; 1.85 and 1.87
+  still fail on stable let-chains, while 1.88 builds and passes the suite. Added
+  a manifest regression test, `tools/check_msrv.sh`, and requirements lines in
+  `README.md`, `SINTAXE.md`, `LOI_SPEC.md` and `website/docs.html`.
 - **Current task (2026-11-18):** fixed the five reported library/runtime issues.
   `main` is now the only allocation entry point for the checker, so documented
   library flows and shapes are `open` and appear in generated C headers while

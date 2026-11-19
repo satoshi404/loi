@@ -2082,13 +2082,16 @@ impl<'a> Generator<'a> {
             ExprKind::Cast { ty, .. } => self.resolve_type(ty),
             ExprKind::Call { callee, .. } => match &callee.kind {
                 ExprKind::Ident(name) => self.function_return_ty(name),
-                ExprKind::Member { base, field }
+                ExprKind::Member { base, field } => {
                     if let ExprKind::Ident(choice) = &base.kind
-                        && self.choices.contains_key(choice) =>
-                {
-                    self.choice_variant_ty(choice, field)
-                        .map(|_| Ty::Choice(choice.clone()))
-                        .unwrap_or(Ty::Error)
+                        && self.choices.contains_key(choice)
+                    {
+                        self.choice_variant_ty(choice, field)
+                            .map(|_| Ty::Choice(choice.clone()))
+                            .unwrap_or(Ty::Error)
+                    } else {
+                        Ty::Error
+                    }
                 }
                 _ => Ty::Error,
             },

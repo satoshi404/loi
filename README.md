@@ -12,6 +12,9 @@ Loi is a small compiled systems language built around three ideas:
 The compiler is written in Rust (edition 2024, standard library only) and emits
 C11, so the normal toolchain is Cargo plus a C compiler.
 
+**Requirements:** Rust 1.88 or newer (the verified minimum supported version)
+and a C11 compiler.
+
 ```loi
 shape Vec2 [ x: f64, y: f64 ]
 
