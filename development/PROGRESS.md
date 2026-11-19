@@ -4,13 +4,25 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-19, review follow-up):** addressed both reported
+- **Current task (2026-11-19, Block A1):** `give` on a field or element now
+  consumes only that ownership path when the sub-place is composite. Scalar
+  sub-places are copied without killing the owner; whole-variable `give` keeps
+  its existing transfer rule. A runtime index in a consumed path is a wildcard
+  over all elements, and cross-flow effect summaries are path-sensitive, so a
+  callee giving `p.left` kills only `p.left` at the call site. `checker.rs` now
+  parses ownership paths into components, resolves path types from callee
+  signatures and composes consumed paths through calls. Six new tests cover
+  field moves, scalar fields/elements, runtime-index swaps, cross-flow paths,
+  wildcard soundness and generated C11; the swap prints `321` when compiled and
+  run. Rules are documented in `SINTAXE.md` §11, `LOI_SPEC.md` §4.3 and
+  `website/docs.html`; design reasons are in `DECISIONS.md` and the remaining
+  library friction is in `FRICTION.md`.
+- **Previous task (2026-11-19, review follow-up):** addressed both reported
   review problems. `tests/order.rs` now probes clang with `has_tool --version`,
   honors `LOI_TEST_CLANG`, treats the Termux path as only one candidate, and
   prints a skip message instead of failing when no clang exists. The recursive
   `comptime` global error now points at `LIMIT` (`7:1`) with a secondary label
   on the recursive call (`4:17`), while the first diagnostic stays at `4:17`.
-  Reasons are recorded in `DECISIONS.md`; no language rule changed.
 - **Previous task (2026-11-19, item 1):** Loi now defines strict left-to-right
   evaluation rather than rejecting ambiguous programs. The C backend sequences
   operator operands, call/intrinsic arguments, literal elements, assignment
@@ -49,19 +61,21 @@
   finalized CRC values zlib-style. `map_*_get_or` and `map_*_lookup` return a
   default or a `found` status in one scan. `vec_reserve` is exported and the
   docs explain pre-sizing because the arena retains older growth blocks.
-- **Verification for the current task:** `tests/order.rs` was written before
-  the fix and initially failed 3/5 tests; after the fix all 6 pass, including
-  the 320-program differential suite and a short-circuit regression. The `5007`
-  repro was checked with GCC 15.2.0 (`cc`) and clang 21.1.8. No ASan execution
-  is claimed in this PRoot container. Final gate command:
+- **Verification for the current task:** the five A1 checker tests and the
+  codegen swap test were written first and failed with the original whole-root
+  consumption (`3 failed` in `checker`; codegen blocked at check time). After
+  the implementation all new tests pass. Final gate command:
   `export PATH="/root/.cargo/bin:$PATH"; export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets && python3 tools/sync_examples.py --check && git diff --check`.
-  All five checks exited 0; `cargo test --all-targets` reported **338 passed,
-  0 failed** (lib 22 + main 6 + bindgen 1 + checker 114 + cli 42 + codegen 51 +
-  const_values 5 + errors 2 + header 4 + lexer 8 + lib-integration 33 + msrv 1 +
-  order 6 + parser 26 + pretty 17). `benchmark/run.py` (min of 9, pinned CPU 6)
-  before/after ratios: hash 0.994→0.991, crc32 1.120→1.113, sort 1.380→1.382,
-  int_map 1.285→1.247, str_map 0.763→0.757, random 0.992→0.991; no ratio
-  worsened by more than 3%.
+  All five checks exited 0; `cargo test --all-targets` reported **346 passed,
+  0 failed** (lib 22 + main 6 + bindgen 1 + checker 120 + cli 42 + codegen 52 +
+  const_values 5 + errors 3 + header 4 + lexer 8 + lib-integration 33 + msrv 1 +
+  order 6 + parser 26 + pretty 17). The swap test also compiles the generated C
+  under strict C11 and with sanitizers compile-only; no ASan execution is
+  claimed in this PRoot container. There is no generated-C ABI or runtime
+  change. `benchmark/run.py` (min of 9, pinned CPU 6) before/after ratios:
+  hash 1.025→1.009, crc32 1.113→1.115, sort 1.379→1.325, int_map 1.172→1.234,
+  str_map 0.808→0.798, random 1.013→0.990. The compiler-only change has no
+  expected runtime effect; the differences are noise.
 - **Previous task (2026-11-18):** expanded the canonical example set with two
   runnable Flow Syntax programs: `examples/marks.loi` covers a finite tag set,
   equality, state transitions and a mark stored in a shape; `examples/choices.loi`
@@ -536,8 +550,10 @@ for f in lib/std.loi lib/math.loi lib/ctype.loi lib/os.loi lib/net.loi; do ./tar
   an uninitialized `->` parameter initializes the whole value; joining a
   consumed value with a live one keeps the conservative (consumed) state. Loops are
   treated as possibly executing zero times.
-- Cross-flow consumption is summarized per whole parameter. Partial consumption
-  (for example only `p.pos`) is widened to the whole argument.
+- Cross-flow consumption is path-sensitive, but a whole-place read still
+  overlaps every moved subpath. Passing a partially consumed composite to a
+  `<-` flow is therefore rejected until field-sensitive views or borrow
+  lifetimes exist (Block A3).
 - `protect` taints follow locals, fields, ownership transfers, shape literals,
   `->` arguments and returns, and are conservatively forwarded from consumed
   `<->` arguments to every slice-containing output or composite result. They
@@ -670,20 +686,18 @@ Remaining implementation or secondary choices:
 
 ## Next Steps
 
-1. Add a real module/namespace design and enforce `open`/`sealed` across files.
-2. Design linear resources (`guard`, `<Shape>_release`) and apply them to the
-   socket descriptors now exposed by `lib/net.loi`; the shim alone does not
-   manage lifetimes.
-3. Design growable collections (`Vec<T>`, maps) as library code now that
-   generics and explicit monomorphization exist.
-4. Extend the binding generator for the C constructs that still require
-   hand-written shims, and add window/render examples for SDL2 and raylib on a
-   machine with the runtimes installed.
-5. Evaluate the opt-in LLVM lowering from the new Open Design Question: start
-   with scalar IR plus exported C runtime wrappers, keep the C backend default,
-   and require parity on the existing runnable test corpus before any build-mode
-   switch.
-6. Finish IR/ASM or remove them from the published CLI surface.
-7. Keep the docs in sync: `SINTAXE.md` is canonical, `website/docs.html`
+1. Block A2: recursive `clone` for slice-containing composites, with explicit
+   allocation/region rules; then remove the clone-only restrictions in
+   `lib/vec.loi` and `lib/slice.loi`.
+2. Block A3: lexical views/borrows so a partially consumed composite can still
+   be passed to a read-only flow that only touches live fields.
+3. Block A4: slice literals and writable length/out-param support for empty
+   collections without forcing `alloc` into every constructor.
+4. Block A5: `Clone`, `Copy` and `Eq` generic constraints so library flows can
+   state their element requirements instead of being numeric-only.
+5. After Block A: revisit modules/namespaces, linear resources for `lib/net.loi`,
+   binding-generator gaps and the opt-in LLVM question; keep the C11 backend as
+   the production oracle.
+6. Keep the docs in sync: `SINTAXE.md` is canonical, `website/docs.html`
    mirrors it, and `python3 tools/sync_examples.py --check` guards the example
    mirror.

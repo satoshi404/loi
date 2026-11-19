@@ -248,6 +248,9 @@ b <- give(a)         // a is no longer usable
 - `<->` is exclusive: while a value is passed as `<->`, no other use of it is allowed in the same call.
 - Passing the same value twice as `<-` (`f(a, a)`) is allowed, because both are reads.
 - Scalars (`i32`, `f64`, `bool`, ...) are copied implicitly. `clone()` is required only for composite values (confirmed in 5.7).
+- Partial moves are path-sensitive: giving a composite field or element kills only that place, leaves siblings alive, and can be reversed by writing the place again. Giving a scalar sub-place copies it without killing the owner; giving a whole scalar variable remains an explicit transfer.
+- A consumed path containing a runtime index is a wildcard over every element of that slice. Reads of any element are rejected until the whole slice is reinitialized.
+- Function-effect summaries carry consumed paths, so a callee that gives `p.left` kills only `p.left` at the call site.
 - `clone` of a type that contains a slice is a compile error (confirmed in 5.7).
 - `give(x)` is a compiler intrinsic, not an ordinary function: it kills the variable. The parser must treat it specially.
 

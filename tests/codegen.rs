@@ -1199,3 +1199,42 @@ fn choices_and_shapes_share_the_by_value_layout_order() {
         "the shape embeds the choice, so the choice layout must come first:\n{c}"
     );
 }
+
+#[test]
+fn partial_moves_compile_and_swap_runtime_elements() {
+    let source = r#"flow swap
+    <-> v: [u64]
+    <- i: u64
+    <- j: u64
+{
+    tmp: u64 <- give(v[i])
+    v[i] = give(v[j])
+    v[j] = give(tmp)
+}
+
+flow main
+    => i32
+{
+    protect {
+        mut xs: [u64]
+        alloc(-> xs, u64, 3)
+        xs[0] = 1
+        xs[1] = 2
+        xs[2] = 3
+        swap(<-> xs, 0, 2)
+        print_int(xs[0])
+        print_int(xs[1])
+        print_int(xs[2])
+    }
+    => 0
+}
+"#;
+    let c = generated(source);
+    assert_strict_c11("partial-move-swap", &c);
+    assert_sanitizers_compile("partial-move-swap", &c);
+    let Some(run) = compile_and_run_output("partial-move-swap", &c, "") else {
+        return;
+    };
+    assert_eq!(run.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "321");
+}

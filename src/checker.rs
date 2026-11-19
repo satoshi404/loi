@@ -207,9 +207,9 @@ struct FunctionScan {
     unguarded_deps: Vec<String>,
     /// Every called function name.
     calls: HashSet<String>,
-    /// Roots of expressions passed to `move(...)`.
-    moved_roots: HashSet<String>,
-    /// Call sites with the direction and root of every argument.
+    /// Root-relative places consumed by `give(...)` in this body.
+    moved_places: HashSet<(String, String)>,
+    /// Call sites with the direction and place of every argument.
     call_args: Vec<CallSiteScan>,
     /// Whether returning a place transfers ownership (composite return type).
     returns_composite: bool,
@@ -217,7 +217,7 @@ struct FunctionScan {
 
 struct CallSiteScan {
     callee: String,
-    args: Vec<(Direction, Option<String>)>,
+    args: Vec<(Direction, Option<(String, String)>)>,
 }
 
 struct LvalueInfo {
@@ -265,8 +265,9 @@ struct Checker {
     /// Function names that can allocate without a lexical `protect` in this
     /// function (directly or through another such function).
     unguarded_allocators: HashSet<String>,
-    /// Per function, whether each parameter may be moved out by the call.
-    param_consumption: HashMap<String, Vec<bool>>,
+    /// Per function, the root-relative places each parameter may lose through
+    /// the call. `""` means the whole parameter.
+    param_consumption: HashMap<String, Vec<HashSet<String>>>,
     /// Names declared by top-level `let`/`var`, for duplicate diagnostics.
     global_names: HashSet<String>,
     /// Parent region for each lexical block or `protect` region.
@@ -1052,11 +1053,12 @@ impl Checker {
     /// must provide the `protect` region by contract.
     ///
     /// Ownership: a parameter is *consumed* when the function moves from it,
-    /// directly or through another call. At a call site a consumed `out` or
-    /// `inout` argument is moved for the caller.
+    /// directly or through another call. Consumption is path-sensitive: moving
+    /// a field does not kill the rest of the value. At a call site only the
+    /// consumed paths of an `out` or `inout` argument are moved for the caller.
     fn analyze_function_effects(&mut self, program: &Program) {
         let mut scans: HashMap<String, FunctionScan> = HashMap::new();
-        let mut params: HashMap<String, Vec<(String, Direction)>> = HashMap::new();
+        let mut params: HashMap<String, Vec<(String, Direction, Ty)>> = HashMap::new();
         let mut spans: Vec<(String, Span)> = Vec::new();
 
         for item in &program.items {
@@ -1073,11 +1075,23 @@ impl Checker {
             }
             scan_block_effects(&decl.body, 0, &mut scan);
             scans.insert(decl.name.clone(), scan);
+            let param_types = self
+                .functions
+                .get(&decl.name)
+                .map(|signature| signature.params.clone())
+                .unwrap_or_default();
             params.insert(
                 decl.name.clone(),
                 decl.params
                     .iter()
-                    .map(|param| (param.name.clone(), param.direction))
+                    .enumerate()
+                    .map(|(index, param)| {
+                        let ty = param_types
+                            .get(index)
+                            .map(|sig| sig.ty.clone())
+                            .unwrap_or(Ty::Error);
+                        (param.name.clone(), param.direction, ty)
+                    })
                     .collect(),
             );
             spans.push((decl.name.clone(), decl.span));
@@ -1125,16 +1139,25 @@ impl Checker {
         }
         self.unguarded_allocators = unguarded;
 
-        let mut consumption: HashMap<String, Vec<bool>> = HashMap::new();
+        let mut consumption: HashMap<String, Vec<HashSet<String>>> = HashMap::new();
         for (name, param_list) in &params {
             let scan = &scans[name];
-            let flags = param_list
-                .iter()
-                .map(|(param, direction)| {
-                    *direction != Direction::In && scan.moved_roots.contains(param)
-                })
-                .collect();
-            consumption.insert(name.clone(), flags);
+            let mut paths: Vec<HashSet<String>> =
+                param_list.iter().map(|_| HashSet::new()).collect();
+            for (root, path) in &scan.moved_places {
+                let Some((index, (_, direction, ty))) = param_list
+                    .iter()
+                    .enumerate()
+                    .find(|(_, (param, _, _))| param == root)
+                else {
+                    continue;
+                };
+                if *direction == Direction::In || !self.move_consumes_place(ty, path) {
+                    continue;
+                }
+                insert_consumed_path(&mut paths[index], path.clone());
+            }
+            consumption.insert(name.clone(), paths);
         }
 
         loop {
@@ -1144,15 +1167,17 @@ impl Checker {
                     continue;
                 };
                 for site in &scan.call_args {
-                    let Some(callee_flags) = consumption.get(&site.callee).cloned() else {
+                    let Some(callee_paths) = consumption.get(&site.callee).cloned() else {
                         continue;
                     };
                     let Some(callee_signature) = self.functions.get(&site.callee) else {
                         continue;
                     };
-                    for (index, (_, root)) in site.args.iter().enumerate() {
-                        let consumed = callee_flags.get(index).copied().unwrap_or(false);
-                        if !consumed {
+                    for (index, arg) in site.args.iter().enumerate() {
+                        let Some(consumed_paths) = callee_paths.get(index) else {
+                            continue;
+                        };
+                        if consumed_paths.is_empty() {
                             continue;
                         }
                         let direction = callee_signature
@@ -1163,17 +1188,23 @@ impl Checker {
                         if !matches!(direction, Direction::Out | Direction::Inout) {
                             continue;
                         }
-                        let Some(root) = root else {
+                        let (_, Some((arg_root, arg_path))) = &arg else {
                             continue;
                         };
-                        let Some(position) = param_list.iter().position(|(param, _)| param == root)
+                        let Some((position, (_, caller_direction, _))) = param_list
+                            .iter()
+                            .enumerate()
+                            .find(|(_, (param, _, _))| param == arg_root)
                         else {
                             continue;
                         };
-                        let flags = consumption.get_mut(name).expect("consumption flags");
-                        if !flags[position] {
-                            flags[position] = true;
-                            changed = true;
+                        if *caller_direction == Direction::In {
+                            continue;
+                        }
+                        let caller_paths = consumption.get_mut(name).expect("consumption paths");
+                        for relative in consumed_paths {
+                            let combined = join_paths(arg_path, relative);
+                            changed |= insert_consumed_path(&mut caller_paths[position], combined);
                         }
                     }
                 }
@@ -2643,7 +2674,7 @@ impl Checker {
 
         let mut transfer = Vec::new();
         for (index, arg) in args.iter().enumerate() {
-            if !consumed.get(index).copied().unwrap_or(false) {
+            if consumed.get(index).is_none_or(|paths| paths.is_empty()) {
                 continue;
             }
             let direction = signature
@@ -2689,7 +2720,10 @@ impl Checker {
             return;
         };
         for (index, arg) in args.iter().enumerate() {
-            if !consumed.get(index).copied().unwrap_or(false) {
+            let Some(relative_paths) = consumed.get(index) else {
+                continue;
+            };
+            if relative_paths.is_empty() {
                 continue;
             }
             let direction = signature
@@ -2710,7 +2744,9 @@ impl Checker {
                 );
                 continue;
             }
-            self.record_move(&root, &path, arg.value.span);
+            for relative in relative_paths {
+                self.record_move(&root, &join_paths(&path, relative), arg.value.span);
+            }
         }
     }
 
@@ -2934,7 +2970,7 @@ impl Checker {
                 &root,
                 &path,
             );
-        } else {
+        } else if path.is_empty() || is_composite(&info.ty) {
             self.record_move(&root, &path, value.span);
         }
         info.ty
@@ -3033,7 +3069,9 @@ impl Checker {
                 LvalueInfo {
                     ty,
                     root: base_info.root,
-                    path: base_info.path.map(|path| append_path(&path, "[]")),
+                    path: base_info
+                        .path
+                        .map(|path| append_path(&path, &index_path(index))),
                     poisoned: base_info.poisoned,
                 }
             }
@@ -3416,7 +3454,7 @@ impl Checker {
                     && let Some(consumed) = self.param_consumption.get(name)
                 {
                     for (index, arg) in args.iter().enumerate() {
-                        if !consumed.get(index).copied().unwrap_or(false) {
+                        if consumed.get(index).is_none_or(|paths| paths.is_empty()) {
                             continue;
                         }
                         let direction = signature
@@ -3525,6 +3563,45 @@ impl Checker {
             .as_deref()
             .and_then(|root| self.lookup(root))
             .and_then(|var| var.home_region)
+    }
+
+    /// Whether giving a place transfers ownership out of its root.
+    ///
+    /// Giving a whole variable keeps the historical "explicit transfer" rule,
+    /// even for scalars. Giving a sub-place only consumes when that sub-place
+    /// owns non-copyable data; scalar fields and elements are copied implicitly.
+    fn move_consumes_place(&self, ty: &Ty, path: &str) -> bool {
+        if path.is_empty() {
+            return true;
+        }
+        match self.type_at_path(ty, path) {
+            Some(actual) => is_composite(&actual),
+            None => true,
+        }
+    }
+
+    /// Resolve the type of a root-relative ownership path.
+    fn type_at_path(&self, ty: &Ty, path: &str) -> Option<Ty> {
+        let mut current = ty.clone();
+        for component in parse_path(path) {
+            current = match component {
+                PathComponent::Field(field) => match &current {
+                    Ty::Slice(_) if field == "len" => Ty::U64,
+                    Ty::Named(name) => {
+                        let info = self.interfaces.get(name)?;
+                        let index = *info.field_index.get(&field)?;
+                        info.fields[index].ty.clone()
+                    }
+                    Ty::Choice(name) => self.choices.get(name)?.variants.get(&field)?.ty.clone(),
+                    _ => return None,
+                },
+                PathComponent::Index(_) => match current {
+                    Ty::Slice(element) => *element,
+                    _ => return None,
+                },
+            };
+        }
+        Some(current)
     }
 
     fn reject_implicit_copy(&mut self, value: &Expr, value_ty: &Ty) {
@@ -3743,9 +3820,9 @@ fn scan_statement_effects(statement: &Stmt, depth: usize, scan: &mut FunctionSca
         StmtKind::Return(value) => {
             if let Some(value) = value {
                 if scan.returns_composite
-                    && let Some(root) = place_root(value)
+                    && let (Some(root), Some(path)) = (place_root(value), place_path(value))
                 {
-                    scan.moved_roots.insert(root);
+                    scan.moved_places.insert((root, path));
                 }
                 scan_expr_effects(value, depth, scan);
             }
@@ -3791,7 +3868,10 @@ fn scan_expr_effects(expr: &Expr, depth: usize, scan: &mut FunctionScan) {
                     callee: name.clone(),
                     args: args
                         .iter()
-                        .map(|arg| (arg.direction, place_root(&arg.value)))
+                        .map(|arg| {
+                            let place = place_root(&arg.value).zip(place_path(&arg.value));
+                            (arg.direction, place)
+                        })
                         .collect(),
                 });
             } else {
@@ -3809,8 +3889,8 @@ fn scan_expr_effects(expr: &Expr, depth: usize, scan: &mut FunctionScan) {
             scan_expr_effects(count, depth, scan);
         }
         ExprKind::Move(value) => {
-            if let Some(root) = place_root(value) {
-                scan.moved_roots.insert(root);
+            if let (Some(root), Some(path)) = (place_root(value), place_path(value)) {
+                scan.moved_places.insert((root, path));
             }
             scan_expr_effects(value, depth, scan);
         }
@@ -3838,19 +3918,88 @@ fn append_path(base: &str, component: &str) -> String {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PathComponent {
+    Field(String),
+    /// `None` is a runtime index (`[]`); it overlaps any constant index.
+    Index(Option<i128>),
+}
+
+fn parse_path(path: &str) -> Vec<PathComponent> {
+    let bytes = path.as_bytes();
+    let mut components = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'.' => index += 1,
+            b'[' => {
+                let Some(relative_close) = path[index + 1..].find(']') else {
+                    break;
+                };
+                let close = index + 1 + relative_close;
+                components.push(PathComponent::Index(path[index + 1..close].parse().ok()));
+                index = close + 1;
+            }
+            _ => {
+                let start = index;
+                while index < bytes.len() && bytes[index] != b'.' && bytes[index] != b'[' {
+                    index += 1;
+                }
+                components.push(PathComponent::Field(path[start..index].to_string()));
+            }
+        }
+    }
+    components
+}
+
 /// True when `ancestor` is the same path as `path` or contains it, respecting
-/// path-component boundaries (`a` contains `a.b` and `a[]`, but not `ab`).
+/// path-component boundaries. A runtime index (`[]`) contains every constant
+/// element of the same slice but is not itself contained by one element.
 fn path_is_ancestor(ancestor: &str, path: &str) -> bool {
-    if ancestor == path {
+    if ancestor == path || ancestor.is_empty() {
         return true;
     }
-    if ancestor.is_empty() {
-        return true;
-    }
-    let Some(rest) = path.strip_prefix(ancestor) else {
+    let ancestor = parse_path(ancestor);
+    let path = parse_path(path);
+    if ancestor.len() > path.len() {
         return false;
-    };
-    rest.starts_with('.') || rest.starts_with('[')
+    }
+    ancestor
+        .into_iter()
+        .zip(path)
+        .all(|(left, right)| match (left, right) {
+            (PathComponent::Field(left), PathComponent::Field(right)) => left == right,
+            (PathComponent::Index(None), PathComponent::Index(_)) => true,
+            (PathComponent::Index(Some(left)), PathComponent::Index(Some(right))) => left == right,
+            _ => false,
+        })
+}
+
+/// Append one root-relative path after another. Both forms already carry their
+/// own separators (`.field` or `[index]`).
+fn join_paths(prefix: &str, relative: &str) -> String {
+    if relative.is_empty() {
+        prefix.to_string()
+    } else if prefix.is_empty() {
+        relative.to_string()
+    } else {
+        format!("{prefix}{relative}")
+    }
+}
+
+/// Add a consumed path to a summary, collapsing all paths into `""` when the
+/// whole parameter is consumed.
+fn insert_consumed_path(paths: &mut HashSet<String>, path: String) -> bool {
+    if paths.contains("") {
+        return false;
+    }
+    if path.is_empty() {
+        paths.clear();
+        paths.insert(String::new());
+        true
+    } else {
+        paths.insert(path)
+    }
 }
 
 fn paths_overlap(left: &str, right: &str) -> bool {
@@ -3993,13 +4142,18 @@ fn place_path(expr: &Expr) -> Option<String> {
         ExprKind::Ident(_) => Some(String::new()),
         ExprKind::Member { base, field } => place_path(base).map(|path| append_path(&path, field)),
         ExprKind::Index { base, index } => {
-            let component = match const_int(index) {
-                Some(value) => format!("[{value}]"),
-                None => "[]".to_string(),
-            };
-            place_path(base).map(|path| append_path(&path, &component))
+            place_path(base).map(|path| append_path(&path, &index_path(index)))
         }
         _ => None,
+    }
+}
+
+/// Ownership-path component for an index expression. A constant index keeps
+/// its value; an unknown index is a wildcard that overlaps every element.
+fn index_path(index: &Expr) -> String {
+    match const_int(index) {
+        Some(value) => format!("[{value}]"),
+        None => "[]".to_string(),
     }
 }
 

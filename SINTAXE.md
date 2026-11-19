@@ -542,6 +542,20 @@ xs.len         // u64
 - `clone(x)` makes an explicit duplicate. It is required for composite values
   and rejected for any value that contains a slice.
 - Scalars copy implicitly; `clone` is never needed for them.
+- `give(x.field)` and `give(x[i])` consume only that place when it holds a
+  composite value. Siblings stay live, and a later write to the consumed place
+  reinitializes it. Scalar fields and elements are copied without killing the
+  owner; `give(x)` of the whole variable still kills `x`.
+
+  ```loi
+  tmp: u64 <- give(xs[i])
+  xs[i] = give(xs[j])
+  xs[j] = tmp
+  ```
+
+- A runtime index in a consumed path is a wildcard: after `give(xs[i])` of a
+  composite element, every element of `xs` is considered moved until the whole
+  slice is reinitialized.
 - `give` and `clone` are compiler intrinsics, not ordinary flows.
 - Two names for the same address (double reference) is a compile error.
 - Slices and slice-containing composites move with ownership; there is no

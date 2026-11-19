@@ -46,6 +46,17 @@ composites that recursively clones slice fields. Until then `Vec<T>` is
 documented as requiring cloneable `T`: scalars and shapes whose fields are
 themselves cloneable without slices.
 
+Resolved by Block A1: giving a composite element now consumes only that
+element path, and cross-flow consumption summaries are path-sensitive. The
+recursive clone requirement remains open and is tracked as Block A2.
+
+A follow-up attempt to replace `clone` with `give` in `vec_reserve`, `vec_pop`,
+`vec_swap` and `slice_swap` exposed a second limitation: after a composite
+element is moved, passing the whole vector to a `<-` flow such as `vec_len`
+is rejected because a whole-place read overlaps every moved subpath. The
+library therefore keeps `clone` in those flows. The remaining requirement is
+field-sensitive read views or borrow lifetimes (Block A3), not A1.
+
 ### Borrowed slice views cannot escape a flow
 
 Attempted design: `vec_as_slice<T>(<- v: Vec<T>) => [T]` returning `v.data`

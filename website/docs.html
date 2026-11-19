@@ -590,7 +590,23 @@ print(other.x)</code></pre>
             <li>Scalars (<code>i32</code>, <code>f64</code>, <code>bool</code>, ...) copy
               implicitly because they have no identity and no destructor.</li>
             <li>Composite values never copy implicitly.</li>
+            <li><code>give(x.field)</code> and <code>give(x[i])</code> consume only that place
+              when it holds a composite value. Siblings stay live and a later write restores the
+              consumed place. Giving a scalar field or element copies it without killing the
+              owner; giving a whole variable still kills it.</li>
           </ul>
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>partial-moves.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-loi">tmp: u64 &lt;- give(xs[i])
+xs[i] = give(xs[j])
+xs[j] = tmp</code></pre>
+          </div>
+          <p>
+            A runtime index in a consumed path is a wildcard: after giving a composite element at
+            <code>xs[i]</code>, every element is considered moved until the whole slice is written
+            again. The same path tracking crosses flow calls, so giving <code>p.left</code> inside a
+            callee kills only <code>p.left</code> at the call site.
+          </p>
 
           <h3>Borrows are scoped views</h3>
           <p>

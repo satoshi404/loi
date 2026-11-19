@@ -706,6 +706,195 @@ fn allocation_taints_follow_a_consumed_inout_argument_into_a_composite_result() 
 }
 
 // ---------------------------------------------------------------------------
+// Block A1: partial moves out of composites
+// ---------------------------------------------------------------------------
+
+const A1_PARTIAL_MOVE_SOURCE: &str = r#"shape Pair [
+    left: [u64]
+    right: u64
+]
+
+flow main
+    => i32
+{
+    protect {
+        mut p: Pair
+        alloc(-> p.left, u64, 1)
+        p.left[0] = 7
+        p.right = 9
+        mut taken: [u64]
+        taken = give(p.left)
+        print_int(taken[0])
+        print_int(p.right)
+        alloc(-> p.left, u64, 1)
+        p.left[0] = 8
+        print_int(p.left[0])
+    }
+    => 0
+}
+"#;
+
+#[test]
+fn partial_move_of_a_composite_field_leaves_siblings_alive() {
+    assert_clean(A1_PARTIAL_MOVE_SOURCE);
+}
+
+#[test]
+fn moved_composite_field_cannot_be_read_before_reinitialization() {
+    let source = r#"shape Pair [
+    left: [u64]
+    right: u64
+]
+
+flow f
+    <-> p: Pair
+{
+    mut taken: [u64] <- give(p.left)
+    print_int(p.left.len)
+    print_int(taken.len)
+    alloc(-> p.left, u64, 1)
+}
+"#;
+    assert_message(source, "use of moved value 'p'");
+}
+
+const A1_SWAP_SOURCE: &str = r#"flow swap
+    <-> v: [u64]
+    <- i: u64
+    <- j: u64
+{
+    tmp: u64 <- give(v[i])
+    v[i] = give(v[j])
+    v[j] = give(tmp)
+}
+
+flow main
+    => i32
+{
+    protect {
+        mut xs: [u64]
+        alloc(-> xs, u64, 3)
+        xs[0] = 1
+        xs[1] = 2
+        xs[2] = 3
+        swap(<-> xs, 0, 2)
+        print_int(xs[0])
+        print_int(xs[1])
+        print_int(xs[2])
+    }
+    => 0
+}
+"#;
+
+#[test]
+fn giving_scalar_elements_with_runtime_indices_does_not_consume_the_slice() {
+    assert_clean(A1_SWAP_SOURCE);
+}
+
+#[test]
+fn giving_a_composite_element_with_a_runtime_index_poisons_unknown_elements() {
+    let source = r#"shape Cell [
+    data: [u64]
+]
+
+flow steal
+    <-> cells: [Cell]
+    <- i: u64
+{
+    mut out: [u64]
+    out = give(cells[i].data)
+    print_int(out.len)
+}
+
+flow main
+    => i32
+{
+    protect {
+        mut cells: [Cell]
+        alloc(-> cells, Cell, 2)
+        alloc(-> cells[0].data, u64, 1)
+        alloc(-> cells[1].data, u64, 1)
+        steal(<-> cells, 1)
+        print_int(cells[0].data.len)
+    }
+    => 0
+}
+"#;
+    let messages = messages(source);
+    assert_eq!(
+        messages.len(),
+        1,
+        "the runtime index should poison every element, got {messages:#?}"
+    );
+    assert!(messages[0].contains("use of moved value 'cells'"));
+}
+
+#[test]
+fn giving_a_scalar_field_does_not_kill_the_owner() {
+    let source = r#"shape Counter [
+    label: [u8]
+    value: u64
+]
+
+flow take_value
+    <-> c: Counter
+    => u64
+{
+    => give(c.value)
+}
+
+flow main
+    => i32
+{
+    mut c <- Counter[ label: "x", value: 7 ]
+    print_int(take_value(<-> c))
+    print_int(c.value)
+    => 0
+}
+"#;
+    assert_clean(source);
+}
+
+#[test]
+fn partial_consumption_through_a_call_only_kills_the_consumed_field() {
+    let source = r#"shape Pair [
+    left: [u64]
+    right: [u64]
+]
+
+flow steal
+    <-> p: Pair
+    -> out: [u64]
+{
+    out = give(p.left)
+}
+
+flow main
+    => i32
+{
+    protect {
+        mut p: Pair
+        alloc(-> p.left, u64, 1)
+        alloc(-> p.right, u64, 1)
+        p.right[0] = 5
+        mut out: [u64]
+        steal(<-> p, -> out)
+        print_int(p.right[0])
+        print_int(p.left[0])
+    }
+    => 0
+}
+"#;
+    let messages = messages(source);
+    assert_eq!(
+        messages.len(),
+        1,
+        "only the consumed field should be dead, got {messages:#?}"
+    );
+    assert!(messages[0].contains("use of moved value 'p'"));
+}
+
+// ---------------------------------------------------------------------------
 // Phase 2: protect regions and alloc escape
 // ---------------------------------------------------------------------------
 
