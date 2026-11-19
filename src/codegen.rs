@@ -657,6 +657,11 @@ struct Generator<'a> {
     /// Shapes and choices in dependency order.
     type_order: Vec<TypeDecl>,
     function_order: Vec<String>,
+    /// Deep-clone helpers emitted on demand and inserted before function
+    /// definitions. Each helper allocates fresh arena storage for every slice
+    /// it reaches, so a clone never aliases its source.
+    clone_helpers: String,
+    clone_helpers_emitted: HashSet<String>,
     out: String,
     depth: usize,
     temp_counter: usize,
@@ -783,6 +788,8 @@ impl<'a> Generator<'a> {
             choice_order,
             type_order: Vec::new(),
             function_order,
+            clone_helpers: String::new(),
+            clone_helpers_emitted: HashSet::new(),
             out: String::new(),
             depth: 0,
             temp_counter: 0,
@@ -820,10 +827,13 @@ impl<'a> Generator<'a> {
         self.out.push_str(PRELUDE_TYPES);
         self.out.push('\n');
         self.emit_interfaces();
+        let helpers_at = self.out.len();
         self.emit_strings();
         self.emit_globals();
         self.emit_prototypes();
         self.emit_functions();
+        let helpers = std::mem::take(&mut self.clone_helpers);
+        self.out.insert_str(helpers_at, &helpers);
 
         if let Some(map_path) = self.source_map_path {
             self.write_source_map(map_path)?;
@@ -1381,6 +1391,132 @@ impl<'a> Generator<'a> {
             .find_map(|candidate| {
                 (candidate.name == variant).then(|| self.resolve_type(&candidate.ty))
             })
+    }
+
+    /// Whether a clone of `ty` must duplicate arena storage. Mirrors the
+    /// checker's slice containment using codegen's resolved type information.
+    fn ty_contains_slice(&self, ty: &Ty) -> bool {
+        self.ty_contains_slice_inner(ty, &mut HashSet::new())
+    }
+
+    fn ty_contains_slice_inner(&self, ty: &Ty, visited: &mut HashSet<String>) -> bool {
+        match ty {
+            Ty::Slice(_) => true,
+            Ty::Named(name) => {
+                if !visited.insert(name.clone()) {
+                    return false;
+                }
+                self.interfaces.get(name).is_some_and(|decl| {
+                    decl.fields.iter().any(|field| {
+                        self.ty_contains_slice_inner(&self.resolve_type(&field.ty), visited)
+                    })
+                })
+            }
+            Ty::Choice(name) => {
+                if !visited.insert(name.clone()) {
+                    return false;
+                }
+                self.choices.get(name).is_some_and(|decl| {
+                    decl.variants.iter().any(|variant| {
+                        self.ty_contains_slice_inner(&self.resolve_type(&variant.ty), visited)
+                    })
+                })
+            }
+            _ => false,
+        }
+    }
+
+    /// Stable C identifier suffix for a Loi type, used only to name clone
+    /// helpers. Nested slices spell out their element type so `[[u8]]` and
+    /// `[u8]` cannot collide.
+    fn clone_suffix(&self, ty: &Ty) -> String {
+        let raw = match ty {
+            Ty::Slice(element) => format!("slice_{}", self.clone_suffix(element)),
+            other => other.to_string(),
+        };
+        raw.chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() {
+                    ch.to_ascii_lowercase()
+                } else {
+                    '_'
+                }
+            })
+            .collect()
+    }
+
+    fn clone_helper_name(&self, ty: &Ty) -> String {
+        format!("loi_clone_{}", self.clone_suffix(ty))
+    }
+
+    /// Emit a deep-clone helper for `ty` (and, recursively, for every nested
+    /// type that owns a slice). Forward declarations go first so helpers may
+    /// call each other regardless of emission order.
+    fn ensure_clone_helper(&mut self, ty: &Ty) {
+        if !self.ty_contains_slice(ty) {
+            return;
+        }
+        let name = self.clone_helper_name(ty);
+        if !self.clone_helpers_emitted.insert(name.clone()) {
+            return;
+        }
+        let c_ty = self.c_type(ty);
+        self.clone_helpers.push_str(&format!(
+            "static inline {c_ty} {name}({c_ty}, size_t, size_t);\n"
+        ));
+
+        let mut body = format!(
+            "static inline {c_ty} {name}({c_ty} loi_src, size_t loi_line, size_t loi_column) {{\n"
+        );
+        match ty {
+            Ty::Slice(element) => {
+                let element_c = self.c_type(element);
+                body.push_str(&format!("    LoiSlice loi_result = loi_alloc_slice(loi_src.len, sizeof({element_c}), loi_line, loi_column);\n"));
+                if self.ty_contains_slice(element) {
+                    let element_helper = self.clone_helper_name(element);
+                    self.ensure_clone_helper(element);
+                    body.push_str(&format!(
+                        "    const {element_c}* loi_in = (const {element_c}*)loi_src.data;\n"
+                    ));
+                    body.push_str(&format!(
+                        "    {element_c}* loi_out = ({element_c}*)loi_result.data;\n"
+                    ));
+                    body.push_str("    for (size_t loi_i = 0; loi_i < loi_src.len; ++loi_i) {\n");
+                    body.push_str(&format!("        loi_out[loi_i] = {element_helper}(loi_in[loi_i], loi_line, loi_column);\n"));
+                    body.push_str("    }\n");
+                } else {
+                    body.push_str("    if (loi_src.len != 0) {\n");
+                    body.push_str(&format!("        memcpy(loi_result.data, loi_src.data, loi_src.len * sizeof({element_c}));\n"));
+                    body.push_str("    }\n");
+                }
+                body.push_str("    return loi_result;\n");
+            }
+            Ty::Named(shape) => {
+                let decl = self.interfaces.get(shape).copied();
+                body.push_str(&format!("    {c_ty} loi_result;\n"));
+                if let Some(decl) = decl {
+                    for field in &decl.fields {
+                        let field_ty = self.resolve_type(&field.ty);
+                        let field_c = self.c_field(&field.name);
+                        if self.ty_contains_slice(&field_ty) {
+                            let field_helper = self.clone_helper_name(&field_ty);
+                            self.ensure_clone_helper(&field_ty);
+                            body.push_str(&format!("    loi_result.{field_c} = {field_helper}(loi_src.{field_c}, loi_line, loi_column);\n"));
+                        } else {
+                            body.push_str(&format!(
+                                "    loi_result.{field_c} = loi_src.{field_c};\n"
+                            ));
+                        }
+                    }
+                }
+                body.push_str("    return loi_result;\n");
+            }
+            // Choices cannot carry slices (the checker rejects slice payloads),
+            // so a bit copy is complete for every choice type.
+            _ => body.push_str("    return loi_src;\n"),
+        }
+        body.push_str("}\n\n");
+        self.clone_helpers.push_str(&body);
     }
 
     fn emit_marks(&mut self, visible_only: bool) {
@@ -2692,7 +2828,22 @@ impl<'a> Generator<'a> {
                 );
                 Self::with_order(steps, code)
             }
-            ExprKind::Move(value) | ExprKind::Copy(value) => self.gen_expr(value),
+            ExprKind::Move(value) => self.gen_expr(value),
+            ExprKind::Copy(value) => {
+                let ty = self.ty_of(value).concretize();
+                if self.ty_contains_slice(&ty) {
+                    self.ensure_clone_helper(&ty);
+                    let helper = self.clone_helper_name(&ty);
+                    let (steps, values) = self.order_values(vec![(value, None)]);
+                    let code = format!(
+                        "{helper}({}, {}, {})",
+                        values[0], expr.span.line, expr.span.column
+                    );
+                    Self::with_order(steps, code)
+                } else {
+                    self.gen_expr(value)
+                }
+            }
             ExprKind::Member { base, field } => {
                 if let ExprKind::Ident(name) = &base.kind
                     && self.marks.contains_key(name)

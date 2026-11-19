@@ -368,10 +368,74 @@ fn checks_alloc_targets_and_element_types() {
 }
 
 #[test]
-fn rejects_copy_of_values_containing_slices() {
-    assert_message(
+fn clone_of_slice_containing_shape_is_allowed() {
+    // A2: clone is a deep copy, so cloning a shape that contains a slice is no
+    // longer a checker error. The allocation belongs to the caller's arena.
+    assert_clean(
         "shape World [\n    particles: [i32]\n]\n\nflow f\n    <- w: World\n    => World\n{\n    => clone(w)\n}\n",
-        "cannot copy a value of type World because it contains a slice",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Block A2: recursive clone with slices
+// ---------------------------------------------------------------------------
+
+#[test]
+fn clone_of_a_slice_inside_protect_is_allowed() {
+    assert_clean(
+        "flow main\n    => i32\n{\n    protect {\n        xs: [u8] <- \"hi\"\n        mut ys: [u8] <- clone(xs)\n        ys[0] = 65\n        print_int(xs[0])\n        print_int(ys[0])\n    }\n    => 0\n}\n",
+    );
+}
+
+#[test]
+fn clone_of_a_shape_with_a_slice_field_inside_protect_is_allowed() {
+    assert_clean(
+        "shape World [\n    particles: [i32]\n]\n\nflow main\n    => i32\n{\n    protect {\n        mut w: World\n        alloc(-> w.particles, i32, 2)\n        w.particles[0] = 1\n        w.particles[1] = 2\n        mut copy: World <- clone(w)\n        copy.particles[0] = 9\n        print_int(w.particles[0])\n        print_int(copy.particles[0])\n    }\n    => 0\n}\n",
+    );
+}
+
+#[test]
+fn clone_of_nested_shapes_with_slices_is_allowed() {
+    assert_clean(
+        "shape Inner [\n    data: [u64]\n]\n\nshape Outer [\n    left: Inner\n    right: Inner\n]\n\nflow main\n    => i32\n{\n    protect {\n        mut o: Outer\n        alloc(-> o.left.data, u64, 1)\n        alloc(-> o.right.data, u64, 1)\n        o.left.data[0] = 3\n        o.right.data[0] = 4\n        mut copy: Outer <- clone(o)\n        copy.left.data[0] = 7\n        print_int(o.left.data[0])\n        print_int(copy.right.data[0])\n    }\n    => 0\n}\n",
+    );
+}
+
+#[test]
+fn clone_does_not_consume_the_source() {
+    assert_clean(
+        "flow main\n    => i32\n{\n    protect {\n        xs: [u8] <- \"abc\"\n        mut ys: [u8] <- clone(xs)\n        print_int(xs.len)\n        print_int(ys.len)\n    }\n    => 0\n}\n",
+    );
+}
+
+#[test]
+fn clone_of_a_slice_outside_protect_is_rejected() {
+    assert_message(
+        "flow main\n    => i32\n{\n    xs: [u8] <- \"hi\"\n    mut copy: [u8] <- clone(xs)\n    => copy.len as i32\n}\n",
+        "can allocate outside a 'protect' block",
+    );
+}
+
+#[test]
+fn clone_result_cannot_escape_the_protect_block() {
+    assert_message(
+        "flow main\n    => i32\n{\n    mut escaped: [u8]\n    protect {\n        xs: [u8] <- \"hi\"\n        escaped = clone(xs)\n    }\n    => escaped.len as i32\n}\n",
+        "value allocated inside 'protect' escapes the block",
+    );
+}
+
+#[test]
+fn clone_inside_a_caller_protect_is_allowed_through_a_flow() {
+    assert_clean(
+        "shape Cell [\n    data: [u64]\n]\n\nflow duplicate\n    <- c: Cell\n    => Cell\n{\n    => clone(c)\n}\n\nflow main\n    => i32\n{\n    protect {\n        mut c: Cell\n        alloc(-> c.data, u64, 1)\n        c.data[0] = 5\n        mut d: Cell <- duplicate(c)\n        print_int(d.data[0])\n    }\n    => 0\n}\n",
+    );
+}
+
+#[test]
+fn clone_outside_protect_through_a_flow_is_rejected() {
+    assert_message(
+        "shape Cell [\n    data: [u64]\n]\n\nflow duplicate\n    <- c: Cell\n    => Cell\n{\n    => clone(c)\n}\n\nflow main\n    => i32\n{\n    mut c: Cell\n    alloc(-> c.data, u64, 1)\n    mut d: Cell <- duplicate(c)\n    => d.data[0] as i32\n}\n",
+        "can allocate outside a 'protect' block",
     );
 }
 

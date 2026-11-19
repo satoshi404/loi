@@ -1238,3 +1238,176 @@ flow main
     assert_eq!(run.status.code(), Some(0));
     assert_eq!(String::from_utf8_lossy(&run.stdout), "321");
 }
+
+// ---------------------------------------------------------------------------
+// Block A2: recursive clone with slices
+// ---------------------------------------------------------------------------
+
+#[test]
+fn recursive_clone_of_a_shape_creates_independent_storage() {
+    let source = r#"shape World [
+    particles: [i32]
+]
+
+flow main
+    => i32
+{
+    protect {
+        mut w: World
+        alloc(-> w.particles, i32, 2)
+        w.particles[0] = 1
+        w.particles[1] = 2
+        mut copy: World <- clone(w)
+        copy.particles[0] = 9
+        print_int(w.particles[0])
+        print_int(copy.particles[0])
+        print_int(w.particles[1])
+        print_int(copy.particles[1])
+    }
+    => 0
+}
+"#;
+    let c = generated(source);
+    assert!(
+        c.contains("loi_clone_world"),
+        "expected a generated shape clone helper:\n{c}"
+    );
+    assert!(
+        c.contains("loi_clone_slice_i32"),
+        "expected a generated slice clone helper:\n{c}"
+    );
+    assert_strict_c11("recursive-clone-shape", &c);
+    assert_sanitizers_compile("recursive-clone-shape", &c);
+    let Some(run) = compile_and_run_output("recursive-clone-shape", &c, "") else {
+        return;
+    };
+    assert_eq!(run.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "1922");
+}
+
+#[test]
+fn recursive_clone_of_nested_shapes_creates_independent_storage() {
+    let source = r#"shape Inner [
+    data: [u64]
+]
+
+shape Outer [
+    left: Inner
+    right: Inner
+]
+
+flow main
+    => i32
+{
+    protect {
+        mut o: Outer
+        alloc(-> o.left.data, u64, 1)
+        alloc(-> o.right.data, u64, 1)
+        o.left.data[0] = 3
+        o.right.data[0] = 4
+        mut copy: Outer <- clone(o)
+        copy.left.data[0] = 7
+        copy.right.data[0] = 8
+        print_int(o.left.data[0])
+        print_int(copy.left.data[0])
+        print_int(o.right.data[0])
+        print_int(copy.right.data[0])
+    }
+    => 0
+}
+"#;
+    let c = generated(source);
+    assert_strict_c11("recursive-clone-nested", &c);
+    assert_sanitizers_compile("recursive-clone-nested", &c);
+    let Some(run) = compile_and_run_output("recursive-clone-nested", &c, "") else {
+        return;
+    };
+    assert_eq!(run.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "3748");
+}
+
+#[test]
+fn recursive_clone_of_a_slice_copies_elements() {
+    let source = r#"flow main
+    => i32
+{
+    protect {
+        xs: [u8] <- "abc"
+        mut ys: [u8] <- clone(xs)
+        ys[0] = 90
+        print_int(xs[0])
+        print_int(ys[0])
+        print_int(xs.len)
+        print_int(ys.len)
+    }
+    => 0
+}
+"#;
+    let c = generated(source);
+    assert_strict_c11("recursive-clone-slice", &c);
+    assert_sanitizers_compile("recursive-clone-slice", &c);
+    let Some(run) = compile_and_run_output("recursive-clone-slice", &c, "") else {
+        return;
+    };
+    assert_eq!(run.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "979033");
+}
+
+#[test]
+fn recursive_clone_of_nested_slices_creates_independent_rows() {
+    let source = r#"flow main
+    => i32
+{
+    protect {
+        mut rows: [[u8]]
+        alloc(-> rows, [u8], 2)
+        alloc(-> rows[0], u8, 1)
+        alloc(-> rows[1], u8, 1)
+        rows[0][0] = 10
+        rows[1][0] = 20
+        mut copy: [[u8]] <- clone(rows)
+        copy[0][0] = 99
+        print_int(rows[0][0])
+        print_int(copy[0][0])
+        print_int(rows[1][0])
+        print_int(copy[1][0])
+    }
+    => 0
+}
+"#;
+    let c = generated(source);
+    assert!(
+        c.contains("loi_clone_slice_slice_u8"),
+        "expected a nested-slice clone helper:\n{c}"
+    );
+    assert_strict_c11("recursive-clone-nested-slices", &c);
+    assert_sanitizers_compile("recursive-clone-nested-slices", &c);
+    let Some(run) = compile_and_run_output("recursive-clone-nested-slices", &c, "") else {
+        return;
+    };
+    assert_eq!(run.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "10992020");
+}
+
+#[test]
+fn clone_of_an_empty_slice_is_safe() {
+    let source = r#"flow main
+    => i32
+{
+    protect {
+        xs: [u64] <- [u64:]
+        mut ys: [u64] <- clone(xs)
+        print_int(ys.len)
+    }
+    => 0
+}
+"#;
+    let c = generated(source);
+    assert_strict_c11("recursive-clone-empty", &c);
+    assert_sanitizers_compile("recursive-clone-empty", &c);
+    let Some(run) = compile_and_run_output("recursive-clone-empty", &c, "") else {
+        return;
+    };
+    assert_eq!(run.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "0");
+}

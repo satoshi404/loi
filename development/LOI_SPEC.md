@@ -243,7 +243,7 @@ a <- 7
 b <- give(a)         // a is no longer usable
 ```
 
-- There is no implicit copy of composite values. `clone(x)` makes an explicit duplicate in new memory.
+- There is no implicit copy of composite values. `clone(x)` makes an explicit duplicate in new memory. For values that contain slices the duplicate is deep: each slice gets fresh arena storage, nested shapes are cloned recursively, and the source stays live and unchanged. Because it allocates, such a clone requires an active `protect` region (or a flow whose caller supplies one), and its result may not escape that region. Slice-free composites remain a bit-wise copy.
 - Two names for the same address is a compile error (**double reference**).
 - `<->` is exclusive: while a value is passed as `<->`, no other use of it is allowed in the same call.
 - Passing the same value twice as `<-` (`f(a, a)`) is allowed, because both are reads.
@@ -251,7 +251,7 @@ b <- give(a)         // a is no longer usable
 - Partial moves are path-sensitive: giving a composite field or element kills only that place, leaves siblings alive, and can be reversed by writing the place again. Giving a scalar sub-place copies it without killing the owner; giving a whole scalar variable remains an explicit transfer.
 - A consumed path containing a runtime index is a wildcard over every element of that slice. Reads of any element are rejected until the whole slice is reinitialized.
 - Function-effect summaries carry consumed paths, so a callee that gives `p.left` kills only `p.left` at the call site.
-- `clone` of a type that contains a slice is a compile error (confirmed in 5.7).
+- A deep `clone` of a slice-containing type allocates in the current `protect` region; out-of-region clones and escaping results are compile errors (see 5.7, updated by Block A2).
 - `give(x)` is a compiler intrinsic, not an ordinary function: it kills the variable. The parser must treat it specially.
 
 ### 4.4 Results: `->` and `=>`
@@ -571,18 +571,27 @@ guard file <- file_open("data.bin") {
 `read_file`, `write_file`, `read_stdin` and `read_line` intrinsics, but there
 is no long-lived file/socket handle API or `guard` yet.
 
-### 5.7 Scalar and composite copy — confirmed (question 7)
+### 5.7 Scalar and composite copy — confirmed (question 7), revised by Block A2
 
-**Decision:** the Phase 2 rules are confirmed.
+**Decision:** the Phase 2 rules were confirmed, then extended by Block A2 to
+support recursive deep clones.
 
 - Scalars (`i32`, `f64`, `bool`, ...) copy implicitly: they have no identity, no address and no destructor.
-- `clone(x)` is a deep value duplication for slice-free composites.
-- `clone` of any value that contains a slice (directly or through a shape) is rejected: a copy would either alias the slice (forbidden) or allocate memory without a region/length policy.
-- Slices and slice-containing composites move with `give`/ownership transfer, or are duplicated later by an explicit allocating operation such as `dup` in the standard library.
+- `clone(x)` duplicates a slice-free composite bit-wise (no allocation).
+- A `clone` of a value containing a slice (directly, in a nested shape, or as a slice of slice-containing elements) is a **deep copy**: every slice gets fresh arena storage via the current region, so the result never aliases the source. The source is only read and stays live.
+- The clone's result carries the active `protect` region. A clone outside every
+  `protect` (including through a flow) is rejected as an unguarded allocation,
+  and a clone result may not escape its region. A flow whose body deep-clones is
+  treated as an allocator: callers must cover it with `protect`.
+- Slices and slice-containing composites still move with `give`/ownership transfer.
 
-**Why:** this is the smallest rule that keeps single ownership sound today. An allocating copy needs an allocator and a policy for nested slices, which belongs to the library/region design.
+**Why:** the original rejection avoided aliasing but blocked ordinary collection
+use (`Vec<[u8]>`). With a lexical `protect` region the allocator and lifetime
+policy already exist, so `clone` can allocate fresh storage with no dangling
+aliases. Helper generation is type-directed and recursive; choices cannot carry
+slices, so their helpers stay bit-wise.
 
-**Status:** implemented and covered by the Phase 2 tests.
+**Status:** implemented and covered by Block A2 checker and codegen tests.
 
 ### 5.8 File extension — `.loi` (question 8)
 

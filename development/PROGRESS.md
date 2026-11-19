@@ -4,7 +4,26 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-19, Block A1):** `give` on a field or element now
+- **Current task (2026-11-19, Block A2):** `clone` is now a recursive deep copy.
+  When a value contains slices, every slice gets fresh arena storage, nested
+  shapes are cloned recursively, and the source stays live and unchanged;
+  slice-free types keep the bit-wise copy. Because it allocates, a deep clone
+  requires an active `protect` region (directly or through a flow); clones
+  outside `protect` and results escaping the region are compile errors, and a
+  flow that deep-clones propagates the allocation effect to its callers via a
+  `clone_allocators` fixpoint. The checker resolves place/return types in the
+  effect prepass and rewrites `collect_value_regions` so clone results carry the
+  active region instead of the source's taints. The C backend emits on-demand
+  type-directed `static inline` clone helpers with forward declarations:
+  `memcpy` for slices of scalar elements, a helper per element for slice-of-
+  composite, and bit-copy for types without slices. Nine checker tests (the old
+  slice-clone rejection test inverted), five codegen tests (strict C11 +
+  sanitizer compile-only + run) and one library test (`Vec<[u8]>`) cover the
+  feature; a `Vec<[u8]>` probe prints `9798` and exits 0. Rules are documented
+  in `SINTAXE.md` §11/§14, `LOI_SPEC.md` §4.3/§5.7, `website/docs.html`,
+  `FRICTION.md` (slice-containing element and map-key restrictions lifted) and
+  `DECISIONS.md`.
+- **Previous task (2026-11-19, Block A1):** `give` on a field or element now
   consumes only that ownership path when the sub-place is composite. Scalar
   sub-places are copied without killing the owner; whole-variable `give` keeps
   its existing transfer rule. A runtime index in a consumed path is a wildcard
@@ -61,7 +80,26 @@
   finalized CRC values zlib-style. `map_*_get_or` and `map_*_lookup` return a
   default or a `found` status in one scan. `vec_reserve` is exported and the
   docs explain pre-sizing because the arena retains older growth blocks.
-- **Verification for the current task:** the five A1 checker tests and the
+- **Verification for the current task (Block A2):** the nine new checker tests
+  and five new codegen tests were written first; the inverted
+  `clone_of_slice_containing_shape_is_allowed` failed against the old rejection
+  and the rest failed at check time. After the implementation all new tests
+  pass, including the `Vec<[u8]>` library test. Final gate command:
+  `export PATH="/root/.cargo/bin:$PATH"; export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets && python3 tools/sync_examples.py --check && git diff --check`.
+  All five checks exited 0; `cargo test --all-targets` reported **360 passed,
+  0 failed** (lib 22 + main 6 + bindgen 1 + checker 128 + cli 42 + codegen 57 +
+  const_values 5 + errors 3 + header 4 + lexer 8 + lib-integration 34 + msrv 1 +
+  order 6 + parser 26 + pretty 17). The clone tests compile the generated C
+  under strict C11 and with sanitizers compile-only, and run it; no ASan
+  execution is claimed in this PRoot container. Generated C changes only for
+  clone of slice-containing values: new `static inline loi_clone_<type>` helpers
+  call `loi_alloc_slice` in the active arena; no existing ABI or runtime helper
+  signature changed. `benchmark/run.py` (min of 9, pinned CPU 6, GCC 15.2.0)
+  before/after Loi/C ratios: hash 1.009→0.995, crc32 1.115→1.114,
+  sort 1.325→1.335, int_map 1.234→1.182, str_map 0.798→0.839,
+  random 0.990→1.002. The benchmarked programs clone scalar values only, so
+  their emitted C is unchanged and the differences are noise.
+- **Verification for Block A1:** the five A1 checker tests and the
   codegen swap test were written first and failed with the original whole-root
   consumption (`3 failed` in `checker`; codegen blocked at check time). After
   the implementation all new tests pass. Final gate command:
@@ -409,11 +447,11 @@
 | Lexer | Working | Canonical Flow Syntax only; strings with decoded escapes; decimal/hex/binary integers; floats; `<-`/`->`/`<->`/`=>` glyphs; bitwise/shift/compound tokens; `//` comments collected for `fmt` |
 | AST / parser | Working | Shapes and generic shapes, flows and generic flows, `extern flow ... as`, `opaque`, imports, globals, slice/shape literals, `give`/`clone`/`alloc`, `protect`, loops, bitwise/shift precedence, `comptime flow`/`comptime expr`, explicit type arguments |
 | Pretty-printer | Working | Emits canonical Flow Syntax including generics and `comptime`; idempotent on all canonical files; `loi fmt` preserves `//` comments (`format_program` remains comment-free) |
-| Type checker | Working | Types, literals, directions, calls, globals, intrinsics, `opaque`/`cstr`, constant folding, shape-cycle detection, bitwise/shift rules, I/O intrinsic signatures and allocation effects; monomorphization feeds concrete declarations into the checker and diagnostics show source generic spellings |
+| Type checker | Working | Types, literals, directions, calls, globals, intrinsics, `opaque`/`cstr`, constant folding, shape-cycle detection, bitwise/shift rules, I/O intrinsic signatures and allocation effects (including deep-clone allocators); monomorphization feeds concrete declarations into the checker and diagnostics show source generic spellings |
 | Compile-time evaluation | Working | `src/const_eval.rs`: pure `comptime flow` interpreter with step/depth limits, constant globals and shape defaults, `comptime expr`, purity diagnostics |
 | Diagnostics | Working | `src/diagnostic.rs`: human output with full source underlines (multi-line spans get `...`), secondary labels and an error summary; `short` keeps `path:line:column: message`; `json` emits structured objects with `end_line`/`end_column`; ANSI colors honor `NO_COLOR`/`CLICOLOR_FORCE`; unknown names get namespace-aware edit-distance suggestions; parser spans carry exact token ends and multi-line end lines with a line-scan fallback |
-| Ownership | Working | Give liveness, definite assignment/return, exclusive `->`/`<->`, cross-flow consumption, `protect` taints and lexical-block escape analysis for slice literals, `read_file`/`read_stdin`/`read_line`; gives from globals are rejected and move state is per function body |
-| C backend | Working | One C11 translation unit, ordered shape layouts, checked arithmetic, bitwise/shift helpers, growable arena, bounds checks, defaults, headers, source maps, multi-file objects, statics, file/stdin I/O and numeric printing |
+| Ownership | Working | Give liveness, path-sensitive partial moves, definite assignment/return, exclusive `->`/`<->`, cross-flow consumption, `protect` taints and lexical-block escape analysis for slice literals and deep-clone results, `read_file`/`read_stdin`/`read_line`; gives from globals are rejected and move state is per function body |
+| C backend | Working | One C11 translation unit, ordered shape layouts, checked arithmetic, bitwise/shift helpers, growable arena, recursive on-demand deep-clone helpers, bounds checks, defaults, headers, source maps, multi-file objects, statics, file/stdin I/O and numeric printing |
 | C interop | Working | `opaque` → `void *`, `cstr` → `const char *`, bodyless `extern flow`, `--c-source`, `--cc-flag`; string literals coerce to `cstr` |
 | Library | Working | `lib/std.loi` (scalar/string helpers), `lib/math.loi` (generic and `comptime`), `lib/ctype.loi` (pure ASCII helpers), `lib/os.loi`/`lib/net.loi` (thin POSIX bindings with C shims); prefixed names, explicitly imported, 7 integration tests |
 | Binding generator | Working | `tools/bindgen/bindgen.py` emits `opaque` handles, safe `shape`s, typed constants, `extern flow`s, a `memcpy` shim with `_Static_assert` checks and a skip report |
@@ -425,7 +463,7 @@
 
 ## Verification
 
-Last verified 2026-11-19 for the review follow-up with:
+Last verified 2026-11-19 for Block A2 with:
 
 ```sh
 export PATH="/root/.cargo/bin:$PATH"
@@ -437,29 +475,29 @@ python3 tools/sync_examples.py --check
 git diff --check
 ```
 
-- All five checks exited 0. `cargo test --all-targets` reported **339 passed,
-  0 failed** (lib 22, main 6, bindgen 1, checker 114, cli 42, codegen 51,
-  const_values 5, errors 3, header 4, lexer 8, lib-integration 33, msrv 1,
+- All five checks exited 0. `cargo test --all-targets` reported **360 passed,
+  0 failed** (lib 22, main 6, bindgen 1, checker 128, cli 42, codegen 57,
+  const_values 5, errors 3, header 4, lexer 8, lib-integration 34, msrv 1,
   order 6, parser 26, pretty 17).
 - `LOI_TEST_CLANG=/definitely/not/clang cargo test --test order -- --nocapture`
   ran all 6 order tests and printed one skip message per test with no failure.
   With clang present, all 6 ran differentially against GCC 15.2.0 (`cc`) and
   clang 21.1.8. No ASan execution is claimed in this PRoot container.
-- `benchmark/run.py --output /tmp/opencode/bench_followup_{before,after}.json`
+- `benchmark/run.py --output /tmp/opencode/bench_{a1_after,a2_after}.json`
   (minimum of 9 runs, pinned CPU 6, GCC 15.2.0, identical checksums) measured
   these Loi/C ratios:
 
   | benchmark | before | after |
   |---|---:|---:|
-  | hash | 0.998 | 1.004 |
-  | crc32 | 1.111 | 1.145 |
-  | sort | 1.336 | 1.376 |
-  | int_map | 1.261 | 1.194 |
-  | str_map | 1.213 | 0.855 |
-  | random | 0.991 | 0.992 |
+  | hash | 1.009 | 0.995 |
+  | crc32 | 1.115 | 1.114 |
+  | sort | 1.325 | 1.335 |
+  | int_map | 1.234 | 1.182 |
+  | str_map | 0.798 | 0.839 |
+  | random | 0.990 | 1.002 |
 
-  The patch changes no generated C; the ratios are recorded as measured rather
-  than attributed to the patch.
+  The benchmarks clone scalar values only, so their generated C is unchanged;
+  the ratios are recorded as measured rather than attributed to the patch.
 
 Previously verified 2026-11-18 after the canonical example expansion with:
 
@@ -564,8 +602,9 @@ for f in lib/std.loi lib/math.loi lib/ctype.loi lib/os.loi lib/net.loi; do ./tar
 - Slice literals are rejected when they escape their block through a return, a
   variable declared outside the block or a shape that escapes. This is lexical
   escape analysis, not a full interprocedural lifetime system.
-- `clone` of any value containing a slice is rejected, recursively through
-  shapes.
+- `clone` of a slice-containing value is a deep copy and therefore allocates;
+  it is rejected outside every `protect` region, and its result may not escape
+  that region. Slice-free composites still copy bit-wise without allocation.
 - There are no implicit conversions between named numeric types. Unsuffixed
   literals coerce; a literal that does not fit the expected type is rejected,
   while explicit `as` casts truncate without a range check.
@@ -686,9 +725,8 @@ Remaining implementation or secondary choices:
 
 ## Next Steps
 
-1. Block A2: recursive `clone` for slice-containing composites, with explicit
-   allocation/region rules; then remove the clone-only restrictions in
-   `lib/vec.loi` and `lib/slice.loi`.
+1. Block A2: done — recursive deep `clone` with `protect`-scoped allocation;
+   `Vec<[u8]>` works and the library docs no longer require slice-free `T`.
 2. Block A3: lexical views/borrows so a partially consumed composite can still
    be passed to a read-only flow that only touches live fields.
 3. Block A4: slice literals and writable length/out-param support for empty

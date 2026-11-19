@@ -539,8 +539,15 @@ xs.len         // u64
   // a is dead here
   ```
 
-- `clone(x)` makes an explicit duplicate. It is required for composite values
-  and rejected for any value that contains a slice.
+- `clone(x)` makes an explicit duplicate. It is required for composite values.
+  The source is only read, so it stays live after the clone.
+- `clone` is a **deep copy**: when the value contains slices, every slice gets
+  fresh arena storage, so mutating the clone never changes the source (and vice
+  versa). Shapes and nested shapes are cloned recursively. Types without slices
+  are still copied bit-wise.
+- A deep clone allocates, so it is only legal inside a `protect` region (directly
+  or through a flow whose caller provides one). Its result may not escape that
+  region.
 - Scalars copy implicitly; `clone` is never needed for them.
 - `give(x.field)` and `give(x[i])` consume only that place when it holds a
   composite value. Siblings stay live, and a later write to the consumed place
@@ -726,8 +733,9 @@ shapes are `open` so generated headers can expose them; internal helpers stay
 `sealed`. An exported allocator still needs a caller's `protect` region — Loi
 callers are checked, and foreign callers follow the same contract.
 `lib/vec.loi` and `lib/slice.loi` are pure Loi; `Vec<T>` stores cloned values,
-so `T` must be cloneable without slice fields, and ordering/search flows accept
-numeric `T` only. The arena keeps older growth blocks until `protect` ends, so
+so `clone<T>` must be available — including recursive deep clones for `T` that
+contain slices. Ordering/search flows accept numeric `T` only. The arena keeps
+older growth blocks until `protect` ends, so
 pre-size with `vec_reserve<T>` when the final length is known to avoid repeated
 growth and its peak memory. `lib/string.loi` returns owned `[u8]` values, so
 its transforming flows need the caller's `protect`; its queries do not.
@@ -738,9 +746,10 @@ little-endian bytes, and needs no `protect`. `lib/crc32.loi` is also pure:
 slice. `crc32_update` folds raw chunk state, while `crc32_extend` continues an
 already finalized CRC in the same way as zlib's `crc32(crc, buf)`.
 `lib/map.loi` provides `IntMap<V>` and `StrMap<V>` with linear scans and
-value-only generics: `V` must be cloneable without slice fields. `StrMap<V>`
-stores byte keys in one contiguous arena buffer, so no slice-of-slices value is
-formed. Mutations need the caller's `protect`. `map_int_get` / `map_str_get`
+value-only generics: `V` must be cloneable (recursive deep clone covers values
+that contain slices). `StrMap<V>` stores byte keys in one contiguous arena
+buffer, so no slice-of-slices value is formed. Mutations need the caller's
+`protect`. `map_int_get` / `map_str_get`
 abort on a missing key with a flow-naming message; prefer `map_*_get_or` for a
 fallback value or `map_*_lookup` for a `found` status plus a default, both of
 which scan the map once. `lib/random.loi` is a pure, seeded xorshift64*

@@ -555,6 +555,39 @@ open flow main
 }
 
 #[test]
+fn vec_library_stores_slice_elements_with_independent_storage() {
+    assert_ok_with_c_variants(
+        "vec-slice-elements",
+        &["vec.loi"],
+        r#"
+open flow main
+    => i32
+{
+    protect {
+        mut rows: Vec<[u8]>
+        vec_new<[u8]>(-> rows)
+        mut first: [u8]
+        alloc(-> first, u8, 2)
+        first[0] = 97
+        first[1] = 98
+        vec_push<[u8]>(<-> rows, first)
+        first[0] = 90
+        mut got: [u8] <- vec_get<[u8]>(rows, 0)
+        if got[0] != 97 or got[1] != 98 { => 1 }
+        got[0] = 91
+        mut again: [u8] <- vec_get<[u8]>(rows, 0)
+        if again[0] != 97 { => 2 }
+        print("vec slice elements ok\n")
+    }
+    => 0
+}
+"#,
+        &[],
+        "vec slice elements ok\n",
+    );
+}
+
+#[test]
 fn slice_library_covers_every_flow_and_cloneable_elements() {
     assert_ok_with_c_variants(
         "slice-core",

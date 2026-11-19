@@ -46,9 +46,11 @@ composites that recursively clones slice fields. Until then `Vec<T>` is
 documented as requiring cloneable `T`: scalars and shapes whose fields are
 themselves cloneable without slices.
 
-Resolved by Block A1: giving a composite element now consumes only that
-element path, and cross-flow consumption summaries are path-sensitive. The
-recursive clone requirement remains open and is tracked as Block A2.
+Resolved by Block A1 (giving a composite element now consumes only that element
+path, with path-sensitive cross-flow summaries) and Block A2 (`clone` is now a
+recursive deep copy: slice-containing `T`, including `Vec<[u8]>`, works). The
+`clone`-inside-`protect` rule supplies the allocation region; the previously
+blocked `vec_proto2.loi` pattern now type-checks and runs.
 
 A follow-up attempt to replace `clone` with `give` in `vec_reserve`, `vec_pop`,
 `vec_swap` and `slice_swap` exposed a second limitation: after a composite
@@ -205,19 +207,21 @@ matches a bitwise reference on known vectors and seeded data.
 ### Slice keys are stored in a contiguous buffer
 
 Attempted design: `StrMap<V>` with a `keys: [[u8]]` field so each entry owns its
-key slice directly. This is the same slice-containing-composite limitation
-already recorded in Phase 1: slices cannot be cloned recursively and moving one
-out of an inout composite consumes the map. No new diagnostic was needed for
-this phase; the Phase 1 record applies unchanged.
+key slice directly. This was the same slice-containing-composite limitation
+recorded in Phase 1: slices could not be cloned recursively and moving one out
+of an inout composite consumed the map. No new diagnostic was needed for this
+phase; the Phase 1 record applied unchanged.
 
-Language requirement: recursive clone for slice fields, or moving a single
-element out of an inout composite without consuming the owner. Current
-workaround: store all key bytes in one `keys: [u8]` arena buffer and keep
-`starts` / `lengths` arrays describing each key. No slice-of-slices value is
-ever formed.
+Block A1 (path-sensitive partial moves) and Block A2 (recursive deep `clone`)
+lift the language restriction, so a `[[u8]]` value is now representable. The
+current contiguous-buffer design is retained deliberately: storing all key
+bytes in one `keys: [u8]` arena buffer with `starts` / `lengths` arrays avoids a
+per-key allocation and keeps rehashing cheap. It is no longer a workaround for
+a checker limitation.
 
 No other Phase 4 design was blocked. `IntMap<V>` and `StrMap<V>` are generic
-only over `V`, which is documented as cloneable without slice fields.
+only over `V`, which must be cloneable (recursive deep clone now covers values
+that contain slices).
 
 ## Phase 5 — `lib/random.loi`
 

@@ -584,9 +584,14 @@ print(other.x)</code></pre>
           </div>
           <ul>
             <li><code>give(x)</code> transfers ownership and kills <code>x</code>.</li>
-            <li><code>clone(x)</code> duplicates composite values explicitly.</li>
-            <li><code>clone</code> of a value containing a slice is rejected: two names must not
-              alias the same backing array.</li>
+            <li><code>clone(x)</code> duplicates composite values explicitly; the source stays
+              live.</li>
+            <li><code>clone</code> is a deep copy: when the value contains slices, every slice
+              gets fresh arena storage and nested shapes are cloned recursively, so the two
+              values never alias. Slice-free types are still copied bit-wise.</li>
+            <li>A deep clone allocates, so it must run inside <code>protect</code> (directly or
+              through a flow whose caller provides one), and its result may not escape the
+              region.</li>
             <li>Scalars (<code>i32</code>, <code>f64</code>, <code>bool</code>, ...) copy
               implicitly because they have no identity and no destructor.</li>
             <li>Composite values never copy implicitly.</li>
@@ -888,8 +893,9 @@ xs[j] = tmp</code></pre>
             are checked, and foreign callers follow the same contract.
             <code>lib/vec.loi</code> and <code>lib/slice.loi</code> are pure
             Loi. <code>Vec&lt;T&gt;</code> stores cloned values, so
-            <code>T</code> must be cloneable without slice fields, and
-            ordering/search flows accept numeric <code>T</code> only. The arena
+            <code>clone&lt;T&gt;</code> must be available — including recursive
+            deep clones for <code>T</code> that contain slices; ordering/search
+            flows accept numeric <code>T</code> only. The arena
             keeps older growth blocks until <code>protect</code> ends, so
             pre-size with <code>vec_reserve&lt;T&gt;</code> when the final
             length is known to avoid repeated growth and its peak memory.
@@ -906,7 +912,8 @@ xs[j] = tmp</code></pre>
             same way as zlib's <code>crc32(crc, buf)</code>.
             <code>lib/map.loi</code> provides <code>IntMap&lt;V&gt;</code> and
             <code>StrMap&lt;V&gt;</code> with linear scans and value-only
-            generics: <code>V</code> must be cloneable without slice fields.
+            generics: <code>V</code> must be cloneable (recursive deep clone now
+            covers values that contain slices).
             <code>StrMap&lt;V&gt;</code> stores byte keys in one contiguous
             arena buffer, so no slice-of-slices value is formed. Mutations need
             the caller's <code>protect</code>. <code>map_int_get</code> /

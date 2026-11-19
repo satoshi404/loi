@@ -201,8 +201,10 @@ enum RegionKind {
 /// Effects collected from one function body before body checking.
 #[derive(Default)]
 struct FunctionScan {
-    /// An `alloc` outside every lexical `protect`.
+    /// An `alloc` or slice-cloning `clone` outside every lexical `protect`.
     direct_alloc: bool,
+    /// A slice-cloning `clone` anywhere in this function.
+    clone_direct: bool,
     /// Calls made outside every lexical `protect`.
     unguarded_deps: Vec<String>,
     /// Every called function name.
@@ -265,6 +267,10 @@ struct Checker {
     /// Function names that can allocate without a lexical `protect` in this
     /// function (directly or through another such function).
     unguarded_allocators: HashSet<String>,
+    /// Function names whose result carries storage allocated by a recursive
+    /// `clone` of a slice-containing type. Used to taint call results with the
+    /// caller's active `protect` region.
+    clone_allocators: HashSet<String>,
     /// Per function, the root-relative places each parameter may lose through
     /// the call. `""` means the whole parameter.
     param_consumption: HashMap<String, Vec<HashSet<String>>>,
@@ -296,6 +302,7 @@ impl Checker {
             reachable: true,
             loop_depth: 0,
             unguarded_allocators: HashSet::new(),
+            clone_allocators: HashSet::new(),
             param_consumption: HashMap::new(),
             global_names: HashSet::new(),
             region_parents: Vec::new(),
@@ -1022,6 +1029,36 @@ impl Checker {
         }
     }
 
+    /// Side-effect-free type resolution for the effect prepass and region
+    /// tracking. Unknown names become `Ty::Error`; diagnostics are produced by
+    /// the real body check, so this helper must never emit any.
+    fn resolve_type_pure(&self, ty: &Type) -> Ty {
+        match ty {
+            Type::Named(name, _) => {
+                if let Some(primitive) = Ty::from_name(name) {
+                    primitive
+                } else if name == "cstr" {
+                    Ty::CStr
+                } else if self.interfaces.contains_key(name) {
+                    Ty::Named(name.clone())
+                } else if self.marks.contains_key(name) {
+                    Ty::Mark(name.clone())
+                } else if self.choices.contains_key(name) {
+                    Ty::Choice(name.clone())
+                } else if self.opaques.contains(name) {
+                    Ty::Opaque(name.clone())
+                } else {
+                    Ty::Error
+                }
+            }
+            Type::Slice(element, _) => Ty::Slice(Box::new(self.resolve_type_pure(element))),
+            Type::Generic(name, _, _) => {
+                let _ = name;
+                Ty::Error
+            }
+        }
+    }
+
     /// Like [`types::assignable`], with the single literal coercion the FFI
     /// boundary needs: a string literal may initialize a `cstr`. Arbitrary
     /// `[u8]` values are not NUL-terminated, so they are rejected.
@@ -1070,10 +1107,24 @@ impl Checker {
             }
 
             let mut scan = FunctionScan::default();
+            let mut locals = HashMap::new();
             if let Some(signature) = self.functions.get(&decl.name) {
                 scan.returns_composite = is_composite(&signature.return_type);
+                for param in &signature.params {
+                    locals.insert(param.name.clone(), param.ty.clone());
+                }
             }
-            scan_block_effects(&decl.body, 0, &mut scan);
+            for item in &program.items {
+                if let Item::Global(global) = item {
+                    let ty = global
+                        .ty
+                        .as_ref()
+                        .map(|ty| self.resolve_type_pure(ty))
+                        .unwrap_or_else(|| self.scan_expr_ty(&global.value, &HashMap::new()));
+                    locals.insert(global.name.clone(), ty);
+                }
+            }
+            scan_block_effects(self, &decl.body, 0, &mut scan, &mut locals);
             scans.insert(decl.name.clone(), scan);
             let param_types = self
                 .functions
@@ -1098,11 +1149,15 @@ impl Checker {
         }
 
         let mut direct = HashSet::new();
+        let mut clone_direct = HashSet::new();
         let mut deps: HashMap<String, Vec<String>> = HashMap::new();
         let mut called = HashSet::new();
         for (name, scan) in &scans {
             if scan.direct_alloc {
                 direct.insert(name.clone());
+            }
+            if scan.clone_direct {
+                clone_direct.insert(name.clone());
             }
             deps.insert(name.clone(), scan.unguarded_deps.clone());
             called.extend(scan.calls.iter().cloned());
@@ -1138,6 +1193,32 @@ impl Checker {
             }
         }
         self.unguarded_allocators = unguarded;
+
+        // A flow whose result may carry clone-allocated storage is itself a
+        // clone allocator when it calls such a flow. This mirrors the
+        // unguarded-allocation propagation but uses all calls, not just calls
+        // outside `protect`: a clone inside a nested `protect` still allocates.
+        let mut clone_allocators = clone_direct;
+        loop {
+            let mut changed = false;
+            for (name, scan) in &scans {
+                if clone_allocators.contains(name) {
+                    continue;
+                }
+                if scan
+                    .calls
+                    .iter()
+                    .any(|callee| clone_allocators.contains(callee))
+                {
+                    clone_allocators.insert(name.clone());
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        self.clone_allocators = clone_allocators;
 
         let mut consumption: HashMap<String, Vec<HashSet<String>>> = HashMap::new();
         for (name, param_list) in &params {
@@ -2976,15 +3057,13 @@ impl Checker {
         info.ty
     }
 
+    /// `clone(x)` is a deep copy. The source is read (so moved/uninitialized
+    /// places are still rejected by `check_expr`) and stays live. When the type
+    /// contains slices, the clone allocates fresh arena storage; region escape
+    /// and the unguarded-allocation effect are handled by `collect_value_regions`
+    /// and the effect prepass respectively.
     fn check_copy(&mut self, value: &Expr) -> Ty {
-        let ty = self.check_expr(value);
-        if self.type_contains_slice(&ty) {
-            self.error(
-                value.span,
-                format!("cannot copy a value of type {ty} because it contains a slice"),
-            );
-        }
-        ty
+        self.check_expr(value)
     }
 
     // ------------------------------------------------------------------
@@ -3015,6 +3094,81 @@ impl Checker {
                 _ => None,
             },
             _ => None,
+        }
+    }
+
+    /// Lightweight type resolution shared by the effect prepass and region
+    /// tracking. `locals` supplies parameters and declarations discovered by
+    /// the prepass; during body checking it is empty and `self.lookup` resolves
+    /// every name. Unknown expressions resolve to `Ty::Error`, which is never
+    /// reported as containing a slice, so this helper stays diagnostic-free.
+    fn scan_expr_ty(&self, expr: &Expr, locals: &HashMap<String, Ty>) -> Ty {
+        match &expr.kind {
+            ExprKind::Int(_) => Ty::IntLiteral,
+            ExprKind::Float(_) => Ty::FloatLiteral,
+            ExprKind::Bool(_) => Ty::Bool,
+            ExprKind::String(_) => Ty::Slice(Box::new(Ty::U8)),
+            ExprKind::Ident(name) => locals
+                .get(name)
+                .cloned()
+                .or_else(|| self.lookup(name).map(|info| info.ty.clone()))
+                .unwrap_or(Ty::Error),
+            ExprKind::Member { base, field } => match self.scan_expr_ty(base, locals) {
+                Ty::Named(name) => self
+                    .interfaces
+                    .get(&name)
+                    .and_then(|info| {
+                        info.field_index
+                            .get(field)
+                            .map(|&index| info.fields[index].ty.clone())
+                    })
+                    .unwrap_or(Ty::Error),
+                Ty::Choice(name) => self
+                    .choices
+                    .get(&name)
+                    .and_then(|info| info.variants.get(field).map(|variant| variant.ty.clone()))
+                    .unwrap_or(Ty::Error),
+                Ty::Slice(_) if field == "len" => Ty::U64,
+                _ => Ty::Error,
+            },
+            ExprKind::Index { base, .. } => match self.scan_expr_ty(base, locals) {
+                Ty::Slice(element) => *element,
+                _ => Ty::Error,
+            },
+            ExprKind::Call { callee, .. } => match &callee.kind {
+                ExprKind::Ident(name) => self
+                    .functions
+                    .get(name)
+                    .map(|signature| signature.return_type.clone())
+                    .unwrap_or(Ty::Error),
+                _ => Ty::Error,
+            },
+            ExprKind::SliceLiteral {
+                element_type,
+                elements,
+            } => {
+                let element = element_type
+                    .as_ref()
+                    .map(|ty| self.resolve_type_pure(ty))
+                    .or_else(|| {
+                        elements
+                            .first()
+                            .map(|first| self.scan_expr_ty(first, locals))
+                    })
+                    .unwrap_or(Ty::Error);
+                Ty::Slice(Box::new(element))
+            }
+            ExprKind::InterfaceLiteral { name, .. } => Ty::Named(name.clone()),
+            ExprKind::Cast { ty, .. } => self.resolve_type_pure(ty),
+            ExprKind::Unary { operand, .. } => self.scan_expr_ty(operand, locals),
+            ExprKind::Binary { op, left, .. } => match op {
+                BinaryOp::Is => Ty::Bool,
+                _ => self.scan_expr_ty(left, locals),
+            },
+            ExprKind::Move(inner)
+            | ExprKind::Copy(inner)
+            | ExprKind::Comptime(inner)
+            | ExprKind::Alloc { target: inner, .. } => self.scan_expr_ty(inner, locals),
         }
     }
 
@@ -3448,6 +3602,15 @@ impl Checker {
                 //
                 // Composite results may also carry data moved out of a consumed
                 // `inout` argument; propagate those regions conservatively.
+                // A callee that recursively clones slice-containing values
+                // allocates its result in the caller's active arena, which
+                // must be a `protect` region that outlives the result.
+                if let ExprKind::Ident(name) = &callee.kind
+                    && self.clone_allocators.contains(name)
+                    && let Some(region) = self.current_protect_region()
+                {
+                    regions.push(region);
+                }
                 if let ExprKind::Ident(name) = &callee.kind
                     && let Some(signature) = self.functions.get(name)
                     && self.type_contains_slice(&signature.return_type)
@@ -3469,8 +3632,18 @@ impl Checker {
                 }
             }
             ExprKind::Alloc { .. } => {}
-            ExprKind::Move(value) | ExprKind::Copy(value) => {
-                self.collect_value_regions(value, regions);
+            ExprKind::Move(value) => self.collect_value_regions(value, regions),
+            ExprKind::Copy(value) => {
+                // A deep clone owns fresh storage and never aliases the source,
+                // so it does not inherit the source's region taints. The new
+                // storage belongs to the innermost `protect` region active at
+                // the clone site.
+                let value_ty = self.scan_expr_ty(value, &HashMap::new());
+                if self.type_contains_slice(&value_ty)
+                    && let Some(region) = self.current_protect_region()
+                {
+                    regions.push(region);
+                }
             }
             ExprKind::InterfaceLiteral { fields, .. } => {
                 for field in fields {
@@ -3770,53 +3943,96 @@ fn direction_name(direction: Direction) -> &'static str {
 ///
 /// `depth` counts enclosing lexical `protect` blocks. Allocations and calls at
 /// depth zero are effects that a caller must cover with a `protect`.
-fn scan_block_effects(block: &Block, depth: usize, scan: &mut FunctionScan) {
+fn scan_block_effects(
+    checker: &Checker,
+    block: &Block,
+    depth: usize,
+    scan: &mut FunctionScan,
+    locals: &mut HashMap<String, Ty>,
+) {
     for statement in &block.statements {
-        scan_statement_effects(statement, depth, scan);
+        scan_statement_effects(checker, statement, depth, scan, locals);
     }
 }
 
-fn scan_statement_effects(statement: &Stmt, depth: usize, scan: &mut FunctionScan) {
+fn scan_statement_effects(
+    checker: &Checker,
+    statement: &Stmt,
+    depth: usize,
+    scan: &mut FunctionScan,
+    locals: &mut HashMap<String, Ty>,
+) {
     match &statement.kind {
-        StmtKind::Let { value, .. } => {
+        StmtKind::Let {
+            name, ty, value, ..
+        } => {
             if let Some(value) = value {
-                scan_expr_effects(value, depth, scan);
+                scan_expr_effects(checker, value, depth, scan, locals);
+            }
+            let inferred = ty
+                .as_ref()
+                .map(|ty| checker.resolve_type_pure(ty))
+                .or_else(|| {
+                    value
+                        .as_ref()
+                        .map(|value| checker.scan_expr_ty(value, locals))
+                });
+            if let Some(ty) = inferred {
+                locals.insert(name.clone(), ty);
             }
         }
         StmtKind::Assign { target, value, .. } => {
-            scan_expr_effects(target, depth, scan);
-            scan_expr_effects(value, depth, scan);
+            scan_expr_effects(checker, target, depth, scan, locals);
+            scan_expr_effects(checker, value, depth, scan, locals);
         }
-        StmtKind::Expr(expr) => scan_expr_effects(expr, depth, scan),
+        StmtKind::Expr(expr) => scan_expr_effects(checker, expr, depth, scan, locals),
         StmtKind::If {
             condition,
             then_block,
             else_branch,
         } => {
-            scan_expr_effects(condition, depth, scan);
-            scan_block_effects(then_block, depth, scan);
+            scan_expr_effects(checker, condition, depth, scan, locals);
+            scan_block_effects(checker, then_block, depth, scan, locals);
             match else_branch {
-                Some(ElseBranch::Block(block)) => scan_block_effects(block, depth, scan),
-                Some(ElseBranch::If(inner)) => scan_statement_effects(inner, depth, scan),
+                Some(ElseBranch::Block(block)) => {
+                    scan_block_effects(checker, block, depth, scan, locals)
+                }
+                Some(ElseBranch::If(inner)) => {
+                    scan_statement_effects(checker, inner, depth, scan, locals)
+                }
                 None => {}
             }
         }
         StmtKind::While { condition, body } => {
-            scan_expr_effects(condition, depth, scan);
-            scan_block_effects(body, depth, scan);
+            scan_expr_effects(checker, condition, depth, scan, locals);
+            scan_block_effects(checker, body, depth, scan, locals);
         }
         StmtKind::ForRange {
-            start, end, body, ..
+            variable,
+            start,
+            end,
+            body,
         } => {
-            scan_expr_effects(start, depth, scan);
-            scan_expr_effects(end, depth, scan);
-            scan_block_effects(body, depth, scan);
+            scan_expr_effects(checker, start, depth, scan, locals);
+            scan_expr_effects(checker, end, depth, scan, locals);
+            locals.insert(variable.clone(), Ty::U64);
+            scan_block_effects(checker, body, depth, scan, locals);
         }
-        StmtKind::ForEach { iterable, body, .. } => {
-            scan_expr_effects(iterable, depth, scan);
-            scan_block_effects(body, depth, scan);
+        StmtKind::ForEach {
+            variable,
+            iterable,
+            body,
+            ..
+        } => {
+            scan_expr_effects(checker, iterable, depth, scan, locals);
+            let element = match checker.scan_expr_ty(iterable, locals) {
+                Ty::Slice(element) => *element,
+                _ => Ty::Error,
+            };
+            locals.insert(variable.clone(), element);
+            scan_block_effects(checker, body, depth, scan, locals);
         }
-        StmtKind::Protect(block) => scan_block_effects(block, depth + 1, scan),
+        StmtKind::Protect(block) => scan_block_effects(checker, block, depth + 1, scan, locals),
         StmtKind::Return(value) => {
             if let Some(value) = value {
                 if scan.returns_composite
@@ -3824,7 +4040,7 @@ fn scan_statement_effects(statement: &Stmt, depth: usize, scan: &mut FunctionSca
                 {
                     scan.moved_places.insert((root, path));
                 }
-                scan_expr_effects(value, depth, scan);
+                scan_expr_effects(checker, value, depth, scan, locals);
             }
         }
         StmtKind::Continue => {}
@@ -3832,7 +4048,13 @@ fn scan_statement_effects(statement: &Stmt, depth: usize, scan: &mut FunctionSca
     }
 }
 
-fn scan_expr_effects(expr: &Expr, depth: usize, scan: &mut FunctionScan) {
+fn scan_expr_effects(
+    checker: &Checker,
+    expr: &Expr,
+    depth: usize,
+    scan: &mut FunctionScan,
+    locals: &mut HashMap<String, Ty>,
+) {
     match &expr.kind {
         ExprKind::Int(_)
         | ExprKind::Float(_)
@@ -3841,20 +4063,20 @@ fn scan_expr_effects(expr: &Expr, depth: usize, scan: &mut FunctionScan) {
         | ExprKind::Ident(_) => {}
         ExprKind::SliceLiteral { elements, .. } => {
             for element in elements {
-                scan_expr_effects(element, depth, scan);
+                scan_expr_effects(checker, element, depth, scan, locals);
             }
         }
         ExprKind::InterfaceLiteral { fields, .. } => {
             for field in fields {
-                scan_expr_effects(&field.value, depth, scan);
+                scan_expr_effects(checker, &field.value, depth, scan, locals);
             }
         }
-        ExprKind::Unary { operand, .. } => scan_expr_effects(operand, depth, scan),
+        ExprKind::Unary { operand, .. } => scan_expr_effects(checker, operand, depth, scan, locals),
         ExprKind::Binary { left, right, .. } => {
-            scan_expr_effects(left, depth, scan);
-            scan_expr_effects(right, depth, scan);
+            scan_expr_effects(checker, left, depth, scan, locals);
+            scan_expr_effects(checker, right, depth, scan, locals);
         }
-        ExprKind::Cast { expr, .. } => scan_expr_effects(expr, depth, scan),
+        ExprKind::Cast { expr, .. } => scan_expr_effects(checker, expr, depth, scan, locals),
         ExprKind::Call { callee, args, .. } => {
             if let ExprKind::Ident(name) = &callee.kind {
                 scan.calls.insert(name.clone());
@@ -3875,32 +4097,41 @@ fn scan_expr_effects(expr: &Expr, depth: usize, scan: &mut FunctionScan) {
                         .collect(),
                 });
             } else {
-                scan_expr_effects(callee, depth, scan);
+                scan_expr_effects(checker, callee, depth, scan, locals);
             }
             for arg in args {
-                scan_expr_effects(&arg.value, depth, scan);
+                scan_expr_effects(checker, &arg.value, depth, scan, locals);
             }
         }
         ExprKind::Alloc { target, count, .. } => {
             if depth == 0 {
                 scan.direct_alloc = true;
             }
-            scan_expr_effects(target, depth, scan);
-            scan_expr_effects(count, depth, scan);
+            scan_expr_effects(checker, target, depth, scan, locals);
+            scan_expr_effects(checker, count, depth, scan, locals);
         }
         ExprKind::Move(value) => {
             if let (Some(root), Some(path)) = (place_root(value), place_path(value)) {
                 scan.moved_places.insert((root, path));
             }
-            scan_expr_effects(value, depth, scan);
+            scan_expr_effects(checker, value, depth, scan, locals);
         }
-        ExprKind::Copy(value) => scan_expr_effects(value, depth, scan),
-        ExprKind::Member { base, .. } => scan_expr_effects(base, depth, scan),
+        ExprKind::Copy(value) => {
+            let value_ty = checker.scan_expr_ty(value, locals);
+            if checker.type_contains_slice(&value_ty) {
+                scan.clone_direct = true;
+                if depth == 0 {
+                    scan.direct_alloc = true;
+                }
+            }
+            scan_expr_effects(checker, value, depth, scan, locals);
+        }
+        ExprKind::Member { base, .. } => scan_expr_effects(checker, base, depth, scan, locals),
         ExprKind::Index { base, index } => {
-            scan_expr_effects(base, depth, scan);
-            scan_expr_effects(index, depth, scan);
+            scan_expr_effects(checker, base, depth, scan, locals);
+            scan_expr_effects(checker, index, depth, scan, locals);
         }
-        ExprKind::Comptime(inner) => scan_expr_effects(inner, depth, scan),
+        ExprKind::Comptime(inner) => scan_expr_effects(checker, inner, depth, scan, locals),
     }
 }
 
