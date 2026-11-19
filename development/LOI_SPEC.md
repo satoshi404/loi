@@ -314,8 +314,8 @@ These rules were added to unblock real programs and are implemented and tested. 
 **Globals**
 
 - Top-level bindings (`name <- value`, `mut name: T <- value`) are globals. They are initialized once, before any function runs.
-- Initializers must be compile-time constants (literals, constant unary/binary expressions, casts, `clone`, shape literals of constants and slice literals of constants).
-- The C backend currently supports scalar, `bool` and `[u8]`-from-string globals only; other composite globals are rejected pending a runtime constructor.
+- Initializers must be compile-time constants (literals, constant unary/binary expressions, casts, `clone`, shape literals of constants, slice literals of constants, mark variants and choice constructors).
+- The C backend emits every constant global as a strict C11 static initializer, including nested shapes, slices, strings, marks and choices. Diagnostics for a forbidden subexpression point at that subexpression.
 - A global name may not collide with a function or another global. Non-`mut` globals are immutable, as for locals.
 
 **Imports**
@@ -437,7 +437,7 @@ All nine questions from the 0.2 draft are decided. Each entry states the rule, t
 
 **Why:** the first draft was ambiguous because a `comptime` function could receive runtime values. A guarantee gives the compiler something it can rely on, keeps constant contexts honest, and leaves ordinary constant folding free to happen anywhere as an optimization.
 
-**Status:** implemented. The parser accepts `comptime flow` and `comptime expr`; `const_eval.rs` evaluates globals, shape defaults and `comptime` expressions with purity checks, a step budget and a call-depth limit, using the expected type to reproduce runtime width, overflow and `f32` rounding. Global initializers of any shape are emitted as strict C11 static initializers: plain brace/designated initializers for shapes and named `static` arrays for slice data, with no compound literals.
+**Status:** implemented. The parser accepts `comptime flow` and `comptime expr`; `const_eval.rs` evaluates globals, shape defaults and `comptime` expressions with purity checks, a step budget and a call-depth limit, using the expected type to reproduce runtime width, overflow and `f32` rounding. Marks and choices are first-class compile-time values: mark variants, choice constructors, `is`, equality and payload reads evaluate in constant contexts and match runtime results. Global initializers of any shape are emitted as strict C11 static initializers: plain brace/designated initializers for shapes and choices (choice tags and payloads use nested braces), mark variant macros and named `static` arrays for slice data, with no compound literals. Forbidden calls in a constant report the offending subexpression span.
 
 ### 5.1a Generics — explicit instantiation, monomorphized
 

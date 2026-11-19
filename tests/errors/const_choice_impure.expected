@@ -1,0 +1,2 @@
+tests/errors/const_choice_impure.loi:2:26: initializer for global 'Bad' must be a compile-time constant: call to 'runtime_value' is not allowed in a constant
+tests/errors/const_choice_impure.loi:13:10: cannot copy Result implicitly; use give(...) or clone(...)

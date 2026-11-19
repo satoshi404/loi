@@ -933,7 +933,7 @@ impl Checker {
                         decl.name, error.message
                     )
                 };
-                self.error(decl.value.span, message);
+                self.error(error.span, message);
             }
 
             let resolved = match (declared, value_ty) {

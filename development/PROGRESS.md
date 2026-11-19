@@ -4,12 +4,18 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-19, item 2):** emitted headers are now
-  self-contained and linkable. `LoiSlice`, marks and shapes/choices use shared
-  guards; the top-level guard comes from the header file name; prototypes are
-  wrapped in `extern "C"`. New tests compile a header alone under strict C11 and
-  C++17, link a C caller against the generated `.c` and compare four values
-  with a Loi reference, include two headers twice, and reject sealed leaks.
+- **Current task (2026-11-19, item 4):** mark variants and choice constructors
+  now work in global, shape-default, slice and `comptime` constant contexts.
+  `ConstValue` carries marks and choices; the evaluator handles `is`, equality,
+  payload reads and coercion, and preserves step/depth limits. Generated C uses
+  static mark macros and nested choice tag/payload initializers under strict
+  C11. Forbidden calls now report the exact offending subexpression span.
+  New tests cover runtime/comptime agreement, generated initializers, exact
+  diagnostics and two negative corpus files; one old recursion expectation was
+  re-blessed because its span now points at the recursive call.
+- **Previous task (2026-11-19, item 2):** emitted headers were made
+  self-contained and linkable with filename guards, shared guarded type
+  definitions and `extern "C"` prototypes.
 - **Previous task (2026-11-18, item 3):** declared and verified Rust 1.88 as the
   MSRV. Replaced the single `if let` guard with a nested check; 1.85 and 1.87
   still fail on stable let-chains, while 1.88 builds and passes the suite. Added

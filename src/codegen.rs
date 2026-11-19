@@ -1470,6 +1470,21 @@ impl<'a> Generator<'a> {
                 }
                 format!("{{ {} }}", initializers.join(", "))
             }
+            ConstValue::Mark { name, variant } => self.c_mark_variant(name, variant),
+            ConstValue::Choice {
+                name,
+                variant,
+                payload,
+            } => {
+                let Some(index) = self.choice_variant_index(name, variant) else {
+                    return "0".to_string();
+                };
+                let payload_code = self.const_value_static_code(payload);
+                format!(
+                    "{{ {index}u, {{ .{} = {payload_code} }} }}",
+                    self.c_choice_payload(variant)
+                )
+            }
         }
         .trim()
         .to_string()
@@ -1518,6 +1533,26 @@ impl<'a> Generator<'a> {
                     initializers.push(format!(".{} = {code}", self.c_field(field_name)));
                 }
                 format!("({struct_name}){{ {} }}", initializers.join(", "))
+            }
+            ConstValue::Mark { name, variant } => self.c_mark_variant(name, variant),
+            ConstValue::Choice {
+                name,
+                variant,
+                payload,
+            } => {
+                let Some(index) = self.choice_variant_index(name, variant) else {
+                    return "0".to_string();
+                };
+                let Some(payload_ty) = self.choice_variant_ty(name, variant) else {
+                    return "0".to_string();
+                };
+                let payload_c = self.c_type(&payload_ty);
+                let payload_code = self.const_value_code(payload);
+                let choice_c = self.c_interface(name);
+                format!(
+                    "(({choice_c}){{ {index}u, {{ .{} = ({payload_c})({payload_code}) }} }})",
+                    self.c_choice_payload(variant)
+                )
             }
         }
         .trim()

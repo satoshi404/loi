@@ -32,6 +32,17 @@ pub enum ConstValue {
         name: String,
         fields: Vec<(String, ConstValue)>,
     },
+    /// A value of a finite `mark` type.
+    Mark {
+        name: String,
+        variant: String,
+    },
+    /// A constructed value of a `choice` type with its active payload.
+    Choice {
+        name: String,
+        variant: String,
+        payload: Box<ConstValue>,
+    },
 }
 
 impl ConstValue {
@@ -78,6 +89,8 @@ impl ConstValue {
             ConstValue::CStr(_) => Ty::CStr,
             ConstValue::Slice { element, .. } => Ty::Slice(Box::new(element.clone())),
             ConstValue::Shape { name, .. } => Ty::Named(name.clone()),
+            ConstValue::Mark { name, .. } => Ty::Mark(name.clone()),
+            ConstValue::Choice { name, .. } => Ty::Choice(name.clone()),
         }
     }
 }
@@ -111,6 +124,8 @@ type Env = HashMap<String, Binding>;
 /// Evaluates constant expressions and pure `comptime flow` bodies.
 pub struct ConstEvaluator<'a> {
     interfaces: HashMap<&'a str, &'a InterfaceDecl>,
+    marks: HashMap<&'a str, &'a MarkDecl>,
+    choices: HashMap<&'a str, &'a ChoiceDecl>,
     functions: HashMap<&'a str, &'a FunctionDecl>,
     globals: HashMap<String, Binding>,
     steps: usize,
@@ -125,11 +140,19 @@ pub struct ConstEvaluator<'a> {
 impl<'a> ConstEvaluator<'a> {
     pub fn new(program: &'a Program) -> Self {
         let mut interfaces = HashMap::new();
+        let mut marks = HashMap::new();
+        let mut choices = HashMap::new();
         let mut functions = HashMap::new();
         for item in &program.items {
             match item {
                 Item::Interface(decl) => {
                     interfaces.entry(decl.name.as_str()).or_insert(decl);
+                }
+                Item::Mark(decl) => {
+                    marks.entry(decl.name.as_str()).or_insert(decl);
+                }
+                Item::Choice(decl) => {
+                    choices.entry(decl.name.as_str()).or_insert(decl);
                 }
                 Item::Function(decl) => {
                     functions.entry(decl.name.as_str()).or_insert(decl);
@@ -139,6 +162,8 @@ impl<'a> ConstEvaluator<'a> {
         }
         Self {
             interfaces,
+            marks,
+            choices,
             functions,
             globals: HashMap::new(),
             steps: 0,
@@ -202,6 +227,10 @@ impl<'a> ConstEvaluator<'a> {
                     Some(Ty::CStr)
                 } else if self.interfaces.contains_key(name.as_str()) {
                     Some(Ty::Named(name.clone()))
+                } else if self.marks.contains_key(name.as_str()) {
+                    Some(Ty::Mark(name.clone()))
+                } else if self.choices.contains_key(name.as_str()) {
+                    Some(Ty::Choice(name.clone()))
                 } else {
                     None
                 }
@@ -385,6 +414,49 @@ impl<'a> ConstEvaluator<'a> {
                 }
             }
             ExprKind::Binary { op, left, right } => {
+                if *op == BinaryOp::Is {
+                    let ExprKind::Member { base, field } = &right.kind else {
+                        return Err(ConstError::new(
+                            right.span,
+                            "'is' expects a choice variant on the right",
+                        ));
+                    };
+                    let ExprKind::Ident(choice) = &base.kind else {
+                        return Err(ConstError::new(
+                            right.span,
+                            "'is' expects a choice variant on the right",
+                        ));
+                    };
+                    let Some(decl) = self.choices.get(choice.as_str()).copied() else {
+                        return Err(ConstError::new(
+                            base.span,
+                            format!("unknown choice '{choice}'"),
+                        ));
+                    };
+                    if !decl.variants.iter().any(|variant| variant.name == *field) {
+                        return Err(ConstError::new(
+                            right.span,
+                            format!("choice '{choice}' has no variant '{field}'"),
+                        ));
+                    }
+                    let value = self.eval_expr_env(left, Some(&Ty::Choice(choice.clone())), env)?;
+                    let active = match value {
+                        ConstValue::Choice { name, variant, .. } if name == *choice => variant,
+                        ConstValue::Choice { name, .. } => {
+                            return Err(ConstError::new(
+                                left.span,
+                                format!("expected a value of choice '{choice}', found '{name}'"),
+                            ));
+                        }
+                        _ => {
+                            return Err(ConstError::new(
+                                left.span,
+                                format!("expected a compile-time value of choice '{choice}'"),
+                            ));
+                        }
+                    };
+                    return Ok(ConstValue::Bool(active == *field));
+                }
                 if *op == BinaryOp::And {
                     let left_value = self.eval_expr_env(left, Some(&Ty::Bool), env)?;
                     let left_value = as_bool_value(left_value, left.span)?;
@@ -416,6 +488,34 @@ impl<'a> ConstEvaluator<'a> {
                 convert_to(value, &target, expr.span)
             }
             ExprKind::Call { callee, args, .. } => {
+                if let ExprKind::Member { base, field } = &callee.kind
+                    && let ExprKind::Ident(choice) = &base.kind
+                    && let Some(decl) = self.choices.get(choice.as_str()).copied()
+                {
+                    let Some(variant) = decl.variants.iter().find(|variant| variant.name == *field)
+                    else {
+                        return Err(ConstError::new(
+                            callee.span,
+                            format!("choice '{choice}' has no variant '{field}'"),
+                        ));
+                    };
+                    if args.len() != 1 {
+                        return Err(ConstError::new(
+                            expr.span,
+                            format!("choice '{choice}.{field}' expects one payload"),
+                        ));
+                    }
+                    let payload_ty = self.resolve_type(&variant.ty).ok_or_else(|| {
+                        ConstError::new(variant.ty.span(), "unknown payload type")
+                    })?;
+                    let value = self.eval_expr_env(&args[0].value, Some(&payload_ty), env)?;
+                    let value = coerce_to(value, &payload_ty, args[0].value.span)?;
+                    return Ok(ConstValue::Choice {
+                        name: choice.clone(),
+                        variant: field.clone(),
+                        payload: Box::new(value),
+                    });
+                }
                 let ExprKind::Ident(name) = &callee.kind else {
                     return Err(ConstError::new(
                         expr.span,
@@ -432,6 +532,20 @@ impl<'a> ConstEvaluator<'a> {
                 self.eval_expr_env(value, expected, env)
             }
             ExprKind::Member { base, field } => {
+                if let ExprKind::Ident(name) = &base.kind
+                    && let Some(decl) = self.marks.get(name.as_str()).copied()
+                {
+                    if decl.variants.iter().any(|variant| variant.name == *field) {
+                        return Ok(ConstValue::Mark {
+                            name: name.clone(),
+                            variant: field.clone(),
+                        });
+                    }
+                    return Err(ConstError::new(
+                        expr.span,
+                        format!("mark '{name}' has no variant '{field}'"),
+                    ));
+                }
                 let base_value = self.eval_expr_env(base, None, env)?;
                 match base_value {
                     ConstValue::Slice { values, .. } if field == "len" => {
@@ -450,6 +564,19 @@ impl<'a> ConstEvaluator<'a> {
                                 format!("compile-time shape has no field '{field}'"),
                             )
                         }),
+                    ConstValue::Choice {
+                        name,
+                        variant,
+                        payload,
+                    } => {
+                        if variant != *field {
+                            return Err(ConstError::new(
+                                expr.span,
+                                format!("choice '{name}' does not hold '{field}' at compile time"),
+                            ));
+                        }
+                        Ok(*payload)
+                    }
                     _ => Err(ConstError::new(
                         expr.span,
                         format!("cannot read field '{field}' at compile time"),
@@ -559,7 +686,7 @@ impl<'a> ConstEvaluator<'a> {
         if !function.comptime {
             return Err(ConstError::new(
                 span,
-                format!("flow '{name}' is not declared 'comptime' and cannot run at compile time"),
+                format!("call to '{name}' is not allowed in a constant"),
             ));
         }
         if function.external {
@@ -1193,6 +1320,28 @@ fn values_equal(left: &ConstValue, right: &ConstValue) -> bool {
                         name_a == name_b && values_equal(value_a, value_b)
                     })
         }
+        (
+            ConstValue::Mark {
+                name: name_a,
+                variant: variant_a,
+            },
+            ConstValue::Mark {
+                name: name_b,
+                variant: variant_b,
+            },
+        ) => name_a == name_b && variant_a == variant_b,
+        (
+            ConstValue::Choice {
+                name: name_a,
+                variant: variant_a,
+                payload: payload_a,
+            },
+            ConstValue::Choice {
+                name: name_b,
+                variant: variant_b,
+                payload: payload_b,
+            },
+        ) => name_a == name_b && variant_a == variant_b && values_equal(payload_a, payload_b),
         _ => {
             if let (Some(a), Some(b)) = (left.as_float(), right.as_float()) {
                 a == b
@@ -1330,6 +1479,38 @@ fn convert_impl(
             ConstValue::String(text) | ConstValue::CStr(text) => Ok(ConstValue::CStr(text)),
             _ => Err(ConstError::new(span, "expected a string value")),
         },
+        Ty::Mark(expected) => match value {
+            ConstValue::Mark { name, variant } if *name == *expected => {
+                Ok(ConstValue::Mark { name, variant })
+            }
+            ConstValue::Mark { name, .. } => Err(ConstError::new(
+                span,
+                format!("expected a value of mark '{expected}', found '{name}'"),
+            )),
+            _ => Err(ConstError::new(
+                span,
+                format!("expected a compile-time value of mark '{expected}'"),
+            )),
+        },
+        Ty::Choice(expected) => match value {
+            ConstValue::Choice {
+                name,
+                variant,
+                payload,
+            } if *name == *expected => Ok(ConstValue::Choice {
+                name,
+                variant,
+                payload,
+            }),
+            ConstValue::Choice { name, .. } => Err(ConstError::new(
+                span,
+                format!("expected a value of choice '{expected}', found '{name}'"),
+            )),
+            _ => Err(ConstError::new(
+                span,
+                format!("expected a compile-time value of choice '{expected}'"),
+            )),
+        },
         Ty::Slice(_) => Ok(value),
         Ty::Named(_) => Ok(value),
         _ => Err(ConstError::new(span, "unsupported compile-time conversion")),
@@ -1386,6 +1567,14 @@ pub fn validate_comptime_functions(program: &Program) -> Vec<ConstError> {
             _ => None,
         })
         .collect::<HashSet<_>>();
+    let choices = program
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Choice(decl) => Some(decl.name.as_str()),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
     let comptime_functions = function_names(program, true);
     let all_functions = function_names(program, false);
 
@@ -1399,6 +1588,7 @@ pub fn validate_comptime_functions(program: &Program) -> Vec<ConstError> {
         validate_block(
             &decl.body,
             &globals,
+            &choices,
             &comptime_functions,
             &all_functions,
             &mut errors,
@@ -1450,6 +1640,7 @@ fn function_names(program: &Program, only_comptime: bool) -> HashSet<&str> {
 fn validate_block(
     block: &Block,
     globals: &HashSet<&str>,
+    choices: &HashSet<&str>,
     comptime_functions: &HashSet<&str>,
     all_functions: &HashSet<&str>,
     errors: &mut Vec<ConstError>,
@@ -1458,6 +1649,7 @@ fn validate_block(
         validate_statement(
             statement,
             globals,
+            choices,
             comptime_functions,
             all_functions,
             errors,
@@ -1468,6 +1660,7 @@ fn validate_block(
 fn validate_statement(
     statement: &Stmt,
     globals: &HashSet<&str>,
+    choices: &HashSet<&str>,
     comptime_functions: &HashSet<&str>,
     all_functions: &HashSet<&str>,
     errors: &mut Vec<ConstError>,
@@ -1475,7 +1668,14 @@ fn validate_statement(
     match &statement.kind {
         StmtKind::Let { value, .. } => {
             if let Some(value) = value {
-                validate_expr(value, globals, comptime_functions, all_functions, errors);
+                validate_expr(
+                    value,
+                    globals,
+                    choices,
+                    comptime_functions,
+                    all_functions,
+                    errors,
+                );
             }
         }
         StmtKind::Assign { target, value, .. } => {
@@ -1487,11 +1687,32 @@ fn validate_statement(
                     "a comptime flow cannot mutate a global",
                 ));
             }
-            validate_expr(target, globals, comptime_functions, all_functions, errors);
-            validate_expr(value, globals, comptime_functions, all_functions, errors);
+            validate_expr(
+                target,
+                globals,
+                choices,
+                comptime_functions,
+                all_functions,
+                errors,
+            );
+            validate_expr(
+                value,
+                globals,
+                choices,
+                comptime_functions,
+                all_functions,
+                errors,
+            );
         }
         StmtKind::Expr(expr) => {
-            validate_expr(expr, globals, comptime_functions, all_functions, errors);
+            validate_expr(
+                expr,
+                globals,
+                choices,
+                comptime_functions,
+                all_functions,
+                errors,
+            );
         }
         StmtKind::If {
             condition,
@@ -1501,6 +1722,7 @@ fn validate_statement(
             validate_expr(
                 condition,
                 globals,
+                choices,
                 comptime_functions,
                 all_functions,
                 errors,
@@ -1508,17 +1730,28 @@ fn validate_statement(
             validate_block(
                 then_block,
                 globals,
+                choices,
                 comptime_functions,
                 all_functions,
                 errors,
             );
             match else_branch {
-                Some(ElseBranch::Block(block)) => {
-                    validate_block(block, globals, comptime_functions, all_functions, errors)
-                }
-                Some(ElseBranch::If(inner)) => {
-                    validate_statement(inner, globals, comptime_functions, all_functions, errors)
-                }
+                Some(ElseBranch::Block(block)) => validate_block(
+                    block,
+                    globals,
+                    choices,
+                    comptime_functions,
+                    all_functions,
+                    errors,
+                ),
+                Some(ElseBranch::If(inner)) => validate_statement(
+                    inner,
+                    globals,
+                    choices,
+                    comptime_functions,
+                    all_functions,
+                    errors,
+                ),
                 None => {}
             }
         }
@@ -1526,18 +1759,47 @@ fn validate_statement(
             validate_expr(
                 condition,
                 globals,
+                choices,
                 comptime_functions,
                 all_functions,
                 errors,
             );
-            validate_block(body, globals, comptime_functions, all_functions, errors);
+            validate_block(
+                body,
+                globals,
+                choices,
+                comptime_functions,
+                all_functions,
+                errors,
+            );
         }
         StmtKind::ForRange {
             start, end, body, ..
         } => {
-            validate_expr(start, globals, comptime_functions, all_functions, errors);
-            validate_expr(end, globals, comptime_functions, all_functions, errors);
-            validate_block(body, globals, comptime_functions, all_functions, errors);
+            validate_expr(
+                start,
+                globals,
+                choices,
+                comptime_functions,
+                all_functions,
+                errors,
+            );
+            validate_expr(
+                end,
+                globals,
+                choices,
+                comptime_functions,
+                all_functions,
+                errors,
+            );
+            validate_block(
+                body,
+                globals,
+                choices,
+                comptime_functions,
+                all_functions,
+                errors,
+            );
         }
         StmtKind::ForEach {
             direction,
@@ -1551,8 +1813,22 @@ fn validate_statement(
                     "a comptime flow can only use '<-' iteration",
                 ));
             }
-            validate_expr(iterable, globals, comptime_functions, all_functions, errors);
-            validate_block(body, globals, comptime_functions, all_functions, errors);
+            validate_expr(
+                iterable,
+                globals,
+                choices,
+                comptime_functions,
+                all_functions,
+                errors,
+            );
+            validate_block(
+                body,
+                globals,
+                choices,
+                comptime_functions,
+                all_functions,
+                errors,
+            );
         }
         StmtKind::Protect(_) => errors.push(ConstError::new(
             statement.span,
@@ -1560,7 +1836,14 @@ fn validate_statement(
         )),
         StmtKind::Return(value) => {
             if let Some(value) = value {
-                validate_expr(value, globals, comptime_functions, all_functions, errors);
+                validate_expr(
+                    value,
+                    globals,
+                    choices,
+                    comptime_functions,
+                    all_functions,
+                    errors,
+                );
             }
         }
         StmtKind::Continue | StmtKind::Break => {}
@@ -1571,6 +1854,7 @@ fn validate_statement(
 fn validate_expr(
     expr: &Expr,
     globals: &HashSet<&str>,
+    choices: &HashSet<&str>,
     comptime_functions: &HashSet<&str>,
     all_functions: &HashSet<&str>,
     errors: &mut Vec<ConstError>,
@@ -1581,7 +1865,16 @@ fn validate_expr(
             "'alloc' is not allowed in a comptime flow",
         )),
         ExprKind::Call { callee, args, .. } => {
-            if let ExprKind::Ident(name) = &callee.kind {
+            let constructor = match &callee.kind {
+                ExprKind::Member { base, .. } => matches!(
+                    &base.kind,
+                    ExprKind::Ident(name) if choices.contains(name.as_str())
+                ),
+                _ => false,
+            };
+            if constructor {
+                // Choice constructors are pure value expressions.
+            } else if let ExprKind::Ident(name) = &callee.kind {
                 if !PURE_INTRINSICS.contains(&name.as_str())
                     && !comptime_functions.contains(name.as_str())
                 {
@@ -1602,28 +1895,65 @@ fn validate_expr(
                 validate_expr(
                     &arg.value,
                     globals,
+                    choices,
                     comptime_functions,
                     all_functions,
                     errors,
                 );
             }
         }
-        ExprKind::Unary { operand, .. } => {
-            validate_expr(operand, globals, comptime_functions, all_functions, errors)
-        }
+        ExprKind::Unary { operand, .. } => validate_expr(
+            operand,
+            globals,
+            choices,
+            comptime_functions,
+            all_functions,
+            errors,
+        ),
         ExprKind::Binary { left, right, .. } => {
-            validate_expr(left, globals, comptime_functions, all_functions, errors);
-            validate_expr(right, globals, comptime_functions, all_functions, errors);
+            validate_expr(
+                left,
+                globals,
+                choices,
+                comptime_functions,
+                all_functions,
+                errors,
+            );
+            validate_expr(
+                right,
+                globals,
+                choices,
+                comptime_functions,
+                all_functions,
+                errors,
+            );
         }
-        ExprKind::Cast { expr, .. } | ExprKind::Move(expr) | ExprKind::Copy(expr) => {
-            validate_expr(expr, globals, comptime_functions, all_functions, errors)
-        }
-        ExprKind::Comptime(inner) => {
-            validate_expr(inner, globals, comptime_functions, all_functions, errors)
-        }
+        ExprKind::Cast { expr, .. } | ExprKind::Move(expr) | ExprKind::Copy(expr) => validate_expr(
+            expr,
+            globals,
+            choices,
+            comptime_functions,
+            all_functions,
+            errors,
+        ),
+        ExprKind::Comptime(inner) => validate_expr(
+            inner,
+            globals,
+            choices,
+            comptime_functions,
+            all_functions,
+            errors,
+        ),
         ExprKind::SliceLiteral { elements, .. } => {
             for element in elements {
-                validate_expr(element, globals, comptime_functions, all_functions, errors);
+                validate_expr(
+                    element,
+                    globals,
+                    choices,
+                    comptime_functions,
+                    all_functions,
+                    errors,
+                );
             }
         }
         ExprKind::InterfaceLiteral { fields, .. } => {
@@ -1631,18 +1961,38 @@ fn validate_expr(
                 validate_expr(
                     &field.value,
                     globals,
+                    choices,
                     comptime_functions,
                     all_functions,
                     errors,
                 );
             }
         }
-        ExprKind::Member { base, .. } => {
-            validate_expr(base, globals, comptime_functions, all_functions, errors)
-        }
+        ExprKind::Member { base, .. } => validate_expr(
+            base,
+            globals,
+            choices,
+            comptime_functions,
+            all_functions,
+            errors,
+        ),
         ExprKind::Index { base, index } => {
-            validate_expr(base, globals, comptime_functions, all_functions, errors);
-            validate_expr(index, globals, comptime_functions, all_functions, errors);
+            validate_expr(
+                base,
+                globals,
+                choices,
+                comptime_functions,
+                all_functions,
+                errors,
+            );
+            validate_expr(
+                index,
+                globals,
+                choices,
+                comptime_functions,
+                all_functions,
+                errors,
+            );
         }
         ExprKind::Int(_)
         | ExprKind::Float(_)

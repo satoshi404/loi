@@ -1,0 +1,16 @@
+open choice Result [ Ok: i32, Err: i32 ]
+Bad: Result <- Result.Ok(runtime_value())
+
+flow runtime_value
+    => i32
+{
+    => 3
+}
+
+open flow main
+    => i32
+{
+    r <- Bad
+    printf("%d\n", r.Ok)
+    => 0
+}

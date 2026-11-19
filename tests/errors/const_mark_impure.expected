@@ -1,0 +1,1 @@
+tests/errors/const_mark_impure.loi:2:14: initializer for global 'Bad' must be a compile-time constant: call to 'impure_mark' is not allowed in a constant

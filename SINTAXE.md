@@ -229,13 +229,14 @@ open mut LIMIT: i32 <- 3
 ```
 
 Global initializers must be compile-time constants: literals, constant
-expressions, constant globals, shape/slice literals and `comptime` calls. The C
-backend emits them as static initializers, including nested shapes, slices and
-strings. These initializers are strict C11: shapes use brace/designated
-initializers (no compound literals), and slice constants are backed by named
-`static` arrays emitted before the globals. Globals can be read or cloned, but
-`give` cannot transfer ownership out of a global or out of a field/element of
-one; use `clone(...)` instead.
+expressions, constant globals, shape/slice literals, mark variants, choice
+constructors and `comptime` calls. The C backend emits them as static
+initializers, including nested shapes, slices, strings, marks and choices.
+These initializers are strict C11: shapes use brace/designated initializers (no
+compound literals), choices use brace initializers with a tag and payload, and
+slice constants are backed by named `static` arrays emitted before the globals.
+Globals can be read or cloned, but `give` cannot transfer ownership out of a
+global or out of a field/element of one; use `clone(...)` instead.
 
 ---
 
@@ -349,10 +350,12 @@ flow next
   the pure math intrinsics (`sqrt`, `floor`, `ceil`, `fabs`, `pow`, `fmod`,
   `len`).
 - `comptime expr` forces compile-time evaluation. It is valid only when the
-  expression is constant: literals, constant globals, pure operators/casts and
+  expression is constant: literals, constant globals, mark variants, choice
+  constructors, pure operators/casts (including `is` and equality) and
   `comptime` calls.
-- Global initializers and shape defaults are constant contexts. A call to a
-  non-`comptime` flow there is an error.
+- Global initializers, shape defaults and slice elements are constant contexts.
+  A call to a non-`comptime` flow there is an error; the diagnostic underlines
+  the offending call rather than the whole initializer.
 - Evaluation is step-limited and call-depth-limited, so a recursive
   `comptime` flow produces a diagnostic instead of hanging the compiler.
 - `comptime` arithmetic has the same semantics as runtime arithmetic for the

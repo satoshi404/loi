@@ -357,10 +357,12 @@ flow next
           </div>
 
           <p>
-            Global initializers and shape field defaults are constant contexts. A call to a
-            non-<code>comptime</code> flow there is an error. Evaluation is step- and
-            depth-limited, so runaway or recursive constant evaluation produces a diagnostic
-            instead of hanging the compiler. Compile-time arithmetic matches the runtime: signed
+            Global initializers, shape field defaults and slice elements are constant contexts.
+            Mark variants and choice constructors are compile-time values, and <code>is</code>,
+            equality and payload reads work there too. A call to a non-<code>comptime</code> flow
+            is an error reported at the offending call. Evaluation is step- and depth-limited, so
+            runaway or recursive constant evaluation produces a diagnostic instead of hanging the
+            compiler. Compile-time arithmetic matches the runtime: signed
             overflow is an error, unsigned arithmetic wraps at its width, shifts are checked at
             that width, <code>as</code> still truncates, and <code>f32</code> results are rounded
             to <code>f32</code> precision.
@@ -508,8 +510,9 @@ for i in 0..len(explicit) {
           <p>
             A top-level binding is a global. It is initialized once, before any flow runs, and its
             initializer must be a compile-time constant. Globals may hold any constant shape,
-            including nested shapes, slices and strings; the C backend emits them as static
-            initializers. Imports are textual: <code>import "lib/std.loi"</code>.
+            including nested shapes, slices, strings, mark variants and choice values; the C
+            backend emits them as strict C11 static initializers. Imports are textual:
+            <code>import "lib/std.loi"</code>.
           </p>
 
           <div class="doc-code">
