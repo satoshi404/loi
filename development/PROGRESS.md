@@ -4,7 +4,13 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-18, item 3):** declared and verified Rust 1.88 as the
+- **Current task (2026-11-19, item 2):** emitted headers are now
+  self-contained and linkable. `LoiSlice`, marks and shapes/choices use shared
+  guards; the top-level guard comes from the header file name; prototypes are
+  wrapped in `extern "C"`. New tests compile a header alone under strict C11 and
+  C++17, link a C caller against the generated `.c` and compare four values
+  with a Loi reference, include two headers twice, and reject sealed leaks.
+- **Previous task (2026-11-18, item 3):** declared and verified Rust 1.88 as the
   MSRV. Replaced the single `if let` guard with a nested check; 1.85 and 1.87
   still fail on stable let-chains, while 1.88 builds and passes the suite. Added
   a manifest regression test, `tools/check_msrv.sh`, and requirements lines in

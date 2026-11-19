@@ -1128,7 +1128,7 @@ python3 -m http.server -d web 8000   # abra http://localhost:8000</code></pre>
               <tr><td><code>--debug</code> / <code>--release</code></td><td>Adds <code>-g</code> or <code>-O2</code> to the C compiler.</td></tr>
               <tr><td><code>--rebuild</code></td><td>Ignores the incremental stamp and rebuilds.</td></tr>
               <tr><td><code>--emit-c FILE</code></td><td>Retains the generated C alongside the output.</td></tr>
-              <tr><td><code>--emit-h FILE</code></td><td>Writes a C header for exported declarations.</td></tr>
+              <tr><td><code>--emit-h FILE</code></td><td>Writes a self-contained C11 header for exported declarations; the guard comes from the file name.</td></tr>
               <tr><td><code>--emit-ir FILE</code></td><td>Writes the draft three-address IR.</td></tr>
               <tr><td><code>--emit-asm FILE</code></td><td>Disabled: the assembly backend is an unfinished draft. The CLI rejects the flag with exit 2; use generated C or <code>--emit-c</code>.</td></tr>
               <tr><td><code>--source-map FILE</code></td><td>Writes source-map JSON Lines.</td></tr>
@@ -1137,6 +1137,15 @@ python3 -m http.server -d web 8000   # abra http://localhost:8000</code></pre>
               <tr><td><code>--c-source FILE</code></td><td>Compiles and links an extra C file, such as a vendored FFI shim; repeatable.</td></tr>
             </tbody>
           </table>
+
+          <p>
+            Generated headers define <code>LoiSlice</code>, visible marks, choices and shapes in
+            dependency order, and prototypes for visible flows. Type declarations are guarded and
+            the header guard comes from the output file name, so two Loi headers can be included
+            together; C++ callers get <code>extern "C"</code> prototypes. Sealed flows are not
+            exported, and every flow declared in a header has an external definition in the
+            generated C file.
+          </p>
 
           <div class="doc-code">
             <div class="doc-code-bar"><span>building.loi</span><button type="button" data-copy>copy</button></div>

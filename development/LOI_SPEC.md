@@ -756,6 +756,17 @@ The full Flow Syntax was chosen because it makes the three distinctive ideas —
 - [x] Foreign C interop (`opaque`, `cstr`, `extern flow`, shims) and the binding generator
 - [ ] Later: x86-64 or LLVM. `src/ir.rs` and `src/asm.rs` are drafts; `--emit-ir` emits IR text, while `--emit-asm` is disabled with a clear CLI error until the assembly backend can generate runnable code.
 
+### 6.1 Generated headers
+
+An emitted header is self-contained C11: it defines the shared guarded
+`LoiSlice` type, then visible marks, choices and shapes in dependency order,
+then prototypes for visible flows. Every type declaration is guarded so two
+headers can be included together, the top-level guard is derived from the
+output file name, and prototypes are wrapped in `extern "C"` for C++ callers.
+Generated C uses the same guarded type definitions. Flows whose prototypes are
+exported have external definitions in the `.c`; sealed flows remain `static
+inline` and are never declared in a header.
+
 ---
 
 ## 7. Lexical Notes

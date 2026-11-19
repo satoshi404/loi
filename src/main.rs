@@ -640,7 +640,7 @@ fn gen_source(
     }
     if let Some(header_path) = emit_h {
         ensure_distinct_output(path, header_path);
-        match loi::generate_header(&program, Some(header_path)) {
+        match loi::generate_header_named(&program, None, Some(header_path)) {
             Ok(header) => {
                 if let Err(error) = fs::write(header_path, header) {
                     eprintln!("loi: {}: {error}", header_path.display());
@@ -847,8 +847,9 @@ fn build_source(
 
         // Emit the header file if requested.
         if let Some(header_path) = emit_h {
-            match loi::generate_header(
+            match loi::generate_header_named(
                 &load_program(&source, input_path, diagnostics),
+                None,
                 Some(header_path),
             ) {
                 Ok(header) => {
@@ -1008,8 +1009,9 @@ fn build_source(
         // Emit header next to each source.
         let header_path = input_path.with_extension("h");
         ensure_distinct_output(input_path, &header_path);
-        match loi::generate_header(
+        match loi::generate_header_named(
             &load_program(source.as_str(), input_path.as_path(), diagnostics),
+            None,
             Some(header_path.as_path()),
         ) {
             Ok(header) => {

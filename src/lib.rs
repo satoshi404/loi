@@ -18,7 +18,10 @@ pub mod types;
 pub use asm::{generate_asm, generate_asm_from_program};
 pub use ast::*;
 pub use checker::check;
-pub use codegen::{CodegenError, generate_c, generate_c_subset, generate_header, generate_ir};
+pub use codegen::{
+    CodegenError, generate_c, generate_c_subset, generate_header, generate_header_named,
+    generate_ir,
+};
 pub use diagnostic::{ColorChoice, Diagnostic, ErrorFormat, Severity};
 pub use ir::{IrBuilder, IrModule};
 pub use lexer::{Comment, LexError, Lexer, tokenize, tokenize_with_comments};

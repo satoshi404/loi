@@ -728,6 +728,18 @@ The socket helpers expose integer descriptors only; no foreign pointer type
 enters ordinary Loi values. The shims are POSIX-only and are not part of the
 closed intrinsic set.
 
+### Generated C headers
+
+`loi gen FILE -o FILE.c --emit-h FILE.h` (and the same option on `loi build`)
+writes a self-contained C11 header. Its include guard comes from the header
+file name, so two headers can be included in one translation unit. The header
+defines `LoiSlice`, visible marks, choices and shapes in dependency order, and
+prototypes for visible flows; every declaration is guarded and the prototype
+block is wrapped in `extern "C"` for C++ callers. The matching flow definitions
+in the generated `.c` have external linkage; sealed flows stay internal and do
+not appear in headers. A generated `.c` can be linked with C code that includes
+one or more generated headers without duplicate type definitions.
+
 ---
 
 ## 15. Foreign C interop (`opaque`, `cstr`, `extern flow`)
