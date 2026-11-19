@@ -568,6 +568,45 @@ xs.len         // u64
 - Slices and slice-containing composites move with ownership; there is no
   implicit deep copy.
 
+### Lexical read views
+
+A `<-` parameter is a read-only view of the caller's value that lives for the
+call. The checker summarizes which paths each flow reads and forwards that
+summary through flows that pass a `<-` parameter on to another flow. A
+partially consumed composite may be passed as a read-only view when those reads
+avoid every consumed path; a flow that reads a moved path is still rejected.
+
+```loi
+shape Pair [
+    left: [u8]
+    right: u64
+]
+
+flow right_only
+    <- p: Pair
+    => u64
+{
+    => p.right         // reads only p.right
+}
+
+flow main
+    => i32
+{
+    protect {
+        mut p: Pair
+        alloc(-> p.left, u8, 1)
+        p.right = 7
+        taken <- give(p.left)       // p.left is consumed; p.right stays live
+        print_int(right_only(p))    // ok: the view touches only p.right
+        print_int(taken[0])
+    }
+    => 0
+}
+```
+
+The view is lexical: it lasts for the call, and a flow still may not store or
+return any part of a `<-` parameter (use `clone(...)` to keep data).
+
 ---
 
 ## 12. Slices, allocation and `protect`

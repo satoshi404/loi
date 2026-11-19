@@ -55,9 +55,11 @@ blocked `vec_proto2.loi` pattern now type-checks and runs.
 A follow-up attempt to replace `clone` with `give` in `vec_reserve`, `vec_pop`,
 `vec_swap` and `slice_swap` exposed a second limitation: after a composite
 element is moved, passing the whole vector to a `<-` flow such as `vec_len`
-is rejected because a whole-place read overlaps every moved subpath. The
-library therefore keeps `clone` in those flows. The remaining requirement is
-field-sensitive read views or borrow lifetimes (Block A3), not A1.
+was rejected because a whole-place read overlapped every moved subpath.
+**Resolved by Block A3:** the checker now summarizes the paths each `<-` flow
+reads (forwarding them through calls) and accepts the whole-value argument when
+those paths avoid the consumed ones. The `vec_len`-after-move pattern is
+covered by checker and codegen tests.
 
 ### Borrowed slice views cannot escape a flow
 
@@ -79,6 +81,11 @@ callee can return a slice that aliases storage owned by the caller for a
 statically bounded region. Current library workaround: `vec_as_slice<T>`
 allocates a new arena slice inside the caller's `protect` and copies the live
 prefix into it.
+
+Block A3 deliberately does **not** address this case: its read views are
+lexical to the call and never escape the callee. Returning a borrowed slice
+needs return-alias summaries and borrow-region tracking (rejecting moves and
+writes to the source while the view is live), which is a separate follow-up.
 
 ### A generic slice literal cannot escape into an out-parameter
 

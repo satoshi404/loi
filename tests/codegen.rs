@@ -1411,3 +1411,50 @@ fn clone_of_an_empty_slice_is_safe() {
     assert_eq!(run.status.code(), Some(0));
     assert_eq!(String::from_utf8_lossy(&run.stdout), "0");
 }
+
+// ---------------------------------------------------------------------------
+// Block A3: lexical read views of partially consumed composites
+// ---------------------------------------------------------------------------
+
+#[test]
+fn field_limited_read_view_compiles_and_runs() {
+    let source = r#"shape Cell [
+    value: u64
+]
+
+shape Vec [
+    data: [Cell]
+    len: u64
+]
+
+flow vec_len
+    <- v: Vec
+    => u64
+{
+    => v.len
+}
+
+flow main
+    => i32
+{
+    protect {
+        mut v: Vec
+        alloc(-> v.data, Cell, 2)
+        v.data[0].value = 7
+        v.len = 2
+        taken <- give(v.data[0])
+        print_int(vec_len(v))
+        print_int(taken.value)
+    }
+    => 0
+}
+"#;
+    let c = generated(source);
+    assert_strict_c11("read-view-vec-len", &c);
+    assert_sanitizers_compile("read-view-vec-len", &c);
+    let Some(run) = compile_and_run_output("read-view-vec-len", &c, "") else {
+        return;
+    };
+    assert_eq!(run.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "27");
+}

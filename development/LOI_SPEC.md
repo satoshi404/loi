@@ -231,7 +231,7 @@ Every parameter declares its direction. The direction is mandatory.
 | `<->`     | Read and write access to the caller's value                          |
 
 - At the call site, `->` and `<->` are marked (`step(<-> w, dt)`, `world_new(..., -> w)`). `<-` is not marked, to keep calls readable.
-- A `<-` parameter can be read but never stored or returned. To keep part of it, use `clone(...)`.
+- A `<-` parameter can be read but never stored or returned. To keep part of it, use `clone(...)`. The read-only view is lexical: it lasts for the call, and its precise extent is the read-view summary described in 4.3.
 
 ### 4.3 Ownership, `give` and `clone`
 
@@ -251,6 +251,8 @@ b <- give(a)         // a is no longer usable
 - Partial moves are path-sensitive: giving a composite field or element kills only that place, leaves siblings alive, and can be reversed by writing the place again. Giving a scalar sub-place copies it without killing the owner; giving a whole scalar variable remains an explicit transfer.
 - A consumed path containing a runtime index is a wildcard over every element of that slice. Reads of any element are rejected until the whole slice is reinitialized.
 - Function-effect summaries carry consumed paths, so a callee that gives `p.left` kills only `p.left` at the call site.
+- Read-view summaries complement consumption: for each `<-` parameter, a flow records the root-relative paths it reads. A whole-parameter `<-` argument passed on to another flow inherits the callee's read paths (joined with the argument path) through a fixpoint; an unknown or external callee is assumed to read the whole value.
+- A composite with consumed paths may be passed to a `<-` parameter when every effective read path avoids the consumed paths. A read that overlaps a consumed path is reported as a use of the moved value. This keeps a whole-place read sound while allowing a caller to hand a partially consumed value to a flow that only touches live fields (Block A3).
 - A deep `clone` of a slice-containing type allocates in the current `protect` region; out-of-region clones and escaping results are compile errors (see 5.7, updated by Block A2).
 - `give(x)` is a compiler intrinsic, not an ordinary function: it kills the variable. The parser must treat it specially.
 
@@ -259,7 +261,7 @@ b <- give(a)         // a is no longer usable
 - A function may declare any number of `->` parameters and/or a single `=> T` result.
 - `=> T` is sugar for a hidden `->` parameter. The compiler may lower it that way internally.
 - Returning a composite value that holds a slice moves ownership to the receiver, with no copy.
-- Returning something that points inside a `<-` parameter is an error. Return `clone(...)` of the part instead. This rule is implemented and confirmed by the Phase 2 review (5.7).
+- Returning something that points inside a `<-` parameter is an error. Return `clone(...)` of the part instead. This rule is implemented and confirmed by the Phase 2 review (5.7). The call-scoped read views of 4.3 do not relax it: returning a borrowed slice view needs a separate escape-lifetime design and remains unsupported.
 
 ### 4.5 `protect` blocks and allocation
 

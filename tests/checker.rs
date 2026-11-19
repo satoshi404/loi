@@ -959,6 +959,179 @@ flow main
 }
 
 // ---------------------------------------------------------------------------
+// Block A3: lexical read views of partially consumed composites
+// ---------------------------------------------------------------------------
+
+const A3_READ_VIEW_SOURCE: &str = r#"shape Pair [
+    left: [u8]
+    right: u64
+]
+
+flow right_only
+    <- p: Pair
+    => u64
+{
+    => p.right
+}
+
+flow main
+    => i32
+{
+    protect {
+        mut p: Pair
+        alloc(-> p.left, u8, 1)
+        p.right = 7
+        taken <- give(p.left)
+        print_int(right_only(p))
+        print_int(taken[0])
+    }
+    => 0
+}
+"#;
+
+#[test]
+fn partially_moved_composite_can_be_passed_to_a_field_limited_read_flow() {
+    assert_clean(A3_READ_VIEW_SOURCE);
+}
+
+#[test]
+fn read_flow_touching_a_moved_field_is_still_rejected() {
+    let source = r#"shape Pair [
+    left: [u8]
+    right: u64
+]
+
+flow left_len
+    <- p: Pair
+    => u64
+{
+    => p.left.len
+}
+
+flow main
+    => i32
+{
+    protect {
+        mut p: Pair
+        alloc(-> p.left, u8, 1)
+        p.right = 7
+        taken <- give(p.left)
+        print_int(left_len(p))
+        print_int(taken[0])
+    }
+    => 0
+}
+"#;
+    assert_message(source, "use of moved value 'p'");
+}
+
+#[test]
+fn field_limited_read_summary_propagates_through_a_read_only_flow() {
+    let source = r#"shape Pair [
+    left: [u8]
+    right: u64
+]
+
+flow right_only
+    <- p: Pair
+    => u64
+{
+    => p.right
+}
+
+flow relay
+    <- p: Pair
+    => u64
+{
+    => right_only(p)
+}
+
+flow main
+    => i32
+{
+    protect {
+        mut p: Pair
+        alloc(-> p.left, u8, 1)
+        p.right = 7
+        taken <- give(p.left)
+        print_int(relay(p))
+        print_int(taken[0])
+    }
+    => 0
+}
+"#;
+    assert_clean(source);
+}
+
+#[test]
+fn a_read_flow_that_uses_the_whole_value_is_still_rejected_after_a_partial_move() {
+    let source = r#"shape Pair [
+    left: [u8]
+    right: u64
+]
+
+flow both_fields
+    <- p: Pair
+    => u64
+{
+    mut n: u64 <- p.right
+    n += p.left.len
+    => n
+}
+
+flow main
+    => i32
+{
+    protect {
+        mut p: Pair
+        alloc(-> p.left, u8, 1)
+        p.right = 7
+        taken <- give(p.left)
+        print_int(both_fields(p))
+        print_int(taken[0])
+    }
+    => 0
+}
+"#;
+    assert_message(source, "use of moved value 'p'");
+}
+
+#[test]
+fn vec_len_accepts_a_vector_with_a_moved_element() {
+    let source = r#"shape Cell [
+    value: u64
+]
+
+shape Vec [
+    data: [Cell]
+    len: u64
+]
+
+flow vec_len
+    <- v: Vec
+    => u64
+{
+    => v.len
+}
+
+flow main
+    => i32
+{
+    protect {
+        mut v: Vec
+        alloc(-> v.data, Cell, 2)
+        v.len = 2
+        taken <- give(v.data[0])
+        print_int(vec_len(v))
+        print_int(taken.value)
+    }
+    => 0
+}
+"#;
+    assert_clean(source);
+}
+
+// ---------------------------------------------------------------------------
 // Phase 2: protect regions and alloc escape
 // ---------------------------------------------------------------------------
 

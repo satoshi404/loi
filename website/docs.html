@@ -621,6 +621,34 @@ xs[j] = tmp</code></pre>
             of the same value is allowed in that call. Passing the same value twice as
             <code>&lt;-</code> is allowed because both are reads.
           </p>
+          <p>
+            The checker knows which paths a flow reads. Those read paths are forwarded through
+            flows that pass a <code>&lt;-</code> parameter onward, so a value with a consumed field
+            can still be passed to a reader that only touches live fields:
+          </p>
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>read-view.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-loi">shape Pair [ left: [u8], right: u64 ]
+
+flow right_only
+    &lt;- p: Pair
+    =&gt; u64
+{
+    =&gt; p.right          // reads only p.right
+}
+
+protect {
+    mut p: Pair
+    alloc(-&gt; p.left, u8, 1)
+    p.right = 7
+    taken &lt;- give(p.left)     // p.left consumed; p.right stays live
+    print_int(right_only(p))  // ok: the view touches only p.right
+}</code></pre>
+          </div>
+          <p>
+            The view is lexical: it lasts for the call. A flow still cannot return a slice that
+            points into a <code>&lt;-</code> parameter; that needs a separate escape-lifetime design.
+          </p>
 
           <h3>Regions and <code>protect</code></h3>
           <p>

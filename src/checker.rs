@@ -215,6 +215,18 @@ struct FunctionScan {
     call_args: Vec<CallSiteScan>,
     /// Whether returning a place transfers ownership (composite return type).
     returns_composite: bool,
+    /// `<-` parameter name to its parameter index. Used to record which parts
+    /// of a borrowed parameter the body actually reads.
+    read_params: HashMap<String, usize>,
+    /// Per `<-` parameter index, the root-relative places the body reads
+    /// directly (excluding whole-value `<-` arguments refined by the fixpoint).
+    direct_reads: Vec<HashSet<String>>,
+}
+
+impl FunctionScan {
+    fn record_reads(&mut self, expr: &Expr) {
+        collect_direct_reads(expr, &self.read_params, &mut self.direct_reads);
+    }
 }
 
 struct CallSiteScan {
@@ -274,6 +286,10 @@ struct Checker {
     /// Per function, the root-relative places each parameter may lose through
     /// the call. `""` means the whole parameter.
     param_consumption: HashMap<String, Vec<HashSet<String>>>,
+    /// Per function, the root-relative places each `<-` parameter may be read
+    /// through. `""` means the whole parameter. A partially consumed composite
+    /// may be passed to a `<-` flow whose reads avoid the consumed paths.
+    param_reads: HashMap<String, Vec<HashSet<String>>>,
     /// Names declared by top-level `let`/`var`, for duplicate diagnostics.
     global_names: HashSet<String>,
     /// Parent region for each lexical block or `protect` region.
@@ -304,6 +320,7 @@ impl Checker {
             unguarded_allocators: HashSet::new(),
             clone_allocators: HashSet::new(),
             param_consumption: HashMap::new(),
+            param_reads: HashMap::new(),
             global_names: HashSet::new(),
             region_parents: Vec::new(),
             region_kinds: Vec::new(),
@@ -1110,9 +1127,13 @@ impl Checker {
             let mut locals = HashMap::new();
             if let Some(signature) = self.functions.get(&decl.name) {
                 scan.returns_composite = is_composite(&signature.return_type);
-                for param in &signature.params {
+                for (index, param) in signature.params.iter().enumerate() {
                     locals.insert(param.name.clone(), param.ty.clone());
+                    if param.direction == Direction::In {
+                        scan.read_params.insert(param.name.clone(), index);
+                    }
                 }
+                scan.direct_reads = vec![HashSet::new(); signature.params.len()];
             }
             for item in &program.items {
                 if let Item::Global(global) = item {
@@ -1296,6 +1317,67 @@ impl Checker {
         }
 
         self.param_consumption = consumption;
+
+        // Read views: summarize which paths of each `<-` parameter a flow may
+        // read. Direct reads come from the body scan; whole-value `<-`
+        // arguments are refined here from the callee's summary, so a flow that
+        // forwards `p` to a field-limited reader keeps that field precision.
+        let mut reads: HashMap<String, Vec<HashSet<String>>> = HashMap::new();
+        for (name, param_list) in &params {
+            let scan = &scans[name];
+            let mut paths: Vec<HashSet<String>> =
+                param_list.iter().map(|_| HashSet::new()).collect();
+            for (index, direct) in scan.direct_reads.iter().enumerate() {
+                paths[index].extend(direct.iter().cloned());
+            }
+            reads.insert(name.clone(), paths);
+        }
+
+        loop {
+            let mut changed = false;
+            for (name, scan) in &scans {
+                let Some(param_list) = params.get(name) else {
+                    continue;
+                };
+                for site in &scan.call_args {
+                    for (index, arg) in site.args.iter().enumerate() {
+                        if arg.0 != Direction::In {
+                            continue;
+                        }
+                        let Some((arg_root, arg_path)) = &arg.1 else {
+                            continue;
+                        };
+                        let Some((caller_index, (_, caller_direction, _))) = param_list
+                            .iter()
+                            .enumerate()
+                            .find(|(_, (param, _, _))| param == arg_root)
+                        else {
+                            continue;
+                        };
+                        if *caller_direction != Direction::In {
+                            continue;
+                        }
+                        // An unknown callee (intrinsic or external flow) may
+                        // read the whole borrowed value: stay conservative.
+                        let effective = reads
+                            .get(&site.callee)
+                            .and_then(|callee| callee.get(index).cloned())
+                            .unwrap_or_else(|| HashSet::from([String::new()]));
+                        let caller_paths =
+                            &mut reads.get_mut(name).expect("read paths")[caller_index];
+                        for relative in &effective {
+                            let combined = join_paths(arg_path, relative);
+                            changed |= insert_read_path(caller_paths, combined);
+                        }
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        self.param_reads = reads;
     }
 
     // ------------------------------------------------------------------
@@ -2570,7 +2652,7 @@ impl Checker {
         for (index, arg) in args.iter().enumerate() {
             match signature.params.get(index) {
                 Some(param) => {
-                    if let Some(info) = self.check_call_arg(arg, param, may_allocate) {
+                    if let Some(info) = self.check_call_arg(arg, param, may_allocate, name, index) {
                         out_targets.push((index, info));
                     }
                 }
@@ -2890,11 +2972,63 @@ impl Checker {
         }
     }
 
+    /// Type-check a `<-` argument. A partially consumed composite may still be
+    /// passed by read-only view when the callee's read summary avoids every
+    /// consumed path; the normal whole-place rule is kept otherwise.
+    fn check_read_argument(&mut self, value: &Expr, callee: &str, param_index: usize) -> Ty {
+        let info = if is_place(value) {
+            Some(self.lvalue_info(value))
+        } else {
+            None
+        };
+        let Some(info) = info else {
+            return self.check_expr(value);
+        };
+        let (Some(root), Some(path)) = (info.root.clone(), info.path.clone()) else {
+            return self.check_expr(value);
+        };
+        let Some(var) = self.lookup(&root) else {
+            return self.check_expr(value);
+        };
+        let Some(reads) = self
+            .param_reads
+            .get(callee)
+            .and_then(|params| params.get(param_index))
+        else {
+            return self.check_expr(value);
+        };
+        if var.moved.is_empty() || var.is_global {
+            return self.check_expr(value);
+        }
+        if !var.initialized {
+            self.error(
+                value.span,
+                format!("use of uninitialized variable '{root}'"),
+            );
+            return info.ty;
+        }
+        for read in reads {
+            let effective = join_paths(&path, read);
+            if path_is_moved(&var.moved, &effective) {
+                self.error_moved(
+                    value.span,
+                    format!("use of moved value '{root}'"),
+                    &root,
+                    &effective,
+                );
+                return info.ty;
+            }
+        }
+        info.ty
+    }
+
     fn check_call_arg(
         &mut self,
         arg: &CallArg,
         param: &ParamSig,
         may_allocate: bool,
+        callee: &str,
+        param_index: usize,
     ) -> Option<LvalueInfo> {
         if arg.direction != param.direction {
             self.error(
@@ -2910,7 +3044,7 @@ impl Checker {
 
         match param.direction {
             Direction::In => {
-                let actual = self.check_expr(&arg.value);
+                let actual = self.check_read_argument(&arg.value, callee, param_index);
                 if !self.assignable_expr(&param.ty, &actual, &arg.value) {
                     self.error(
                         arg.value.span,
@@ -3967,6 +4101,7 @@ fn scan_statement_effects(
             name, ty, value, ..
         } => {
             if let Some(value) = value {
+                scan.record_reads(value);
                 scan_expr_effects(checker, value, depth, scan, locals);
             }
             let inferred = ty
@@ -3982,15 +4117,21 @@ fn scan_statement_effects(
             }
         }
         StmtKind::Assign { target, value, .. } => {
+            scan.record_reads(target);
+            scan.record_reads(value);
             scan_expr_effects(checker, target, depth, scan, locals);
             scan_expr_effects(checker, value, depth, scan, locals);
         }
-        StmtKind::Expr(expr) => scan_expr_effects(checker, expr, depth, scan, locals),
+        StmtKind::Expr(expr) => {
+            scan.record_reads(expr);
+            scan_expr_effects(checker, expr, depth, scan, locals);
+        }
         StmtKind::If {
             condition,
             then_block,
             else_branch,
         } => {
+            scan.record_reads(condition);
             scan_expr_effects(checker, condition, depth, scan, locals);
             scan_block_effects(checker, then_block, depth, scan, locals);
             match else_branch {
@@ -4004,6 +4145,7 @@ fn scan_statement_effects(
             }
         }
         StmtKind::While { condition, body } => {
+            scan.record_reads(condition);
             scan_expr_effects(checker, condition, depth, scan, locals);
             scan_block_effects(checker, body, depth, scan, locals);
         }
@@ -4013,6 +4155,8 @@ fn scan_statement_effects(
             end,
             body,
         } => {
+            scan.record_reads(start);
+            scan.record_reads(end);
             scan_expr_effects(checker, start, depth, scan, locals);
             scan_expr_effects(checker, end, depth, scan, locals);
             locals.insert(variable.clone(), Ty::U64);
@@ -4024,6 +4168,7 @@ fn scan_statement_effects(
             body,
             ..
         } => {
+            scan.record_reads(iterable);
             scan_expr_effects(checker, iterable, depth, scan, locals);
             let element = match checker.scan_expr_ty(iterable, locals) {
                 Ty::Slice(element) => *element,
@@ -4040,6 +4185,7 @@ fn scan_statement_effects(
                 {
                     scan.moved_places.insert((root, path));
                 }
+                scan.record_reads(value);
                 scan_expr_effects(checker, value, depth, scan, locals);
             }
         }
@@ -4231,6 +4377,12 @@ fn insert_consumed_path(paths: &mut HashSet<String>, path: String) -> bool {
     } else {
         paths.insert(path)
     }
+}
+
+/// Add a read path to a summary. A whole-value read subsumes every narrower
+/// path, so the set collapses to `""` just like consumed paths do.
+fn insert_read_path(paths: &mut HashSet<String>, path: String) -> bool {
+    insert_consumed_path(paths, path)
 }
 
 fn paths_overlap(left: &str, right: &str) -> bool {
@@ -4449,6 +4601,82 @@ fn collect_index_reads(expr: &Expr, accesses: &mut Vec<(String, String)>) {
         ExprKind::Index { base, index } => {
             collect_index_reads(base, accesses);
             collect_accesses(index, accesses);
+        }
+        _ => {}
+    }
+}
+
+/// Collect the root-relative places an expression reads directly from `<-`
+/// parameters. Unlike [`collect_accesses`], a whole-value `<-` argument is not
+/// recorded: the interprocedural read-summary fixpoint refines it to the fields
+/// the callee actually touches. Index expressions are still read directly.
+fn collect_direct_reads(
+    expr: &Expr,
+    read_params: &HashMap<String, usize>,
+    reads: &mut [HashSet<String>],
+) {
+    match &expr.kind {
+        ExprKind::Ident(name) => {
+            if let Some(&index) = read_params.get(name) {
+                insert_read_path(&mut reads[index], String::new());
+            }
+        }
+        ExprKind::Member { .. } | ExprKind::Index { .. } => {
+            if let (Some(root), Some(path)) = (place_root(expr), place_path(expr))
+                && let Some(&index) = read_params.get(&root)
+            {
+                insert_read_path(&mut reads[index], path);
+            }
+            collect_direct_index_reads(expr, read_params, reads);
+        }
+        ExprKind::Unary { operand, .. } => collect_direct_reads(operand, read_params, reads),
+        ExprKind::Binary { left, right, .. } => {
+            collect_direct_reads(left, read_params, reads);
+            collect_direct_reads(right, read_params, reads);
+        }
+        ExprKind::Cast { expr, .. } => collect_direct_reads(expr, read_params, reads),
+        ExprKind::Call { args, .. } => {
+            for arg in args {
+                let whole_borrowed_arg = place_root(&arg.value)
+                    .zip(place_path(&arg.value))
+                    .is_some_and(|(root, path)| path.is_empty() && read_params.contains_key(&root));
+                if !whole_borrowed_arg {
+                    collect_direct_reads(&arg.value, read_params, reads);
+                }
+            }
+        }
+        ExprKind::Alloc { target, count, .. } => {
+            collect_direct_index_reads(target, read_params, reads);
+            collect_direct_reads(count, read_params, reads);
+        }
+        ExprKind::Move(value) | ExprKind::Copy(value) => {
+            collect_direct_reads(value, read_params, reads)
+        }
+        ExprKind::SliceLiteral { elements, .. } => {
+            for element in elements {
+                collect_direct_reads(element, read_params, reads);
+            }
+        }
+        ExprKind::InterfaceLiteral { fields, .. } => {
+            for field in fields {
+                collect_direct_reads(&field.value, read_params, reads);
+            }
+        }
+        ExprKind::Comptime(inner) => collect_direct_reads(inner, read_params, reads),
+        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::String(_) => {}
+    }
+}
+
+fn collect_direct_index_reads(
+    expr: &Expr,
+    read_params: &HashMap<String, usize>,
+    reads: &mut [HashSet<String>],
+) {
+    match &expr.kind {
+        ExprKind::Member { base, .. } => collect_direct_index_reads(base, read_params, reads),
+        ExprKind::Index { base, index } => {
+            collect_direct_index_reads(base, read_params, reads);
+            collect_direct_reads(index, read_params, reads);
         }
         _ => {}
     }

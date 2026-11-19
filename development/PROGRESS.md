@@ -4,7 +4,36 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-19, Block A2):** `clone` is now a recursive deep copy.
+- **Current task (2026-11-19, Block A3):** a partially consumed composite can
+  be passed to a read-only flow when that flow only reads live fields. The
+  checker records, per `<-` parameter, the root-relative paths a flow reads
+  (`FunctionScan::direct_reads` plus `collect_direct_reads`), forwards whole
+  `<-` arguments from the callee's paths through a fixpoint (`param_reads`), and
+  treats unknown/external callees as whole readers. At a call site a place with
+  consumed paths is checked against the callee's effective read paths instead
+  of being rejected by the whole-place rule; overlapping paths still report a
+  use of the moved value. Five checker tests (three positive, two negative)
+  and one codegen test cover the feature, including the realistic
+  `vec_len(v)`-after-`give(v.data[0])` case that prints `27` and exits 0. The
+  view is lexical to the call: returning or storing a `<-`-borrowed value stays
+  rejected, and returning a borrowed slice view remains a separate limitation.
+  Rules are documented in `SINTAXE.md` §11, `LOI_SPEC.md` §4.2–4.4,
+  `FRICTION.md`, `DECISIONS.md` and `website/docs.html`.
+- **Verification for the current task (Block A3):** the three positive checker
+  tests failed with `use of moved value` before the change; the two negative
+  tests and the codegen test passed only after the implementation. Final gate
+  command:
+  `export PATH="/root/.cargo/bin:$PATH"; export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets && python3 tools/sync_examples.py --check && git diff --check`.
+  All five checks exited 0; `cargo test --all-targets` reported **366 passed,
+  0 failed** (lib 22 + main 6 + bindgen 1 + checker 133 + cli 42 + codegen 58 +
+  const_values 5 + errors 3 + header 4 + lexer 8 + lib-integration 34 + msrv 1 +
+  order 6 + parser 26 + pretty 17). The new codegen test compiles the generated
+  C under strict C11 and with sanitizers compile-only, then runs it; no ASan
+  execution is claimed in this PRoot container. No generated-C ABI or runtime
+  helper signature changed, and the benchmarked clone programs do not exercise
+  read views, so `benchmark/run.py` is not applicable to this compiler-only
+  change.
+- **Previous task (2026-11-19, Block A2):** `clone` is now a recursive deep copy.
   When a value contains slices, every slice gets fresh arena storage, nested
   shapes are cloned recursively, and the source stays live and unchanged;
   slice-free types keep the bit-wise copy. Because it allocates, a deep clone
@@ -80,7 +109,7 @@
   finalized CRC values zlib-style. `map_*_get_or` and `map_*_lookup` return a
   default or a `found` status in one scan. `vec_reserve` is exported and the
   docs explain pre-sizing because the arena retains older growth blocks.
-- **Verification for the current task (Block A2):** the nine new checker tests
+- **Verification for Block A2:** the nine new checker tests
   and five new codegen tests were written first; the inverted
   `clone_of_slice_containing_shape_is_allowed` failed against the old rejection
   and the rest failed at check time. After the implementation all new tests
@@ -447,10 +476,10 @@
 | Lexer | Working | Canonical Flow Syntax only; strings with decoded escapes; decimal/hex/binary integers; floats; `<-`/`->`/`<->`/`=>` glyphs; bitwise/shift/compound tokens; `//` comments collected for `fmt` |
 | AST / parser | Working | Shapes and generic shapes, flows and generic flows, `extern flow ... as`, `opaque`, imports, globals, slice/shape literals, `give`/`clone`/`alloc`, `protect`, loops, bitwise/shift precedence, `comptime flow`/`comptime expr`, explicit type arguments |
 | Pretty-printer | Working | Emits canonical Flow Syntax including generics and `comptime`; idempotent on all canonical files; `loi fmt` preserves `//` comments (`format_program` remains comment-free) |
-| Type checker | Working | Types, literals, directions, calls, globals, intrinsics, `opaque`/`cstr`, constant folding, shape-cycle detection, bitwise/shift rules, I/O intrinsic signatures and allocation effects (including deep-clone allocators); monomorphization feeds concrete declarations into the checker and diagnostics show source generic spellings |
+| Type checker | Working | Types, literals, directions, calls, globals, intrinsics, `opaque`/`cstr`, constant folding, shape-cycle detection, bitwise/shift rules, I/O intrinsic signatures, allocation effects (including deep-clone allocators) and `<-` read-view summaries; monomorphization feeds concrete declarations into the checker and diagnostics show source generic spellings |
 | Compile-time evaluation | Working | `src/const_eval.rs`: pure `comptime flow` interpreter with step/depth limits, constant globals and shape defaults, `comptime expr`, purity diagnostics |
 | Diagnostics | Working | `src/diagnostic.rs`: human output with full source underlines (multi-line spans get `...`), secondary labels and an error summary; `short` keeps `path:line:column: message`; `json` emits structured objects with `end_line`/`end_column`; ANSI colors honor `NO_COLOR`/`CLICOLOR_FORCE`; unknown names get namespace-aware edit-distance suggestions; parser spans carry exact token ends and multi-line end lines with a line-scan fallback |
-| Ownership | Working | Give liveness, path-sensitive partial moves, definite assignment/return, exclusive `->`/`<->`, cross-flow consumption, `protect` taints and lexical-block escape analysis for slice literals and deep-clone results, `read_file`/`read_stdin`/`read_line`; gives from globals are rejected and move state is per function body |
+| Ownership | Working | Give liveness, path-sensitive partial moves, field-sensitive lexical read views, definite assignment/return, exclusive `->`/`<->`, cross-flow consumption, `protect` taints and lexical-block escape analysis for slice literals and deep-clone results, `read_file`/`read_stdin`/`read_line`; gives from globals are rejected and move state is per function body |
 | C backend | Working | One C11 translation unit, ordered shape layouts, checked arithmetic, bitwise/shift helpers, growable arena, recursive on-demand deep-clone helpers, bounds checks, defaults, headers, source maps, multi-file objects, statics, file/stdin I/O and numeric printing |
 | C interop | Working | `opaque` → `void *`, `cstr` → `const char *`, bodyless `extern flow`, `--c-source`, `--cc-flag`; string literals coerce to `cstr` |
 | Library | Working | `lib/std.loi` (scalar/string helpers), `lib/math.loi` (generic and `comptime`), `lib/ctype.loi` (pure ASCII helpers), `lib/os.loi`/`lib/net.loi` (thin POSIX bindings with C shims); prefixed names, explicitly imported, 7 integration tests |
@@ -588,10 +617,12 @@ for f in lib/std.loi lib/math.loi lib/ctype.loi lib/os.loi lib/net.loi; do ./tar
   an uninitialized `->` parameter initializes the whole value; joining a
   consumed value with a live one keeps the conservative (consumed) state. Loops are
   treated as possibly executing zero times.
-- Cross-flow consumption is path-sensitive, but a whole-place read still
-  overlaps every moved subpath. Passing a partially consumed composite to a
-  `<-` flow is therefore rejected until field-sensitive views or borrow
-  lifetimes exist (Block A3).
+- Cross-flow consumption is path-sensitive, and read-view summaries now let a
+  partially consumed composite be passed to a `<-` flow whose read paths avoid
+  the consumed ones. A flow whose reads cannot be summarized (an unknown or
+  external callee) is treated as reading the whole value, so it still rejects
+  partial moves. Returning a slice view that points into a `<-` parameter is not
+  supported: that needs return-alias summaries and borrow-region tracking.
 - `protect` taints follow locals, fields, ownership transfers, shape literals,
   `->` arguments and returns, and are conservatively forwarded from consumed
   `<->` arguments to every slice-containing output or composite result. They
@@ -727,8 +758,9 @@ Remaining implementation or secondary choices:
 
 1. Block A2: done — recursive deep `clone` with `protect`-scoped allocation;
    `Vec<[u8]>` works and the library docs no longer require slice-free `T`.
-2. Block A3: lexical views/borrows so a partially consumed composite can still
-   be passed to a read-only flow that only touches live fields.
+2. Block A3: done — call-scoped read views let a partially consumed composite
+   be passed to a read-only flow that only touches live fields. Returning a
+   borrowed slice view remains a separate escape-lifetime feature.
 3. Block A4: slice literals and writable length/out-param support for empty
    collections without forcing `alloc` into every constructor.
 4. Block A5: `Clone`, `Copy` and `Eq` generic constraints so library flows can
