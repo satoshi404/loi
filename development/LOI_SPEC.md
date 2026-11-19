@@ -309,11 +309,13 @@ These rules were added to unblock real programs and are implemented and tested. 
 **Slice literals**
 
 - `[a, b, c]` infers the element type from the elements. The explicit form is `[T: a, b, c]`; `[T:]` is the empty literal.
-- The backing array has automatic storage in the enclosing lexical block. A slice literal must not escape that block: the checker rejects returning it, storing it in a variable declared outside the block, or embedding it in a shape that then escapes. Bind it to a local in the same block. Use `alloc` for data that must outlive the block.
+- A **non-empty** literal's backing array has automatic storage in the enclosing lexical block. It must not escape that block: the checker rejects returning it, storing it in a variable declared outside the block, or embedding it in a shape that then escapes. Bind it to a local in the same block. Use `alloc` for data that must outlive the block.
+- The **empty** literal `[T:]` allocates no storage: it is the null slice with length zero. It has no region taint, so it may be returned, assigned into a `->`/`<->` parameter, or stored in a shape that outlives the creating block. This lets a collection constructor produce an empty value without an `alloc` or a surrounding `protect`; the first growth still needs `alloc` inside `protect`. Runtime indexing checks length before dereferencing, so indexing the null slice aborts rather than reading invalid memory (Block A4).
 
 **Length**
 
 - `len(xs)` is a compiler intrinsic and `xs.len` is member syntax; both require `[T]` and have type `u64`.
+- `xs.len` is a writable place when `xs` is mutable (including `->`/`<->` parameters). Writing it changes the length used by runtime bounds checks; the checker does not track capacity, so setting a length larger than the allocated storage is the programmer's responsibility. A `<-` parameter remains read-only (Block A4).
 - `len` is a reserved intrinsic name; user code may not redeclare it (5.9).
 
 **Globals**

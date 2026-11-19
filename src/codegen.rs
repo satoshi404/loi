@@ -1129,7 +1129,16 @@ impl<'a> Generator<'a> {
                     return self.place_from_value(expr);
                 }
                 let (steps, base_place) = self.gen_place(base);
-                (steps, format!("({base_place}).{}", self.c_field(field)))
+                // Slice headers are the shared C struct `LoiSlice`, whose
+                // fields are plain `data`/`len`; only Loi shapes get the
+                // `loi_f_` field prefix. The surface exposes `len` on slices,
+                // so writing it through a place must target the real field.
+                let c_field = if matches!(self.ty_of(base), Ty::Slice(_)) {
+                    field.clone()
+                } else {
+                    self.c_field(field)
+                };
+                (steps, format!("({base_place}).{c_field}"))
             }
             ExprKind::Index { base, index } => {
                 let element_ty = match self.ty_of(base) {

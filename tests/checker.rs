@@ -1132,6 +1132,74 @@ flow main
 }
 
 // ---------------------------------------------------------------------------
+// Block A4: empty slice literals and writable slice length
+// ---------------------------------------------------------------------------
+
+const A4_EMPTY_VEC_SOURCE: &str = r#"shape Vec [
+    data: [u64]
+    len: u64
+]
+
+flow vec_new
+    -> v: Vec
+{
+    v.data = [u64:]
+    v.len = 0
+}
+
+flow main
+    => i32
+{
+    mut v: Vec
+    vec_new(-> v)
+    print_int(v.len)
+    => 0
+}
+"#;
+
+#[test]
+fn empty_slice_literal_can_initialize_an_out_parameter() {
+    assert_clean(A4_EMPTY_VEC_SOURCE);
+}
+
+#[test]
+fn non_empty_slice_literal_cannot_escape_into_an_out_parameter() {
+    let source = A4_EMPTY_VEC_SOURCE.replace("v.data = [u64:]", "v.data = [u64: 1, 2, 3]");
+    assert_message(
+        &source,
+        "slice literal storage escapes the block that created it",
+    );
+}
+
+#[test]
+fn empty_slice_literal_can_be_returned() {
+    assert_clean("flow empty\n    => [u64]\n{\n    => [u64:]\n}\n");
+}
+
+#[test]
+fn non_empty_slice_literal_cannot_be_returned() {
+    assert_message(
+        "flow make\n    => [u64]\n{\n    => [u64: 1, 2]\n}\n",
+        "cannot return a slice literal",
+    );
+}
+
+#[test]
+fn slice_len_can_be_written_through_an_inout_parameter() {
+    assert_clean(
+        "flow set_len\n    <-> s: [u64]\n{\n    s.len = 2\n}\n\nflow main {\n    protect {\n        mut xs: [u64]\n        alloc(-> xs, u64, 4)\n        set_len(<-> xs)\n    }\n}\n",
+    );
+}
+
+#[test]
+fn slice_len_cannot_be_written_through_a_read_parameter() {
+    assert_message(
+        "flow set_len\n    <- s: [u64]\n{\n    s.len = 2\n}\n",
+        "cannot write to '<-' parameter 's'",
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Phase 2: protect regions and alloc escape
 // ---------------------------------------------------------------------------
 

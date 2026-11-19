@@ -3786,10 +3786,16 @@ impl Checker {
             }
             ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::String(_) => {}
             ExprKind::SliceLiteral { elements, .. } => {
-                // The backing array has automatic storage in the enclosing
-                // lexical block. String literals are static and deliberately
-                // do not reach this branch.
-                if let Some(region) = self.current_region() {
+                // A non-empty literal's backing array has automatic storage in
+                // the enclosing lexical block, so it must not escape. An empty
+                // literal allocates nothing: the C backend emits `{ NULL, 0 }`,
+                // which is safe to store anywhere (runtime indexing checks the
+                // length before dereferencing). Only element expressions can
+                // still carry regions. String literals are static and
+                // deliberately do not reach this branch.
+                if !elements.is_empty()
+                    && let Some(region) = self.current_region()
+                {
                     regions.push(region);
                 }
                 for element in elements {

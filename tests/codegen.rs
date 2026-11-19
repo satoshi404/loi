@@ -1458,3 +1458,85 @@ flow main
     assert_eq!(run.status.code(), Some(0));
     assert_eq!(String::from_utf8_lossy(&run.stdout), "27");
 }
+
+// ---------------------------------------------------------------------------
+// Block A4: empty slice literals and writable slice length
+// ---------------------------------------------------------------------------
+
+#[test]
+fn empty_slice_literal_out_param_compiles_and_runs() {
+    let source = r#"shape Vec [
+    data: [u64]
+    len: u64
+    cap: u64
+]
+
+flow vec_new
+    -> v: Vec
+{
+    v.data = [u64:]
+    v.len = 0
+    v.cap = 0
+}
+
+flow vec_len
+    <- v: Vec
+    => u64
+{
+    => v.len
+}
+
+flow main
+    => i32
+{
+    mut v: Vec
+    vec_new(-> v)
+    print_int(vec_len(v))
+    print_int(v.cap)
+    => 0
+}
+"#;
+    let c = generated(source);
+    assert_strict_c11("empty-slice-out-param", &c);
+    assert_sanitizers_compile("empty-slice-out-param", &c);
+    let Some(run) = compile_and_run_output("empty-slice-out-param", &c, "") else {
+        return;
+    };
+    assert_eq!(run.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "00");
+}
+
+#[test]
+fn slice_len_write_compiles_and_runs() {
+    let source = r#"flow set_len
+    <-> s: [u64]
+    <- n: u64
+{
+    s.len = n
+}
+
+flow main
+    => i32
+{
+    protect {
+        mut xs: [u64]
+        alloc(-> xs, u64, 4)
+        xs[0] = 11
+        xs[1] = 22
+        set_len(<-> xs, 2)
+        print_int(xs.len)
+        print_int(xs[0])
+        print_int(xs[1])
+    }
+    => 0
+}
+"#;
+    let c = generated(source);
+    assert_strict_c11("slice-len-write", &c);
+    assert_sanitizers_compile("slice-len-write", &c);
+    let Some(run) = compile_and_run_output("slice-len-write", &c, "") else {
+        return;
+    };
+    assert_eq!(run.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "21122");
+}

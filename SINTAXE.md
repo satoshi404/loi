@@ -635,7 +635,11 @@ protect {
   current chunk gets its own chunk. Chunks are never moved, so existing slices
   stay valid. Leaving the block restores the arena offset.
 - `protect` is memory-only. There is no `defer`, no `free`, no destructor.
-- `len(xs)` and `xs.len` both return `u64`.
+- `len(xs)` and `xs.len` both return `u64`. `xs.len` is also writable through a
+  mutable place (including a `->` or `<->` parameter), so a caller-owned buffer
+  can be resized by a callee. The new length is used by runtime bounds checks;
+  writing a length larger than the allocated storage is the programmer's
+  responsibility. A `<-` parameter stays read-only.
 
 Slice literals:
 
@@ -645,11 +649,18 @@ explicit: [i32] <- [i32: 1, 2, 3]
 empty: [i32] <- [i32:]
 ```
 
-A slice literal has automatic storage in the enclosing lexical block; it must
-not escape that block. The checker rejects returning it, assigning it to a
-variable declared outside the block, or embedding it in a shape that then
-escapes. Bind it to a local in the same block, or use `alloc` for longer-lived
-data.
+A **non-empty** slice literal has automatic storage in the enclosing lexical
+block; it must not escape that block. The checker rejects returning it,
+assigning it to a variable declared outside the block, or embedding it in a
+shape that then escapes. Bind it to a local in the same block, or use `alloc`
+for longer-lived data.
+
+An **empty** slice literal (`[T:]`) needs no storage: it is the null slice
+`{ data: NULL, len: 0 }`. It may escape freely — be returned, assigned into an
+out-parameter, or stored in a shape declared outside a `protect` block. This is
+how an empty collection can be constructed without allocating; the first
+growth then uses `alloc` inside `protect`. Indexing an empty slice is still
+bounds-checked at runtime, so it aborts rather than dereferencing null.
 
 ---
 
@@ -756,7 +767,7 @@ textual and there are no namespaces yet.
 | `lib/std.loi` | `min_i32`, `max_i32`, `abs_i32`, `clamp_i32`, `min_f64`, `max_f64`, `abs_f64`, `clamp_f64`, `str_len`, `str_eq`, `str_starts_with`, `str_find` | no |
 | `lib/math.loi` | `MATH_PI`, `MATH_E`, `MATH_TAU`, `math_factorial`, generic `math_min<T>` / `math_max<T>` / `math_clamp<T>` / `math_sum<T>`, `math_lerp`, `math_smoothstep`, `math_deg_to_rad`, `math_rad_to_deg`, `math_hypot`, `math_near`, `math_sign_i32`, `math_gcd_u64`, `math_pow_u64`, `math_dot_f64` | no |
 | `lib/ctype.loi` | `ctype_is_digit`, `ctype_is_upper`, `ctype_is_lower`, `ctype_is_alpha`, `ctype_is_alnum`, `ctype_is_hex_digit`, `ctype_is_space`, `ctype_is_ascii`, `ctype_to_lower`, `ctype_to_upper`, `ctype_hex_value`, `ctype_parse_u64`, `ctype_count_digits`, `ctype_equals_ignore_case` | no |
-| `lib/vec.loi` | `Vec<T>`, `vec_new<T>`, `vec_len<T>`, `vec_capacity<T>`, `vec_is_empty<T>`, `vec_get<T>`, `vec_set<T>`, `vec_push<T>`, `vec_pop<T>`, `vec_find<T>`, `vec_from_slice<T>`, `vec_as_slice<T>`, `vec_reserve<T>`, `vec_clear<T>`, `vec_reverse<T>`, `vec_sort<T>`, `vec_binary_search<T>` | no; call inside `protect` |
+| `lib/vec.loi` | `Vec<T>`, `vec_new<T>`, `vec_len<T>`, `vec_capacity<T>`, `vec_is_empty<T>`, `vec_get<T>`, `vec_set<T>`, `vec_push<T>`, `vec_pop<T>`, `vec_find<T>`, `vec_from_slice<T>`, `vec_as_slice<T>`, `vec_reserve<T>`, `vec_clear<T>`, `vec_reverse<T>`, `vec_sort<T>`, `vec_binary_search<T>` | no; `vec_new<T>` needs no `protect`, growing flows do |
 | `lib/slice.loi` | `slice_len<T>`, `slice_is_empty<T>`, `slice_get<T>`, `slice_first<T>`, `slice_last<T>`, `slice_find<T>`, `slice_equals_u8`, `slice_clone<T>`, `slice_copy<T>`, `slice_reverse<T>` | no; allocators need `protect` |
 | `lib/string.loi` | `STRING_MAX_LEN`, `str_is_ascii_space`, `str_trim`, `str_concat`, `str_reverse`, `str_repeat`, `str_count`, `str_index_of`, `str_contains` | no; owned results need `protect` |
 | `lib/hash.loi` | `HASH_OFFSET`, `HASH_PRIME`, `hash_bytes_seeded`, `hash_bytes`, `hash_str`, `hash_u64_seeded`, `hash_u64`, `hash_pair_u64` | no |

@@ -123,9 +123,12 @@ open shape Vec<T> [
 open flow vec_new<T>
     -> v: Vec<T>
 {
-    alloc(-> v.data, T, 1)
+    // An empty slice needs no backing storage, so constructing an empty
+    // vector does not require a surrounding `protect` region. The first
+    // push reserves at least one slot.
+    v.data = [T:]
     v.len = 0
-    v.cap = 1
+    v.cap = 0
 }
 
 open flow vec_len<T>
@@ -210,7 +213,10 @@ open flow vec_push<T>
     <- value: T
 {
     if v.len == v.cap {
-        needed <- v.cap * 2
+        mut needed: u64 <- v.cap * 2
+        if needed == 0 {
+            needed = 1
+        }
         vec_reserve<T>(<-> v, needed)
     }
     v.data[v.len] = clone(value)

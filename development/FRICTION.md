@@ -114,10 +114,18 @@ error: lvalue required as left operand of assignment
 
 Language requirement: either permit escaping slice literals into out-parameters
 with an explicit lifetime/arena region, or make slice length writable so a
-caller-owned buffer can be resized by the callee. Current workaround:
-`vec_new<T>` uses `alloc(-> v.data, T, 1)`, so an empty vector has capacity one.
-`alloc(..., 0)` was measured to work and produce length 0, but the allocator
-still has to be called from inside `protect`.
+caller-owned buffer can be resized by the callee.
+
+**Resolved by Block A4.** The empty literal `[T:]` emits `{ NULL, 0 }` and needs
+no backing array, so the checker no longer taints it with the current lexical
+block; it can be returned or assigned into an out-parameter. Non-empty literals
+still carry block storage and remain confined to their block. Separately, slice
+member places now use the real `LoiSlice` field name (`len`) in generated C, so
+`s.len = n` through a `<->` parameter compiles and runs. `vec_new<T>` now uses
+`v.data = [T:]`, `v.len = 0`, `v.cap = 0` and no longer needs a `protect`;
+`vec_push<T>` reserves at least one slot on first growth. The remaining
+constraint is unchanged: growing a vector still calls `alloc` and therefore
+needs a caller `protect` region.
 
 ### Generic comparisons fail for composite `T`
 

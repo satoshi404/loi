@@ -438,7 +438,7 @@ open flow main
     protect {
         mut xs: Vec<i32>
         vec_new<i32>(-> xs)
-        if vec_len<i32>(xs) != 0 or vec_capacity<i32>(xs) != 1 { => 1 }
+        if vec_len<i32>(xs) != 0 or vec_capacity<i32>(xs) != 0 { => 1 }
         if not vec_is_empty<i32>(xs) { => 2 }
 
         vec_push<i32>(<-> xs, 10)
@@ -511,6 +511,26 @@ open flow main
 "#,
         &[],
         "vec ok\n",
+    );
+}
+
+#[test]
+fn vec_new_does_not_require_a_protect_region() {
+    assert_ok(
+        "vec-new-no-protect",
+        &["vec.loi"],
+        r#"
+open flow main
+    => i32
+{
+    mut xs: Vec<i32>
+    vec_new<i32>(-> xs)
+    if vec_len<i32>(xs) != 0 or vec_capacity<i32>(xs) != 0 { => 1 }
+    print("empty vector ok\n")
+    => 0
+}
+"#,
+        "empty vector ok\n",
     );
 }
 

@@ -499,6 +499,8 @@ for &lt;-&gt; item in items {     // mutate each element
             <code>[T: a, b, c]</code>; an inferred literal is <code>[a, b, c]</code>; the empty
             literal is <code>[T:]</code>. <code>len(xs)</code> and <code>xs.len</code> both
             return a <code>u64</code>. Indexing is bounds-checked at runtime.
+            <code>xs.len</code> is also writable through a mutable place, including an
+            out/inout parameter; a <code>&lt;-</code> parameter stays read-only.
           </p>
 
           <div class="doc-code">
@@ -514,11 +516,13 @@ for i in 0..len(explicit) {
           </div>
 
           <div class="doc-callout warn">
-            <strong>Literal lifetime.</strong> A slice literal's backing array has automatic storage
-            in the enclosing lexical block. It must not escape that block: the checker rejects
+            <strong>Literal lifetime.</strong> A non-empty slice literal's backing array has automatic
+            storage in the enclosing lexical block. It must not escape that block: the checker rejects
             returning it, assigning it to a variable declared outside the block, or embedding it in a
             shape that then escapes. If the data must outlive the block, allocate it inside a
-            <code>protect</code> region with <code>alloc</code>.
+            <code>protect</code> region with <code>alloc</code>. The empty literal <code>[T:]</code>
+            needs no storage and may escape freely; it is the null slice, so an empty collection can
+            be constructed without allocating.
           </div>
 
           <h3>Globals and imports</h3>
@@ -832,7 +836,7 @@ protect {
                   <code>vec_reverse&lt;T&gt;</code>,
                   <code>vec_sort&lt;T&gt;</code>,
                   <code>vec_binary_search&lt;T&gt;</code></td>
-                <td>no; call inside <code>protect</code></td>
+                <td>no; <code>vec_new&lt;T&gt;</code> needs no <code>protect</code>, growing flows do</td>
               </tr>
               <tr>
                 <td><code>lib/slice.loi</code></td>
@@ -1564,7 +1568,7 @@ sealed flow winning_line
             <li>I/O is limited to whole-file and whole-stdin reads/writes plus numeric and <code>printf</code> formatting. There is no socket, directory, seek, environment or process API. User-declared variadic flows are not supported. <code>read_file</code>, <code>read_stdin</code> and <code>read_line</code> allocate in the current <code>protect</code> region and cannot escape it.</li>
             <li>Imports are textual and cross-file visibility is not enforced. Multi-file builds give sealed flows external linkage so cross-file calls link.</li>
             <li>Globals accept any compile-time constant, including nested shapes, slices and strings; the backend folds them into strict C11 static initializers (named arrays back slice data, with no compound literals). Growable collections (<code>Vec&lt;T&gt;</code>, maps) remain library work even though generics are available.</li>
-            <li>A slice literal cannot escape the block that created it, including being returned or stored into an outer variable; allocate long-lived data in a <code>protect</code> region.</li>
+            <li>A non-empty slice literal cannot escape the block that created it, including being returned or stored into an outer variable; allocate long-lived data in a <code>protect</code> region. The empty literal <code>[T:]</code> has no backing storage and may escape.</li>
             <li><code>&lt;-</code> composite parameters are passed to C by value (slice headers still point at the caller's data). The checker forbids storing or returning the borrowed value, so the parameter stays observationally read-only.</li>
             <li><code>loi fmt</code> preserves <code>//</code> comments and is idempotent; comments inside multi-line expressions may move to the next statement boundary. Shape literals stay on one line.</li>
             <li>Binding generation is conservative: callbacks, variadics, unions, bitfields, inline arrays, pointer-to-pointer, mutable <code>char *</code> buffers, wide strings and pointers to unsafe records need a hand-written shim.</li>

@@ -4,7 +4,37 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-19, Block A3):** a partially consumed composite can
+- **Current task (2026-11-19, Block A4):** an empty slice literal (`[T:]`) no
+  longer carries a block-region taint, because the C backend emits `{ NULL, 0 }`
+  with no backing array. It can now be returned, stored in an outer shape, or
+  assigned into a `->`/`<->` parameter; non-empty literals still carry automatic
+  block storage and remain confined to their block. Slice member places now use
+  the real `LoiSlice` field name (`len`) in generated C instead of the `loi_f_`
+  prefix used for Loi shapes, so `s.len = n` through an inout parameter compiles
+  and runs; `<-` parameters stay read-only. `vec_new<T>` now builds an empty
+  vector with `[T:]`, length/capacity zero and no `alloc`, so it works outside
+  `protect`; `vec_push<T>` reserves at least one slot on first growth. Six
+  checker tests, two codegen tests (strict C11 + sanitizer compile-only + run)
+  and one library test cover the feature. Rules are documented in `SINTAXE.md`
+  §12, `LOI_SPEC.md` §4, `FRICTION.md`, `DECISIONS.md` and `website/docs.html`.
+- **Verification for the current task (Block A4):** the two positive checker
+  tests and both codegen tests failed before the change (the empty literal hit
+  the escape diagnostic; the `.len` write failed strict C11 compilation with
+  `LoiSlice has no member named loi_f_len`). After the implementation all new
+  tests pass, including `vec_new` outside `protect` and the `slice_len_write`
+  program that prints `21122` and exits 0. Final gate command:
+  `export PATH="/root/.cargo/bin:$PATH"; export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets && python3 tools/sync_examples.py --check && git diff --check`.
+  All five checks exited 0; `cargo test --all-targets` reported **375 passed,
+  0 failed** (lib 22 + main 6 + bindgen 1 + checker 139 + cli 42 + codegen 60 +
+  const_values 5 + errors 3 + header 4 + lexer 8 + lib-integration 35 + msrv 1 +
+  order 6 + parser 26 + pretty 17). The new codegen tests compile the generated
+  C under strict C11 and with sanitizers compile-only, then run it; no ASan
+  execution is claimed in this PRoot container. No runtime helper signature or
+  ABI changed: the only generated-C differences are slice member places using
+  `len` instead of `loi_f_len`, and the stdlib no longer emitting an `alloc` in
+  `vec_new`. This is a checker/codegen/stdlib change on programs whose hot loop
+  bodies are unchanged, so `benchmark/run.py` is not applicable.
+- **Previous task (2026-11-19, Block A3):** a partially consumed composite can
   be passed to a read-only flow when that flow only reads live fields. The
   checker records, per `<-` parameter, the root-relative paths a flow reads
   (`FunctionScan::direct_reads` plus `collect_direct_reads`), forwards whole
@@ -19,7 +49,7 @@
   rejected, and returning a borrowed slice view remains a separate limitation.
   Rules are documented in `SINTAXE.md` §11, `LOI_SPEC.md` §4.2–4.4,
   `FRICTION.md`, `DECISIONS.md` and `website/docs.html`.
-- **Verification for the current task (Block A3):** the three positive checker
+- **Verification for Block A3:** the three positive checker
   tests failed with `use of moved value` before the change; the two negative
   tests and the codegen test passed only after the implementation. Final gate
   command:
@@ -479,7 +509,7 @@
 | Type checker | Working | Types, literals, directions, calls, globals, intrinsics, `opaque`/`cstr`, constant folding, shape-cycle detection, bitwise/shift rules, I/O intrinsic signatures, allocation effects (including deep-clone allocators) and `<-` read-view summaries; monomorphization feeds concrete declarations into the checker and diagnostics show source generic spellings |
 | Compile-time evaluation | Working | `src/const_eval.rs`: pure `comptime flow` interpreter with step/depth limits, constant globals and shape defaults, `comptime expr`, purity diagnostics |
 | Diagnostics | Working | `src/diagnostic.rs`: human output with full source underlines (multi-line spans get `...`), secondary labels and an error summary; `short` keeps `path:line:column: message`; `json` emits structured objects with `end_line`/`end_column`; ANSI colors honor `NO_COLOR`/`CLICOLOR_FORCE`; unknown names get namespace-aware edit-distance suggestions; parser spans carry exact token ends and multi-line end lines with a line-scan fallback |
-| Ownership | Working | Give liveness, path-sensitive partial moves, field-sensitive lexical read views, definite assignment/return, exclusive `->`/`<->`, cross-flow consumption, `protect` taints and lexical-block escape analysis for slice literals and deep-clone results, `read_file`/`read_stdin`/`read_line`; gives from globals are rejected and move state is per function body |
+| Ownership | Working | Give liveness, path-sensitive partial moves, field-sensitive lexical read views, definite assignment/return, exclusive `->`/`<->`, cross-flow consumption, `protect` taints and lexical-block escape analysis for non-empty slice literals and deep-clone results (empty literals are untainted), writable slice length, `read_file`/`read_stdin`/`read_line`; gives from globals are rejected and move state is per function body |
 | C backend | Working | One C11 translation unit, ordered shape layouts, checked arithmetic, bitwise/shift helpers, growable arena, recursive on-demand deep-clone helpers, bounds checks, defaults, headers, source maps, multi-file objects, statics, file/stdin I/O and numeric printing |
 | C interop | Working | `opaque` → `void *`, `cstr` → `const char *`, bodyless `extern flow`, `--c-source`, `--cc-flag`; string literals coerce to `cstr` |
 | Library | Working | `lib/std.loi` (scalar/string helpers), `lib/math.loi` (generic and `comptime`), `lib/ctype.loi` (pure ASCII helpers), `lib/os.loi`/`lib/net.loi` (thin POSIX bindings with C shims); prefixed names, explicitly imported, 7 integration tests |
@@ -630,9 +660,12 @@ for f in lib/std.loi lib/math.loi lib/ctype.loi lib/os.loi lib/net.loi; do ./tar
 - The entry-point heuristic treats `main` and every uncalled non-`sealed`
   flow as an entry for the allocation check; an uncalled `sealed` helper may
   rely on a caller's `protect`.
-- Slice literals are rejected when they escape their block through a return, a
-  variable declared outside the block or a shape that escapes. This is lexical
-  escape analysis, not a full interprocedural lifetime system.
+- Non-empty slice literals are rejected when they escape their block through a
+  return, a variable declared outside the block or a shape that escapes. Empty
+  literals (`[T:]`) have no backing storage and may escape. Writing `xs.len` is
+  unchecked against capacity: the checker does not track slice capacity, so a
+  length larger than the allocated buffer is the programmer's responsibility.
+  This is lexical escape analysis, not a full interprocedural lifetime system.
 - `clone` of a slice-containing value is a deep copy and therefore allocates;
   it is rejected outside every `protect` region, and its result may not escape
   that region. Slice-free composites still copy bit-wise without allocation.
@@ -761,8 +794,8 @@ Remaining implementation or secondary choices:
 2. Block A3: done — call-scoped read views let a partially consumed composite
    be passed to a read-only flow that only touches live fields. Returning a
    borrowed slice view remains a separate escape-lifetime feature.
-3. Block A4: slice literals and writable length/out-param support for empty
-   collections without forcing `alloc` into every constructor.
+3. Block A4: done — empty slice literals escape freely, `.len` is writable, and
+   `vec_new<T>` no longer needs `protect`. Non-empty literals stay block-local.
 4. Block A5: `Clone`, `Copy` and `Eq` generic constraints so library flows can
    state their element requirements instead of being numeric-only.
 5. After Block A: revisit modules/namespaces, linear resources for `lib/net.loi`,
