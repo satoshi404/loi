@@ -1,2 +1,2 @@
 tests/errors/comptime_recursion.loi:4:17: comptime call depth exceeded; is the flow recursive?
-tests/errors/comptime_recursion.loi:4:17: initializer for global 'LIMIT' must be a compile-time constant: comptime call depth exceeded; is the flow recursive?
+tests/errors/comptime_recursion.loi:7:1: initializer for global 'LIMIT' must be a compile-time constant: comptime call depth exceeded; is the flow recursive?

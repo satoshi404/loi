@@ -42,15 +42,38 @@ fn generated_c(source: &str, dir: &Path) -> PathBuf {
     c_path
 }
 
-fn clang() -> String {
-    if let Ok(path) = std::env::var("LOI_TEST_CLANG") {
-        return path;
+fn has_tool(tool: &str) -> bool {
+    Command::new(tool)
+        .arg("--version")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+/// Return the first usable clang candidate, or `None` on machines without one.
+/// `LOI_TEST_CLANG` selects an explicit binary; the Termux path is only a
+/// candidate and is validated like any other tool.
+fn clang() -> Option<String> {
+    let candidate = std::env::var("LOI_TEST_CLANG")
+        .ok()
+        .or_else(|| {
+            let bundled = "/data/data/com.termux/files/usr/bin/clang";
+            Path::new(bundled).exists().then(|| bundled.to_string())
+        })
+        .unwrap_or_else(|| "clang".to_string());
+    has_tool(&candidate).then_some(candidate)
+}
+
+fn require_clang(test_name: &str) -> Option<String> {
+    match clang() {
+        Some(compiler) => Some(compiler),
+        None => {
+            eprintln!(
+                "skipping {test_name}: clang is unavailable; set LOI_TEST_CLANG to a working clang binary"
+            );
+            None
+        }
     }
-    let bundled = "/data/data/com.termux/files/usr/bin/clang";
-    if Path::new(bundled).exists() {
-        return bundled.to_string();
-    }
-    "clang".to_string()
 }
 
 fn compile_and_run(compiler: &str, c_path: &Path, exe: &Path) -> String {
@@ -121,9 +144,12 @@ flow sink
 
 #[test]
 fn repro_prints_5007_with_gcc_and_clang() {
+    let Some(clang) = require_clang("repro_prints_5007_with_gcc_and_clang") else {
+        return;
+    };
     let dir = test_dir("repro");
     let c_path = generated_c(ORDER_REPRO, &dir);
-    for (label, compiler) in [("gcc", "cc"), ("clang", clang().as_str())] {
+    for (label, compiler) in [("gcc", "cc"), ("clang", clang.as_str())] {
         let exe = dir.join(format!("repro-{label}"));
         assert_eq!(
             compile_and_run(compiler, &c_path, &exe),
@@ -147,9 +173,12 @@ open flow main
 }}
 "#
     );
+    let Some(clang) = require_clang("binary_operands_evaluate_left_to_right") else {
+        return;
+    };
     let dir = test_dir("binary");
     let c_path = generated_c(&source, &dir);
-    for (label, compiler) in [("gcc", "cc"), ("clang", clang().as_str())] {
+    for (label, compiler) in [("gcc", "cc"), ("clang", clang.as_str())] {
         let exe = dir.join(format!("binary-{label}"));
         assert_eq!(
             compile_and_run(compiler, &c_path, &exe),
@@ -173,9 +202,12 @@ open flow main
 }}
 "#
     );
+    let Some(clang) = require_clang("call_arguments_evaluate_left_to_right") else {
+        return;
+    };
     let dir = test_dir("call-args");
     let c_path = generated_c(&source, &dir);
-    for (label, compiler) in [("gcc", "cc"), ("clang", clang().as_str())] {
+    for (label, compiler) in [("gcc", "cc"), ("clang", clang.as_str())] {
         let exe = dir.join(format!("call-args-{label}"));
         assert_eq!(
             compile_and_run(compiler, &c_path, &exe),
@@ -198,9 +230,12 @@ open flow main
 }}
 "#
     );
+    let Some(clang) = require_clang("printf_arguments_evaluate_left_to_right") else {
+        return;
+    };
     let dir = test_dir("printf-args");
     let c_path = generated_c(&source, &dir);
-    for (label, compiler) in [("gcc", "cc"), ("clang", clang().as_str())] {
+    for (label, compiler) in [("gcc", "cc"), ("clang", clang.as_str())] {
         let exe = dir.join(format!("printf-args-{label}"));
         assert_eq!(
             compile_and_run(compiler, &c_path, &exe),
@@ -240,9 +275,12 @@ open flow main
     => 0
 }
 "#;
+    let Some(clang) = require_clang("logical_operators_keep_short_circuiting") else {
+        return;
+    };
     let dir = test_dir("short-circuit");
     let c_path = generated_c(source, &dir);
-    for (label, compiler) in [("gcc", "cc"), ("clang", clang().as_str())] {
+    for (label, compiler) in [("gcc", "cc"), ("clang", clang.as_str())] {
         let exe = dir.join(format!("short-circuit-{label}"));
         assert_eq!(
             compile_and_run(compiler, &c_path, &exe),
@@ -360,8 +398,12 @@ fn make_program(seed: u64) -> (String, String) {
 
 #[test]
 fn three_hundred_generated_programs_match_the_left_to_right_oracle() {
+    let Some(compiler) =
+        require_clang("three_hundred_generated_programs_match_the_left_to_right_oracle")
+    else {
+        return;
+    };
     let dir = test_dir("differential");
-    let compiler = clang();
     for seed in 1..=320 {
         let (source, expected) = make_program(seed);
         let case_dir = dir.join(format!("case-{seed}"));

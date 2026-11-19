@@ -933,7 +933,19 @@ impl Checker {
                         decl.name, error.message
                     )
                 };
-                self.error(error.span, message);
+                if error.message.contains("comptime call depth exceeded") {
+                    // A depth-limit failure describes the whole initializer.
+                    // The recursive call is already the primary location of
+                    // the first diagnostic, so keep it secondary here and
+                    // show where the affected global is declared.
+                    self.diagnostics.push(
+                        Diagnostic::from_error(message, decl.span)
+                            .with_label("non-constant global initializer")
+                            .with_secondary(error.span, "recursive comptime call"),
+                    );
+                } else {
+                    self.error(error.span, message);
+                }
             }
 
             let resolved = match (declared, value_ty) {

@@ -92,6 +92,37 @@ fn error_corpus_matches_expected_short_output() {
 }
 
 #[test]
+fn recursive_comptime_global_error_has_a_secondary_call_label() {
+    let output = Command::new(loi())
+        .arg("check")
+        .arg("--error-format")
+        .arg("json")
+        .arg("--color")
+        .arg("never")
+        .arg("tests/errors/comptime_recursion.loi")
+        .current_dir(manifest_dir())
+        .output()
+        .expect("loi should run");
+    let actual = String::from_utf8(output.stderr).expect("diagnostics should be UTF-8");
+
+    let call = actual
+        .lines()
+        .find(|line| {
+            line.contains("\"message\":\"comptime call depth exceeded; is the flow recursive?\"")
+        })
+        .expect("the recursive call should be reported");
+    assert!(call.contains("\"line\":4,\"column\":17"));
+
+    let global = actual
+        .lines()
+        .find(|line| line.contains("initializer for global 'LIMIT'"))
+        .expect("the global initializer should be reported");
+    assert!(global.contains("\"line\":7,\"column\":1"));
+    assert!(global.contains("\"label\":\"non-constant global initializer\""));
+    assert!(global.contains("\"line\":4,\"column\":17,\"end_line\":4,\"end_column\":23,\"label\":\"recursive comptime call\""));
+}
+
+#[test]
 fn every_example_checks_cleanly() {
     let dir = manifest_dir().join("examples");
     let mut files = fs::read_dir(&dir)

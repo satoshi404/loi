@@ -4,7 +4,14 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-19, item 1):** Loi now defines strict left-to-right
+- **Current task (2026-11-19, review follow-up):** addressed both reported
+  review problems. `tests/order.rs` now probes clang with `has_tool --version`,
+  honors `LOI_TEST_CLANG`, treats the Termux path as only one candidate, and
+  prints a skip message instead of failing when no clang exists. The recursive
+  `comptime` global error now points at `LIMIT` (`7:1`) with a secondary label
+  on the recursive call (`4:17`), while the first diagnostic stays at `4:17`.
+  Reasons are recorded in `DECISIONS.md`; no language rule changed.
+- **Previous task (2026-11-19, item 1):** Loi now defines strict left-to-right
   evaluation rather than rejecting ambiguous programs. The C backend sequences
   operator operands, call/intrinsic arguments, literal elements, assignment
   target before value, index base before index and range start before end with
@@ -24,8 +31,8 @@
   static mark macros and nested choice tag/payload initializers under strict
   C11. Forbidden calls now report the exact offending subexpression span.
   New tests cover runtime/comptime agreement, generated initializers, exact
-  diagnostics and two negative corpus files; one old recursion expectation was
-  re-blessed because its span now points at the recursive call.
+  diagnostics and two negative corpus files; the recursion case is handled by
+  the review follow-up above instead of moving both errors to the same span.
 - **Previous task (2026-11-19, item 2):** emitted headers were made
   self-contained and linkable with filename guards, shared guarded type
   definitions and `extern "C"` prototypes.
@@ -404,7 +411,43 @@
 
 ## Verification
 
-Last verified 2026-11-18 after the canonical example expansion with:
+Last verified 2026-11-19 for the review follow-up with:
+
+```sh
+export PATH="/root/.cargo/bin:$PATH"
+export RUSTFLAGS="-C linker=/usr/bin/gcc"
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test --all-targets
+python3 tools/sync_examples.py --check
+git diff --check
+```
+
+- All five checks exited 0. `cargo test --all-targets` reported **339 passed,
+  0 failed** (lib 22, main 6, bindgen 1, checker 114, cli 42, codegen 51,
+  const_values 5, errors 3, header 4, lexer 8, lib-integration 33, msrv 1,
+  order 6, parser 26, pretty 17).
+- `LOI_TEST_CLANG=/definitely/not/clang cargo test --test order -- --nocapture`
+  ran all 6 order tests and printed one skip message per test with no failure.
+  With clang present, all 6 ran differentially against GCC 15.2.0 (`cc`) and
+  clang 21.1.8. No ASan execution is claimed in this PRoot container.
+- `benchmark/run.py --output /tmp/opencode/bench_followup_{before,after}.json`
+  (minimum of 9 runs, pinned CPU 6, GCC 15.2.0, identical checksums) measured
+  these Loi/C ratios:
+
+  | benchmark | before | after |
+  |---|---:|---:|
+  | hash | 0.998 | 1.004 |
+  | crc32 | 1.111 | 1.145 |
+  | sort | 1.336 | 1.376 |
+  | int_map | 1.261 | 1.194 |
+  | str_map | 1.213 | 0.855 |
+  | random | 0.991 | 0.992 |
+
+  The patch changes no generated C; the ratios are recorded as measured rather
+  than attributed to the patch.
+
+Previously verified 2026-11-18 after the canonical example expansion with:
 
 ```sh
 export PATH=/root/.cargo/bin:$PATH
