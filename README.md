@@ -1,16 +1,46 @@
-# Loi
+<p align="center">
+  <img src="website/assets/logo.svg" alt="Loi" width="72" height="72">
+</p>
 
-Loi is a small compiled systems language built around three ideas:
+<h1 align="center">Loi</h1>
 
-- **single ownership** — one live name per value, with `give` for transfer and
-  `clone` for an explicit duplicate;
-- **explicit directions** — `<-` reads, `->` initializes, `<->` reads and
-  writes, `=>` returns;
-- **lexical memory regions** — `protect { ... }` owns everything allocated
+<p align="center">
+  <em>A compiled systems language with single ownership, explicit directions,
+  and lexical memory regions.</em>
+</p>
+
+<p align="center">
+  Rust 1.88+ &middot; C11 backend &middot; MIT OR Apache-2.0
+</p>
+
+---
+
+## Contents
+
+- [Why Loi](#why-loi)
+- [Quick start](#quick-start)
+- [Command-line interface](#command-line-interface)
+- [Language at a glance](#language-at-a-glance)
+- [Repository layout](#repository-layout)
+- [Documentation](#documentation)
+- [Testing](#testing)
+- [License](#license)
+
+## Why Loi
+
+Loi is built around three ideas:
+
+- **Single ownership** — one live name per value, with `give` for transfer and
+  `clone` for an explicit duplicate.
+- **Explicit directions** — `<-` reads, `->` initializes, `<->` reads and
+  writes, `=>` returns. Effects are visible at the call site.
+- **Lexical memory regions** — `protect { ... }` owns everything allocated
   inside it; nothing escapes.
 
 The compiler is written in Rust (edition 2024, standard library only) and emits
-C11, so the normal toolchain is Cargo plus a C compiler.
+C11, so the normal toolchain is Cargo plus a C compiler. Ambiguous expressions
+are not rejected: Loi defines strict left-to-right evaluation for operands,
+arguments and assignment, while `and`/`or` keep their short-circuit behavior.
 
 **Requirements:** Rust 1.88 or newer (the verified minimum supported version)
 and a C11 compiler.
@@ -46,7 +76,7 @@ cargo build
 ./flow_demo
 ```
 
-The CLI is:
+## Command-line interface
 
 ```text
 loi <lex|parse|fmt|check> FILE
@@ -87,9 +117,11 @@ cargo test --all-targets
 - `protect` is a growable bump arena. `--arena-size` sets the initial chunk.
 - Signed integer arithmetic traps on overflow; unsigned arithmetic wraps at
   its declared width; division and remainder by zero trap with a source
-  position. See `SINTAXE.md` for the full rules.
+  position.
 - Bitwise and shift operators (`&`, `|`, `^`, `~`, `<<`, `>>`) and compound
   forms are available for masks, flags and hashing; shift counts are checked.
+- Operands, arguments and assignment are evaluated strictly left to right;
+  `and` and `or` short-circuit. See `SINTAXE.md` under "Evaluation order".
 - `read_file`, `write_file`, `read_stdin` and `read_line` cover whole-file and
   stdin I/O. `print_int`, `print_float` and `printf` print numbers and formatted
   text without building strings by hand; `printf` checks its varargs against a
