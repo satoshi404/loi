@@ -129,6 +129,42 @@ impl PartialEq for Type {
 
 impl Eq for Type {}
 
+/// A constraint written on a generic type parameter, for example the `Clone`
+/// in `flow f<T: Clone + Eq>`.
+///
+/// Constraint names are not global keywords: they are ordinary identifiers
+/// recognized only in bound position by the parser. This keeps the canonical
+/// keyword set unchanged while giving diagnostics a closed vocabulary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypeBound {
+    /// `clone(value)` works for the type. Every Loi type is cloneable after
+    /// deep clone was added, including shapes containing slices.
+    Clone,
+    /// The type may be copied implicitly (no `give`/`clone` needed): numbers,
+    /// bool, marks, opaque handles and `cstr`.
+    Copy,
+    /// The type supports `==` and `!=`: numbers, bool, marks and `[u8]`.
+    Eq,
+}
+
+impl std::fmt::Display for TypeBound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Clone => write!(f, "Clone"),
+            Self::Copy => write!(f, "Copy"),
+            Self::Eq => write!(f, "Eq"),
+        }
+    }
+}
+
+/// One parameter of a generic shape or flow, including its constraints.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeParam {
+    pub span: Span,
+    pub name: String,
+    pub bounds: Vec<TypeBound>,
+}
+
 /// A complete source file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program {
@@ -193,8 +229,9 @@ pub struct InterfaceDecl {
     pub close_line: usize,
     pub visibility: Visibility,
     pub name: String,
-    /// Type parameters declared as `shape Name<T, U>`.
-    pub type_params: Vec<String>,
+    /// Type parameters declared as `shape Name<T, U>`, optionally bounded
+    /// (`shape Name<T: Copy>`).
+    pub type_params: Vec<TypeParam>,
     pub fields: Vec<FieldDecl>,
 }
 
@@ -260,8 +297,9 @@ pub struct FunctionDecl {
     pub span: Span,
     pub visibility: Visibility,
     pub name: String,
-    /// Type parameters declared as `flow name<T, U>`.
-    pub type_params: Vec<String>,
+    /// Type parameters declared as `flow name<T, U>`, optionally bounded
+    /// (`flow name<T: Clone + Eq>`).
+    pub type_params: Vec<TypeParam>,
     /// True for `comptime flow`: the body must be pure and is evaluated at
     /// compile time when called from a constant context.
     pub comptime: bool,

@@ -10,6 +10,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
+use crate::types::Ty;
 
 /// A diagnostic produced by monomorphization.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,11 +44,12 @@ pub fn monomorphize(program: &Program) -> (Program, Vec<MonoError>) {
 /// Like [`monomorphize`], but also instantiates templates that the program
 /// never uses so the checker can validate their bodies.
 ///
-/// Type parameters have no constraints, so an unused template is validated
-/// once with `i32` substituted for every parameter. This is a smoke test for
-/// name, type and ownership errors, not a proof that the body works for every
-/// type. Real uses are still checked with their actual type arguments. The
-/// extra declarations are only used by the checker; code generation calls
+/// An unused template is validated once with `i32` substituted for every
+/// parameter. `i32` satisfies all three constraints (`Clone`, `Copy`, `Eq`), so
+/// this remains a smoke test for name, type and ownership errors rather than a
+/// proof that the body works for every type. Real uses are still checked with
+/// their actual type arguments, and declared bounds are validated here too.
+/// The extra declarations are only used by the checker; code generation calls
 /// [`monomorphize`] and never sees them.
 pub fn monomorphize_for_check(
     program: &Program,
@@ -64,6 +66,8 @@ fn run(
         functions: HashMap::new(),
         named_interfaces: HashSet::new(),
         named_functions: HashSet::new(),
+        marks: HashSet::new(),
+        opaques: HashSet::new(),
         requested: HashMap::new(),
         instantiated: HashSet::new(),
         queue: Vec::new(),
@@ -86,6 +90,12 @@ fn run(
             }
             Item::Function(decl) => {
                 pass.named_functions.insert(decl.name.clone());
+            }
+            Item::Mark(decl) => {
+                pass.marks.insert(decl.name.clone());
+            }
+            Item::Opaque(decl) => {
+                pass.opaques.insert(decl.name.clone());
             }
             _ => {}
         }
@@ -154,6 +164,10 @@ struct Monomorphizer<'a> {
     functions: HashMap<String, &'a FunctionDecl>,
     named_interfaces: HashSet<String>,
     named_functions: HashSet<String>,
+    /// Non-shape named types that satisfy `Copy` and/or `Eq`. Choices and
+    /// shapes are composite by construction and are not listed here.
+    marks: HashSet<String>,
+    opaques: HashSet<String>,
     /// Concrete name -> readable instantiation, used to detect mangling
     /// collisions as well as collisions with user declarations.
     requested: HashMap<String, String>,
@@ -524,8 +538,16 @@ impl<'a> Monomorphizer<'a> {
                     ));
                     return;
                 }
+                let bound_errors = self.check_bounds(
+                    &template.type_params,
+                    &request.args,
+                    "shape",
+                    &request.base,
+                    request.span,
+                );
+                self.errors.extend(bound_errors);
                 for (param, arg) in template.type_params.iter().zip(request.args.iter()) {
-                    mapping.insert(param.clone(), arg.clone());
+                    mapping.insert(param.name.clone(), arg.clone());
                 }
                 let mut decl = template.clone();
                 decl.name = request.name;
@@ -549,8 +571,16 @@ impl<'a> Monomorphizer<'a> {
                     ));
                     return;
                 }
+                let bound_errors = self.check_bounds(
+                    &template.type_params,
+                    &request.args,
+                    "flow",
+                    &request.base,
+                    request.span,
+                );
+                self.errors.extend(bound_errors);
                 for (param, arg) in template.type_params.iter().zip(request.args.iter()) {
-                    mapping.insert(param.clone(), arg.clone());
+                    mapping.insert(param.name.clone(), arg.clone());
                 }
                 let mut decl = template.clone();
                 decl.name = request.name;
@@ -558,6 +588,116 @@ impl<'a> Monomorphizer<'a> {
                 self.rewrite_function(&mut decl, &mapping);
                 self.generated.push(Item::Function(decl));
             }
+        }
+    }
+
+    /// Human-readable type spelling for bound diagnostics. Instantiated
+    /// arguments reach this pass already mangled (`Vec__i32`), but users wrote
+    /// `Vec<i32>`; `requested` records the mapping. Collision diagnostics keep
+    /// the mangled name on purpose, so only bound messages use this helper.
+    fn type_display_source(&self, ty: &Type) -> String {
+        match ty {
+            Type::Named(name, _) => self
+                .requested
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| name.clone()),
+            Type::Slice(element, _) => format!("[{}]", self.type_display_source(element)),
+            Type::Generic(name, args, _) => {
+                let base = self
+                    .requested
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_else(|| name.clone());
+                let rendered = args
+                    .iter()
+                    .map(|arg| self.type_display_source(arg))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{base}<{rendered}>")
+            }
+        }
+    }
+
+    /// Validate declared constraints once the concrete type arguments are
+    /// known. The request span is the call site or type use that triggered the
+    /// instantiation, so the diagnostic points at code the user wrote rather
+    /// than at a generated declaration.
+    fn check_bounds(
+        &self,
+        params: &[TypeParam],
+        args: &[Type],
+        noun: &str,
+        base: &str,
+        span: Span,
+    ) -> Vec<MonoError> {
+        let mut errors = Vec::new();
+        for (param, arg) in params.iter().zip(args.iter()) {
+            let missing = param
+                .bounds
+                .iter()
+                .copied()
+                .filter(|bound| !self.bound_satisfied(*bound, arg))
+                .collect::<Vec<_>>();
+            if missing.is_empty() {
+                continue;
+            }
+            let names = missing
+                .iter()
+                .map(|bound| format!("'{bound}'"))
+                .collect::<Vec<_>>()
+                .join(" and ");
+            let hint = if missing.contains(&TypeBound::Eq) {
+                "Eq requires a numeric type, bool, a mark or [u8]"
+            } else if missing.contains(&TypeBound::Copy) {
+                "Copy requires a numeric type, bool, a mark, an opaque handle or cstr"
+            } else {
+                "every Loi type is Clone, so this bound is always satisfied"
+            };
+            errors.push(MonoError::new(
+                span,
+                format!(
+                    "type '{}' does not satisfy the {names} bound on type parameter '{}' of {noun} '{base}'; {hint}",
+                    self.type_display_source(arg),
+                    param.name
+                ),
+            ));
+        }
+        errors
+    }
+
+    fn bound_satisfied(&self, bound: TypeBound, ty: &Type) -> bool {
+        match bound {
+            TypeBound::Clone => true,
+            TypeBound::Copy => self.is_copy_type(ty),
+            TypeBound::Eq => self.is_eq_type(ty),
+        }
+    }
+
+    /// Mirror the checker's implicit-copy rule: scalars, marks, opaque handles
+    /// and `cstr` are bit-copied; shapes, choices and slices are composite.
+    fn is_copy_type(&self, ty: &Type) -> bool {
+        match ty {
+            Type::Named(name, _) => {
+                Ty::from_name(name).is_some()
+                    || self.marks.contains(name)
+                    || self.opaques.contains(name)
+                    || name == "cstr"
+            }
+            Type::Slice(_, _) | Type::Generic(..) => false,
+        }
+    }
+
+    /// Mirror the checker's `==`/`!=` rule: numbers, bool, two values of the
+    /// same mark, and byte slices. Structural equality for shapes, choices and
+    /// other slices is deliberately not part of `Eq`.
+    fn is_eq_type(&self, ty: &Type) -> bool {
+        match ty {
+            Type::Named(name, _) => Ty::from_name(name).is_some() || self.marks.contains(name),
+            Type::Slice(element, _) => {
+                matches!(&**element, Type::Named(name, _) if name == "u8")
+            }
+            Type::Generic(..) => false,
         }
     }
 

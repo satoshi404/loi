@@ -30,7 +30,9 @@ pub fn check(program: &Program) -> Vec<Diagnostic> {
     if has_mono_errors {
         // Generic errors (missing arguments, recursion limits, name
         // collisions) leave the program partly rewritten. Checking it would
-        // only add cascades about unknown generated names.
+        // only add cascades about unknown generated names. Bound diagnostics
+        // already carry source spelling from the monomorphizer; rewriting all
+        // mono errors here would hide the generated name in collision reports.
         return diagnostics;
     }
     for error in crate::const_eval::validate_comptime_functions(&program) {

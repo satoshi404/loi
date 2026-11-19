@@ -136,9 +136,20 @@ arbitrary `T`. The Phase 0 probe `d_generic_cmp.loi` confirmed:
 error: operator requires numeric operands, found Bad and Bad
 ```
 
-Language requirement: trait constraints/ord bounds on generic type parameters.
-Current workaround: document ordering/search/sort flows as numeric-only where
-needed, and avoid pretending that `T` is comparable.
+**Partially resolved by Block A5.** Generic type parameters can now declare
+`T: Clone + Copy + Eq` bounds. The `Eq` bound makes equality search work for
+every type the checker already accepts with `==`: numbers, bool, marks and
+`[u8]`. `vec_find<T>` and `slice_find<T>` now declare `T: Eq` instead of being
+numeric-only, and `vec_find<bool>` is covered by a library test. `Copy` marks
+flows that pass `T` by value; `Clone` documents flows that copy elements.
+
+Still open: ordering. No `Ord` bound was added, so `<`/`>` on generic `T` are
+still numeric-only and `math_min<T>`, `math_max<T>`, `math_clamp<T>`,
+`math_sum<T>`, `vec_sort<T>` and `vec_binary_search<T>` keep their numeric
+restriction. Structural equality for shapes, choices and non-byte slices is
+also still unavailable; a future `Eq` implementation would need code generation
+for those types. Language requirement: an `Ord` constraint (and broader
+structural `Eq`) before ordering helpers can be honest about arbitrary `T`.
 
 ## Phase 2 — `lib/string.loi` and `lib/hash.loi`
 

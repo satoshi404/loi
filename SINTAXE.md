@@ -181,6 +181,7 @@ nested  <- Vec<Vec<i32>>[ data: [Vec<i32>:], len: 0 ]
 ```
 
 - Type parameters are declared after the shape name: `shape Name<T, U> [...]`.
+  They may carry constraints (`shape Slot<T: Copy>`); see §5.4.
 - Every instantiation supplies all type arguments explicitly; there is no
   inference. `Vec[...]` without `<...>` is an error.
 - Generic declarations are templates. The compiler monomorphizes each used
@@ -315,7 +316,8 @@ flow main
 }
 ```
 
-- Declare type parameters after the flow name: `flow name<T, U>`.
+- Declare type parameters after the flow name: `flow name<T, U>`. They may
+  carry bounds; see §5.4.
 - Calls spell their type arguments: `sum<i32>(xs)`. There is no inference, and
   a generic flow without type arguments is an error.
 - Passing a type argument to a non-generic flow is an error, as is the wrong
@@ -325,7 +327,55 @@ flow main
   checked with `i32` placeholders, and recursive instantiations hit the same
   depth limit as generic shapes.
 
-### 5.4 `comptime`
+### 5.4 Generic constraints
+
+```loi
+flow copy_row<T: Clone>
+    <- row: T
+    => T
+{
+    => clone(row)
+}
+
+flow find<T: Clone + Eq>
+    <- xs: [T]
+    <- needle: T
+    => i64
+{
+    for i in 0..xs.len {
+        if xs[i] == needle {
+            => i as i64
+        }
+    }
+    => -1
+}
+
+shape Slot<T: Copy> [
+    value: T
+]
+
+slot <- Slot<i32>[ value: 7 ]
+index <- find<i32>([i32: 1, 2], 2)
+```
+
+- A type parameter may list constraints after a colon: `T: Clone`,
+  `T: Clone + Eq`, `T: Clone + Copy + Eq`. Separate several parameters with
+  commas: `find<T: Eq, U>`. Bounds apply to shapes and flows alike.
+- `Clone`, `Copy` and `Eq` are the only accepted constraint names in this
+  version. They are ordinary identifiers recognized only in bound position,
+  not new keywords; any other name is a parse error naming the unknown
+  constraint.
+- A bound is checked when the template is instantiated with concrete type
+  arguments, and the diagnostic points at the call or type use that triggered
+  it, using source spelling (`Vec<i32>`, not the mangled `Vec__i32`). The
+  exact set of types satisfying each bound is a language rule recorded in
+  `LOI_SPEC.md` §5.1a.
+- Bounds are documentation and validation only: they do not change mangled
+  names, generated C or the ABI. `Clone` is satisfied by every Loi type,
+  but cloning a value with slices still allocates and needs `protect`.
+- Ordering remains numeric-only; there is no `Ord` constraint in this version.
+
+### 5.5 `comptime`
 
 ```loi
 comptime flow double

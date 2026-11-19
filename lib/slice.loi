@@ -8,9 +8,10 @@
 //!
 //! `slice_get`, `slice_first`, `slice_last`, `slice_clone` and `slice_copy` are
 //! open public APIs. The copying flows allocate from the caller's `protect`
-//! arena. Values are cloned, so `T` must be cloneable by value. `slice_find` is
-//! numeric-only because Loi has no trait constraints; see
-//! `development/FRICTION.md`.
+//! arena and declare `T: Clone`. `slice_find<T>` declares `T: Eq`, so equality
+//! search supports numbers, bool, marks and byte slices. Ordering constraints
+//! are not available yet, so `development/FRICTION.md` still records the
+//! numeric-only limitation for ordering helpers.
 
 // ---------------------------------------------------------------------------
 // Runtime error formatting
@@ -125,7 +126,7 @@ open flow slice_is_empty<T>
     => values.len == 0
 }
 
-open flow slice_get<T>
+open flow slice_get<T: Clone>
     <- values: [T]
     <- index: u64
     => T
@@ -136,7 +137,7 @@ open flow slice_get<T>
     => clone(values[index])
 }
 
-open flow slice_first<T>
+open flow slice_first<T: Clone>
     <- values: [T]
     => T
 {
@@ -146,7 +147,7 @@ open flow slice_first<T>
     => clone(values[0])
 }
 
-open flow slice_last<T>
+open flow slice_last<T: Clone>
     <- values: [T]
     => T
 {
@@ -156,7 +157,7 @@ open flow slice_last<T>
     => clone(values[values.len - 1])
 }
 
-open flow slice_find<T>
+open flow slice_find<T: Eq>
     <- values: [T]
     <- needle: T
     => i64
@@ -181,7 +182,7 @@ open flow slice_equals_u8
 // Copying and mutation
 // ---------------------------------------------------------------------------
 
-open flow slice_clone<T>
+open flow slice_clone<T: Clone>
     <- values: [T]
     => [T]
 {
@@ -193,7 +194,7 @@ open flow slice_clone<T>
     => give(copy)
 }
 
-open flow slice_copy<T>
+open flow slice_copy<T: Clone>
     <- values: [T]
     -> out: [T]
 {
@@ -203,7 +204,7 @@ open flow slice_copy<T>
     }
 }
 
-sealed flow slice_swap<T>
+sealed flow slice_swap<T: Clone>
     <-> values: [T]
     <- i: u64
     <- j: u64
@@ -213,7 +214,7 @@ sealed flow slice_swap<T>
     values[j] = clone(saved)
 }
 
-open flow slice_reverse<T>
+open flow slice_reverse<T: Clone>
     <-> values: [T]
 {
     half <- values.len / 2

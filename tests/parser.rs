@@ -740,17 +740,53 @@ fn parses_typed_slice_literals_in_flow_syntax() {
 }
 
 #[test]
+fn parses_bounded_type_params() {
+    let program = parse_source(
+        "shape Pair<T: Copy> [\n    first: T\n    second: T\n]\n\nflow find<T: Clone + Eq, U>\n    <- xs: [T]\n    <- needle: U\n{\n}\n",
+    );
+
+    let pair = interface(&program, "Pair");
+    assert_eq!(pair.type_params.len(), 1);
+    assert_eq!(pair.type_params[0].name, "T");
+    assert_eq!(pair.type_params[0].bounds, vec![TypeBound::Copy]);
+
+    let find = function(&program, "find");
+    assert_eq!(find.type_params.len(), 2);
+    assert_eq!(find.type_params[0].name, "T");
+    assert_eq!(
+        find.type_params[0].bounds,
+        vec![TypeBound::Clone, TypeBound::Eq]
+    );
+    assert_eq!(find.type_params[1].name, "U");
+    assert!(find.type_params[1].bounds.is_empty());
+}
+
+#[test]
+fn rejects_unknown_type_param_bound() {
+    let tokens = tokenize("flow f<T: Ord> {\n}\n", "<test>").expect("source should lex");
+    let error = parse(tokens).expect_err("an unknown constraint should fail to parse");
+    assert!(
+        error.message.contains("unknown constraint 'Ord'"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
 fn parses_generic_shapes_flows_and_calls() {
     let program = parse_source(
         "shape Vec<T> [\n    data: [T]\n    len: u64\n]\n\nflow push<T>\n    <-> xs: Vec<T>\n    <- value: T\n{\n}\n\nflow main\n    => i32\n{\n    mut v <- Vec<i32>[ data: [i32:], len: 0 ]\n    push<i32>(<-> v, 7)\n    => 0\n}\n",
     );
 
     let vec = interface(&program, "Vec");
-    assert_eq!(vec.type_params, vec!["T".to_string()]);
+    assert_eq!(vec.type_params.len(), 1);
+    assert_eq!(vec.type_params[0].name, "T");
+    assert!(vec.type_params[0].bounds.is_empty());
     assert_eq!(vec.fields[0].ty, Type::slice(Type::named("T")));
 
     let push = function(&program, "push");
-    assert_eq!(push.type_params, vec!["T".to_string()]);
+    assert_eq!(push.type_params.len(), 1);
+    assert_eq!(push.type_params[0].name, "T");
+    assert!(push.type_params[0].bounds.is_empty());
     assert_eq!(
         push.params[0].ty,
         Type::generic("Vec", vec![Type::named("T")])

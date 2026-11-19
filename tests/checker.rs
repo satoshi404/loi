@@ -1200,6 +1200,225 @@ fn slice_len_cannot_be_written_through_a_read_parameter() {
 }
 
 // ---------------------------------------------------------------------------
+// Block A5: generic constraints
+// ---------------------------------------------------------------------------
+
+#[test]
+fn eq_bound_accepts_every_type_that_supports_equality() {
+    assert_clean(
+        r#"mark Color [ Red, Green ]
+
+flow same<T: Eq>
+    <- a: T
+    <- b: T
+    => bool
+{
+    => a == b
+}
+
+flow main
+    => i32
+{
+    red <- Color.Red
+    if not same<i32>(1, 2) { => 1 }
+    if not same<bool>(true, true) { => 2 }
+    if not same<Color>(red, red) { => 3 }
+    if not same<[u8]>([u8: 1], [u8: 1]) { => 4 }
+    => 0
+}
+"#,
+    );
+}
+
+#[test]
+fn eq_bound_rejects_a_shape_at_the_call_site() {
+    assert_message(
+        r#"shape Point [
+    x: i32
+]
+
+flow same<T: Eq>
+    <- a: T
+    <- b: T
+    => bool
+{
+    => a == b
+}
+
+flow main
+    => i32
+{
+    p <- Point[ x: 1 ]
+    q <- Point[ x: 1 ]
+    if same<Point>(p, q) { => 1 }
+    => 0
+}
+"#,
+        "does not satisfy the 'Eq' bound",
+    );
+}
+
+#[test]
+fn copy_bound_rejects_a_shape_at_the_call_site() {
+    assert_message(
+        r#"shape Point [
+    x: i32
+]
+
+flow identity<T: Copy>
+    <- value: T
+    => T
+{
+    => value
+}
+
+flow main
+    => i32
+{
+    p <- Point[ x: 1 ]
+    taken <- identity<Point>(p)
+    => 0
+}
+"#,
+        "does not satisfy the 'Copy' bound",
+    );
+}
+
+#[test]
+fn copy_bound_rejects_a_slice_at_the_call_site() {
+    assert_message(
+        r#"flow identity<T: Copy>
+    <- value: T
+    => T
+{
+    => value
+}
+
+flow main
+    => i32
+{
+    taken <- identity<[i32]>([i32: 1])
+    => 0
+}
+"#,
+        "does not satisfy the 'Copy' bound",
+    );
+}
+
+#[test]
+fn copy_bound_accepts_scalars_marks_opaques_and_cstr() {
+    assert_clean(
+        r#"mark Color [ Red, Green ]
+opaque Handle
+extern flow make_handle
+    => Handle
+extern flow title
+    <- text: cstr
+    => i32
+
+flow identity<T: Copy>
+    <- value: T
+    => T
+{
+    => value
+}
+
+flow main
+    => i32
+{
+    green <- Color.Green
+    handle <- make_handle()
+    if identity<i32>(7) != 7 { => 1 }
+    if identity<Color>(green) != green { => 2 }
+    taken <- identity<Handle>(handle)
+    if title(identity<cstr>("hello")) == 0 { => 3 }
+    => 0
+}
+"#,
+    );
+}
+
+#[test]
+fn clone_bound_accepts_types_containing_slices() {
+    assert_clean(
+        r#"shape Row [
+    cells: [u8]
+]
+
+flow copy_row<T: Clone>
+    <- value: T
+    => T
+{
+    => clone(value)
+}
+
+flow main
+    => i32
+{
+    protect {
+        mut row: Row
+        alloc(-> row.cells, u8, 2)
+        row.cells[0] = 1
+        made <- copy_row<Row>(row)
+        if made.cells.len != 2 { => 1 }
+    }
+    => 0
+}
+"#,
+    );
+}
+
+#[test]
+fn shape_bounds_are_checked_at_instantiation() {
+    assert_message(
+        r#"shape Point [
+    x: i32
+]
+
+shape Box<T: Copy> [
+    value: T
+]
+
+flow main
+    => i32
+{
+    boxed <- Box<Point>[ value: Point[ x: 1 ] ]
+    => 0
+}
+"#,
+        "does not satisfy the 'Copy' bound",
+    );
+}
+
+#[test]
+fn bound_diagnostics_show_source_spelling_for_nested_types() {
+    assert_message(
+        r#"shape Vec<T> [
+    data: [T]
+]
+
+flow same<T: Eq>
+    <- a: T
+    <- b: T
+    => bool
+{
+    => a == b
+}
+
+flow main
+    => i32
+{
+    a <- Vec<i32>[ data: [i32:] ]
+    b <- Vec<i32>[ data: [i32:] ]
+    if same<Vec<i32>>(a, b) { => 1 }
+    => 0
+}
+"#,
+        "type 'Vec<i32>' does not satisfy the 'Eq' bound",
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Phase 2: protect regions and alloc escape
 // ---------------------------------------------------------------------------
 

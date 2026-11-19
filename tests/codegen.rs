@@ -1507,6 +1507,49 @@ flow main
 }
 
 #[test]
+fn bounded_generic_flow_keeps_the_same_mangling_and_runs() {
+    let source = r#"flow find<T: Clone + Eq>
+    <- xs: [T]
+    <- needle: T
+    => i64
+{
+    for i in 0..xs.len {
+        if xs[i] == needle {
+            => i as i64
+        }
+    }
+    => -1
+}
+
+flow main
+    => i32
+{
+    protect {
+        mut xs: [i32]
+        alloc(-> xs, i32, 3)
+        xs[0] = 4
+        xs[1] = 5
+        xs[2] = 6
+        print_int(find<i32>(xs, 5))
+    }
+    => 0
+}
+"#;
+    let c = generated(source);
+    assert!(
+        c.contains("find__i32"),
+        "bounds must not change the generated name"
+    );
+    assert_strict_c11("bounded-generic", &c);
+    assert_sanitizers_compile("bounded-generic", &c);
+    let Some(run) = compile_and_run_output("bounded-generic", &c, "") else {
+        return;
+    };
+    assert_eq!(run.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "1");
+}
+
+#[test]
 fn slice_len_write_compiles_and_runs() {
     let source = r#"flow set_len
     <-> s: [u64]

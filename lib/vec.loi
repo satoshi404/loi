@@ -7,10 +7,12 @@
 //! ```
 //!
 //! Every flow that allocates must be called from inside a `protect` block;
-//! the storage lives until that block ends. `Vec<T>` stores cloned values, so
-//! `T` must be cloneable by value (scalars and shapes without slice fields).
-//! The ordering/search flows are numeric-only because Loi has no trait
-//! constraints; see `development/FRICTION.md`. The arena keeps older growth
+//! the storage lives until that block ends. Flows that copy elements declare
+//! `T: Clone`; every Loi type satisfies it because `clone` is recursive, but
+//! cloning a value containing slices still allocates. `vec_find<T>` declares
+//! `T: Eq`, so equality search works for numbers, bool, marks and `[u8]`.
+//! Ordering flows are still numeric-only because Loi has no `Ord` constraint;
+//! see `development/FRICTION.md`. The arena keeps older growth
 //! blocks until the enclosing `protect` ends, so call `vec_reserve<T>` when the
 //! final size is known: pre-reserving once avoids the peak memory of repeated
 //! geometric growth.
@@ -152,7 +154,7 @@ open flow vec_is_empty<T>
     => v.len == 0
 }
 
-open flow vec_reserve<T>
+open flow vec_reserve<T: Clone>
     <-> v: Vec<T>
     <- capacity: u64
 {
@@ -185,7 +187,7 @@ open flow vec_clear<T>
 // Element access
 // ---------------------------------------------------------------------------
 
-open flow vec_get<T>
+open flow vec_get<T: Clone>
     <- v: Vec<T>
     <- index: u64
     => T
@@ -196,7 +198,7 @@ open flow vec_get<T>
     => clone(v.data[index])
 }
 
-open flow vec_set<T>
+open flow vec_set<T: Clone>
     <-> v: Vec<T>
     <- index: u64
     <- value: T
@@ -208,7 +210,7 @@ open flow vec_set<T>
     v.data[index] = clone(value)
 }
 
-open flow vec_push<T>
+open flow vec_push<T: Clone>
     <-> v: Vec<T>
     <- value: T
 {
@@ -223,7 +225,7 @@ open flow vec_push<T>
     v.len += 1
 }
 
-open flow vec_pop<T>
+open flow vec_pop<T: Clone>
     <-> v: Vec<T>
     => T
 {
@@ -234,7 +236,7 @@ open flow vec_pop<T>
     => clone(v.data[v.len])
 }
 
-open flow vec_find<T>
+open flow vec_find<T: Eq>
     <- v: Vec<T>
     <- value: T
     => i64
@@ -247,7 +249,7 @@ open flow vec_find<T>
     => -1
 }
 
-open flow vec_from_slice<T>
+open flow vec_from_slice<T: Clone>
     <- values: [T]
     -> v: Vec<T>
 {
@@ -259,7 +261,7 @@ open flow vec_from_slice<T>
     v.cap = values.len
 }
 
-open flow vec_as_slice<T>
+open flow vec_as_slice<T: Clone>
     <- v: Vec<T>
     => [T]
 {
@@ -272,10 +274,10 @@ open flow vec_as_slice<T>
 }
 
 // ---------------------------------------------------------------------------
-// Mutation and ordering (numeric T only)
+// Mutation and ordering (ordering still requires numeric T)
 // ---------------------------------------------------------------------------
 
-sealed flow vec_swap<T>
+sealed flow vec_swap<T: Clone>
     <-> v: Vec<T>
     <- i: u64
     <- j: u64
@@ -285,7 +287,7 @@ sealed flow vec_swap<T>
     v.data[j] = clone(saved)
 }
 
-open flow vec_reverse<T>
+open flow vec_reverse<T: Clone>
     <-> v: Vec<T>
 {
     half <- v.len / 2
@@ -295,7 +297,7 @@ open flow vec_reverse<T>
     }
 }
 
-sealed flow vec_sift_down<T>
+sealed flow vec_sift_down<T: Clone>
     <-> v: Vec<T>
     <- start: u64
     <- end: u64
@@ -320,7 +322,7 @@ sealed flow vec_sift_down<T>
     }
 }
 
-open flow vec_sort<T>
+open flow vec_sort<T: Clone>
     <-> v: Vec<T>
 {
     if v.len >= 2 {
@@ -339,7 +341,7 @@ open flow vec_sort<T>
     }
 }
 
-open flow vec_binary_search<T>
+open flow vec_binary_search<T: Clone>
     <- v: Vec<T>
     <- value: T
     => i64

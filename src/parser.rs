@@ -672,16 +672,51 @@ impl Parser {
         }
     }
 
-    /// Parse `flow f<T, U>` type parameters. Returns an empty list when the
-    /// current token is not `<`.
-    fn parse_type_params(&mut self) -> ParseResult<Vec<String>> {
+    /// Parse `flow f<T, U>` or `flow f<T: Clone + Eq, U>` type parameters.
+    /// Returns an empty list when the current token is not `<`.
+    ///
+    /// Constraint names (`Clone`, `Copy`, `Eq`) stay ordinary identifiers in
+    /// the token stream; only this position gives them meaning. An unknown
+    /// name is a parse error so a typo cannot silently be ignored.
+    fn parse_type_params(&mut self) -> ParseResult<Vec<TypeParam>> {
         if !self.at(TokenKind::Lt) {
             return Ok(Vec::new());
         }
         self.advance();
         let mut params = Vec::new();
         loop {
-            params.push(self.parse_identifier("type parameter name")?);
+            let start = self.span_here();
+            let name = self.parse_identifier("type parameter name")?;
+            let mut bounds = Vec::new();
+            if self.matches(TokenKind::Colon) {
+                loop {
+                    let token = self.expect(TokenKind::Identifier, "constraint name")?;
+                    let bound = match token.lexeme.as_str() {
+                        "Clone" => TypeBound::Clone,
+                        "Copy" => TypeBound::Copy,
+                        "Eq" => TypeBound::Eq,
+                        other => {
+                            return Err(ParseError::new(
+                                format!(
+                                    "unknown constraint '{other}' on type parameter '{name}'; expected Clone, Copy or Eq"
+                                ),
+                                token.line,
+                                token.column,
+                            ));
+                        }
+                    };
+                    bounds.push(bound);
+                    if self.matches(TokenKind::Plus) {
+                        continue;
+                    }
+                    break;
+                }
+            }
+            params.push(TypeParam {
+                span: self.through_last(start),
+                name,
+                bounds,
+            });
             if self.matches(TokenKind::Comma) {
                 continue;
             }

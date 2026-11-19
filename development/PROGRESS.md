@@ -4,36 +4,40 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-19, Block A4):** an empty slice literal (`[T:]`) no
-  longer carries a block-region taint, because the C backend emits `{ NULL, 0 }`
-  with no backing array. It can now be returned, stored in an outer shape, or
-  assigned into a `->`/`<->` parameter; non-empty literals still carry automatic
-  block storage and remain confined to their block. Slice member places now use
-  the real `LoiSlice` field name (`len`) in generated C instead of the `loi_f_`
-  prefix used for Loi shapes, so `s.len = n` through an inout parameter compiles
-  and runs; `<-` parameters stay read-only. `vec_new<T>` now builds an empty
-  vector with `[T:]`, length/capacity zero and no `alloc`, so it works outside
-  `protect`; `vec_push<T>` reserves at least one slot on first growth. Six
-  checker tests, two codegen tests (strict C11 + sanitizer compile-only + run)
-  and one library test cover the feature. Rules are documented in `SINTAXE.md`
-  §12, `LOI_SPEC.md` §4, `FRICTION.md`, `DECISIONS.md` and `website/docs.html`.
-- **Verification for the current task (Block A4):** the two positive checker
-  tests and both codegen tests failed before the change (the empty literal hit
-  the escape diagnostic; the `.len` write failed strict C11 compilation with
-  `LoiSlice has no member named loi_f_len`). After the implementation all new
-  tests pass, including `vec_new` outside `protect` and the `slice_len_write`
-  program that prints `21122` and exits 0. Final gate command:
+- **Current task (2026-11-19, Block A5):** generic type parameters can declare
+  `T: Clone + Copy + Eq` bounds on shapes and flows. `ast::TypeParam` carries a
+  list of `TypeBound`; the parser accepts the three constraint names and rejects
+  unknown ones, and the pretty-printer round-trips them. Bounds are validated in
+  the monomorphizer when concrete arguments are known, pointing at the call site
+  or type use with source spelling (`Vec<i32>`), while collision diagnostics keep
+  mangled names. `Clone` is satisfied by every type, `Copy` by numbers/bool/
+  marks/opaques/`cstr`, and `Eq` by numbers/bool/marks/`[u8]`; no `Ord` was added.
+  Library flows now state their real contracts: `vec_find`/`slice_find` use
+  `T: Eq`, copying flows use `T: Clone`, math helpers use `T: Copy`. Rules are in
+  `SINTAXE.md` §5.4, `LOI_SPEC.md` §5.1a, `FRICTION.md`, `DECISIONS.md` and
+  `website/docs.html`.
+- **Verification for Block A5:** 14 new tests cover parsing (positive and unknown
+  bound), formatting, checker acceptance/rejection at call sites and type uses,
+  preserved mangling plus strict C11/sanitizer compile-only execution, and the
+  `vec_find` library contract; before implementation the parser and checker tests
+  failed to compile or reported unbounded comparisons. Final gate command:
   `export PATH="/root/.cargo/bin:$PATH"; export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets && python3 tools/sync_examples.py --check && git diff --check`.
-  All five checks exited 0; `cargo test --all-targets` reported **375 passed,
-  0 failed** (lib 22 + main 6 + bindgen 1 + checker 139 + cli 42 + codegen 60 +
-  const_values 5 + errors 3 + header 4 + lexer 8 + lib-integration 35 + msrv 1 +
-  order 6 + parser 26 + pretty 17). The new codegen tests compile the generated
-  C under strict C11 and with sanitizers compile-only, then run it; no ASan
-  execution is claimed in this PRoot container. No runtime helper signature or
-  ABI changed: the only generated-C differences are slice member places using
-  `len` instead of `loi_f_len`, and the stdlib no longer emitting an `alloc` in
-  `vec_new`. This is a checker/codegen/stdlib change on programs whose hot loop
-  bodies are unchanged, so `benchmark/run.py` is not applicable.
+  All five checks exited 0; `cargo test --all-targets` reported **389 passed,
+  0 failed** (lib 22 + main 6 + bindgen 1 + checker 147 + cli 42 + codegen 61 +
+  const_values 5 + errors 3 + header 4 + lexer 8 + lib-integration 37 + msrv 1 +
+  order 6 + parser 28 + pretty 18). The codegen test runs the generated program
+  (stdout `1`) and only claims sanitizer compile-only in this PRoot container.
+  Bounds do not change mangling, generated C, headers or the ABI: a bounded
+  `find<T: Clone + Eq>` still emits `find__i32`, and headers expose only concrete
+  instantiations. No runtime helper signature changed, and generated hot loops
+  are unchanged, so `benchmark/run.py` is not applicable.
+- **Previous task (2026-11-19, Block A4):** empty slice literals (`[T:]`) can
+  escape their block because they emit `{ NULL, 0 }`; non-empty literals stay
+  block-confined. Slice member writes use the real `LoiSlice.len` field, and
+  `vec_new<T>` no longer allocates while `vec_push<T>` reserves at least one
+  slot. Gate exited 0 with **375 passed, 0 failed**; see git history for the full
+  test breakdown. Rules remain documented in `SINTAXE.md` §12, `LOI_SPEC.md` §4,
+  `FRICTION.md`, `DECISIONS.md` and `website/docs.html`.
 - **Previous task (2026-11-19, Block A3):** a partially consumed composite can
   be passed to a read-only flow when that flow only reads live fields. The
   checker records, per `<-` parameter, the root-relative paths a flow reads
@@ -522,7 +526,7 @@
 
 ## Verification
 
-Last verified 2026-11-19 for Block A2 with:
+Last verified 2026-11-19 for Block A5 with:
 
 ```sh
 export PATH="/root/.cargo/bin:$PATH"
@@ -534,10 +538,11 @@ python3 tools/sync_examples.py --check
 git diff --check
 ```
 
-- All five checks exited 0. `cargo test --all-targets` reported **360 passed,
-  0 failed** (lib 22, main 6, bindgen 1, checker 128, cli 42, codegen 57,
-  const_values 5, errors 3, header 4, lexer 8, lib-integration 34, msrv 1,
-  order 6, parser 26, pretty 17).
+- All five checks exited 0. `cargo test --all-targets` reported **389 passed,
+  0 failed** (lib 22, main 6, bindgen 1, checker 147, cli 42, codegen 61,
+  const_values 5, errors 3, header 4, lexer 8, lib-integration 37, msrv 1,
+  order 6, parser 28, pretty 18). A5 adds no benchmark: bounds are static checks
+  and emit the same C as before.
 - `LOI_TEST_CLANG=/definitely/not/clang cargo test --test order -- --nocapture`
   ran all 6 order tests and printed one skip message per test with no failure.
   With clang present, all 6 ran differentially against GCC 15.2.0 (`cc`) and
@@ -681,6 +686,11 @@ for f in lib/std.loi lib/math.loi lib/ctype.loi lib/os.loi lib/net.loi; do ./tar
   cannot refer to other fields or parameters.
 - `%` is restricted to integer operands. Shape equality is not structural;
   compare fields explicitly.
+- A `mark` variant or `choice` constructor passed directly as a call argument
+  (for example `same<Color>(Color.Red, Color.Red)`) is misreported as
+  `unknown variable 'Color'`: `<-` argument checking treats place-like
+  expressions as lvalues. Binding it first (`red <- Color.Red`) works. This is
+  a pre-existing checker bug, not part of Block A5; A5 tests use local binds.
 
 ### Arithmetic
 
@@ -768,8 +778,10 @@ Remaining implementation or secondary choices:
 
 - Enforce cross-file visibility and replace textual imports with a real module
   and namespace design.
-- Define structural equality for shapes, or keep the current field-by-field
-  rule permanently.
+- Define structural equality for shapes, choices and non-byte slices, or keep
+  the current field-by-field rule permanently; that would let the existing `Eq`
+  bound cover more types without changing its spelling. Ordering needs a
+  separate `Ord` bound and a decision on what it means for non-numeric types.
 - Decide whether callbacks, user-declared variadics, arbitrary C unions or fixed
   arrays deserve first-class support or remain shim-only. Loi `choice` already
   covers tagged unions with safe payloads (`printf` is already a variadic
@@ -796,11 +808,12 @@ Remaining implementation or secondary choices:
    borrowed slice view remains a separate escape-lifetime feature.
 3. Block A4: done — empty slice literals escape freely, `.len` is writable, and
    `vec_new<T>` no longer needs `protect`. Non-empty literals stay block-local.
-4. Block A5: `Clone`, `Copy` and `Eq` generic constraints so library flows can
-   state their element requirements instead of being numeric-only.
-5. After Block A: revisit modules/namespaces, linear resources for `lib/net.loi`,
-   binding-generator gaps and the opt-in LLVM question; keep the C11 backend as
-   the production oracle.
+4. Block A5: done — `Clone`, `Copy` and `Eq` bounds let library flows state
+   their element requirements; equality search is no longer numeric-only.
+   Ordering still needs a future `Ord` constraint.
+5. Block A complete. Next: revisit modules/namespaces, linear resources for
+   `lib/net.loi`, binding-generator gaps and the opt-in LLVM question; keep the
+   C11 backend as the production oracle.
 6. Keep the docs in sync: `SINTAXE.md` is canonical, `website/docs.html`
    mirrors it, and `python3 tools/sync_examples.py --check` guards the example
    mirror.

@@ -281,6 +281,57 @@ flow main
             declaration, supplying the wrong number, or passing arguments to a non-generic flow is
             a compile error.
           </p>
+
+          <h4>Constraints on type parameters</h4>
+          <p>
+            A type parameter may list bounds after a colon. The three accepted constraints are
+            <code>Clone</code>, <code>Copy</code> and <code>Eq</code>; combine them with
+            <code>+</code> and separate several parameters with commas:
+          </p>
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>constraints.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-loi">flow copy_row&lt;T: Clone&gt;
+    &lt;- row: T
+    =&gt; T
+{
+    =&gt; clone(row)
+}
+
+shape Slot&lt;T: Copy&gt; [
+    value: T
+]
+
+flow find&lt;T: Clone + Eq&gt;
+    &lt;- xs: [T]
+    &lt;- needle: T
+    =&gt; i64
+{
+    for i in 0..xs.len {
+        if xs[i] == needle {
+            =&gt; i as i64
+        }
+    }
+    =&gt; -1
+}</code></pre>
+          </div>
+          <p>
+            <code>Clone</code> is satisfied by every Loi type, including values with slices: the
+            deep clone allocates in the active <code>protect</code> region. <code>Copy</code> is
+            satisfied by numbers, <code>bool</code>, marks, <code>opaque</code> handles and
+            <code>cstr</code>, the types the checker copies implicitly. <code>Eq</code> is
+            satisfied by numbers, <code>bool</code>, marks and <code>[u8]</code>, the types that
+            support <code>==</code> and <code>!=</code>. For example, <code>vec_find&lt;T&gt;</code>
+            and <code>slice_find&lt;T&gt;</code> now declare <code>T: Eq</code>, so equality search
+            works on booleans and marks as well as numbers.
+          </p>
+          <p>
+            Bounds are checked when a template is instantiated with concrete type arguments; an
+            error points at the call or type use and shows the source spelling, such as
+            <code>Vec&lt;i32&gt;</code>. Unknown constraint names are parse errors. Bounds do not
+            change generated names, C code or the ABI. Ordering is still numeric-only: there is no
+            <code>Ord</code> constraint, so helpers such as <code>math_min&lt;T&gt;</code> and
+            <code>vec_sort&lt;T&gt;</code> keep their numeric restriction.
+          </p>
           <p>
             A template that is never instantiated is still checked once with <code>i32</code>
             substituted for every type parameter, so unused code with name, type or ownership errors
@@ -406,9 +457,9 @@ count &lt;- total as i32         // numeric cast with `as`</code></pre>
             <code>&amp;</code>, shifts, additive, multiplicative, casts, unary.
           </p>
           <p>
-            <code>==</code> and <code>!=</code> are defined for scalar numeric types, <code>bool</code>
-            and <code>[u8]</code>. Byte slices compare structurally. Other shapes and slices must be
-            compared field by field.
+            <code>==</code> and <code>!=</code> are defined for scalar numeric types, <code>bool</code>,
+            values of the same <code>mark</code> and <code>[u8]</code>. Byte slices compare
+            structurally. Other shapes and slices must be compared field by field.
           </p>
           <p>
             <strong>Integer arithmetic is checked.</strong> Signed <code>+</code>, <code>-</code>,
@@ -924,10 +975,13 @@ protect {
             still needs a caller's <code>protect</code> region — Loi callers
             are checked, and foreign callers follow the same contract.
             <code>lib/vec.loi</code> and <code>lib/slice.loi</code> are pure
-            Loi. <code>Vec&lt;T&gt;</code> stores cloned values, so
-            <code>clone&lt;T&gt;</code> must be available — including recursive
-            deep clones for <code>T</code> that contain slices; ordering/search
-            flows accept numeric <code>T</code> only. The arena
+            Loi. <code>Vec&lt;T&gt;</code> stores cloned values, so copying
+            flows declare <code>T: Clone</code> — including recursive deep
+            clones for <code>T</code> that contain slices;
+            <code>vec_find&lt;T&gt;</code> and <code>slice_find&lt;T&gt;</code>
+            declare <code>T: Eq</code>, so equality search also works on bool,
+            marks and <code>[u8]</code>. Ordering flows still accept numeric
+            <code>T</code> only because Loi has no <code>Ord</code> bound. The arena
             keeps older growth blocks until <code>protect</code> ends, so
             pre-size with <code>vec_reserve&lt;T&gt;</code> when the final
             length is known to avoid repeated growth and its peak memory.
@@ -1481,9 +1535,9 @@ sealed flow winning_line
               <tr><td>Choice</td><td><code>choice Result [ Ok: i32, Err: i64 ]</code></td></tr>
               <tr><td>Choice constructor</td><td><code>Result.Ok(42)</code></td></tr>
               <tr><td>Variant test</td><td><code>result is Result.Ok</code></td></tr>
-              <tr><td>Generic shape</td><td><code>shape Vec&lt;T&gt; [ data: [T], len: u64 ]</code></td></tr>
+              <tr><td>Generic shape</td><td><code>shape Vec&lt;T&gt; [ data: [T], len: u64 ]</code>, bounded as <code>shape Slot&lt;T: Copy&gt; [ value: T ]</code></td></tr>
               <tr><td>Flow with result</td><td><code>flow f &lt;- x: i32 =&gt; i32 { =&gt; x }</code></td></tr>
-              <tr><td>Generic flow</td><td><code>flow f&lt;T&gt; &lt;- x: T =&gt; T { =&gt; x }</code>, called as <code>f&lt;i32&gt;(x)</code></td></tr>
+              <tr><td>Generic flow</td><td><code>flow f&lt;T&gt; &lt;- x: T =&gt; T { =&gt; x }</code>, called as <code>f&lt;i32&gt;(x)</code>; bounds: <code>flow f&lt;T: Clone + Eq&gt;</code></td></tr>
               <tr><td>Compile-time flow</td><td><code>comptime flow f &lt;- x: i32 =&gt; i32 { =&gt; x * 2 }</code></td></tr>
               <tr><td>Compile-time expression</td><td><code>comptime f(21)</code></td></tr>
               <tr><td>Immutable binding</td><td><code>x &lt;- 1</code></td></tr>
@@ -1552,7 +1606,7 @@ sealed flow winning_line
             <tbody>
               <tr><td>Lexer, parser, pretty-printer</td><td>Working; canonical Flow Syntax only. <code>loi fmt</code> preserves comments.</td></tr>
               <tr><td>Type checker</td><td>Working, including literal ranges, intrinsic signatures, checked <code>printf</code> varargs, bitwise/shift rules, shape cycle detection, generic instantiation and canonical diagnostics.</td></tr>
-              <tr><td>Monomorphization</td><td>Working: generic shapes and flows are expanded into concrete declarations before checking and code generation, with mangled names, a recursion depth limit, collision diagnostics and validation of unused templates.</td></tr>
+              <tr><td>Monomorphization</td><td>Working: generic shapes and flows are expanded into concrete declarations before checking and code generation, with mangled names, a recursion depth limit, collision diagnostics, validation of unused templates and checking of <code>Clone</code>/<code>Copy</code>/<code>Eq</code> bounds at each instantiation.</td></tr>
               <tr><td>Compile-time evaluation</td><td>Working: pure <code>comptime flow</code> and <code>comptime expr</code>, constant globals of any shape, and shape defaults, with purity checks, step/depth limits and runtime-matching overflow, cast and <code>f32</code> semantics.</td></tr>
               <tr><td>Ownership analysis</td><td>Working: give liveness, definite assignment, exclusive <code>&lt;-&gt;</code>, region escape checks, and allocating read intrinsics.</td></tr>
               <tr><td>C backend</td><td>Working: one C11 translation unit, bounds checks, regions, checked arithmetic, bitwise/shift helpers, file/stdin I/O, numeric and formatted printing, source maps, headers, multi-file objects.</td></tr>

@@ -56,12 +56,28 @@ pub fn format_type(ty: &Type) -> String {
     }
 }
 
-fn format_type_params(params: &[String]) -> String {
+fn format_type_params(params: &[TypeParam]) -> String {
     if params.is_empty() {
-        String::new()
-    } else {
-        format!("<{}>", params.join(", "))
+        return String::new();
     }
+    let rendered = params
+        .iter()
+        .map(|param| {
+            if param.bounds.is_empty() {
+                param.name.clone()
+            } else {
+                let bounds = param
+                    .bounds
+                    .iter()
+                    .map(|bound| bound.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" + ");
+                format!("{}: {}", param.name, bounds)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("<{rendered}>")
 }
 
 fn format_type_args(args: &[Type]) -> String {

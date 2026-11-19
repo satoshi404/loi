@@ -61,7 +61,7 @@ The goal is that any new model can open `development/PROGRESS.md` and immediatel
 | Aliasing             | Two names for the same address are a compile error (double reference)    |
 | Memory scope         | `protect { }` — everything allocated inside lives only there             |
 | Arrays               | Slices `[T]` (pointer + length, bounds checked)                          |
-| Generics             | `shape Vec<T>` / `flow f<T>`; explicit arguments, monomorphized           |
+| Generics             | `shape Vec<T>` / `flow f<T>`; explicit arguments, monomorphized, optional `T: Clone + Copy + Eq` bounds (§5.1a) |
 | Compile-time values  | `comptime flow` (pure) and `comptime expr`; globals require constants     |
 | Cleanup              | No `defer`. `protect` covers memory                                      |
 | Variables            | `name <- value` immutable, `mut name <- value` mutable                   |
@@ -478,9 +478,36 @@ All nine questions from the 0.2 draft are decided. Each entry states the rule, t
 - A generated name that collides with a user declaration, or two instantiations that mangle to the same identifier, are reported as collisions with both the readable instantiation and the generated name.
 - Growable collections remain library work; generics make a future `Vec<T>` implementation possible without changing the language.
 
-**Why:** explicit arguments make monomorphization predictable and keep the first implementation small. Inference can be added later without changing the surface syntax.
+**Generic constraints (Block A5).** A type parameter may declare bounds with
+`T: Clone + Copy + Eq`; the canonical spelling is in `SINTAXE.md` §5.4. There
+are exactly three constraints in this version:
 
-**Status:** implemented and tested for shapes, flows, nested instantiations, speculative `>>` token splitting, depth limits, name collisions and unused-template validation.
+- `Clone` is satisfied by every Loi type. It documents that a flow copies its
+  argument; since deep clone (§4.3) is recursive, this includes shapes and
+  choices containing slices. Cloning a value with slices allocates in the
+  caller's `protect` region and propagates the allocation effect to callers.
+  The bound is still validated, so a misspelled bound cannot be treated as
+  `Clone`, and it is a contract for future implementations where some types
+  may not be cloneable.
+- `Copy` is satisfied by numbers, `bool`, marks, `opaque` handles and `cstr`:
+  exactly the types the checker may copy implicitly without `give` or
+  `clone`. Shapes, choices and slices are composite and do not satisfy it.
+- `Eq` is satisfied by numbers, `bool`, marks and `[u8]`: exactly the types
+  for which the checker accepts `==` and `!=`. Structural equality for other
+  slices, shapes and choices is not implemented, so they do not satisfy `Eq`.
+
+Bounds are checked in the monomorphizer, when concrete type arguments are
+known; a violation is reported at the call site or type use that triggered the
+instantiation, with source type spelling. An unused template is still checked
+with `i32` for every parameter, and `i32` satisfies all three bounds. Bounds
+do not affect mangling, generated C or ABI. Because no `Ord` constraint is
+introduced, ordering helpers (`math_min`, `vec_sort`) remain numeric-only; see
+`development/FRICTION.md`. Constraint names are ordinary identifiers, not
+keywords, and an unknown name is a parse error.
+
+**Why:** explicit arguments make monomorphization predictable and keep the first implementation small. Inference can be added later without changing the surface syntax. Deferring bound validation to the monomorphizer avoids re-checking abstract `T` bodies with speculative type rules and keeps the diagnostic on code the user wrote; keeping `Clone`, `Copy` and `Eq` aligned with existing checker operations avoids promising comparisons or copies the backend cannot emit.
+
+**Status:** implemented and tested for shapes, flows, nested instantiations, speculative `>>` token splitting, depth limits, name collisions, unused-template validation and the three bounds (positive and negative cases at call sites and type uses).
 
 ### 5.2 Pointers — none (question 2)
 

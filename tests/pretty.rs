@@ -236,6 +236,14 @@ fn formats_generics_and_comptime_stably() {
 }
 
 #[test]
+fn formats_bounded_type_params_stably() {
+    let source = "shape Pair<T: Copy> [\n    first: T\n    second: T\n]\n\nflow find<T: Clone + Eq, U>\n    <- xs: [T]\n    <- needle: U\n{\n}\n";
+    let formatted = assert_format_stable(source);
+    assert!(formatted.contains("shape Pair<T: Copy>"));
+    assert!(formatted.contains("flow find<T: Clone + Eq, U>"));
+}
+
+#[test]
 fn formats_nested_generic_types_stably() {
     let source = "shape Vec<T> [\n    data: [T]\n]\n\nflow f\n    <- xs: Vec<Vec<i32>>\n{\n}\n";
     let formatted = assert_format_stable(source);

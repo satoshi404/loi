@@ -535,6 +535,64 @@ open flow main
 }
 
 #[test]
+fn vec_find_reports_the_eq_bound_at_the_call_site() {
+    let dir = test_dir("vec-find-bound");
+    let program = write_program(
+        &dir,
+        &["vec.loi"],
+        r#"
+shape Point [ x: i32 ]
+
+open flow main
+    => i32
+{
+    mut xs: Vec<Point>
+    vec_new<Point>(-> xs)
+    p <- Point[ x: 1 ]
+    found <- vec_find<Point>(xs, p)
+    => 0
+}
+"#,
+    );
+    let checked = check(&program);
+    assert!(
+        !checked.status.success(),
+        "an unbounded element type must be rejected"
+    );
+    let stderr = String::from_utf8_lossy(&checked.stderr);
+    assert!(
+        stderr.contains("does not satisfy the 'Eq' bound"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("vec_find"), "{stderr}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn vec_find_accepts_non_numeric_eq_types() {
+    assert_ok(
+        "vec-find-bool",
+        &["vec.loi"],
+        r#"
+open flow main
+    => i32
+{
+    protect {
+        mut xs: Vec<bool>
+        vec_new<bool>(-> xs)
+        vec_push<bool>(<-> xs, false)
+        vec_push<bool>(<-> xs, true)
+        if vec_find<bool>(xs, true) != 1 { => 1 }
+    }
+    print("vec find bool ok\n")
+    => 0
+}
+"#,
+        "vec find bool ok\n",
+    );
+}
+
+#[test]
 fn vec_library_covers_u8_and_f64_instantiations() {
     assert_ok_with_c_variants(
         "vec-numeric",

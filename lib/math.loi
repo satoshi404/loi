@@ -7,7 +7,9 @@
 //! ```
 //!
 //! Imports are textual, so names are prefixed (`math_*`, `MATH_*`) to avoid
-//! clashes with user code and with the other library files.
+//! clashes with user code and with the other library files. Generic helpers
+//! declare `T: Copy` because they pass `T` by value; ordering and arithmetic
+//! still require numeric `T` (Loi has no `Ord` constraint).
 
 open MATH_PI: f64 <- 3.141592653589793
 open MATH_E: f64 <- 2.718281828459045
@@ -27,7 +29,7 @@ comptime flow math_factorial
     => result
 }
 
-flow math_min<T>
+flow math_min<T: Copy>
     <- a: T
     <- b: T
     => T
@@ -38,7 +40,7 @@ flow math_min<T>
     => b
 }
 
-flow math_max<T>
+flow math_max<T: Copy>
     <- a: T
     <- b: T
     => T
@@ -49,7 +51,7 @@ flow math_max<T>
     => b
 }
 
-flow math_clamp<T>
+flow math_clamp<T: Copy>
     <- value: T
     <- low: T
     <- high: T
@@ -65,7 +67,7 @@ flow math_clamp<T>
 }
 
 /// Sum every element of a slice; the element type is supplied explicitly.
-flow math_sum<T>
+flow math_sum<T: Copy>
     <- xs: [T]
     => T
 {

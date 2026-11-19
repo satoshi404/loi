@@ -70,7 +70,7 @@ open flow rng_below_u64
     => value % bound
 }
 
-open flow rng_pick<T>
+open flow rng_pick<T: Clone>
     <-> rng: Rng
     <- values: [T]
     => T
@@ -82,7 +82,7 @@ open flow rng_pick<T>
     => clone(values[at])
 }
 
-sealed flow rng_swap<T>
+sealed flow rng_swap<T: Clone>
     <-> values: [T]
     <- i: u64
     <- j: u64
@@ -92,7 +92,7 @@ sealed flow rng_swap<T>
     values[j] = clone(saved)
 }
 
-open flow rng_shuffle<T>
+open flow rng_shuffle<T: Clone>
     <-> rng: Rng
     <-> values: [T]
 {
