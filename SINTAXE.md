@@ -849,9 +849,16 @@ p   <- m::Point[ x: 1, y: 2 ]
   A module may always use its own sealed items unqualified.
 - Import cycles are errors. A file that appears twice under different aliases
   is one module with two names.
-- Declared names are still unique across a whole compilation unit: qualified
-  access disambiguates *references*, not declarations or generated C symbols.
-  Two modules may not both declare `helper` (see `LOI_SPEC.md` §4.8).
+- Two modules may declare the same item name. An unqualified name binds to the
+  current module when it declares that name, and to the only other declaration
+  when the name is unique elsewhere. If several modules declare it and the
+  current module does not, the name is ambiguous and must be qualified.
+- Names shared by several modules get a module-qualified internal name and
+  distinct C symbols (`a::helper` → `loi_fn_a__helper`). Names declared in only
+  one module keep their original spelling and C symbols, so single-module
+  programs are ABI-compatible. `main` and compiler intrinsics cannot be mangled;
+  `extern flow ... as <symbol>` keeps its explicit C symbol. See `LOI_SPEC.md`
+  §4.8 for the full rule.
 - Imports must appear as top-level items. The standard library is explicit;
   there is no implicit prelude. Common import: `import "lib/std.loi"`.
 
@@ -940,9 +947,9 @@ Every library file is imported explicitly with the canonical `import` form.
 Each file is a module (§13); items may be named unqualified or as
 `module::item`. Library names keep their established prefixes (`math_*`,
 `ctype_*`, `vec_*`, `slice_*`, `str_*`, `option_*`, `result_*`, `hash_*`,
-`crc32_*`, `map_*`, `rng_*`, `os_*`, `net_*`) because declaration names remain
-unique across a compilation
-unit.
+`crc32_*`, `map_*`, `rng_*`, `os_*`, `net_*`) so their C symbols stay stable even
+when a user module declares the same name; module-qualified mangling applies only
+to names that actually repeat.
 
 | File | Helpers | Needs a shim? |
 |---|---|---|
@@ -1331,4 +1338,6 @@ Reference programs:
 - `examples/views.loi` — zero-copy slice views and their lexical loans.
 - `examples/options_results.loi` — official `Option<T>` and `Result<T, E>` in a settings parser.
 - `examples/systems.loi` — bitwise flags, shifts and file/stdin I/O.
+- `examples/ordering.loi` — structural equality and `Ord` sorting/search.
+- `examples/module_mangling.loi` — two modules exposing the same API names.
 - `lib/std.loi` — standard library written in canonical Loi.

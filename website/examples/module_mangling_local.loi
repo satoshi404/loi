@@ -1,0 +1,12 @@
+//! One of two policy modules with deliberately identical public names.
+//! The other is `module_mangling_remote.loi`; see `module_mangling.loi`.
+
+open shape Policy [
+    bonus: i32
+]
+
+open flow policy
+    => Policy
+{
+    => Policy[ bonus: 10 ]
+}

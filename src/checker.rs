@@ -5011,7 +5011,7 @@ fn scan_view_statement(
 
 /// Names owned by the compiler. They are the closed intrinsic set from
 /// `LOI_SPEC.md` 5.9; user code may not redeclare them.
-fn is_intrinsic_name(name: &str) -> bool {
+pub(crate) fn is_intrinsic_name(name: &str) -> bool {
     matches!(
         name,
         "print"

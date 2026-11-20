@@ -1,15 +1,18 @@
 //! Module name resolution and visibility enforcement.
 //!
 //! The driver loads each source file as a module and flattens the items into
-//! one program, as it did before modules existed. This pass runs on each
-//! module's own items *before* monomorphization: it rewrites `module::item`
-//! references to the plain name the rest of the compiler expects and rejects
-//! references to `sealed` declarations from another module. Rewriting here
-//! keeps the checker, C backend, headers and ABI unaware of namespaces.
+//! one program. This pass runs on each module's own items *before*
+//! monomorphization: it resolves `module::item` references, rejects references
+//! to `sealed` declarations from another module, and gives declarations that
+//! exist in more than one module a qualified internal name such as `a::helper`.
+//! Unique names stay untouched, so single-module programs keep their existing
+//! C symbols. The checker, monomorphizer and backend therefore see one global
+//! namespace, but one with distinct names for cross-module collisions.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
+use crate::checker::is_intrinsic_name;
 use crate::diagnostic::Diagnostic;
 use crate::types::release_flow_name_for;
 
@@ -33,8 +36,9 @@ pub struct ModuleView {
     pub aliases: HashMap<String, usize>,
 }
 
-/// All declarations, keyed by their unqualified name. A name declared in more
-/// than one module is left to the checker's existing duplicate-name diagnostic.
+/// All declarations, keyed by their source name. Several modules may contribute
+/// the same name; the resolver gives each contribution a qualified internal
+/// name so the rest of the compiler sees a unique namespace.
 #[derive(Debug, Clone, Default)]
 pub struct ResolutionContext {
     pub exports: HashMap<String, Vec<ModuleExport>>,
@@ -48,8 +52,57 @@ struct Resolver<'a> {
 }
 
 impl Resolver<'_> {
-    /// Resolve one reference. Qualified names are rewritten to their item
-    /// part; unqualified names are checked for cross-module sealed access.
+    /// Names owned by the compiler or by the C entry point cannot be mangled.
+    /// A duplicate `main` is a genuine program error and stays a checker error.
+    fn is_reserved(name: &str) -> bool {
+        name == "main" || is_intrinsic_name(name)
+    }
+
+    /// The internal name a declaration from `module` contributes. Only names
+    /// declared in several modules need a qualifier; unique names keep their
+    /// source spelling and therefore their existing C symbols.
+    fn declared_name(&self, name: &str, module: usize) -> String {
+        let shared = self.context.exports.get(name).is_some_and(|entries| {
+            entries
+                .iter()
+                .map(|entry| entry.module)
+                .collect::<HashSet<_>>()
+                .len()
+                > 1
+        });
+        if shared && !Self::is_reserved(name) {
+            format!("{}::{}", self.views[module].name, name)
+        } else {
+            name.to_string()
+        }
+    }
+
+    fn check_sealed(&mut self, declaration: &ModuleExport, alias: Option<&str>, span: Span) {
+        if declaration.visibility == Visibility::Hidden && declaration.module != self.module {
+            let message = match alias {
+                Some(alias) => format!(
+                    "item '{}' is sealed in module '{alias}' and cannot be used here",
+                    declaration.name
+                ),
+                None => format!(
+                    "'{}' is sealed in module '{}' and cannot be used from module '{}'",
+                    declaration.name,
+                    self.views[declaration.module].name,
+                    self.views[self.module].name
+                ),
+            };
+            self.diagnostics.push(
+                Diagnostic::from_error(message, span)
+                    .with_label("sealed item used here")
+                    .with_secondary(declaration.span, "sealed here"),
+            );
+        }
+    }
+
+    /// Resolve one reference. Qualified names select a module; unqualified
+    /// names bind to the current module first, then to a unique declaration
+    /// elsewhere. An unqualified name shared by several other modules is
+    /// ambiguous and must be qualified by the caller.
     fn name(&mut self, name: &str, span: Span) -> String {
         if let Some((alias, item)) = name.split_once("::") {
             if item.contains("::") {
@@ -74,7 +127,8 @@ impl Resolver<'_> {
                 .context
                 .exports
                 .get(item)
-                .and_then(|entries| entries.iter().find(|entry| entry.module == target));
+                .and_then(|entries| entries.iter().find(|entry| entry.module == target))
+                .cloned();
             let Some(declaration) = declaration else {
                 self.diagnostics.push(
                     Diagnostic::from_error(format!("module '{alias}' has no item '{item}'"), span)
@@ -82,40 +136,39 @@ impl Resolver<'_> {
                 );
                 return item.to_string();
             };
-            if declaration.visibility == Visibility::Hidden && target != self.module {
-                self.diagnostics.push(
-                    Diagnostic::from_error(
-                        format!(
-                            "item '{item}' is sealed in module '{alias}' and cannot be used here"
-                        ),
-                        span,
-                    )
-                    .with_label("sealed item used here")
-                    .with_secondary(declaration.span, "sealed here"),
-                );
-            }
-            return item.to_string();
+            self.check_sealed(&declaration, Some(alias), span);
+            return self.declared_name(item, target);
         }
 
-        if let Some(entries) = self.context.exports.get(name)
-            && entries.len() == 1
-        {
-            let declaration = &entries[0];
-            if declaration.module != self.module && declaration.visibility == Visibility::Hidden {
-                self.diagnostics.push(
-                    Diagnostic::from_error(
-                        format!(
-                            "'{name}' is sealed in module '{}' and cannot be used from module '{}'",
-                            self.views[declaration.module].name, self.views[self.module].name
-                        ),
-                        span,
-                    )
-                    .with_label("sealed item used here")
-                    .with_secondary(declaration.span, "sealed here"),
-                );
-            }
+        let Some(entries) = self.context.exports.get(name) else {
+            return name.to_string();
+        };
+        if entries.iter().any(|entry| entry.module == self.module) {
+            return self.declared_name(name, self.module);
         }
-        name.to_string()
+        let modules = entries
+            .iter()
+            .map(|entry| entry.module)
+            .collect::<HashSet<_>>();
+        if modules.len() == 1 {
+            let declaration = entries[0].clone();
+            self.check_sealed(&declaration, None, span);
+            return self.declared_name(name, declaration.module);
+        }
+        let candidates = entries
+            .iter()
+            .map(|entry| format!("{}::{}", self.views[entry.module].name, name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.diagnostics.push(
+            Diagnostic::from_error(
+                format!("ambiguous name '{name}'; qualify it as one of {candidates}"),
+                span,
+            )
+            .with_label("name declared in several modules")
+            .with_help("write module::item to choose a declaration"),
+        );
+        self.declared_name(name, entries[0].module)
     }
 
     fn ty(&mut self, ty: &mut Type) {
@@ -302,6 +355,7 @@ impl Resolver<'_> {
     }
 
     fn item(&mut self, item: &mut Item) {
+        let source_name = item.declared_name().unwrap_or("").to_string();
         match item {
             Item::Import(_) => {}
             Item::Interface(decl) => {
@@ -311,18 +365,26 @@ impl Resolver<'_> {
                         self.expr(default);
                     }
                 }
+                decl.name = self.declared_name(&source_name, self.module);
             }
-            Item::Mark(_) | Item::Opaque(_) => {}
+            Item::Mark(decl) => {
+                decl.name = self.declared_name(&source_name, self.module);
+            }
+            Item::Opaque(decl) => {
+                decl.name = self.declared_name(&source_name, self.module);
+            }
             Item::Choice(decl) => {
                 for variant in &mut decl.variants {
                     self.ty(&mut variant.ty);
                 }
+                decl.name = self.declared_name(&source_name, self.module);
             }
             Item::Global(decl) => {
                 if let Some(ty) = &mut decl.ty {
                     self.ty(ty);
                 }
                 self.expr(&mut decl.value);
+                decl.name = self.declared_name(&source_name, self.module);
             }
             Item::Function(decl) => {
                 for param in &mut decl.params {
@@ -332,6 +394,7 @@ impl Resolver<'_> {
                     self.ty(return_type);
                 }
                 self.block(&mut decl.body);
+                decl.name = self.declared_name(&source_name, self.module);
             }
         }
     }

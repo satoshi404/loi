@@ -645,9 +645,14 @@ open flow main
             items, including through its own name. <code>main</code> is the implicit entry point.
           </p>
           <p>
-            Qualified access disambiguates <em>references</em>, not declarations: names are still
-            unique across a compilation unit because C symbols are derived from the declared name.
-            Two modules cannot both declare <code>helper</code>, even if every use is qualified.
+            Two modules <strong>may</strong> declare the same item name. An unqualified name binds
+            to the current module when it declares that name, otherwise to the only other
+            declaration; if several modules declare it, the caller must qualify it. Names shared
+            by several modules get distinct C symbols (<code>a::helper</code> becomes
+            <code>loi_fn_a__helper</code>), while unique names keep their existing ABI.
+            <code>main</code> and compiler intrinsics cannot be mangled, and two resolved names
+            that sanitize to the same C identifier are rejected. See
+            <code>examples/module_mangling.loi</code>.
           </p>
         </section>
 
@@ -966,11 +971,11 @@ flow exchange
             <code>slice_*</code>, <code>str_*</code>, <code>option_*</code>,
             <code>result_*</code>, <code>hash_*</code>, <code>crc32_*</code>,
             <code>map_*</code>, <code>rng_*</code>, <code>os_*</code>,
-            <code>net_*</code>) because declarations are still
-            unique across a compilation unit. The prefix is a naming convention,
-            not a namespace: you can also import under an alias and use
-            <code>m::math_sum</code>, but two files cannot both declare the same
-            name.</p>
+            <code>net_*</code>) so their generated symbols stay stable even if a user
+            module declares the same name. The prefix is a naming convention, not a
+            namespace: you can also import under an alias and use
+            <code>m::math_sum</code>. Two files may now declare the same name; only
+            those repeated names receive a module-qualified C symbol.</p>
 
           <table class="doc-table">
             <thead>
@@ -1869,7 +1874,7 @@ sealed flow winning_line
           <ul>
             <li>I/O intrinsics are limited to whole-file and whole-stdin reads/writes plus numeric and <code>printf</code> formatting. There is no directory or seek API; <code>lib/os.loi</code> covers environment/process queries and <code>lib/net.loi</code> covers TCP streams. User-declared variadic flows are not supported. <code>read_file</code>, <code>read_stdin</code> and <code>read_line</code> allocate in the current <code>protect</code> region and cannot escape it.</li>
             <li><code>guard</code> derives the release flow name from the shape, so shapes whose snake-case name would collide need hand-written release flows with distinct names. A release flow called by a <code>guard</code> in another module must be <code>open</code>.</li>
-            <li>Modules resolve qualified names and enforce <code>sealed</code> across files, but declaration names are still unique per compilation unit; C symbols are not module-qualified. Multi-file builds give sealed flows external linkage so the first unit that loads a module defines its symbols.</li>
+            <li>Modules resolve qualified names, enforce <code>sealed</code> across files, and mangle declaration names shared by several modules into distinct C symbols. Unique names keep their symbols, so single-module ABIs are unchanged. Multi-file builds give non-entry functions external linkage so the first unit that loads a module defines its symbols.</li>
             <li>Globals accept any compile-time constant, including nested shapes, slices and strings; the backend folds them into strict C11 static initializers (named arrays back slice data, with no compound literals). Growable collections (<code>Vec&lt;T&gt;</code>, maps) remain library work even though generics are available.</li>
             <li>A non-empty slice literal cannot escape the block that created it, including being returned or stored into an outer variable; allocate long-lived data in a <code>protect</code> region. The empty literal <code>[T:]</code> has no backing storage and may escape.</li>
             <li><code>&lt;-</code> composite parameters are passed to C by value (slice headers still point at the caller's data). The checker forbids storing the borrowed composite or returning a non-slice part of it; a borrowed slice view may escape under the lexical loans described above, so the parameter stays observationally read-only.</li>

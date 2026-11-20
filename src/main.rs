@@ -788,7 +788,9 @@ fn build_source(
             }
         };
 
-        let c_source = generate_checked(&source, input_path, source_map, diagnostics);
+        let program = load_program_with_imports(&source, input_path, diagnostics);
+        let c_source =
+            generate_checked_program(&program, input_path, &source, source_map, diagnostics);
         let output_path = output
             .map(Path::to_path_buf)
             .unwrap_or_else(|| kind.default_output(input_path));
@@ -848,11 +850,7 @@ fn build_source(
 
         // Emit the header file if requested.
         if let Some(header_path) = emit_h {
-            match loi::generate_header_named(
-                &load_program(&source, input_path, diagnostics),
-                None,
-                Some(header_path),
-            ) {
+            match loi::generate_header_named(&program, None, Some(header_path)) {
                 Ok(header) => {
                     if let Err(error) = fs::write(header_path, &header) {
                         eprintln!("loi: {}: {error}", header_path.display());
@@ -868,7 +866,7 @@ fn build_source(
 
         // Emit IR if requested.
         if let Some(ir_path) = emit_ir {
-            match loi::generate_ir(&load_program(&source, input_path, diagnostics)) {
+            match loi::generate_ir(&program) {
                 Ok(ir) => {
                     if let Err(error) = fs::write(ir_path, ir) {
                         eprintln!("loi: {}: {error}", ir_path.display());
@@ -1001,7 +999,7 @@ fn build_source(
     );
 
     let mut object_files = Vec::new();
-    for (input_path, defined, source) in &units {
+    for (input_path, defined, _source) in &units {
         let c_source = match loi::generate_c_subset(&merged, source_map, defined) {
             Ok(c_source) => c_source,
             Err(error) => {
@@ -1023,11 +1021,7 @@ fn build_source(
         // Emit header next to each source.
         let header_path = input_path.with_extension("h");
         ensure_distinct_output(input_path, &header_path);
-        match loi::generate_header_named(
-            &load_program(source.as_str(), input_path.as_path(), diagnostics),
-            None,
-            Some(header_path.as_path()),
-        ) {
+        match loi::generate_header_named(&merged, None, Some(header_path.as_path())) {
             Ok(header) => {
                 if let Err(error) = fs::write(&header_path, &header) {
                     eprintln!("loi: {}: {error}", header_path.display());
@@ -1856,16 +1850,6 @@ fn load_program_with_imports(
     load_module(source, path, diagnostics, &mut registry, &mut Vec::new());
     let (items, _) = resolve_and_flatten(&registry, diagnostics);
     loi::Program { items }
-}
-
-fn generate_checked(
-    source: &str,
-    path: &Path,
-    source_map_path: Option<&Path>,
-    diagnostics: DiagnosticOptions,
-) -> String {
-    let program = load_program_with_imports(source, path, diagnostics);
-    generate_checked_program(&program, path, source, source_map_path, diagnostics)
 }
 
 fn generate_checked_program(

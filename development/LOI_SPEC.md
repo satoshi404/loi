@@ -377,10 +377,11 @@ These rules were added to unblock real programs and are implemented and tested. 
   Paths resolve as before. Each canonical file is loaded once per compilation
   unit, so diamond imports do not duplicate declarations; a cycle is an error
   rather than a silently resolved dedup.
-- Imported items still join the compilation unit, so unqualified references keep
-  working and no generated C symbol or ABI changes. Qualified references
-  `module::item` are resolved by the driver before monomorphization and rewritten
-  to the same plain name; the canonical spelling is in `SINTAXE.md` §13.
+- Imported items still join the compilation unit. The driver resolves module
+  names before monomorphization and rewrites references to the declaration's
+  internal name; the canonical spelling is in `SINTAXE.md` §13. A name that is
+  unique in the compilation unit keeps its source spelling and its existing C
+  symbol.
 - `open` items may be referenced from any module; `sealed` items (the default)
   may only be referenced from their own module, whether the reference is
   qualified or unqualified. The resolver reports a sealed cross-module reference
@@ -388,12 +389,23 @@ These rules were added to unblock real programs and are implemented and tested. 
   itself by its own name, so self-qualified access to a sealed item is legal.
 - Qualified names support one level (`module::item`) in this version. There are
   no nested modules, re-exports, module-wide visibility or search paths.
-- **Implementation limitation:** declaration names remain unique across the
-  whole compilation unit, because C symbols are still derived only from the
-  declared name. Two modules declaring the same name are a duplicate-name error
-  in the checker even if every reference is qualified. Module names therefore
-  organize references and enforce privacy; they do not isolate C symbols.
-  Module-qualified C mangling is a later, ABI-visible change.
+- **Same names in several modules:** a declaration name may repeat in different
+  modules. All contributions with that source name receive the internal name
+  `<module>::<name>`; the C backend sanitizes `::` to `__`, so `a::helper`
+  becomes `loi_fn_a__helper`. Only a name shared by several modules is mangled,
+  which keeps the ABI of single-module programs unchanged. `main`, intrinsics
+  and names declared twice inside one module are never mangled: the first two
+  cannot be shadowed and the third remains a duplicate-name error.
+- **Unqualified resolution:** an unqualified name binds to the current module
+  when that module declares it, otherwise to the only declaration elsewhere.
+  When several modules declare it and the current module does not, the resolver
+  reports `ambiguous name '<name>'` and lists the qualified candidates.
+- **ABI visibility:** this rule changes generated C symbol names only for
+  duplicated declarations. Headers, multi-file objects and generic instances
+  use the same mangled names. `extern flow ... as <symbol>` keeps its explicit
+  link name, and several modules may intentionally share one explicit link name.
+  Two resolved names that sanitize to the same C identifier are rejected before
+  emission unless both are explicit links to that same symbol.
 
 **Equality and ordering**
 
@@ -804,7 +816,7 @@ slices, so their helpers stay bit-wise.
    that flow's C symbol; it likewise cannot use one fixed AST-level signature.
    `read_file`, `read_stdin` and `read_line` allocate in the current `protect`
    region and follow the same escape rules as `alloc`.
-2. **The library** is ordinary Loi in `lib/std.loi`, `lib/math.loi` and `lib/ctype.loi`, plus thin `extern flow` bindings in `lib/os.loi` and `lib/net.loi` with matching C shims. Files are explicitly imported; there is no implicit prelude. Each file is a module with a `module::item` qualified form (§4.8); library names keep their established prefixes (`min_i32`, `math_sum`, `ctype_is_digit`, ...) because declaration names remain unique across a compilation unit.
+2. **The library** is ordinary Loi in `lib/std.loi`, `lib/math.loi` and `lib/ctype.loi`, plus thin `extern flow` bindings in `lib/os.loi` and `lib/net.loi` with matching C shims. Files are explicitly imported; there is no implicit prelude. Each file is a module with a `module::item` qualified form (§4.8); library names keep their established prefixes (`min_i32`, `math_sum`, `ctype_is_digit`, ...) so their C symbols stay stable even when a user module declares the same name.
 
 New functionality goes into the library by default; an intrinsic is added only when the operation must be implemented by the backend or the OS.
 

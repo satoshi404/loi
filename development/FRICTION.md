@@ -305,18 +305,24 @@ and `random` were changed to `open`, and `tools/bindgen/bindgen.py` now emits
 `open` on every generated declaration. Internal helpers stay `sealed`, and a
 module still accesses its own sealed items.
 
-### Declaration names remain global per compilation unit
+### Declaration names remain global per compilation unit — resolved
 
-Module qualification disambiguates references, not declarations or C symbols.
-Two imported modules that both declare `helper` still fail in the checker even
-when every call is qualified:
+Module qualification initially disambiguated references, not declarations or C
+symbols. Two imported modules that both declared `helper` failed in the checker
+even when every call was qualified:
 
 ```text
 error: duplicate function 'helper'
 ```
 
-Probe: `/tmp/opencode/loi-b1-friction`. Isolating declarations per module needs
-module-qualified C mangling, an ABI-visible change deferred to a later block.
+Probe: `/tmp/opencode/loi-b1-friction`. **Resolved by module-qualified
+mangling:** names declared in more than one module receive an internal
+`<module>::<name>` spelling and distinct C symbols. Unqualified names bind to
+the current module first; a call from a third module is an explicit ambiguity
+error listing the qualified candidates. Unique names keep their old symbols, so
+single-module programs and the standard library remain ABI-compatible. Two
+resolved names that sanitize to the same C identifier are rejected rather than
+silently producing a duplicate definition.
 
 ## Block B2 — linear resources and `guard`
 

@@ -4,7 +4,36 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-20, structural `Eq` + `Ord`):** `==`/`!=` are now
+- **Current task (2026-11-20, module-qualified mangling):** two modules may now
+  declare the same item name. The driver computes an internal `<module>::<name>`
+  spelling for names declared in several modules and rewrites references before
+  monomorphization; unique names are untouched, so single-module programs keep
+  their ABI. Unqualified names bind to the current module first, then to a
+  unique declaration elsewhere; otherwise the resolver reports an ambiguity
+  with qualified candidates. The C backend sanitizes `::` to `__`, checks for
+  symbol collisions, and uses the same names in headers and multi-file objects.
+  `main`, intrinsics and same-module duplicates are excluded; `extern flow ...
+  as` keeps its link name. Rules are in `LOI_SPEC.md` §4.8, canonical spelling
+  in `SINTAXE.md` §13, rationale in `DECISIONS.md`, resolved friction in
+  `FRICTION.md`. `examples/module_mangling.loi` and its two imported modules
+  are the realistic example.
+- **Verification for module mangling:** the first nine tests in
+  `tests/mangling.rs` failed 6/9 before the implementation (the three expected
+  rejections already passed); a tenth test for shared explicit link names was
+  added during validation. All ten pass now. They cover duplicate names in
+  two modules, own-module unqualified binding, ambiguous cross-module calls,
+  C symbols, headers, multi-file linking, all declaration kinds including
+  generic instances, sanitized-symbol collisions, shared explicit link names and
+  same-module duplicates.
+  The example was checked, built and run (`17`, exit 0) and mirrored with
+  `python3 tools/sync_examples.py`. Final gate command:
+  `export PATH="/root/.cargo/bin:$PATH"; export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets && python3 tools/sync_examples.py --check && git diff --check`.
+  All five checks exited 0; `cargo test --all-targets` reported **475 passed,
+  0 failed** across 21 suites (was 465; ten new mangling tests). This change is
+  ABI-visible only for duplicated names, so `benchmark/run.py` is not applicable
+  to the unchanged single-module path.
+  ASan execution is still not claimed in this PRoot container.
+- **Previous task (2026-11-20, structural `Eq` + `Ord`):** `==`/`!=` are now
   structural for numbers, bool, marks, `cstr`, opaque handles, shapes, choices
   and slices whose elements support equality; `<`, `<=`, `>` and `>=` follow
   the same lexicographic rule except for opaque handles and callbacks, which
@@ -204,13 +233,14 @@
   and `module::item` works in value, type and constructor positions. A new driver
   loader (`src/main.rs`) tracks modules by canonical path, detects cycles,
   deduplicates diamonds and resolves references through `src/modules.rs` before
-  monomorphization; qualified names are rewritten to plain names, so the checker,
-  C backend, headers and ABI are unchanged. `open`/`sealed` are now enforced on
+  monomorphization. At the time, qualified names were rewritten to plain names;
+  module-qualified mangling for duplicated names was added later. `open`/`sealed` are now enforced on
   cross-module references, qualified or not; a module may always use its own
   sealed items. The stdlib files that expose public flows without `open`
   (`ctype`, `math`, `net`, `os`, `random`) and generated bindings now declare
   them `open`; cross-module test wrappers were updated too. Declaration names
-  stay unique per compilation unit (documented limitation). Rules are in
+  were unique per compilation unit at this point; the limitation was removed by
+  module-qualified mangling. Rules are in
   `SINTAXE.md` §13, `LOI_SPEC.md` §4.8, `DECISIONS.md`, `FRICTION.md` and
   `website/docs.html`.
 - **Verification for Block B1:** 12 new integration tests in `tests/modules.rs`
@@ -726,21 +756,20 @@
   synthetic and cross-file spans.
 - **Overall health:** good; the full test suite, `cargo fmt --check` and
   `cargo clippy --all-targets -- -D warnings` pass.
-- **Not done:** module-qualified C mangling, growable collections (`Vec<T>`/maps),
-  the IR/ASM backends and browser integration tests.
+- **Not done:** growable maps, the IR/ASM backends and browser integration tests.
 
 ## Component Status
 
 | Component | Status | Notes |
 |---|---|---|
 | Lexer | Working | Canonical Flow Syntax only; strings with decoded escapes; decimal/hex/binary integers; floats; `<-`/`->`/`<->`/`=>` glyphs; bitwise/shift/compound tokens; `guard` keyword; `//` comments collected for `fmt` |
-| AST / parser | Working | Shapes and generic shapes, flows and generic flows, `extern flow ... as`, `opaque`, imports, globals, slice/shape literals, `give`/`clone`/`alloc`, `protect`, `guard`, loops, bitwise/shift precedence, `comptime flow`/`comptime expr`, explicit type arguments |
+| AST / parser | Working | Shapes and generic shapes, flows and generic flows, `extern flow ... as`, `opaque`, imports, globals, slice/shape literals, `give`/`clone`/`alloc`, `protect`, `guard`, loops, bitwise/shift precedence, `comptime flow`/`comptime expr`, explicit type arguments; module resolution rewrites shared names before monomorphization |
 | Pretty-printer | Working | Emits canonical Flow Syntax including generics and `comptime`; idempotent on all canonical files; `loi fmt` preserves `//` comments (`format_program` remains comment-free) |
-| Type checker | Working | Types, literals, directions, calls, globals, intrinsics, `opaque`/`cstr`, constant folding, shape-cycle detection, bitwise/shift rules, structural `Eq`/`Ord` comparisons, I/O intrinsic signatures, allocation effects (including deep-clone allocators), `<-` read-view summaries and linear-resource `guard` validation (release-flow signature, no explicit release/move/return); monomorphization feeds concrete declarations into the checker and diagnostics show source generic spellings |
+| Type checker | Working | Types, literals, directions, calls, globals, intrinsics, `opaque`/`cstr`, constant folding, shape-cycle detection, bitwise/shift rules, structural `Eq`/`Ord` comparisons, I/O intrinsic signatures, allocation effects (including deep-clone allocators), `<-` read-view summaries and linear-resource `guard` validation (release-flow signature, no explicit release/move/return); monomorphization feeds concrete declarations into the checker and diagnostics show source generic spellings; module-resolved names keep same-module duplicates as errors and reject ambiguous unqualified references |
 | Compile-time evaluation | Working | `src/const_eval.rs`: pure `comptime flow` interpreter with step/depth limits, constant globals and shape defaults, `comptime expr`, purity diagnostics |
 | Diagnostics | Working | `src/diagnostic.rs`: human output with full source underlines (multi-line spans get `...`), secondary labels and an error summary; `short` keeps `path:line:column: message`; `json` emits structured objects with `end_line`/`end_column`; ANSI colors honor `NO_COLOR`/`CLICOLOR_FORCE`; unknown names get namespace-aware edit-distance suggestions; parser spans carry exact token ends and multi-line end lines with a line-scan fallback |
 | Ownership | Working | Give liveness, path-sensitive partial moves, field-sensitive lexical read views, definite assignment/return, exclusive `->`/`<->`, cross-flow consumption, `protect` taints and lexical-block escape analysis for non-empty slice literals and deep-clone results (empty literals are untainted), writable slice length, `read_file`/`read_stdin`/`read_line`, linear-resource `guard` scoping; gives from globals are rejected and move state is per function body |
-| C backend | Working | One C11 translation unit, ordered shape layouts, checked arithmetic, bitwise/shift helpers, growable arena, recursive on-demand deep-clone helpers, on-demand structural `loi_eq_*`/`loi_ord_*` helpers, bounds checks, defaults, headers, source maps, multi-file objects, statics, file/stdin I/O, numeric printing and implicit `guard` releases on normal/return/`break`/`continue` paths with LIFO unwinding |
+| C backend | Working | One C11 translation unit, ordered shape layouts, checked arithmetic, bitwise/shift helpers, growable arena, recursive on-demand deep-clone helpers, on-demand structural `loi_eq_*`/`loi_ord_*` helpers, module-qualified symbols for duplicated names with collision validation, bounds checks, defaults, headers, source maps, multi-file objects, statics, file/stdin I/O, numeric printing and implicit `guard` releases on normal/return/`break`/`continue` paths with LIFO unwinding |
 | C interop | Working | `opaque` → `void *`, `cstr` → `const char *`, fixed-ABI `callback` → `LoiCallback` from `callback(flow)`, bodyless `extern flow`, `--c-source`, `--cc-flag`; string literals coerce to `cstr` |
 | Library | Working | `lib/std.loi` (scalar/string helpers), `lib/math.loi` (generic and `comptime`), `lib/ctype.loi` (pure ASCII helpers), `lib/vec.loi` (cloneable vectors with `Eq` search and `Ord` sort), `lib/slice.loi` (generic slice helpers), `lib/option.loi`/`lib/result.loi`, `lib/os.loi`/`lib/net.loi` (thin POSIX bindings with C shims and linear `File`/`TcpStream` handles); prefixed names, explicitly imported |
 | Binding generator | Working | `tools/bindgen/bindgen.py` emits `opaque` handles, safe `shape`s, typed constants, `extern flow`s, a `memcpy` shim with `_Static_assert` checks and a skip report; C `const T *` parameters bind as borrowed `[T]` slices and mutable `char *` parameters as `<-> [u8]`, with a shared-layout `LoiSlice` shim |
@@ -985,10 +1014,11 @@ for f in lib/std.loi lib/math.loi lib/ctype.loi lib/os.loi lib/net.loi; do ./tar
   nested shapes. The backend folds them once and emits strict C11 static
   initializers: brace/designated initializers for shapes and named `static`
   arrays for slice data, with no compound literals.
-- `==`/`!=` are defined for scalars, `bool` and `[u8]` only.
+- `==`/`!=` and the ordering operators are structural for the types listed in
+  `LOI_SPEC.md` §4.8; `Ord` is a fourth generic bound.
 - Imports bind modules with `module::item` qualified references, and `open`/
-  `sealed` is enforced across module boundaries (§13). Declaration names remain
-  unique per compilation unit; C mangling is still unqualified.
+  `sealed` is enforced across module boundaries (§13). Names repeated in several
+  modules are mangled into distinct C symbols; unique names keep their ABI.
 - I/O intrinsics are limited to `print`, `eprint`, `panic`, numeric/`printf`
   formatting and whole-file / whole-stdin reads and writes. `printf` needs a
   literal format string and rejects dynamic `*` width/precision; user-declared
@@ -1099,10 +1129,11 @@ Remaining implementation or secondary choices:
 9. Block B6: done — fixed-ABI `callback` values pass exact-signature Loi flows
    to C directly.
 10. Structural `Eq`/`Ord`: done — one shared structural rule for `==`, `!=`,
-    `<`, `<=`, `>` and `>=`, an `Ord` bound, and on-demand C helpers. Next:
-    module-qualified mangling, callbacks beyond the fixed ABI, the opt-in LLVM
-    question and the IR/ASM drafts; keep the C11 backend as the production
-    oracle.
-11. Keep the docs in sync: `SINTAXE.md` is canonical, `website/docs.html`
+    `<`, `<=`, `>` and `>=`, an `Ord` bound, and on-demand C helpers.
+11. Module-qualified mangling: done — duplicated declaration names get distinct
+    C symbols; unique names keep their ABI. Next: callbacks beyond the fixed
+    ABI, the opt-in LLVM question and the IR/ASM drafts; keep the C11 backend as
+    the production oracle.
+12. Keep the docs in sync: `SINTAXE.md` is canonical, `website/docs.html`
     mirrors it, and `python3 tools/sync_examples.py --check` guards the example
     mirror.
