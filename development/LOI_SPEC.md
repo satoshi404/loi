@@ -470,7 +470,7 @@ files; application code imports them.
   constants and `extern flow` declarations, plus an optional C shim and a skip
   report.
 - The generator is conservative: callbacks, variadics, unions, bitfields,
-  inline arrays, pointer-to-pointer, mutable `char *` buffers, wide strings and
+  inline arrays, pointer-to-pointer, wide strings, pointer results and
   pointers to records that are not layout-safe are skipped and reported rather
   than guessed.
 - A `const T *` parameter is an input buffer and maps to a borrowed `[T]` slice;
@@ -478,6 +478,11 @@ files; application code imports them.
   and remains an explicit Loi argument, so the caller passes `bytes.len` when
   the API requires a count. `const char *` is still `cstr`, and a `const T *`
   result stays unsupported because ownership of the buffer is unspecified.
+- A mutable `char *` parameter maps to `<-> [u8]`, a writable byte slice. The
+  compiler passes `<->` slices as a pointer to the slice struct, so the shim
+  takes `LoiSlice *` and forwards `buf->data`; the length parameter stays
+  explicit. Writes land in the caller's storage, and a mutable pointer result
+  remains unsupported.
 - Safe records passed or returned by value, shape pointers and scalar out
   parameters go through generated `memcpy` shims with `_Static_assert`
   size/alignment checks. A shim that takes a slice emits the same guarded

@@ -1131,6 +1131,10 @@ python3 tools/bindgen/bindgen.py \
 - A `const T *` parameter becomes a borrowed `[T]` slice. The generated shim
   passes the slice's `data` pointer; any C length parameter stays explicit, so
   the call is `sample_checksum(bytes, bytes.len)`. `const char *` remains `cstr`.
+- A mutable `char *` parameter becomes `<-> [u8]`, a writable byte slice. The
+  compiler passes `<->` slices as a pointer to the slice struct, so the shim
+  takes `LoiSlice *` and passes `buf->data`; the length parameter stays
+  explicit. Writes go straight into the caller's storage.
 - Complete, pointer-free C records become `shape`s; incomplete or unsafe
   records become `opaque` handles.
 - Integer `#define` macros and enum constants become typed globals.
@@ -1138,9 +1142,8 @@ python3 tools/bindgen/bindgen.py \
   loi_bind_<module>_<name>` and implemented in the generated shim with
   `memcpy` plus `_Static_assert` size/alignment checks.
 - Unsupported declarations are never guessed: callbacks, variadics, unions,
-  bitfields, inline arrays, pointer-to-pointer, mutable `char *` buffers,
-  wide strings and pointers to unsafe records are skipped and listed in the
-  skip report.
+  bitfields, inline arrays, pointer-to-pointer, wide strings, pointer results
+  and pointers to unsafe records are skipped and listed in the skip report.
 
 Generated bindings are conservative by design. Add a small hand-written shim
 for the specific unsupported calls a program needs. `vendor/sdl2/` and

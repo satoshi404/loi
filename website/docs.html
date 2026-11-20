@@ -1393,10 +1393,14 @@ python3 -m http.server -d web 8000   # abra http://localhost:8000</code></pre>
             borrowed <code>[T]</code> slice; the shim passes its <code>data</code> pointer and a C
             length parameter stays explicit, so the call is
             <code>sample_checksum(bytes, bytes.len)</code>. <code>const char *</code> remains
-            <code>cstr</code>. Struct and out-parameter conversions go through a generated
+            <code>cstr</code>. A mutable <code>char *</code> parameter becomes a writable
+            <code>&lt;-&gt; [u8]</code> slice; the compiler passes it as a pointer to the
+            slice struct, so the shim takes <code>LoiSlice *</code> and forwards
+            <code>buf-&gt;data</code> while the length parameter stays explicit. Struct and
+            out-parameter conversions go through a generated
             <code>memcpy</code> shim with <code>_Static_assert</code> layout checks.
-            Callbacks, variadics, unions, bitfields, inline arrays, pointer-to-pointer, mutable
-            <code>char *</code> buffers, wide strings and pointers to unsafe records are skipped and
+            Callbacks, variadics, unions, bitfields, inline arrays, pointer-to-pointer,
+            wide strings, pointer results and pointers to unsafe records are skipped and
             reported in <code>skipped.txt</code>. <code>vendor/sdl2/</code> and
             <code>vendor/raylib/</code> are complete worked examples.
           </p>

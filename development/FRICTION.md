@@ -405,3 +405,22 @@ from a neighbouring argument name, so the caller writes
 `sample_checksum(bytes, bytes.len)`. `const char *` remains `cstr`, and const
 pointer results remain skipped because no Loi type expresses who owns the
 returned storage.
+
+## Block B5 — binding generator writable buffers
+
+### Mutable `char *` parameters were reported as skipped
+
+Functions that fill a caller-owned buffer, such as
+`int sample_fill(char *buf, int len)`, were skipped:
+
+```text
+error-equivalent skip: sample_fill: parameter 'buf' is a mutable char buffer; use a vendored shim
+```
+
+The C call is safe as long as the caller owns the storage and passes its real
+length, which is exactly what a mutable Loi slice expresses. **Resolved by
+Block B5:** the parameter binds as `<-> [u8]` and the caller writes
+`sample_fill(<-> buffer, count)`. The generated shim receives `LoiSlice *`
+because the C backend passes `<->` slices by pointer, then forwards
+`buf->data`. The length parameter stays explicit, and mutable pointer results
+remain skipped because ownership of the returned storage is unspecified.

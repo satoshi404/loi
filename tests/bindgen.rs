@@ -104,6 +104,11 @@ open flow main
         values: [i32] <- [i32: 4, 5]
         total <- sample_sum_i32(values, values.len)
         if total != 9 { => 18 }
+        mut buffer: [u8] <- [u8: 0, 0, 0]
+        count <- buffer.len as i32
+        filled <- sample_fill(<-> buffer, count)
+        if filled != 3 { => 19 }
+        if buffer[0] != 120 { => 20 }
     }
     => 0
 }
@@ -189,11 +194,21 @@ fn bindgen_generates_buildable_bindings() {
         shim.contains("sample_checksum((const uint8_t *)bytes.data, len)"),
         "a slice input must reach C through the shim's data pointer:\n{shim}"
     );
+    assert!(
+        shim.contains("sample_fill((char *)buf->data, len)"),
+        "a mutable buffer must reach C through the shim's data pointer:\n{shim}"
+    );
 
     let skipped = fs::read_to_string(dir.join("skipped.txt")).expect("skip report should exist");
     assert!(
-        skipped.contains("sample_fill: parameter 'buf' is a mutable char buffer"),
-        "mutable char buffers should be reported:\n{skipped}"
+        bindings.contains(
+            "open extern flow sample_fill as loi_bind_sample_sample_fill\n    <-> buf: [u8]\n    <- len: i32\n    => i32\n"
+        ),
+        "a mutable char buffer should become a writable byte slice through the shim:\n{bindings}"
+    );
+    assert!(
+        skipped.contains("sample_bad_mutable_return: returns unsupported pointer type"),
+        "mutable char pointer returns should stay unsupported:\n{skipped}"
     );
     assert!(
         skipped.contains("sample_varargs: variadic function"),

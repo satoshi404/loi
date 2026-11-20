@@ -33,6 +33,7 @@ int sample_sparse_code(SparseMode mode);
 int sample_checksum(const unsigned char *bytes, size_t len);
 int sample_sum_i32(const int *values, size_t len);
 const unsigned char *sample_bad_pointer_return(void);
+char *sample_bad_mutable_return(void);
 int sample_bad_pointer_to_pointer(const unsigned char **values);
 
 #endif

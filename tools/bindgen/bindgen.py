@@ -846,11 +846,15 @@ class Bindgen:
             if base == "char":
                 if is_const:
                     return ("<-", Mapped("cstr", "cstr", "const char *"), False, True)
-                self.skips.append(
-                    f"{function_name}: parameter '{param_name}' is a mutable "
-                    f"char buffer; use a vendored shim"
+                # A writable char buffer is a byte slice the callee may fill.
+                # The caller keeps ownership; the shim passes the same data
+                # pointer and any C length parameter stays explicit.
+                return (
+                    "<->",
+                    Mapped("inout_slice", "[u8]", "char *", "char"),
+                    True,
+                    False,
                 )
-                return None
             if base == "void":
                 return ("<-", self.void_ptr(), False, False)
 
@@ -1159,7 +1163,7 @@ class Bindgen:
         lines.append("")
 
         if any(
-            param.mapped.kind == "in_slice"
+            param.mapped.kind in ("in_slice", "inout_slice")
             for function in self.bound_functions
             for param in function.params
         ):
@@ -1277,6 +1281,8 @@ class Bindgen:
                 post.append(f"    *{param.name} = (int32_t){temp};")
             elif mapped.kind == "in_slice":
                 args.append(f"({mapped.c}){param.name}.data")
+            elif mapped.kind == "inout_slice":
+                args.append(f"({mapped.c}){param.name}->data")
             else:
                 args.append(param.name)
 
@@ -1371,6 +1377,10 @@ def shim_param_type(param: BoundParam) -> str:
         return "int32_t *"
     if mapped.kind == "in_slice":
         return "LoiSlice"
+    if mapped.kind == "inout_slice":
+        # The compiler passes a `<->` slice as a pointer to the slice struct,
+        # matching the C backend's extern signature.
+        return "LoiSlice *"
     return "void *"
 
 
