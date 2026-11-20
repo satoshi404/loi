@@ -692,6 +692,7 @@ impl<'a> Monomorphizer<'a> {
                     || self.marks.contains(name)
                     || self.opaques.contains(name)
                     || name == "cstr"
+                    || name == "callback"
             }
             Type::Slice(_, _) | Type::Generic(..) => false,
         }

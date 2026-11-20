@@ -403,7 +403,8 @@ These rules were added to unblock real programs and are implemented and tested. 
 
 **Builtin intrinsics and standard library**
 
-- Intrinsics: `print(<- [u8])`, `eprint(<- [u8])`, `panic(<- [u8])`, `print_int(<- integer)`, `print_float(<- f64)`, `printf(<- [u8], ...)` (literal format string plus typed varargs), `sqrt/floor/ceil/fabs(<- f64) => f64`, `pow/fmod(<- f64, <- f64) => f64` and `len([T]) => u64`.
+- Intrinsics: `print(<- [u8])`, `eprint(<- [u8])`, `panic(<- [u8])`, `print_int(<- integer)`, `print_float(<- f64)`, `printf(<- [u8], ...)` (literal format string plus typed varargs), `sqrt/floor/ceil/fabs(<- f64) => f64`, `pow/fmod(<- f64, <- f64) => f64`, `len([T]) => u64` and
+`callback(<- flow) => callback`.
 - The library is a set of explicitly imported files: `lib/std.loi` (integer/float and byte-string helpers), `lib/math.loi` (generic and `comptime` math), `lib/ctype.loi` (ASCII byte helpers), `lib/option.loi` and `lib/result.loi` (optional and error-carrying values), `lib/os.loi` and `lib/net.loi` (thin POSIX bindings with C shims). The pure files use only the features above; the last two use `extern flow` declarations and must be linked with their shims.
 
 **Optional and error values (Block A6).**
@@ -454,11 +455,29 @@ files; application code imports them.
   `<->` pass an address.
 - The Loi name is the C symbol by default. `extern flow Name as c_symbol` calls
   a different symbol, typically a generated or hand-written shim.
-- Supported types are scalars, `bool`, `opaque` handles, `cstr` and shapes whose
-  fields are themselves FFI-safe. Slices, callbacks, variadics and unions
-  require a C shim.
+- Supported types are scalars, `bool`, `opaque` handles, `cstr`, `callback`
+  as an input-only parameter, borrowed and mutable slices, and shapes whose
+  fields are themselves FFI-safe. Variadics and unions require a C shim.
 - Extern flows are not checked for a body, ownership effects or allocation
   regions. Their contracts are the binding author's responsibility.
+
+**C callbacks (Block B6).**
+
+- `callback` is the FFI-only function-pointer type with the fixed C signature
+  `int32_t (*)(int32_t, int32_t)`. It is copyable and can be stored in locals,
+  shape fields and slices, but Loi cannot call, compare or dereference it.
+- `callback(flow)` is a compiler intrinsic that builds the value from a
+  non-extern flow with exactly two `<- i32` parameters and an `i32` result.
+  The checker rejects unknown, extern and wrong-signature flows; a callback
+  parameter must use `<-`, and an `extern flow` cannot return `callback`.
+  Ordinary Loi flows may return callback values.
+- The generated C passes the flow's symbol directly (`LoiCallback`). There is
+  no thunk, trampoline or userdata, so the fixed ABI must match the C
+  declaration exactly. The typedef is emitted in the same guarded shared-type
+  block as `LoiSlice`, including emitted headers.
+- The binding generator still skips C function-pointer parameters and results;
+  declare those `extern flow`s by hand. `examples/callbacks.loi` with
+  `examples/callbacks_shim.c` is the complete worked program.
 - `loi build ... --c-source FILE` compiles and links extra C sources.
   `--cc-flag FLAG` forwards a flag to the C compiler; on link steps the flags
   follow the objects so `-l` libraries resolve normally.
@@ -770,11 +789,13 @@ slices, so their helpers stay bit-wise.
 1. **Intrinsics** are compiler-known, reserved names with fixed signatures and a direct backend mapping:
    - I/O: `print`, `eprint`, `panic`, `print_int`, `print_float`, `printf`, `read_file`, `write_file`, `read_stdin`, `read_line`
    - math: `sqrt`, `floor`, `ceil`, `fabs`, `pow`, `fmod`
-   - `len`, `view`
+   - `len`, `view`, `callback`
 
    They cannot be redeclared by user code and are always available (no import).
    `view` is type-directed: its element type comes from the source slice, so it
    is checked specially rather than registered with one concrete signature.
+   `callback` takes a flow name, checks its signature in the checker and emits
+   that flow's C symbol; it likewise cannot use one fixed AST-level signature.
    `read_file`, `read_stdin` and `read_line` allocate in the current `protect`
    region and follow the same escape rules as `alloc`.
 2. **The library** is ordinary Loi in `lib/std.loi`, `lib/math.loi` and `lib/ctype.loi`, plus thin `extern flow` bindings in `lib/os.loi` and `lib/net.loi` with matching C shims. Files are explicitly imported; there is no implicit prelude. Each file is a module with a `module::item` qualified form (§4.8); library names keep their established prefixes (`min_i32`, `math_sum`, `ctype_is_digit`, ...) because declaration names remain unique across a compilation unit.
@@ -783,7 +804,7 @@ New functionality goes into the library by default; an intrinsic is added only w
 
 **Why:** a tiny closed intrinsic set keeps the compiler small and portable; a Loi-written library exercises the language and can grow without changing the compiler.
 
-**Status:** implemented. `len` and `view` are reserved in the checker; the old "user-defined `len` wins" exception is gone. `printf` is the only variadic intrinsic: its first argument must be a string literal, and the conversions in that literal determine the number and kind of the remaining arguments. User-declared variadic flows remain out of scope.
+**Status:** implemented. `len`, `view` and `callback` are reserved in the checker; the old "user-defined `len` wins" exception is gone. `printf` is the only variadic intrinsic: its first argument must be a string literal, and the conversions in that literal determine the number and kind of the remaining arguments. User-declared variadic flows remain out of scope.
 
 ### 5.10 Syntax identity — Loi Flow Syntax (adopted, complete)
 
@@ -947,13 +968,14 @@ The full Flow Syntax was chosen because it makes the three distinctive ideas —
 ### Phase 4 — Backend
 
 - [x] Code generation to C11 (first target), including a growable `protect` bump arena, checked arithmetic, runtime bounds checks, headers, source maps and multi-file builds
-- [x] Foreign C interop (`opaque`, `cstr`, `extern flow`, shims) and the binding generator
+- [x] Foreign C interop (`opaque`, `cstr`, `callback`, `extern flow`, shims) and the binding generator
 - [ ] Later: x86-64 or LLVM. `src/ir.rs` and `src/asm.rs` are drafts; `--emit-ir` emits IR text, while `--emit-asm` is disabled with a clear CLI error until the assembly backend can generate runnable code.
 
 ### 6.1 Generated headers
 
 An emitted header is self-contained C11: it defines the shared guarded
-`LoiSlice` type, then visible marks, choices and shapes in dependency order,
+`LoiSlice` and `LoiCallback` types, then visible marks, choices and shapes in
+dependency order,
 then prototypes for visible flows. Every type declaration is guarded so two
 headers can be included together, the top-level guard is derived from the
 output file name, and prototypes are wrapped in `extern "C"` for C++ callers.

@@ -424,3 +424,28 @@ Block B5:** the parameter binds as `<-> [u8]` and the caller writes
 because the C backend passes `<->` slices by pointer, then forwards
 `buf->data`. The length parameter stays explicit, and mutable pointer results
 remain skipped because ownership of the returned storage is unspecified.
+
+## Block B6 — C callbacks
+
+### Flows could not be passed across the FFI boundary
+
+C APIs such as reducers, sorters and event dispatchers take function pointers,
+but Loi flows were not values and the bindgen skip report said:
+
+```text
+error-equivalent skip: sample_for_each: parameter 'cmp' is a function pointer
+```
+
+Binding these calls by hand still required a global C thunk per callback, with
+a bespoke signature and a way for the thunk to reach the Loi flow. **Resolved
+by Block B6:** Loi has a fixed-ABI `callback` type
+(`int32_t (*)(int32_t, int32_t)`) and a `callback(flow)` intrinsic. The checker
+accepts only a non-extern flow with exactly `<- a: i32, <- b: i32 => i32`, and
+the generated C passes that flow's symbol directly: no thunk, trampoline or
+userdata is needed. Callback values are copyable and storable, but Loi cannot
+call, compare or dereference them, so the narrow ABI stays honest.
+
+The generator still skips C function pointers: automatically choosing a thunk
+would have to guess closure state and lifetime, which Loi does not express.
+Declare those `extern flow`s by hand; `examples/callbacks.loi` and
+`examples/callbacks_shim.c` show the complete pattern.

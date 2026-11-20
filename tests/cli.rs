@@ -1598,6 +1598,44 @@ fn build_links_a_c_source_for_extern_flows() {
 }
 
 #[test]
+fn build_links_a_c_callback_example() {
+    if !has_c_compiler() {
+        eprintln!("skipping build_links_a_c_callback_example: cc not found");
+        return;
+    }
+
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let dir = test_dir("build-callback");
+    let source = root.join("examples/callbacks.loi");
+    let shim = root.join("examples/callbacks_shim.c");
+    let executable = dir.join("callbacks");
+
+    let build = Command::new(loi())
+        .arg("build")
+        .arg(&source)
+        .arg("-o")
+        .arg(&executable)
+        .arg("--c-source")
+        .arg(&shim)
+        .output()
+        .expect("loi should run");
+    assert!(
+        build.status.success(),
+        "callback example build failed: {}\n{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let run = Command::new(&executable)
+        .output()
+        .expect("built executable should run");
+    let _ = fs::remove_dir_all(&dir);
+
+    assert_eq!(run.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "104");
+}
+
+#[test]
 fn emit_asm_is_rejected_with_a_clear_message() {
     let dir = test_dir("emit-asm-disabled");
     let input = dir.join("program.loi");

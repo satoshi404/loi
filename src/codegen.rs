@@ -136,14 +136,20 @@ fn header_guard(path: &Path) -> String {
     }
 }
 
-/// Shared by the generated C file and emitted headers so `LoiSlice` has one
-/// definition even when a translation unit includes two Loi headers.
+/// Shared by the generated C file and emitted headers so `LoiSlice` and
+/// `LoiCallback` have one definition even when a translation unit includes two
+/// Loi headers.
 const SHARED_SLICE_TYPE: &str = r#"#ifndef LOI_SLICE_DEFINED
 #define LOI_SLICE_DEFINED
 typedef struct {
     void* data;
     size_t len;
 } LoiSlice;
+#endif
+
+#ifndef LOI_CALLBACK_DEFINED
+#define LOI_CALLBACK_DEFINED
+typedef int32_t (*LoiCallback)(int32_t, int32_t);
 #endif
 "#;
 
@@ -726,6 +732,7 @@ impl<'a> Generator<'a> {
         intrinsic_return_ty.insert("fabs".to_string(), Ty::F64);
         intrinsic_return_ty.insert("fmod".to_string(), Ty::F64);
         intrinsic_return_ty.insert("len".to_string(), Ty::U64);
+        intrinsic_return_ty.insert("callback".to_string(), Ty::Callback);
         intrinsic_return_ty.insert("read_file".to_string(), Ty::Slice(Box::new(Ty::U8)));
         intrinsic_return_ty.insert("read_stdin".to_string(), Ty::Slice(Box::new(Ty::U8)));
         intrinsic_return_ty.insert("read_line".to_string(), Ty::Slice(Box::new(Ty::U8)));
@@ -1283,6 +1290,8 @@ impl<'a> Generator<'a> {
                     primitive
                 } else if name == "cstr" {
                     Ty::CStr
+                } else if name == "callback" {
+                    Ty::Callback
                 } else if self.marks.contains_key(name) {
                     Ty::Mark(name.clone())
                 } else if self.choices.contains_key(name) {
@@ -1313,6 +1322,7 @@ impl<'a> Generator<'a> {
             Ty::Bool => "bool".to_string(),
             Ty::Named(name) | Ty::Mark(name) | Ty::Choice(name) => self.c_interface(name),
             Ty::Opaque(_) => "void *".to_string(),
+            Ty::Callback => "LoiCallback".to_string(),
             Ty::CStr => "const char *".to_string(),
             Ty::Slice(_) => "LoiSlice".to_string(),
             Ty::IntLiteral => "int32_t".to_string(),
@@ -3121,6 +3131,15 @@ impl<'a> Generator<'a> {
                 let slice_c = self.c_type(&slice_ty);
                 self.emit(format!("{slice_c} {temp} = {value};"));
                 Some(format!("((uint64_t){temp}.len)"))
+            }
+            "callback" => {
+                let arg = args.first()?;
+                let ExprKind::Ident(flow) = &arg.value.kind else {
+                    return None;
+                };
+                // The flow's C symbol already has the fixed callback ABI, so it
+                // is passed directly instead of generating a thunk.
+                Some(self.c_func(flow))
             }
             "view" => {
                 args.get(2)?;

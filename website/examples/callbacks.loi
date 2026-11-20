@@ -1,0 +1,41 @@
+// A C helper reduces a range with a caller-supplied Loi flow. The flow is
+// passed as a fixed-ABI `callback`; no thunk or userdata is involved.
+//
+// Build:
+//   loi build examples/callbacks.loi \
+//       --c-source examples/callbacks_shim.c -o callbacks
+
+extern flow reduce_range
+    <- start: i32
+    <- end: i32
+    <- f: callback
+    => i32
+
+flow add
+    <- acc: i32
+    <- value: i32
+    => i32
+{
+    => acc + value
+}
+
+flow max
+    <- acc: i32
+    <- value: i32
+    => i32
+{
+    if acc > value {
+        => acc
+    }
+    => value
+}
+
+flow main
+    => i32
+{
+    sum <- reduce_range(1, 5, callback(add))
+    print_int(sum)
+    largest <- reduce_range(1, 5, callback(max))
+    print_int(largest)
+    => 0
+}

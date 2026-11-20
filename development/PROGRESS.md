@@ -4,17 +4,45 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-20, Block B5 — binding generator writable buffers):**
-  `tools/bindgen/bindgen.py` now maps a C mutable `char *` parameter to a
-  writable Loi `<-> [u8]` slice. The compiler passes `<->` slices as a pointer
-  to the slice struct, so the generated shim takes `LoiSlice *` and forwards
+- **Current task (2026-11-20, Block B6 — C callbacks):** Loi now has a fixed-ABI
+  FFI type `callback` (`int32_t (*)(int32_t, int32_t)`) and a closed
+  `callback(flow)` intrinsic. Only a non-extern flow with exactly
+  `<- a: i32, <- b: i32 => i32` is accepted; the generated C passes that flow's
+  symbol directly, so no thunk, trampoline or userdata is needed. Callback
+  values are copyable and can be stored in locals, shape fields and slices, but
+  cannot be called, compared or dereferenced from Loi. A `callback` parameter
+  must use `<-`, and an `extern flow` cannot return `callback`; ordinary Loi
+  flows may return callback values. The generator still
+  skips C function pointers; declare those `extern flow`s by hand. Rules are in
+  `SINTAXE.md` §2 and §15.6, `LOI_SPEC.md` §4.9, `DECISIONS.md`, `FRICTION.md`
+  and `website/docs.html`. `examples/callbacks.loi` with
+  `examples/callbacks_shim.c` is the complete buildable program.
+- **Verification for Block B6:** the first end-to-end probe
+  (`apply_cb(9, 4, callback(add))` with a C harness) compiled and returned 0,
+  and the negative probes produced the intended diagnostics, including bad
+  directions and `extern flow` callback results. The stored
+  probe (`pos_store.loi`) initially generated `void loi_v_cb = loi_fn_add;`
+  because the codegen intrinsic-return map lacked `callback`; after adding it,
+  locals, flow returns, shape fields and callback slices all emit
+  `LoiCallback`. Added three checker tests, three codegen tests (generated C,
+  strict C11, sanitizer compile, C harness run, emitted header) and one CLI test
+  that runs the complete `examples/callbacks.loi` + shim build. Final gate
+  command:
+  `export PATH="/root/.cargo/bin:$PATH"; export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets && python3 tools/sync_examples.py --check && git diff --check`.
+  All five checks exited 0; `cargo test --all-targets` reported **455 passed,
+  0 failed** across 19 suites (was 448; seven new tests). The C backend ABI
+  changed only by adding a guarded typedef and a new parameter type, so
+  `benchmark/run.py` is not applicable. ASan execution is still not claimed in
+  this PRoot container.
+- **Previous task (2026-11-20, Block B5 — binding generator writable buffers):**
+  `tools/bindgen/bindgen.py` maps a C mutable `char *` parameter to a writable
+  Loi `<-> [u8]` slice. The compiler passes `<->` slices as a pointer to the
+  slice struct, so the generated shim takes `LoiSlice *` and forwards
   `buf->data`; the C length parameter remains explicit, so a call is
   `sample_fill(<-> buffer, count)`. `const char *` stays `cstr`, and pointer
   results stay skipped because ownership of the returned storage is
-  unspecified. Callbacks, variadics, unions, bitfields, inline arrays,
-  pointer-to-pointer, wide strings and unsafe record pointers are still
-  reported in the skip file. Rules are in `SINTAXE.md` §15.5, `LOI_SPEC.md`
-  §4.9, `DECISIONS.md`, `FRICTION.md` and `website/docs.html`.
+  unspecified. Rules are in `SINTAXE.md` §15.5, `LOI_SPEC.md` §4.9,
+  `DECISIONS.md`, `FRICTION.md` and `website/docs.html`.
 - **Verification for Block B5:** before implementation, the extended
   `tests/bindgen.rs` failed with
   `a mutable buffer must reach C through the shim's data pointer`; after the
@@ -686,7 +714,7 @@
 | Diagnostics | Working | `src/diagnostic.rs`: human output with full source underlines (multi-line spans get `...`), secondary labels and an error summary; `short` keeps `path:line:column: message`; `json` emits structured objects with `end_line`/`end_column`; ANSI colors honor `NO_COLOR`/`CLICOLOR_FORCE`; unknown names get namespace-aware edit-distance suggestions; parser spans carry exact token ends and multi-line end lines with a line-scan fallback |
 | Ownership | Working | Give liveness, path-sensitive partial moves, field-sensitive lexical read views, definite assignment/return, exclusive `->`/`<->`, cross-flow consumption, `protect` taints and lexical-block escape analysis for non-empty slice literals and deep-clone results (empty literals are untainted), writable slice length, `read_file`/`read_stdin`/`read_line`, linear-resource `guard` scoping; gives from globals are rejected and move state is per function body |
 | C backend | Working | One C11 translation unit, ordered shape layouts, checked arithmetic, bitwise/shift helpers, growable arena, recursive on-demand deep-clone helpers, bounds checks, defaults, headers, source maps, multi-file objects, statics, file/stdin I/O, numeric printing and implicit `guard` releases on normal/return/`break`/`continue` paths with LIFO unwinding |
-| C interop | Working | `opaque` → `void *`, `cstr` → `const char *`, bodyless `extern flow`, `--c-source`, `--cc-flag`; string literals coerce to `cstr` |
+| C interop | Working | `opaque` → `void *`, `cstr` → `const char *`, fixed-ABI `callback` → `LoiCallback` from `callback(flow)`, bodyless `extern flow`, `--c-source`, `--cc-flag`; string literals coerce to `cstr` |
 | Library | Working | `lib/std.loi` (scalar/string helpers), `lib/math.loi` (generic and `comptime`), `lib/ctype.loi` (pure ASCII helpers), `lib/os.loi`/`lib/net.loi` (thin POSIX bindings with C shims and linear `File`/`TcpStream` handles); prefixed names, explicitly imported |
 | Binding generator | Working | `tools/bindgen/bindgen.py` emits `opaque` handles, safe `shape`s, typed constants, `extern flow`s, a `memcpy` shim with `_Static_assert` checks and a skip report; C `const T *` parameters bind as borrowed `[T]` slices and mutable `char *` parameters as `<-> [u8]`, with a shared-layout `LoiSlice` shim |
 | Vendored bindings | Working (syntax-verified) | `vendor/sdl2/` (SDL2 2.32.10) and `vendor/raylib/` (raylib 5.5), each with generated `.loi`, shim, skip report and README |
@@ -919,6 +947,10 @@ for f in lib/std.loi lib/math.loi lib/ctype.loi lib/os.loi lib/net.loi; do ./tar
 - `cstr` and `opaque` are FFI-only handles. They can be stored, passed,
   returned and compared by identity but not indexed, measured, printed or
   dereferenced. Byte access requires a hand-written shim.
+- `callback` is an FFI-only function pointer with one fixed signature, built by
+  `callback(flow)` from an exact-signature Loi flow. It is copyable and storable
+  but not callable, comparable or dereferenceable from Loi; C uses the flow
+  symbol directly. C function pointers with other signatures remain unsupported.
 - Globals may use any compile-time constant: scalars, strings, slices and
   nested shapes. The backend folds them once and emits strict C11 static
   initializers: brace/designated initializers for shapes and named `static`
@@ -966,10 +998,11 @@ for f in lib/std.loi lib/math.loi lib/ctype.loi lib/os.loi lib/net.loi; do ./tar
 - `--cc-flag` values are one literal argument each and are not passed to `ar`.
 - The IR backend does not lower globals or every literal; the assembly backend
   is disabled at the CLI. Neither is a production path.
-- The binding generator is conservative. Callbacks, variadics, unions,
-  bitfields, inline arrays, pointer-to-pointer, wide strings, pointer results
-  and pointers to unsafe records are skipped and reported. Read-only `const T *`
-  and mutable `char *` parameters are supported as slices.
+- The binding generator is conservative. C function pointers, variadics, unions,
+  bitfields, inline arrays, pointer-to-pointer, wide strings, pointer results and
+  pointers to unsafe records are skipped and reported. Read-only `const T *` and
+  mutable `char *` parameters are supported as slices; other callback signatures
+  than the fixed `callback` ABI need a hand-written `extern flow`.
 - Full SDL2/raylib link-and-run needs their runtime dependency closure, which
   this development environment does not provide.
 - `guard` derives the release flow name from the shape (`Connection` →
@@ -994,10 +1027,12 @@ Remaining implementation or secondary choices:
   the current field-by-field rule permanently; that would let the existing `Eq`
   bound cover more types without changing its spelling. Ordering needs a
   separate `Ord` bound and a decision on what it means for non-numeric types.
-- Decide whether callbacks, user-declared variadics, arbitrary C unions or fixed
-  arrays deserve first-class support or remain shim-only. Loi `choice` already
-  covers tagged unions with safe payloads (`printf` is already a variadic
-  intrinsic).
+- Decide whether callbacks with signatures beyond the fixed
+  `int32_t (*)(int32_t, int32_t)` ABI deserve first-class support, and how they
+  would be spelled without making flows first-class values. B6 keeps other C
+  function pointers shim-only. User-declared variadics, arbitrary C unions and
+  fixed arrays also remain shim-only; Loi `choice` already covers tagged unions
+  with safe payloads (`printf` is already a variadic intrinsic).
 - Define the byte-slice/`cstr` conversion surface beyond string literals.
 - Extend escape analysis beyond lexical blocks if programs need block-local
   slices to outlive their block without `alloc`.
@@ -1030,9 +1065,11 @@ Remaining implementation or secondary choices:
 7. Block B4: done — C `const T *` parameters bind as borrowed slices through the
    generated shim.
 8. Block B5: done — C mutable `char *` parameters bind as `<-> [u8]` slices, with
-   the shim matching the compiler's `LoiSlice *` ABI. Next: revisit the remaining
-   binding-generator gaps and the opt-in LLVM question; keep the C11 backend as
-   the production oracle.
-9. Keep the docs in sync: `SINTAXE.md` is canonical, `website/docs.html`
-   mirrors it, and `python3 tools/sync_examples.py --check` guards the example
-   mirror.
+   the shim matching the compiler's `LoiSlice *` ABI.
+9. Block B6: done — fixed-ABI `callback` values pass exact-signature Loi flows
+   to C directly. Next: revisit the remaining binding-generator gaps (other C
+   function-pointer signatures), structural equality/ordering and the opt-in
+   LLVM question; keep the C11 backend as the production oracle.
+10. Keep the docs in sync: `SINTAXE.md` is canonical, `website/docs.html`
+    mirrors it, and `python3 tools/sync_examples.py --check` guards the example
+    mirror.

@@ -163,6 +163,7 @@ struct FunctionSig {
     span: Span,
     params: Vec<ParamSig>,
     return_type: Ty,
+    external: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -597,7 +598,12 @@ impl Checker {
                     }
                 }
                 Item::Interface(decl) => {
-                    if self.interfaces.contains_key(&decl.name) {
+                    if is_intrinsic_name(&decl.name) {
+                        self.error(
+                            decl.span,
+                            format!("intrinsic '{}' cannot be redeclared", decl.name),
+                        );
+                    } else if self.interfaces.contains_key(&decl.name) {
                         self.error(decl.span, format!("duplicate shape '{}'", decl.name));
                     } else if self.opaques.contains(&decl.name)
                         || self.marks.contains_key(&decl.name)
@@ -665,6 +671,7 @@ impl Checker {
                                 span: decl.span,
                                 params: Vec::new(),
                                 return_type: Ty::Void,
+                                external: decl.external,
                             },
                         );
                     }
@@ -728,6 +735,7 @@ impl Checker {
                 span: Span::new(0, 0),
                 params: sig_params,
                 return_type,
+                external: false,
             },
         );
     }
@@ -942,6 +950,15 @@ impl Checker {
             let mut seen = HashSet::new();
             for param in &decl.params {
                 let ty = self.resolve_type(&param.ty);
+                if ty == Ty::Callback && param.direction != Direction::In {
+                    self.error(
+                        param.span,
+                        format!(
+                            "callback parameter '{}' must use '<-'; callbacks are input-only",
+                            param.name
+                        ),
+                    );
+                }
                 if !seen.insert(param.name.clone()) {
                     self.error(
                         param.span,
@@ -963,6 +980,18 @@ impl Checker {
                 Some(ty) => self.resolve_type(ty),
                 None => Ty::Void,
             };
+            if decl.external && return_type == Ty::Callback {
+                self.error(
+                    decl.return_type
+                        .as_ref()
+                        .map(|ty| ty.span())
+                        .unwrap_or(decl.span),
+                    format!(
+                        "extern flow '{}' cannot return callback; callbacks are input-only",
+                        decl.name
+                    ),
+                );
+            }
 
             self.functions.insert(
                 decl.name.clone(),
@@ -970,6 +999,7 @@ impl Checker {
                     span: decl.span,
                     params,
                     return_type,
+                    external: decl.external,
                 },
             );
         }
@@ -1076,6 +1106,8 @@ impl Checker {
                     primitive
                 } else if name == "cstr" {
                     Ty::CStr
+                } else if name == "callback" {
+                    Ty::Callback
                 } else if self.interfaces.contains_key(name) {
                     Ty::Named(name.clone())
                 } else if self.marks.contains_key(name) {
@@ -1115,6 +1147,8 @@ impl Checker {
                     primitive
                 } else if name == "cstr" {
                     Ty::CStr
+                } else if name == "callback" {
+                    Ty::Callback
                 } else if self.interfaces.contains_key(name) {
                     Ty::Named(name.clone())
                 } else if self.marks.contains_key(name) {
@@ -2884,6 +2918,13 @@ impl Checker {
             return self.check_view_call(args, span);
         }
 
+        // `callback(flow)` builds a C callback value from a Loi flow. The C ABI
+        // is fixed, so only a non-extern flow with exactly two `<- i32`
+        // parameters and an `i32` result is accepted.
+        if name == "callback" {
+            return self.check_callback_call(args, span);
+        }
+
         // `print_int` and `print_float` are generic over the numeric width so
         // callers do not have to cast every value to i64/f64 by hand.
         if matches!(name.as_str(), "print_int" | "print_float") {
@@ -3021,6 +3062,63 @@ impl Checker {
             self.check_literal_range(&arg.value, &Ty::U64);
         }
         Ty::Slice(element)
+    }
+
+    /// Check `callback(flow)`. The value is a C function pointer with the fixed
+    /// FFI signature `int32_t (*)(int32_t, int32_t)`, so the target must be a
+    /// non-extern Loi flow with exactly that signature. The flow symbol itself
+    /// is passed to C; no thunk is generated.
+    fn check_callback_call(&mut self, args: &[CallArg], span: Span) -> Ty {
+        if args.len() != 1 {
+            self.error(
+                span,
+                format!("callback expects 1 argument, found {}", args.len()),
+            );
+            for arg in args {
+                self.check_unmatched_arg(arg);
+            }
+            return Ty::Error;
+        }
+        let arg = &args[0];
+        if arg.direction != Direction::In {
+            self.error(arg.value.span, "callback expects a '<-' argument");
+        }
+        let ExprKind::Ident(flow) = &arg.value.kind else {
+            self.error(arg.value.span, "callback expects a flow name");
+            return Ty::Error;
+        };
+        let Some(signature) = self.functions.get(flow).cloned() else {
+            self.error(
+                arg.value.span,
+                format!("unknown flow '{flow}' for callback"),
+            );
+            return Ty::Error;
+        };
+        if signature.external {
+            self.error(
+                arg.value.span,
+                format!(
+                    "extern flow '{flow}' cannot be used as a callback; declare a Loi flow with signature flow {flow}(<- a: i32, <- b: i32) => i32"
+                ),
+            );
+            return Ty::Error;
+        }
+        let valid = signature.params.len() == 2
+            && signature
+                .params
+                .iter()
+                .all(|param| param.direction == Direction::In && param.ty == Ty::I32)
+            && signature.return_type == Ty::I32;
+        if !valid {
+            self.error(
+                arg.value.span,
+                format!(
+                    "callback flow '{flow}' must have signature flow {flow}(<- a: i32, <- b: i32) => i32"
+                ),
+            );
+            return Ty::Error;
+        }
+        Ty::Callback
     }
 
     /// Check `Name.Variant(value)`, the constructor of a `choice`. Exactly one
@@ -4901,6 +4999,7 @@ fn is_intrinsic_name(name: &str) -> bool {
             | "fmod"
             | "len"
             | "view"
+            | "callback"
             | "read_file"
             | "write_file"
             | "read_stdin"

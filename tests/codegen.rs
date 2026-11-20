@@ -1583,3 +1583,137 @@ flow main
     assert_eq!(run.status.code(), Some(0));
     assert_eq!(String::from_utf8_lossy(&run.stdout), "21122");
 }
+
+const CALLBACK_SOURCE: &str = r#"open extern flow apply_cb
+    <- a: i32
+    <- b: i32
+    <- cb: callback
+    => i32
+
+open shape Handler [
+    cb: callback
+]
+
+open flow add
+    <- a: i32
+    <- b: i32
+    => i32
+{
+    => a + b
+}
+
+open flow pick
+    => callback
+{
+    => callback(add)
+}
+
+open flow consume
+    <- cb: callback
+    => i32
+{
+    => apply_cb(1, 2, cb)
+}
+
+open flow main
+    => i32
+{
+    cb <- callback(add)
+    if apply_cb(2, 3, cb) != 5 { => 1 }
+    h <- Handler[ cb: cb ]
+    if apply_cb(4, 5, h.cb) != 9 { => 2 }
+    p <- pick()
+    if apply_cb(6, 7, p) != 13 { => 3 }
+    cbs: [callback] <- [callback: cb, callback(add)]
+    if apply_cb(1, 1, cbs[0]) != 2 { => 4 }
+    => 0
+}
+"#;
+
+#[test]
+fn callbacks_pass_loi_flows_to_c_without_a_thunk() {
+    let c = generated(CALLBACK_SOURCE);
+
+    assert!(
+        c.contains("typedef int32_t (*LoiCallback)(int32_t, int32_t);"),
+        "missing callback typedef:\n{c}"
+    );
+    assert!(
+        c.contains("int32_t apply_cb(int32_t loi_v_a, int32_t loi_v_b, LoiCallback loi_v_cb);"),
+        "callback parameter should use the fixed C ABI:\n{c}"
+    );
+    assert!(
+        c.contains("LoiCallback loi_v_cb = loi_fn_add;"),
+        "callback(flow) should emit the flow symbol directly:\n{c}"
+    );
+    assert!(
+        c.contains("LoiCallback loi_tmp_ret_"),
+        "returned callbacks must not be emitted as void:\n{c}"
+    );
+    assert!(
+        c.contains("LoiCallback loi_f_cb;"),
+        "shape fields must keep the callback type:\n{c}"
+    );
+    assert!(
+        c.contains("(LoiCallback[])"),
+        "callback slices must have a non-void element type:\n{c}"
+    );
+    assert!(
+        !c.contains("void loi_v_cb"),
+        "callback emitted as void:\n{c}"
+    );
+
+    assert_strict_c11("callbacks", &c);
+    assert_sanitizers_compile("callbacks", &c);
+
+    // The generated translation unit already defines `main`; the harness only
+    // supplies the C side of the FFI call.
+    compile_and_run(
+        "callbacks",
+        &c,
+        r#"int32_t apply_cb(int32_t a, int32_t b, LoiCallback cb) {
+    return cb(a, b);
+}
+"#,
+    );
+}
+
+#[test]
+fn callbacks_example_compiles_and_runs() {
+    let c = generated(include_str!("../examples/callbacks.loi"));
+    assert_strict_c11("callbacks-example", &c);
+    let Some(run) = compile_and_run_output(
+        "callbacks-example",
+        &c,
+        include_str!("../examples/callbacks_shim.c"),
+    ) else {
+        return;
+    };
+    assert_eq!(run.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "104",
+        "reduce_range should apply both callbacks"
+    );
+}
+
+#[test]
+fn headers_expose_the_callback_abi() {
+    let h = generated_header(CALLBACK_SOURCE);
+    assert!(
+        h.contains("typedef int32_t (*LoiCallback)(int32_t, int32_t);"),
+        "header must define the callback ABI:\n{h}"
+    );
+    assert!(
+        h.contains("int32_t loi_fn_consume(LoiCallback loi_v_cb);"),
+        "header must declare callback parameters:\n{h}"
+    );
+    assert!(
+        h.contains("LoiCallback loi_fn_pick(void);"),
+        "header must declare callback results:\n{h}"
+    );
+    assert!(
+        h.contains("LoiCallback loi_f_cb;"),
+        "header must declare callback shape fields:\n{h}"
+    );
+}

@@ -15,7 +15,10 @@ the bound header(s) to Loi, and writes:
 The output is intentionally conservative: anything the generator cannot map
 without guessing is skipped and reported.  In particular, callbacks,
 variadics, unions, bitfields, inline arrays, pointer-to-pointer parameters,
-non-const ``char *`` buffers and pointers to unsafe records are not bound.
+wide strings, pointer results and pointers to unsafe records are not bound.
+Read-only ``const T *`` and writable ``char *`` parameters map to Loi slices.
+Callbacks can be declared with a hand-written ``extern flow`` whose parameter
+uses the fixed ``callback`` type; see ``SINTAXE.md``.
 
 Usage:
 

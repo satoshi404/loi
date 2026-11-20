@@ -32,6 +32,11 @@ pub enum Ty {
     Choice(String),
     /// A foreign handle declared with `opaque Name`.
     Opaque(String),
+    /// A C callback: a function pointer with the fixed FFI signature
+    /// `int32_t (*)(int32_t, int32_t)`. Constructed with `callback(flow)` from a
+    /// non-extern Loi flow with exactly that signature. Values are copyable but
+    /// cannot be called or dereferenced from Loi.
+    Callback,
     /// A NUL-terminated C string handle. Constructed from a string literal or
     /// returned by an `extern flow`; never inspected in Loi.
     CStr,
@@ -134,6 +139,7 @@ impl fmt::Display for Ty {
             Ty::Bool => write!(f, "bool"),
             Ty::Named(name) | Ty::Mark(name) | Ty::Choice(name) => write!(f, "{name}"),
             Ty::Opaque(name) => write!(f, "{name}"),
+            Ty::Callback => write!(f, "callback"),
             Ty::CStr => write!(f, "cstr"),
             Ty::Slice(element) => write!(f, "[{element}]"),
             Ty::IntLiteral => write!(f, "integer literal"),

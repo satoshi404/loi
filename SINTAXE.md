@@ -61,6 +61,7 @@ compiler requires Rust 1.88 or newer, as declared by `rust-version` in
 | `Name<T, ...>` | an instantiation of a generic shape |
 | `Name` | a declared `opaque` foreign handle |
 | `cstr` | NUL-terminated C string handle (FFI only) |
+| `callback` | C function pointer with fixed ABI (FFI only) |
 
 There is no `void`, no pointer type, no array type and no `nil`. A function
 with no `=> T` returns nothing.
@@ -72,6 +73,9 @@ with no `=> T` returns nothing.
 - `cstr` values are constructed only from string literals or returned by
   `extern flow` declarations. They can be passed back to C but not indexed,
   measured or compared.
+- `callback` values are constructed only with `callback(flow)` (section 15.6).
+  They are copyable and may be stored in locals, shapes and slices, but Loi
+  cannot call, index or dereference them.
 
 ---
 
@@ -862,6 +866,7 @@ Compiler intrinsics (always available, cannot be redeclared):
 | `pow` `fmod` | `(<- f64, <- f64) => f64` |
 | `len` | `([T]) => u64` |
 | `view` | `(<- [T], <- u64, <- u64) => [T]` — zero-copy borrowed subslice |
+| `callback` | `(<- flow) => callback` — fixed-ABI C function pointer (section 15.6) |
 | `give` | ownership transfer |
 | `clone` | explicit duplicate |
 | `alloc` | `(-> [T], T, u64)` inside `protect` |
@@ -1081,9 +1086,10 @@ extern flow SDL_Init
 - Directions lower exactly like Loi flows: `<-` passes by value, `->`/`<->`
   pass an address.
 - Supported parameter/result types: scalars, `bool`, `opaque` handles, `cstr`,
-  and shapes whose fields are themselves FFI-safe. Slices, callbacks,
-  variadics and unions require a vendored C shim. Loi flows cannot declare
-  variadic parameters; `printf` is the sole variadic intrinsic (section 14).
+  `callback` as an input-only parameter, borrowed and mutable slices, and
+  shapes whose fields are themselves FFI-safe. Variadics and unions require a
+  vendored C shim. Loi flows cannot declare variadic parameters; `printf` is
+  the sole variadic intrinsic (section 14).
 - Extern flows are not checked for a body, ownership effects or allocation.
   Their contracts are the binding author's responsibility.
 
@@ -1149,6 +1155,50 @@ Generated bindings are conservative by design. Add a small hand-written shim
 for the specific unsupported calls a program needs. `vendor/sdl2/` and
 `vendor/raylib/` are complete worked examples, including their skip reports and
 build instructions.
+
+### 15.6 C callbacks
+
+`callback` is a fixed C ABI: `int32_t (*)(int32_t, int32_t)`. Declare a C
+function that takes one with `extern flow`, then pass a Loi flow through the
+`callback(flow)` intrinsic:
+
+```loi
+extern flow reduce_range
+    <- start: i32
+    <- end: i32
+    <- f: callback
+    => i32
+
+flow add
+    <- acc: i32
+    <- value: i32
+    => i32
+{
+    => acc + value
+}
+
+flow main
+    => i32
+{
+    sum <- reduce_range(1, 5, callback(add))
+    print_int(sum)
+    => 0
+}
+```
+
+- `callback(flow)` accepts exactly one non-`extern` flow declared as
+  `flow name(<- a: i32, <- b: i32) => i32`. The flow's generated C symbol is
+  passed directly; no thunk or userdata is emitted.
+- Callback values are copyable. They can be stored in locals, `shape` fields
+  and `[callback]` slices, and passed back to C, but they cannot be called,
+  compared, used in arithmetic or dereferenced from Loi.
+- A `callback` parameter must use `<-`; C owns the call, so the value is
+  input-only. An `extern flow` cannot return `callback`; ordinary Loi flows may
+  return callback values.
+- `callback` is a compiler intrinsic and cannot be redeclared.
+- The generator still skips C function-pointer declarations; declare the
+  `extern flow` by hand. See `examples/callbacks.loi` and
+  `examples/callbacks_shim.c` for a complete buildable program.
 
 ---
 

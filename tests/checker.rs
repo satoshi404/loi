@@ -55,6 +55,11 @@ fn choices_example_type_checks() {
 }
 
 #[test]
+fn callbacks_example_type_checks() {
+    assert_clean(include_str!("../examples/callbacks.loi"));
+}
+
+#[test]
 fn unsuffixed_literals_coerce_to_numeric_types() {
     assert_clean(
         "flow whole\n    => f64\n{\n    => 1\n}\n\nflow add\n    <- x: u32\n    => u32\n{\n    => x + 1\n}\n\nflow div\n    => f64\n{\n    => 1.0 / 60\n}\n",
@@ -2244,5 +2249,97 @@ fn choices_can_flow_through_flows_and_shapes() {
     );
     assert_clean(
         "choice R [ Ok: i32, Err: i64 ]\nshape Box [ value: R ]\nflow main {\n    r <- R.Ok(3)\n    b: Box <- Box[ value: give(r) ]\n    if b.value is R.Ok {\n        print_int(b.value.Ok)\n    }\n}\n",
+    );
+}
+
+const CALLBACK_SOURCE: &str = r#"extern flow apply_cb
+    <- a: i32
+    <- b: i32
+    <- cb: callback
+    => i32
+
+open shape Handler [
+    cb: callback
+]
+
+open flow add
+    <- a: i32
+    <- b: i32
+    => i32
+{
+    => a + b
+}
+
+open flow pick
+    => callback
+{
+    => callback(add)
+}
+"#;
+
+#[test]
+fn callbacks_accept_only_exact_loi_flow_signatures() {
+    assert_clean(&format!(
+        "{CALLBACK_SOURCE}\nflow main\n    => i32\n{{\n    cb <- callback(add)\n    if apply_cb(2, 3, cb) != 5 {{ => 1 }}\n    h <- Handler[ cb: cb ]\n    if apply_cb(4, 5, h.cb) != 9 {{ => 2 }}\n    p <- pick()\n    if apply_cb(6, 7, p) != 13 {{ => 3 }}\n    cbs: [callback] <- [callback: cb, callback(add)]\n    if apply_cb(1, 1, cbs[0]) != 2 {{ => 4 }}\n    => 0\n}}\n"
+    ));
+
+    assert_message(
+        &format!("{CALLBACK_SOURCE}\nflow main {{\n    cb <- callback(missing)\n}}\n"),
+        "unknown flow 'missing' for callback",
+    );
+    assert_message(
+        &format!(
+            "{CALLBACK_SOURCE}\nflow wrong\n    <- a: i32\n    => i32\n{{\n    => a\n}}\n\nflow main {{\n    cb <- callback(wrong)\n}}\n"
+        ),
+        "callback flow 'wrong' must have signature flow wrong(<- a: i32, <- b: i32) => i32",
+    );
+    assert_message(
+        &format!("{CALLBACK_SOURCE}\nflow main {{\n    cb <- callback(apply_cb)\n}}\n"),
+        "extern flow 'apply_cb' cannot be used as a callback",
+    );
+
+    assert_message(
+        "shape callback []\n",
+        "intrinsic 'callback' cannot be redeclared",
+    );
+    assert_message(
+        "opaque callback\n",
+        "intrinsic 'callback' cannot be redeclared",
+    );
+    assert_message(
+        "flow callback { }\n",
+        "intrinsic 'callback' cannot be redeclared",
+    );
+}
+
+#[test]
+fn callbacks_reject_bad_directions_arithmetic_comparison_and_calls() {
+    assert_message(
+        "extern flow bad\n    -> cb: callback\n    => i32\n\nflow main {\n    => 0\n}\n",
+        "callback parameter 'cb' must use '<-'; callbacks are input-only",
+    );
+    assert_message(
+        "extern flow bad\n    => callback\n\nflow main {\n    => 0\n}\n",
+        "extern flow 'bad' cannot return callback; callbacks are input-only",
+    );
+    assert_message(
+        &format!("{CALLBACK_SOURCE}\nflow main {{\n    cb <- callback(add)\n    x <- cb + 1\n}}\n"),
+        "operator requires numeric operands, found callback and integer literal",
+    );
+    assert_message(
+        &format!(
+            "{CALLBACK_SOURCE}\nflow main {{\n    if callback(add) == callback(add) {{ => 1 }}\n    => 0\n}}\n"
+        ),
+        "cannot compare callback with callback; only scalars and [u8] values support == and !=",
+    );
+    assert_message(
+        &format!("{CALLBACK_SOURCE}\nflow main {{\n    x <- apply_cb(1, 2, 3)\n}}\n"),
+        "argument 'cb' has type integer literal, expected callback",
+    );
+    assert_message(
+        &format!(
+            "{CALLBACK_SOURCE}\nflow main {{\n    cb <- callback(add)\n    x <- cb(1, 2)\n}}\n"
+        ),
+        "unknown function 'cb'",
     );
 }
