@@ -584,6 +584,16 @@ static inline void* loi_index(LoiSlice slice, size_t index, size_t element_size,
     }
     return (unsigned char*)slice.data + index * element_size;
 }
+
+static inline LoiSlice loi_view(LoiSlice source, uint64_t start, uint64_t end, size_t element_size, size_t line, size_t column) {
+    if (start > end || end > source.len) {
+        loi_runtime_fail("view range out of bounds", line, column);
+    }
+    LoiSlice out;
+    out.data = (unsigned char*)source.data + (size_t)start * element_size;
+    out.len = (size_t)(end - start);
+    return out;
+}
 "#;
 
 /// How a variable is represented in generated C.
@@ -2693,7 +2703,16 @@ impl<'a> Generator<'a> {
                 BinaryOp::Shl | BinaryOp::Shr => self.ty_of(left),
             },
             ExprKind::Cast { ty, .. } => self.resolve_type(ty),
-            ExprKind::Call { callee, .. } => match &callee.kind {
+            ExprKind::Call { callee, args, .. } => match &callee.kind {
+                // The view intrinsic has no fixed signature: its element type
+                // comes from the source slice.
+                ExprKind::Ident(name) if name == "view" => args
+                    .first()
+                    .map(|arg| match self.ty_of(&arg.value) {
+                        Ty::Slice(element) => Ty::Slice(element),
+                        _ => Ty::Error,
+                    })
+                    .unwrap_or(Ty::Error),
                 ExprKind::Ident(name) => self.function_return_ty(name),
                 ExprKind::Member { base, field } => {
                     if let ExprKind::Ident(choice) = &base.kind
@@ -3102,6 +3121,21 @@ impl<'a> Generator<'a> {
                 let slice_c = self.c_type(&slice_ty);
                 self.emit(format!("{slice_c} {temp} = {value};"));
                 Some(format!("((uint64_t){temp}.len)"))
+            }
+            "view" => {
+                args.get(2)?;
+                let element = match self.ty_of(&args[0].value) {
+                    Ty::Slice(element) => element.concretize(),
+                    _ => Ty::U8,
+                };
+                let items = args.iter().map(|arg| (&arg.value, None)).collect();
+                let (steps, values) = self.order_values(items);
+                let element_c = self.c_type(&element);
+                let call = format!(
+                    "loi_view({}, (uint64_t)({}), (uint64_t)({}), sizeof({}), {}, {})",
+                    values[0], values[1], values[2], element_c, _span.line, _span.column
+                );
+                Some(Self::with_order(steps, call))
             }
             "panic" => {
                 let arg = args.first()?;

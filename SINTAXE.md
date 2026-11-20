@@ -431,8 +431,9 @@ flow next
 
 Rules:
 
-- A `<-` parameter may be read but never stored or returned. Keep data with
-  `clone(x)`.
+- A `<-` parameter may be read but never stored. Its whole value cannot be
+  returned; use `clone(x)` for an owned copy. A slice-typed view of its storage
+  may be returned — see §6 "Borrowed slice views".
 - The C backend passes `<-` composites by value; slice headers inside them
   still refer to the caller's storage. The checker's borrow rules keep the
   parameter observationally read-only.
@@ -657,8 +658,61 @@ flow main
 }
 ```
 
-The view is lexical: it lasts for the call, and a flow still may not store or
-return any part of a `<-` parameter (use `clone(...)` to keep data).
+The view is lexical: it lasts for the call. A flow may not store the `<-`
+parameter or return a non-slice part of it; `clone(...)` makes an owned copy.
+
+### Borrowed slice views
+
+`view(xs, start, end)` is a compiler intrinsic that returns a zero-copy
+subslice of `xs`. It requires `start <= end <= xs.len` (checked at runtime) and
+accepts only `<-` arguments. The result aliases the caller's storage: no
+element is copied and no arena allocation happens. Because a slice is itself a
+view over storage, a flow may return one borrowed from a `<-` parameter:
+
+```loi
+open flow window
+    <- data: [u8]
+    <- from: u64
+    <- to: u64
+    => [u8]
+{
+    => view(data, from, to)
+}
+
+flow main
+    => i32
+{
+    protect {
+        frame: [u8] <- [u8: 1, 2, 3, 4]
+        head <- window(frame, 0, 2)
+        tail <- view(head, 1, 2)     // a view of a view stays borrowed
+        print_int(head[0] + tail[0]) // 1 + 2
+    }
+    => 0
+}
+```
+
+Loans follow the value, not the flow boundary:
+
+- A view keeps its source borrowed while the variable holding the view is in
+  scope. Writing to, moving from, or passing as `<->` any overlapping path of
+  the source is a compile error. The diagnostic points at the view creation.
+- The loan ends when the view's scope ends. A source may be written again
+  after that brace, provided the view did not escape it.
+- Views may be returned from flows and forwarded through any number of flows.
+  A view can reach a caller inside a returned composite or through a `->`
+  parameter whose type contains a slice; in each case the caller's argument
+  becomes the borrowed source at the call site.
+- A loan tracks both its source and the slot of the holder that stores the
+  view. Overwriting that slot releases the loan; writing a sibling field does
+  not, and selecting a sub-place of a view keeps the loan with the selected
+  value.
+- `clone(x)` does not borrow: its result owns fresh storage.
+- The source's storage region still applies. A view of a block-local slice
+  literal cannot be stored in a variable that outlives that block.
+- `lib/slice.loi` exposes `slice_view<T>` and `lib/vec.loi` exposes
+  `vec_view<T>` for the same zero-copy operation. `vec_as_slice<T>` remains the
+  detached, allocating copy.
 
 ### Linear resources and `guard`
 
@@ -807,6 +861,7 @@ Compiler intrinsics (always available, cannot be redeclared):
 | `sqrt` `floor` `ceil` `fabs` | `(<- f64) => f64` |
 | `pow` `fmod` | `(<- f64, <- f64) => f64` |
 | `len` | `([T]) => u64` |
+| `view` | `(<- [T], <- u64, <- u64) => [T]` — zero-copy borrowed subslice |
 | `give` | ownership transfer |
 | `clone` | explicit duplicate |
 | `alloc` | `(-> [T], T, u64)` inside `protect` |
@@ -877,8 +932,8 @@ unit.
 | `lib/std.loi` | `min_i32`, `max_i32`, `abs_i32`, `clamp_i32`, `min_f64`, `max_f64`, `abs_f64`, `clamp_f64`, `str_len`, `str_eq`, `str_starts_with`, `str_find` | no |
 | `lib/math.loi` | `MATH_PI`, `MATH_E`, `MATH_TAU`, `math_factorial`, generic `math_min<T>` / `math_max<T>` / `math_clamp<T>` / `math_sum<T>`, `math_lerp`, `math_smoothstep`, `math_deg_to_rad`, `math_rad_to_deg`, `math_hypot`, `math_near`, `math_sign_i32`, `math_gcd_u64`, `math_pow_u64`, `math_dot_f64` | no |
 | `lib/ctype.loi` | `ctype_is_digit`, `ctype_is_upper`, `ctype_is_lower`, `ctype_is_alpha`, `ctype_is_alnum`, `ctype_is_hex_digit`, `ctype_is_space`, `ctype_is_ascii`, `ctype_to_lower`, `ctype_to_upper`, `ctype_hex_value`, `ctype_parse_u64`, `ctype_count_digits`, `ctype_equals_ignore_case` | no |
-| `lib/vec.loi` | `Vec<T>`, `vec_new<T>`, `vec_len<T>`, `vec_capacity<T>`, `vec_is_empty<T>`, `vec_get<T>`, `vec_set<T>`, `vec_push<T>`, `vec_pop<T>`, `vec_find<T>`, `vec_from_slice<T>`, `vec_as_slice<T>`, `vec_reserve<T>`, `vec_clear<T>`, `vec_reverse<T>`, `vec_sort<T>`, `vec_binary_search<T>` | no; `vec_new<T>` needs no `protect`, growing flows do |
-| `lib/slice.loi` | `slice_len<T>`, `slice_is_empty<T>`, `slice_get<T>`, `slice_first<T>`, `slice_last<T>`, `slice_find<T>`, `slice_equals_u8`, `slice_clone<T>`, `slice_copy<T>`, `slice_reverse<T>` | no; allocators need `protect` |
+| `lib/vec.loi` | `Vec<T>`, `vec_new<T>`, `vec_len<T>`, `vec_capacity<T>`, `vec_is_empty<T>`, `vec_get<T>`, `vec_set<T>`, `vec_push<T>`, `vec_pop<T>`, `vec_find<T>`, `vec_from_slice<T>`, `vec_view<T>`, `vec_as_slice<T>`, `vec_reserve<T>`, `vec_clear<T>`, `vec_reverse<T>`, `vec_sort<T>`, `vec_binary_search<T>` | no; `vec_new<T>` needs no `protect`, growing flows do |
+| `lib/slice.loi` | `slice_view<T>`, `slice_len<T>`, `slice_is_empty<T>`, `slice_get<T>`, `slice_first<T>`, `slice_last<T>`, `slice_find<T>`, `slice_equals_u8`, `slice_clone<T>`, `slice_copy<T>`, `slice_reverse<T>` | no; allocators need `protect` |
 | `lib/string.loi` | `STRING_MAX_LEN`, `str_is_ascii_space`, `str_trim`, `str_concat`, `str_reverse`, `str_repeat`, `str_count`, `str_index_of`, `str_contains` | no; owned results need `protect` |
 | `lib/hash.loi` | `HASH_OFFSET`, `HASH_PRIME`, `hash_bytes_seeded`, `hash_bytes`, `hash_str`, `hash_u64_seeded`, `hash_u64`, `hash_pair_u64` | no |
 | `lib/crc32.loi` | `CRC32_POLY`, `CRC32_INIT`, `CRC32_XOROUT`, `CRC32_TABLE`, `crc32_update`, `crc32_extend`, `crc32_bytes` | no |
@@ -1192,5 +1247,6 @@ Reference programs:
 - `examples/language_basics.loi` — imports, globals, strings and slices.
 - `examples/marks.loi` — finite tag sets, equality and state transitions.
 - `examples/choices.loi` — tagged payloads, `is` tests and checked reads.
+- `examples/views.loi` — zero-copy slice views and their lexical loans.
 - `examples/systems.loi` — bitwise flags, shifts and file/stdin I/O.
 - `lib/std.loi` — standard library written in canonical Loi.

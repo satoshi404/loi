@@ -697,10 +697,12 @@ xs[j] = tmp</code></pre>
           <h3>Borrows are scoped views</h3>
           <p>
             A <code>&lt;-</code> parameter is a read-only view of the caller's value. It can be read
-            but never stored or returned. To keep part of it, <code>clone</code> that part. A
-            <code>&lt;-&gt;</code> parameter is exclusive for the duration of the call: no other use
-            of the same value is allowed in that call. Passing the same value twice as
-            <code>&lt;-</code> is allowed because both are reads.
+            but never stored. Its whole value cannot be returned; to keep an owned part,
+            <code>clone</code> that part. A slice view of its storage may be returned — see
+            <a href="#slice-views">Borrowed slice views</a>. A <code>&lt;-&gt;</code> parameter is
+            exclusive for the duration of the call: no other use of the same value is allowed in
+            that call. Passing the same value twice as <code>&lt;-</code> is allowed because both
+            are reads.
           </p>
           <p>
             The checker knows which paths a flow reads. Those read paths are forwarded through
@@ -727,8 +729,57 @@ protect {
 }</code></pre>
           </div>
           <p>
-            The view is lexical: it lasts for the call. A flow still cannot return a slice that
-            points into a <code>&lt;-</code> parameter; that needs a separate escape-lifetime design.
+            The read view is lexical: it lasts for the call. A flow still cannot store or return a
+            non-slice part of a <code>&lt;-</code> parameter. Because a slice is itself a view over
+            storage, a borrowed slice can escape safely; the next section shows how.
+          </p>
+
+          <h3 id="slice-views">Borrowed slice views</h3>
+          <p>
+            <code>view(xs, start, end)</code> is a compiler intrinsic that returns a zero-copy
+            subslice of <code>xs</code>. It requires <code>start &lt;= end &lt;= xs.len</code>, checked
+            at runtime, and accepts only <code>&lt;-</code> arguments. The result aliases the
+            caller's storage: no element is copied and no arena allocation happens. Since a slice
+            is a view over its storage, a flow may return one borrowed from a <code>&lt;-</code>
+            parameter and forward it through other flows.
+          </p>
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>slice-views.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-loi">open flow window
+    &lt;- data: [u8]
+    &lt;- from: u64
+    &lt;- to: u64
+    =&gt; [u8]
+{
+    =&gt; view(data, from, to)
+}
+
+protect {
+    frame: [u8] &lt;- [u8: 1, 2, 3, 4]
+    head &lt;- window(frame, 0, 2)
+    tail &lt;- view(head, 1, 2)     // a view of a view stays borrowed
+    print_int(head[0] + tail[0]) // 1 + 2
+}</code></pre>
+          </div>
+          <ul>
+            <li>A view keeps its source borrowed while the variable holding the view is in scope.
+              Writing to, moving from, or passing as <code>&lt;-&gt;</code> any overlapping path of
+              the source is a compile error; the diagnostic points at the view creation.</li>
+            <li>The loan ends when the view's scope ends. A source may be written again after that
+              brace, provided the view did not escape it.</li>
+            <li>Loans follow the value across calls: each flow summarizes which <code>&lt;-</code>
+              parameters it may return as views, and the caller's argument becomes the borrowed
+              source at the call site.</li>
+            <li><code>clone(x)</code> does not borrow: its result owns fresh storage.</li>
+            <li>The source's storage region still applies. A view of a block-local slice literal
+              cannot be stored in a variable that outlives that block.</li>
+            <li><code>lib/slice.loi</code> exposes <code>slice_view&lt;T&gt;</code> and
+              <code>lib/vec.loi</code> exposes <code>vec_view&lt;T&gt;</code> for the same
+              zero-copy operation. <code>vec_as_slice&lt;T&gt;</code> remains the detached,
+              allocating copy.</li>
+          </ul>
+          <p>
+            See <a href="examples/views.loi">examples/views.loi</a> for a complete program.
           </p>
 
           <h3>Linear resources and <code>guard</code></h3>
@@ -871,11 +922,13 @@ flow exchange
               <tr><td><code>pow</code></td><td><code>&lt;- f64, &lt;- f64 =&gt; f64</code></td><td>Exponentiation.</td></tr>
               <tr><td><code>fmod</code></td><td><code>&lt;- f64, &lt;- f64 =&gt; f64</code></td><td>Floating remainder.</td></tr>
               <tr><td><code>len</code></td><td><code>[T] =&gt; u64</code></td><td>Slice length; also <code>xs.len</code>.</td></tr>
+              <tr><td><code>view</code></td><td><code>&lt;- [T], &lt;- u64, &lt;- u64 =&gt; [T]</code></td><td>Zero-copy borrowed subslice; traps unless <code>start &lt;= end &lt;= xs.len</code>.</td></tr>
             </tbody>
           </table>
           <p>
             Intrinsic names are reserved. User code may not redeclare them. <code>len</code> and the
-            math intrinsics are checked against the same signatures as an ordinary flow.
+            math intrinsics are checked against the same signatures as an ordinary flow;
+            <code>view</code> is type-directed and takes its element type from the source slice.
             <code>printf</code> is the only variadic intrinsic: its first argument must be a string
             literal, whose conversions (<code>d i u x X o f F e E g G a A s c</code> and
             <code>%%</code>) decide how many values follow and of which kind. Flags, numeric width,
@@ -953,6 +1006,7 @@ flow exchange
                   <code>vec_push&lt;T&gt;</code>, <code>vec_pop&lt;T&gt;</code>,
                   <code>vec_find&lt;T&gt;</code>,
                   <code>vec_from_slice&lt;T&gt;</code>,
+                  <code>vec_view&lt;T&gt;</code>,
                   <code>vec_as_slice&lt;T&gt;</code>,
                   <code>vec_reserve&lt;T&gt;</code>,
                   <code>vec_clear&lt;T&gt;</code>,
@@ -963,7 +1017,8 @@ flow exchange
               </tr>
               <tr>
                 <td><code>lib/slice.loi</code></td>
-                <td><code>slice_len&lt;T&gt;</code>,
+                <td><code>slice_view&lt;T&gt;</code>,
+                  <code>slice_len&lt;T&gt;</code>,
                   <code>slice_is_empty&lt;T&gt;</code>,
                   <code>slice_get&lt;T&gt;</code>,
                   <code>slice_first&lt;T&gt;</code>,
@@ -1058,8 +1113,11 @@ flow exchange
             clones for <code>T</code> that contain slices;
             <code>vec_find&lt;T&gt;</code> and <code>slice_find&lt;T&gt;</code>
             declare <code>T: Eq</code>, so equality search also works on bool,
-            marks and <code>[u8]</code>. Ordering flows still accept numeric
-            <code>T</code> only because Loi has no <code>Ord</code> bound. The arena
+            marks and <code>[u8]</code>. <code>slice_view&lt;T&gt;</code> and
+            <code>vec_view&lt;T&gt;</code> return zero-copy borrowed subslices;
+            <code>vec_as_slice&lt;T&gt;</code> still allocates and copies.
+            Ordering flows still accept numeric <code>T</code> only because Loi has no
+            <code>Ord</code> bound. The arena
             keeps older growth blocks until <code>protect</code> ends, so
             pre-size with <code>vec_reserve&lt;T&gt;</code> when the final
             length is known to avoid repeated growth and its peak memory.
@@ -1454,6 +1512,10 @@ node website/server.mjs
               <h3>Choices</h3>
               <p>Tagged payloads with <code>is</code> tests, checked payload reads and a mark payload.</p>
             </a>
+            <a class="feature-card" href="examples/views.loi">
+              <h3>Slice views</h3>
+              <p>Zero-copy subslices, borrowed returns and lexical loans enforced by the checker.</p>
+            </a>
             <a class="feature-card" href="examples/iteration.loi">
               <h3>Iteration</h3>
               <p><code>for</code> over ranges and slices, read-only and read-write element directions, and a <code>protect</code> region.</p>
@@ -1690,7 +1752,7 @@ sealed flow winning_line
               <tr><td>Type checker</td><td>Working, including literal ranges, intrinsic signatures, checked <code>printf</code> varargs, bitwise/shift rules, shape cycle detection, generic instantiation and canonical diagnostics.</td></tr>
               <tr><td>Monomorphization</td><td>Working: generic shapes and flows are expanded into concrete declarations before checking and code generation, with mangled names, a recursion depth limit, collision diagnostics, validation of unused templates and checking of <code>Clone</code>/<code>Copy</code>/<code>Eq</code> bounds at each instantiation.</td></tr>
               <tr><td>Compile-time evaluation</td><td>Working: pure <code>comptime flow</code> and <code>comptime expr</code>, constant globals of any shape, and shape defaults, with purity checks, step/depth limits and runtime-matching overflow, cast and <code>f32</code> semantics.</td></tr>
-              <tr><td>Ownership analysis</td><td>Working: give liveness, definite assignment, exclusive <code>&lt;-&gt;</code>, region escape checks, allocating read intrinsics, and linear-resource <code>guard</code> validation.</td></tr>
+              <tr><td>Ownership analysis</td><td>Working: give liveness, definite assignment, exclusive <code>&lt;-&gt;</code>, region escape checks, allocating read intrinsics, lexical slice-view loans, and linear-resource <code>guard</code> validation.</td></tr>
               <tr><td>C backend</td><td>Working: one C11 translation unit, bounds checks, regions, checked arithmetic, bitwise/shift helpers, file/stdin I/O, numeric and formatted printing, source maps, headers, multi-file objects.</td></tr>
               <tr><td>C interop</td><td>Working: <code>opaque</code>, <code>cstr</code>, <code>extern flow</code>, <code>--c-source</code>, and a header-to-Loi binding generator.</td></tr>
               <tr><td>IR and assembly</td><td>Draft: <code>--emit-ir</code> emits IR text; <code>--emit-asm</code> is rejected because the assembly backend cannot generate runnable code yet. The C backend is the production path.</td></tr>
@@ -1706,7 +1768,7 @@ sealed flow winning_line
             <li>Modules resolve qualified names and enforce <code>sealed</code> across files, but declaration names are still unique per compilation unit; C symbols are not module-qualified. Multi-file builds give sealed flows external linkage so the first unit that loads a module defines its symbols.</li>
             <li>Globals accept any compile-time constant, including nested shapes, slices and strings; the backend folds them into strict C11 static initializers (named arrays back slice data, with no compound literals). Growable collections (<code>Vec&lt;T&gt;</code>, maps) remain library work even though generics are available.</li>
             <li>A non-empty slice literal cannot escape the block that created it, including being returned or stored into an outer variable; allocate long-lived data in a <code>protect</code> region. The empty literal <code>[T:]</code> has no backing storage and may escape.</li>
-            <li><code>&lt;-</code> composite parameters are passed to C by value (slice headers still point at the caller's data). The checker forbids storing or returning the borrowed value, so the parameter stays observationally read-only.</li>
+            <li><code>&lt;-</code> composite parameters are passed to C by value (slice headers still point at the caller's data). The checker forbids storing the borrowed composite or returning a non-slice part of it; a borrowed slice view may escape under the lexical loans described above, so the parameter stays observationally read-only.</li>
             <li><code>loi fmt</code> preserves <code>//</code> comments and is idempotent; comments inside multi-line expressions may move to the next statement boundary. Shape literals stay on one line.</li>
             <li>Binding generation is conservative: callbacks, variadics, unions, bitfields, inline arrays, pointer-to-pointer, mutable <code>char *</code> buffers, wide strings and pointers to unsafe records need a hand-written shim.</li>
             <li>The SDL2 and raylib 5.5 bindings and their shims are syntax-verified, but full link/run tests need a machine with those runtimes installed.</li>

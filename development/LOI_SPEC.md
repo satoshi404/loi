@@ -226,12 +226,12 @@ Every parameter declares its direction. The direction is mandatory.
 
 | Direction | Meaning                                                              |
 |-----------|----------------------------------------------------------------------|
-| `<-`      | Read-only access to the caller's value. The checker forbids storing or returning a borrowed part; the C backend passes composites by value (slice headers still point at the caller's storage). |
+| `<-`      | Read-only access to the caller's value. The checker forbids storing a borrowed part; a borrowed slice view may be returned (§4.4a). The C backend passes composites by value (slice headers still point at the caller's storage). |
 | `->`      | The function initializes the caller's variable                       |
 | `<->`     | Read and write access to the caller's value                          |
 
 - At the call site, `->` and `<->` are marked (`step(<-> w, dt)`, `world_new(..., -> w)`). `<-` is not marked, to keep calls readable.
-- A `<-` parameter can be read but never stored or returned. To keep part of it, use `clone(...)`. The read-only view is lexical: it lasts for the call, and its precise extent is the read-view summary described in 4.3.
+- A `<-` parameter can be read but never stored. Its whole value cannot be returned; to keep an owned copy use `clone(...)`. A slice view of its storage may be returned under §4.4a. The read-only view is lexical: it lasts for the call, and its precise extent is the read-view summary described in 4.3.
 
 ### 4.3 Ownership, `give` and `clone`
 
@@ -261,7 +261,51 @@ b <- give(a)         // a is no longer usable
 - A function may declare any number of `->` parameters and/or a single `=> T` result.
 - `=> T` is sugar for a hidden `->` parameter. The compiler may lower it that way internally.
 - Returning a composite value that holds a slice moves ownership to the receiver, with no copy.
-- Returning something that points inside a `<-` parameter is an error. Return `clone(...)` of the part instead. This rule is implemented and confirmed by the Phase 2 review (5.7). The call-scoped read views of 4.3 do not relax it: returning a borrowed slice view needs a separate escape-lifetime design and remains unsupported.
+- Returning a non-slice value that points inside a `<-` parameter is an error. Return `clone(...)` of the part instead.
+- Returning a slice-typed view of a `<-` parameter is allowed under §4.4a. The result is a view whose lifetime is the caller's storage region.
+
+### 4.4a Borrowed slice views (Block A3)
+
+`view(xs, start, end)` is a compiler intrinsic returning a zero-copy subslice.
+`xs` must be `[T]`, `start` and `end` must be integers, and all three arguments
+use `<-`. At runtime `start <= end <= xs.len` is checked; an invalid range
+traps. The result is `{ data: xs.data + start * sizeof(T), len: end - start }`.
+
+A returned slice is a view over its storage, not an owned composite. Loi tracks
+the storage borrowed by every live view with **lexical loans**:
+
+- Creating a view adds a loan on the source place. The loan is attached to the
+  value and is carried through `let`, assignment, member/index access and
+  calls. `clone` stops the chain because it allocates fresh storage.
+- Each flow records which `<-` parameters may escape as views through the `=>`
+  result or a `->` parameter whose type contains a slice. The summary is
+  computed to a fixpoint, so a view may be forwarded through any number of
+  flows, including inside a returned composite; at each call site the loan is
+  rebound to the corresponding argument and destination place.
+- A loan records the source place and the holder-relative slot that stores the
+  view, keeping them distinct. Overwriting the slot releases that loan without
+  disturbing loans in sibling slots, and reading a sub-place relocates the slot
+  with the value.
+- While a loan is live, writing, moving or mutably borrowing an overlapping
+  path of the source is a compile error. The diagnostic labels the place where
+  the view was created.
+- A loan lives exactly as long as the variable holding the view. Its scope end
+  releases it. Loans merge as a union across branches and are restored with
+  the rest of the checker's control state.
+- The ordinary region rules still apply. A view of a block-local slice literal
+  cannot be stored in a variable that outlives the block, and a view of a
+  `protect`-allocated slice cannot escape that `protect`.
+- `lib/slice.loi`'s `slice_view<T>` and `lib/vec.loi`'s `vec_view<T>` expose the
+  same operation as ordinary library flows. `vec_as_slice<T>` keeps its
+  historical detached-copy behaviour.
+
+**Why:** early Loi rejected every borrowed return because a view could outlive
+the storage it pointed at. A closed intrinsic plus summary-driven loans gives
+zero-copy subslice access without introducing named lifetimes, runtime handles
+or a new ABI; the existing region taints already describe storage lifetime.
+
+**Status:** implemented in the checker and the C11 backend (advisory helper
+`loi_view`), with positive, negative and runtime tests.
 
 ### 4.5 `protect` blocks and allocation
 
@@ -695,9 +739,11 @@ slices, so their helpers stay bit-wise.
 1. **Intrinsics** are compiler-known, reserved names with fixed signatures and a direct backend mapping:
    - I/O: `print`, `eprint`, `panic`, `print_int`, `print_float`, `printf`, `read_file`, `write_file`, `read_stdin`, `read_line`
    - math: `sqrt`, `floor`, `ceil`, `fabs`, `pow`, `fmod`
-   - `len`
+   - `len`, `view`
 
    They cannot be redeclared by user code and are always available (no import).
+   `view` is type-directed: its element type comes from the source slice, so it
+   is checked specially rather than registered with one concrete signature.
    `read_file`, `read_stdin` and `read_line` allocate in the current `protect`
    region and follow the same escape rules as `alloc`.
 2. **The library** is ordinary Loi in `lib/std.loi`, `lib/math.loi` and `lib/ctype.loi`, plus thin `extern flow` bindings in `lib/os.loi` and `lib/net.loi` with matching C shims. Files are explicitly imported; there is no implicit prelude. Each file is a module with a `module::item` qualified form (§4.8); library names keep their established prefixes (`min_i32`, `math_sum`, `ctype_is_digit`, ...) because declaration names remain unique across a compilation unit.
@@ -706,7 +752,7 @@ New functionality goes into the library by default; an intrinsic is added only w
 
 **Why:** a tiny closed intrinsic set keeps the compiler small and portable; a Loi-written library exercises the language and can grow without changing the compiler.
 
-**Status:** implemented. `len` is now reserved in the checker like the other intrinsics, and the old "user-defined `len` wins" exception is gone. `printf` is the only variadic intrinsic: its first argument must be a string literal, and the conversions in that literal determine the number and kind of the remaining arguments. User-declared variadic flows remain out of scope.
+**Status:** implemented. `len` and `view` are reserved in the checker; the old "user-defined `len` wins" exception is gone. `printf` is the only variadic intrinsic: its first argument must be a string literal, and the conversions in that literal determine the number and kind of the remaining arguments. User-declared variadic flows remain out of scope.
 
 ### 5.10 Syntax identity — Loi Flow Syntax (adopted, complete)
 
@@ -859,6 +905,7 @@ The full Flow Syntax was chosen because it makes the three distinctive ideas —
 - [x] Slices `[T]` with bounds checking
 - [x] `alloc` and `protect` blocks
 - [x] Lexical-block escape analysis for slice literals
+- [x] Zero-copy slice views with lexical loans and safe borrowed returns (§4.4a)
 
 ### Phase 3 — Advanced Features
 

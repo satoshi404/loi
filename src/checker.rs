@@ -48,6 +48,7 @@ pub fn check(program: &Program) -> Vec<Diagnostic> {
     checker.check_interface_value_cycles(&program);
     checker.resolve_functions(&program);
     checker.analyze_function_effects(&program);
+    checker.analyze_view_returns(&program);
     checker.check_interface_defaults(&program);
     checker.declare_globals(&program);
     checker.check_functions(&program);
@@ -180,6 +181,9 @@ struct VarInfo {
     /// `protect` allocations or block-local slice literals reachable through
     /// this variable.
     taints: Vec<RegionTaint>,
+    /// Storage borrowed by slice views held in this variable. Each loan keeps
+    /// the source place alive for as long as the view variable is in scope.
+    views: Vec<ViewLoan>,
     /// Top-level bindings are stored in the base scope. Their move state is
     /// never recorded: ownership is tracked per function body.
     is_global: bool,
@@ -189,6 +193,39 @@ struct VarInfo {
 struct RegionTaint {
     path: String,
     region: usize,
+}
+
+/// A slice view that aliases storage owned by another place.
+#[derive(Debug, Clone)]
+struct ViewLoan {
+    /// Root variable whose storage is borrowed.
+    source: String,
+    /// Root-relative path of the borrowed place (`""` means the whole root).
+    path: String,
+    /// Holder-relative path of the slot storing this view (`""` means the whole
+    /// holder). Kept separate from `path`: a view of `x` stored in `s.a` borrows
+    /// `x` but lives in slot `a`.
+    slot: String,
+    /// Where the view was created, used for the diagnostic label.
+    span: Span,
+}
+
+/// Which `<-` parameters may escape through a flow's outputs.
+#[derive(Debug, Default)]
+struct ViewSummary {
+    /// Sources that may appear in the `=>` result.
+    returned: HashSet<usize>,
+    /// Sources that may be written to each `->` parameter, by parameter index.
+    out: HashMap<usize, HashSet<usize>>,
+}
+
+/// Mutable state used while summarizing one function body.
+#[derive(Default)]
+struct ViewScanState {
+    /// `<-` parameter indices whose views a local may carry.
+    locals: HashMap<String, HashSet<usize>>,
+    /// Sources reaching each `->` parameter by its declaration name.
+    out: HashMap<String, HashSet<usize>>,
 }
 
 /// Why a region exists. Lexical blocks own slice-literal storage; `protect`
@@ -258,6 +295,7 @@ struct ControlState {
     initialized: bool,
     moved: HashMap<String, Span>,
     taints: Vec<RegionTaint>,
+    views: Vec<ViewLoan>,
 }
 
 /// One active `guard` binding in a function body.
@@ -300,6 +338,13 @@ struct Checker {
     /// through. `""` means the whole parameter. A partially consumed composite
     /// may be passed to a `<-` flow whose reads avoid the consumed paths.
     param_reads: HashMap<String, Vec<HashSet<String>>>,
+    /// Per function, the `<-` parameter indices whose views may appear in the
+    /// `=>` result. Used to carry loans from a call's argument to its result
+    /// without a new ABI or runtime handle.
+    view_returns: HashMap<String, HashSet<usize>>,
+    /// Per function, the `<-` parameter indices whose views may be written to
+    /// each `->` parameter, keyed by out-parameter index.
+    view_out: HashMap<String, HashMap<usize, HashSet<usize>>>,
     /// Names declared by top-level `let`/`var`, for duplicate diagnostics.
     global_names: HashSet<String>,
     /// Parent region for each lexical block or `protect` region.
@@ -332,6 +377,8 @@ impl Checker {
             clone_allocators: HashSet::new(),
             param_consumption: HashMap::new(),
             param_reads: HashMap::new(),
+            view_returns: HashMap::new(),
+            view_out: HashMap::new(),
             global_names: HashSet::new(),
             region_parents: Vec::new(),
             region_kinds: Vec::new(),
@@ -1012,6 +1059,7 @@ impl Checker {
                     moved: HashMap::new(),
                     home_region: None,
                     taints: Vec::new(),
+                    views: Vec::new(),
                     is_global: true,
                 },
             );
@@ -1391,6 +1439,99 @@ impl Checker {
         self.param_reads = reads;
     }
 
+    /// Summarize which `<-` parameters of each flow may escape as borrowed
+    /// slice views, through the `=>` result or through a `->` parameter. The
+    /// fixpoint handles flows that forward another flow's view, so a view can
+    /// travel through any number of calls before reaching its caller. `clone`
+    /// deliberately stops the chain: its result owns fresh storage and carries
+    /// no loan.
+    fn analyze_view_returns(&mut self, program: &Program) {
+        let declarations: Vec<&FunctionDecl> = program
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Function(decl) => Some(decl),
+                _ => None,
+            })
+            .collect();
+        let mut summaries: HashMap<String, ViewSummary> = HashMap::new();
+        for decl in &declarations {
+            summaries.insert(decl.name.clone(), ViewSummary::default());
+        }
+        loop {
+            let mut changed = false;
+            for decl in &declarations {
+                let borrowed_params: HashMap<String, usize> = decl
+                    .params
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, param)| param.direction == Direction::In)
+                    .map(|(index, param)| (param.name.clone(), index))
+                    .collect();
+                let out_params: HashSet<String> = decl
+                    .params
+                    .iter()
+                    .filter(|param| param.direction == Direction::Out)
+                    .map(|param| param.name.clone())
+                    .collect();
+                let ctx = ViewScanCtx {
+                    params: &borrowed_params,
+                    out_params: &out_params,
+                    summaries: &summaries,
+                };
+                let mut state = ViewScanState::default();
+                let returned = scan_view_block(&decl.body, &ctx, &mut state);
+
+                // A scalar result cannot carry a view even if the source text
+                // returns a `<-` parameter by value. Only outputs whose type
+                // contains a slice are allowed to publish a loan.
+                let signature = self.functions.get(&decl.name);
+                let mut next = ViewSummary::default();
+                if signature.is_some_and(|sig| self.type_contains_slice(&sig.return_type)) {
+                    next.returned = returned;
+                }
+                for (name, sources) in state.out {
+                    let Some((index, _)) = decl
+                        .params
+                        .iter()
+                        .enumerate()
+                        .find(|(_, param)| param.name == name)
+                    else {
+                        continue;
+                    };
+                    if signature
+                        .and_then(|sig| sig.params.get(index))
+                        .is_some_and(|param| self.type_contains_slice(&param.ty))
+                    {
+                        next.out.insert(index, sources);
+                    }
+                }
+
+                let entry = summaries.entry(decl.name.clone()).or_default();
+                for index in next.returned {
+                    changed |= entry.returned.insert(index);
+                }
+                for (index, sources) in next.out {
+                    let out_entry = entry.out.entry(index).or_default();
+                    for source in sources {
+                        changed |= out_entry.insert(source);
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        self.view_returns = summaries
+            .iter()
+            .map(|(name, summary)| (name.clone(), summary.returned.clone()))
+            .collect();
+        self.view_out = summaries
+            .iter()
+            .map(|(name, summary)| (name.clone(), summary.out.clone()))
+            .collect();
+    }
+
     // ------------------------------------------------------------------
     // Interface defaults
     // ------------------------------------------------------------------
@@ -1473,6 +1614,7 @@ impl Checker {
                 moved: HashMap::new(),
                 home_region: None,
                 taints: Vec::new(),
+                views: Vec::new(),
                 is_global: false,
             };
             self.scopes
@@ -1647,11 +1789,18 @@ impl Checker {
                         moved: HashMap::new(),
                         home_region: self.current_region(),
                         taints: Vec::new(),
+                        views: Vec::new(),
                         is_global: false,
                     },
                 );
                 if carries_storage {
                     self.set_variable_regions(name, &value_regions);
+                }
+                if let Some(value) = value.as_ref() {
+                    let loans = self.value_views(value);
+                    if !loans.is_empty() {
+                        self.set_variable_views(name, &loans);
+                    }
                 }
             }
             StmtKind::Assign { target, op, value } => {
@@ -1746,6 +1895,7 @@ impl Checker {
                             moved: HashMap::new(),
                             home_region: self.current_region(),
                             taints: Vec::new(),
+                            views: Vec::new(),
                             is_global: false,
                         },
                     );
@@ -1801,6 +1951,7 @@ impl Checker {
                             moved: HashMap::new(),
                             home_region: self.current_region(),
                             taints: Vec::new(),
+                            views: Vec::new(),
                             is_global: false,
                         },
                     );
@@ -1862,11 +2013,16 @@ impl Checker {
                         moved: HashMap::new(),
                         home_region: self.current_region(),
                         taints: Vec::new(),
+                        views: Vec::new(),
                         is_global: false,
                     },
                 );
                 if self.type_contains_slice(&resolved) {
                     self.set_variable_regions(name, &value_regions);
+                }
+                let loans = self.value_views(value);
+                if !loans.is_empty() {
+                    self.set_variable_views(name, &loans);
                 }
                 if let Some(release) = release.clone() {
                     self.guards.push(GuardCleanup {
@@ -2038,6 +2194,12 @@ impl Checker {
                             value.span,
                             format!("cannot return guarded resource '{root}'"),
                         );
+                    } else if from_in && matches!(actual, Ty::Slice(_)) {
+                        // A slice is a view over its storage. Returning one that
+                        // points into a `<-` parameter keeps the caller's storage
+                        // alive for the result's lexical lifetime; the caller
+                        // inherits the loan at the call site.
+                        self.add_loan(&root, &path, value.span);
                     } else if from_in {
                         self.error(
                             value.span,
@@ -2083,6 +2245,8 @@ impl Checker {
                     self.check_region_escape(destination, &value_regions, value.span);
                     self.set_place_regions(&info, &value_regions);
                 }
+                let loans = self.value_views(value);
+                self.set_place_views(&info, &loans);
             }
             AssignOp::Add
             | AssignOp::Sub
@@ -2713,6 +2877,13 @@ impl Checker {
             return Ty::U64;
         }
 
+        // `view(xs, start, end)` is a zero-copy subslice intrinsic. It has no
+        // fixed element type, so it is checked here instead of being registered
+        // with a concrete signature in `collect_names`.
+        if name == "view" {
+            return self.check_view_call(args, span);
+        }
+
         // `print_int` and `print_float` are generic over the numeric width so
         // callers do not have to cast every value to i64/f64 by hand.
         if matches!(name.as_str(), "print_int" | "print_float") {
@@ -2804,8 +2975,52 @@ impl Checker {
         self.check_call_aliasing(name, args, &signature);
         self.apply_parameter_consumption(name, args, &signature);
         self.propagate_call_regions(name, args, &signature, &out_targets);
+        self.propagate_call_views(name, args, &out_targets);
 
         signature.return_type
+    }
+
+    /// Check the `view` intrinsic: `view(xs, start, end)` returns a zero-copy
+    /// subslice of `xs`. The caller's storage stays borrowed for as long as the
+    /// resulting value is live; no allocation or element copy takes place.
+    fn check_view_call(&mut self, args: &[CallArg], span: Span) -> Ty {
+        if args.len() != 3 {
+            self.error(
+                span,
+                format!("view expects 3 argument(s), found {}", args.len()),
+            );
+            for arg in args {
+                self.check_unmatched_arg(arg);
+            }
+            return Ty::Error;
+        }
+        for arg in args {
+            if arg.direction != Direction::In {
+                self.error(arg.value.span, "view expects a '<-' argument");
+            }
+        }
+        let source = self.check_expr(&args[0].value);
+        let start = self.check_expr(&args[1].value);
+        let end = self.check_expr(&args[2].value);
+        let Ty::Slice(element) = source else {
+            if !source.is_error() {
+                self.error(
+                    args[0].value.span,
+                    format!("view expects a slice, found {source}"),
+                );
+            }
+            return Ty::Error;
+        };
+        for (arg, ty) in [(&args[1], &start), (&args[2], &end)] {
+            if !ty.is_integer() && !ty.is_error() {
+                self.error(
+                    arg.value.span,
+                    format!("view expects an integer index, found {ty}"),
+                );
+            }
+            self.check_literal_range(&arg.value, &Ty::U64);
+        }
+        Ty::Slice(element)
     }
 
     /// Check `Name.Variant(value)`, the constructor of a `choice`. Exactly one
@@ -3006,6 +3221,35 @@ impl Checker {
             let destination = self.home_region_of(info);
             self.check_region_escape(destination, &transfer, arg.value.span);
             self.add_place_regions(info, &transfer);
+        }
+    }
+
+    /// Carry loaned views written to `->` parameters back to the caller's
+    /// destination places, using the callee's precomputed view summary.
+    fn propagate_call_views(
+        &mut self,
+        name: &str,
+        args: &[CallArg],
+        out_targets: &[(usize, LvalueInfo)],
+    ) {
+        let Some(out_effects) = self.view_out.get(name).cloned() else {
+            return;
+        };
+        for (index, info) in out_targets {
+            let Some(sources) = out_effects.get(index) else {
+                continue;
+            };
+            let mut loans = Vec::new();
+            for source in sources {
+                if let Some(arg) = args.get(*source) {
+                    self.collect_view_source(&arg.value, &mut loans);
+                }
+            }
+            if loans.is_empty() {
+                continue;
+            }
+            let loans = Self::normalize_views(loans);
+            self.set_place_views(info, &loans);
         }
     }
 
@@ -3651,6 +3895,9 @@ impl Checker {
             return false;
         }
 
+        if self.check_view_source(&name, &path, span) {
+            return false;
+        }
         self.mark_written(&name, &path);
         true
     }
@@ -3695,6 +3942,9 @@ impl Checker {
             );
             return false;
         }
+        if self.check_view_source(&name, &path, span) {
+            return false;
+        }
         true
     }
 
@@ -3715,6 +3965,9 @@ impl Checker {
     }
 
     fn record_move(&mut self, name: &str, path: &str, span: Span) {
+        if self.check_view_source(name, path, span) {
+            return;
+        }
         if self.is_active_guard(name) {
             self.error(
                 span,
@@ -3875,6 +4128,22 @@ impl Checker {
             }
             ExprKind::Call { callee, args, .. } => {
                 if let ExprKind::Ident(name) = &callee.kind
+                    && name == "view"
+                    && let Some(source) = args.first()
+                {
+                    self.collect_value_regions(&source.value, regions);
+                }
+                if let ExprKind::Ident(name) = &callee.kind
+                    && let Some(indices) = self.view_returns.get(name)
+                    && matches!(self.functions.get(name), Some(sig) if matches!(sig.return_type, Ty::Slice(_)))
+                {
+                    for index in indices {
+                        if let Some(arg) = args.get(*index) {
+                            self.collect_value_regions(&arg.value, regions);
+                        }
+                    }
+                }
+                if let ExprKind::Ident(name) = &callee.kind
                     && matches!(name.as_str(), "read_file" | "read_stdin" | "read_line")
                     && let Some(region) = self.current_protect_region()
                 {
@@ -3954,6 +4223,212 @@ impl Checker {
             }
             ExprKind::Comptime(inner) => self.collect_value_regions(inner, regions),
         }
+    }
+
+    // ------------------------------------------------------------------
+    // slice views and their lexical loans
+    // ------------------------------------------------------------------
+
+    /// Add a loan on the storage reached by `source` to every scope until the
+    /// root variable is found. Used when a view escapes through a `return`.
+    fn add_loan(&mut self, source: &str, path: &str, span: Span) {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(info) = scope.get_mut(source)
+                && !info.views.iter().any(|loan| {
+                    loan.source == source
+                        && loan.path == path
+                        && loan.slot.is_empty()
+                        && loan.span == span
+                })
+            {
+                info.views.push(ViewLoan {
+                    source: source.to_string(),
+                    path: path.to_string(),
+                    slot: String::new(),
+                    span,
+                });
+                return;
+            }
+        }
+    }
+
+    fn normalize_views(mut loans: Vec<ViewLoan>) -> Vec<ViewLoan> {
+        loans.sort_by_key(|loan| {
+            (
+                loan.source.clone(),
+                loan.path.clone(),
+                loan.slot.clone(),
+                loan.span.line,
+                loan.span.column,
+            )
+        });
+        loans.dedup_by(|left, right| {
+            left.source == right.source
+                && left.path == right.path
+                && left.slot == right.slot
+                && left.span == right.span
+        });
+        loans
+    }
+
+    /// Loans carried by a value. A `view(...)` call borrows its first argument;
+    /// a flow that returns a borrowed view borrows the matching arguments.
+    fn value_views(&self, expr: &Expr) -> Vec<ViewLoan> {
+        let mut loans = Vec::new();
+        self.collect_value_views(expr, &mut loans);
+        Self::normalize_views(loans)
+    }
+
+    fn collect_value_views(&self, expr: &Expr, loans: &mut Vec<ViewLoan>) {
+        match &expr.kind {
+            ExprKind::Ident(name) => {
+                if let Some(var) = self.lookup(name) {
+                    loans.extend(var.views.iter().cloned());
+                }
+            }
+            ExprKind::Member { .. } | ExprKind::Index { .. } => {
+                if let (Some(root), Some(path)) = (place_root(expr), place_path(expr)) {
+                    if let Some(var) = self.lookup(&root) {
+                        for loan in &var.views {
+                            // `path` selects a slot in the holder, not in the
+                            // borrowed source. Normalize the slot to the value
+                            // selected by this expression.
+                            if let Some(slot) = path_suffix(&loan.slot, &path) {
+                                let mut loan = loan.clone();
+                                loan.slot = slot;
+                                loans.push(loan);
+                            }
+                        }
+                    }
+                } else if let ExprKind::Member { base, .. } = &expr.kind {
+                    self.collect_value_views(base, loans);
+                } else if let ExprKind::Index { base, index } = &expr.kind {
+                    self.collect_value_views(base, loans);
+                    self.collect_value_views(index, loans);
+                }
+            }
+            ExprKind::Call { callee, args, .. } => {
+                let ExprKind::Ident(name) = &callee.kind else {
+                    return;
+                };
+                if name == "view" {
+                    if let Some(source) = args.first() {
+                        self.collect_view_source(&source.value, loans);
+                    }
+                    return;
+                }
+                if let Some(indices) = self.view_returns.get(name) {
+                    for index in indices {
+                        if let Some(arg) = args.get(*index) {
+                            self.collect_view_source(&arg.value, loans);
+                        }
+                    }
+                }
+            }
+            ExprKind::Unary { operand, .. }
+            | ExprKind::Cast { expr: operand, .. }
+            | ExprKind::Comptime(operand) => self.collect_value_views(operand, loans),
+            ExprKind::Binary { left, right, .. } => {
+                self.collect_value_views(left, loans);
+                self.collect_value_views(right, loans);
+            }
+            ExprKind::InterfaceLiteral { fields, .. } => {
+                for field in fields {
+                    self.collect_value_views(&field.value, loans);
+                }
+            }
+            ExprKind::SliceLiteral { elements, .. } => {
+                for element in elements {
+                    self.collect_value_views(element, loans);
+                }
+            }
+            ExprKind::Move(value) => self.collect_value_views(value, loans),
+            // A clone owns fresh storage and never aliases the source.
+            ExprKind::Copy(_) => {}
+            ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::String(_)
+            | ExprKind::Alloc { .. } => {}
+        }
+    }
+
+    /// Collect loans already carried by `expr` and record that its own storage
+    /// is now borrowed as well.
+    fn collect_view_source(&self, expr: &Expr, loans: &mut Vec<ViewLoan>) {
+        self.collect_value_views(expr, loans);
+        if let (Some(root), Some(path)) = (place_root(expr), place_path(expr))
+            && self.lookup(&root).is_some()
+        {
+            loans.push(ViewLoan {
+                source: root,
+                path,
+                slot: String::new(),
+                span: expr.span,
+            });
+        }
+    }
+
+    fn set_variable_views(&mut self, name: &str, loans: &[ViewLoan]) {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(info) = scope.get_mut(name) {
+                info.views = loans.to_vec();
+                return;
+            }
+        }
+    }
+
+    fn set_place_views(&mut self, place: &LvalueInfo, loans: &[ViewLoan]) {
+        let Some(root) = place.root.as_deref() else {
+            return;
+        };
+        let Some(path) = place.path.as_deref() else {
+            return;
+        };
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(info) = scope.get_mut(root) {
+                // Only loans stored in the overwritten slot are released.
+                // `loan.path` describes the *source*, so it must not be used
+                // here: writing `s.b` does not kill a view stored in `s.a`.
+                info.views.retain(|loan| !paths_overlap(&loan.slot, path));
+                let relocated = loans.iter().map(|loan| {
+                    let mut loan = loan.clone();
+                    loan.slot = append_relative_path(path, &loan.slot);
+                    loan
+                });
+                info.views.extend(relocated);
+                return;
+            }
+        }
+    }
+
+    /// Reject a write, move or mutable borrow while a live view aliases the
+    /// same storage. Loans live on view variables, so they disappear with the
+    /// scope that declared the view.
+    fn check_view_source(&mut self, root: &str, path: &str, span: Span) -> bool {
+        let mut conflict = None;
+        'outer: for scope in &self.scopes {
+            for info in scope.values() {
+                for loan in &info.views {
+                    if loan.source == root && paths_overlap(&loan.path, path) {
+                        conflict = Some(loan.clone());
+                        break 'outer;
+                    }
+                }
+            }
+        }
+        let Some(loan) = conflict else {
+            return false;
+        };
+        let place = append_relative_path(root, path);
+        let mut diagnostic = Diagnostic::from_error(
+            format!("cannot write to '{place}': it is borrowed by a slice view"),
+            span,
+        )
+        .with_label("write here");
+        diagnostic = diagnostic.with_secondary(loan.span, "view created here");
+        self.diagnostics.push(diagnostic);
+        true
     }
 
     /// Attach the regions of `value` to a destination place.
@@ -4089,6 +4564,7 @@ impl Checker {
                                 initialized: info.initialized,
                                 moved: info.moved.clone(),
                                 taints: info.taints.clone(),
+                                views: info.views.clone(),
                             },
                         )
                     })
@@ -4104,6 +4580,7 @@ impl Checker {
                     info.initialized = state.initialized;
                     info.moved = state.moved.clone();
                     info.taints = state.taints.clone();
+                    info.views = state.views.clone();
                 }
             }
         }
@@ -4142,6 +4619,18 @@ impl Checker {
                     }
                 }
                 info.taints = taints;
+                let mut views = left_state.views.clone();
+                for loan in &right_state.views {
+                    if !views.iter().any(|existing| {
+                        existing.source == loan.source
+                            && existing.path == loan.path
+                            && existing.slot == loan.slot
+                            && existing.span == loan.span
+                    }) {
+                        views.push(loan.clone());
+                    }
+                }
+                info.views = views;
             }
         }
     }
@@ -4196,6 +4685,206 @@ impl Checker {
     }
 }
 
+/// Context for summarizing view flow through one function body.
+struct ViewScanCtx<'a> {
+    /// `<-` parameter name to its declaration index.
+    params: &'a HashMap<String, usize>,
+    /// Names of this function's `->` parameters.
+    out_params: &'a HashSet<String>,
+    /// Current fixpoint approximation of every function's view summary.
+    summaries: &'a HashMap<String, ViewSummary>,
+}
+
+impl ViewScanCtx<'_> {
+    /// Record that writing `target` may publish `sources` as views.
+    fn record_target(&self, target: &Expr, sources: HashSet<usize>, state: &mut ViewScanState) {
+        if sources.is_empty() {
+            return;
+        }
+        let Some(root) = place_root(target) else {
+            return;
+        };
+        if self.out_params.contains(&root) {
+            state.out.entry(root).or_default().extend(sources);
+        } else if !self.params.contains_key(&root) {
+            state.locals.entry(root).or_default().extend(sources);
+        }
+    }
+
+    fn expr(&self, expr: &Expr, state: &mut ViewScanState) -> HashSet<usize> {
+        match &expr.kind {
+            ExprKind::Ident(name) => {
+                let mut borrowed = state.locals.get(name).cloned().unwrap_or_default();
+                if let Some(sources) = state.out.get(name) {
+                    borrowed.extend(sources.iter().copied());
+                }
+                if let Some(index) = self.params.get(name) {
+                    borrowed.insert(*index);
+                }
+                borrowed
+            }
+            ExprKind::Call { callee, args, .. } => {
+                let ExprKind::Ident(name) = &callee.kind else {
+                    return HashSet::new();
+                };
+                // Visit every argument first: a nested call may publish views
+                // into a local or out parameter even when its result is unused.
+                for arg in args {
+                    self.expr(&arg.value, state);
+                }
+                if name == "view" {
+                    return args
+                        .first()
+                        .map(|source| self.expr(&source.value, state))
+                        .unwrap_or_default();
+                }
+                let Some(summary) = self.summaries.get(name) else {
+                    return HashSet::new();
+                };
+                let mut borrowed = HashSet::new();
+                for index in &summary.returned {
+                    if let Some(arg) = args.get(*index) {
+                        borrowed.extend(self.expr(&arg.value, state));
+                    }
+                }
+                for (out_index, sources) in &summary.out {
+                    let mut mapped = HashSet::new();
+                    for index in sources {
+                        if let Some(arg) = args.get(*index) {
+                            mapped.extend(self.expr(&arg.value, state));
+                        }
+                    }
+                    if let Some(arg) = args.get(*out_index) {
+                        self.record_target(&arg.value, mapped, state);
+                    }
+                }
+                borrowed
+            }
+            ExprKind::Member { base, .. }
+            | ExprKind::Index { base, .. }
+            | ExprKind::Unary { operand: base, .. }
+            | ExprKind::Cast { expr: base, .. }
+            | ExprKind::Comptime(base) => self.expr(base, state),
+            ExprKind::Binary { left, right, .. } => {
+                let mut borrowed = self.expr(left, state);
+                borrowed.extend(self.expr(right, state));
+                borrowed
+            }
+            ExprKind::InterfaceLiteral { fields, .. } => {
+                let mut borrowed = HashSet::new();
+                for field in fields {
+                    borrowed.extend(self.expr(&field.value, state));
+                }
+                borrowed
+            }
+            ExprKind::SliceLiteral { elements, .. } => {
+                let mut borrowed = HashSet::new();
+                for element in elements {
+                    borrowed.extend(self.expr(element, state));
+                }
+                borrowed
+            }
+            ExprKind::Move(value) => self.expr(value, state),
+            // A clone owns its own storage; it cannot extend a source loan.
+            ExprKind::Copy(_) => HashSet::new(),
+            ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::String(_)
+            | ExprKind::Alloc { .. } => HashSet::new(),
+        }
+    }
+}
+
+/// Collect the `<-` parameters whose views may reach an output of a block.
+/// Locals that hold views are tracked so a view can be returned later; out
+/// parameters are tracked separately because they become views in the caller.
+fn scan_view_block(
+    block: &Block,
+    ctx: &ViewScanCtx<'_>,
+    state: &mut ViewScanState,
+) -> HashSet<usize> {
+    let mut returned = HashSet::new();
+    for statement in &block.statements {
+        returned.extend(scan_view_statement(statement, ctx, state));
+    }
+    returned
+}
+
+fn scan_view_statement(
+    statement: &Stmt,
+    ctx: &ViewScanCtx<'_>,
+    state: &mut ViewScanState,
+) -> HashSet<usize> {
+    match &statement.kind {
+        StmtKind::Let { name, value, .. } => {
+            let borrowed = value
+                .as_ref()
+                .map(|value| ctx.expr(value, state))
+                .unwrap_or_default();
+            state.locals.insert(name.clone(), borrowed);
+            HashSet::new()
+        }
+        StmtKind::Assign { target, value, .. } => {
+            let borrowed = ctx.expr(value, state);
+            if let ExprKind::Ident(name) = &target.kind {
+                if ctx.out_params.contains(name) {
+                    state.out.insert(name.clone(), borrowed);
+                } else {
+                    state.locals.insert(name.clone(), borrowed);
+                }
+            } else {
+                ctx.record_target(target, borrowed, state);
+            }
+            HashSet::new()
+        }
+        StmtKind::Expr(expr) => {
+            ctx.expr(expr, state);
+            HashSet::new()
+        }
+        StmtKind::If {
+            condition,
+            then_block,
+            else_branch,
+        } => {
+            ctx.expr(condition, state);
+            let mut returned = scan_view_block(then_block, ctx, state);
+            match else_branch {
+                Some(ElseBranch::Block(block)) => {
+                    returned.extend(scan_view_block(block, ctx, state))
+                }
+                Some(ElseBranch::If(inner)) => {
+                    returned.extend(scan_view_statement(inner, ctx, state))
+                }
+                None => {}
+            }
+            returned
+        }
+        StmtKind::While { condition, body } => {
+            ctx.expr(condition, state);
+            scan_view_block(body, ctx, state)
+        }
+        StmtKind::ForRange {
+            start, end, body, ..
+        } => {
+            ctx.expr(start, state);
+            ctx.expr(end, state);
+            scan_view_block(body, ctx, state)
+        }
+        StmtKind::ForEach { iterable, body, .. } => {
+            ctx.expr(iterable, state);
+            scan_view_block(body, ctx, state)
+        }
+        StmtKind::Protect(block) => scan_view_block(block, ctx, state),
+        StmtKind::Guard { value, body, .. } => {
+            ctx.expr(value, state);
+            scan_view_block(body, ctx, state)
+        }
+        StmtKind::Return(Some(value)) => ctx.expr(value, state),
+        StmtKind::Return(None) | StmtKind::Continue | StmtKind::Break => HashSet::new(),
+    }
+}
+
 /// Names owned by the compiler. They are the closed intrinsic set from
 /// `LOI_SPEC.md` 5.9; user code may not redeclare them.
 fn is_intrinsic_name(name: &str) -> bool {
@@ -4211,6 +4900,7 @@ fn is_intrinsic_name(name: &str) -> bool {
             | "pow"
             | "fmod"
             | "len"
+            | "view"
             | "read_file"
             | "write_file"
             | "read_stdin"
@@ -4468,6 +5158,16 @@ fn append_path(base: &str, component: &str) -> String {
     }
 }
 
+/// Append a relative path made of whole components. Unlike `join_paths`, the
+/// relative part has no leading separator, so a field needs a dot.
+fn append_relative_path(base: &str, relative: &str) -> String {
+    if relative.is_empty() {
+        base.to_string()
+    } else {
+        append_path(base, relative)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PathComponent {
     Field(String),
@@ -4505,24 +5205,63 @@ fn parse_path(path: &str) -> Vec<PathComponent> {
 /// True when `ancestor` is the same path as `path` or contains it, respecting
 /// path-component boundaries. A runtime index (`[]`) contains every constant
 /// element of the same slice but is not itself contained by one element.
+fn components_match_prefix(prefix: &[PathComponent], path: &[PathComponent]) -> bool {
+    prefix.len() <= path.len()
+        && prefix
+            .iter()
+            .zip(path)
+            .all(|(left, right)| match (left, right) {
+                (PathComponent::Field(left), PathComponent::Field(right)) => left == right,
+                (PathComponent::Index(None), PathComponent::Index(_)) => true,
+                (PathComponent::Index(Some(left)), PathComponent::Index(Some(right))) => {
+                    left == right
+                }
+                _ => false,
+            })
+}
+
 fn path_is_ancestor(ancestor: &str, path: &str) -> bool {
-    if ancestor == path || ancestor.is_empty() {
+    if ancestor.is_empty() {
         return true;
     }
     let ancestor = parse_path(ancestor);
     let path = parse_path(path);
-    if ancestor.len() > path.len() {
-        return false;
+    components_match_prefix(&ancestor, &path)
+}
+
+fn render_path(components: &[PathComponent]) -> String {
+    let mut rendered = String::new();
+    for component in components {
+        let piece = match component {
+            PathComponent::Field(field) => field.clone(),
+            PathComponent::Index(None) => "[]".to_string(),
+            PathComponent::Index(Some(index)) => format!("[{index}]"),
+        };
+        rendered = append_path(&rendered, &piece);
     }
-    ancestor
-        .into_iter()
-        .zip(path)
-        .all(|(left, right)| match (left, right) {
-            (PathComponent::Field(left), PathComponent::Field(right)) => left == right,
-            (PathComponent::Index(None), PathComponent::Index(_)) => true,
-            (PathComponent::Index(Some(left)), PathComponent::Index(Some(right))) => left == right,
-            _ => false,
-        })
+    rendered
+}
+
+/// Express a loan's holder-relative slot relative to the selected sub-place.
+/// Selecting below the slot makes the selected value itself the view (`""`);
+/// selecting above it keeps the remaining suffix. Disjoint places return
+/// `None`, so a view stored in `s.a` is not carried by `s.b`.
+fn path_suffix(slot: &str, path: &str) -> Option<String> {
+    if path.is_empty() {
+        return Some(slot.to_string());
+    }
+    if slot.is_empty() {
+        return Some(String::new());
+    }
+    let slot = parse_path(slot);
+    let path = parse_path(path);
+    if components_match_prefix(&path, &slot) {
+        return Some(render_path(&slot[path.len()..]));
+    }
+    if components_match_prefix(&slot, &path) {
+        return Some(String::new());
+    }
+    None
 }
 
 /// Append one root-relative path after another. Both forms already carry their

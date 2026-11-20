@@ -78,14 +78,17 @@ error: cannot return a value borrowed from '<-' parameter 'v'; use clone(...)
 
 Language requirement: slice borrow lifetimes (or a borrow-safe view type) so a
 callee can return a slice that aliases storage owned by the caller for a
-statically bounded region. Current library workaround: `vec_as_slice<T>`
-allocates a new arena slice inside the caller's `protect` and copies the live
-prefix into it.
+statically bounded region. The original library workaround was
+`vec_as_slice<T>`, which allocated a new arena slice inside the caller's
+`protect` and copied the live prefix into it.
 
-Block A3 deliberately does **not** address this case: its read views are
-lexical to the call and never escape the callee. Returning a borrowed slice
-needs return-alias summaries and borrow-region tracking (rejecting moves and
-writes to the source while the view is live), which is a separate follow-up.
+**Resolved by Block A3 (real views):** the `view(xs, start, end)` intrinsic,
+per-flow return-view summaries and lexical loans now allow a slice rooted in a
+`<-` parameter to escape the call safely. Writes, moves and mutable borrows of
+an overlapping source path are rejected while a view is live, and the source's
+storage region still restricts where the result may be stored. New zero-copy
+library flows are `slice_view<T>` and `vec_view<T>`; `vec_as_slice<T>` keeps
+its detached-copy behaviour for callers that need an independent buffer.
 
 ### A generic slice literal cannot escape into an out-parameter
 

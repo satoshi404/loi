@@ -133,6 +133,17 @@ open flow vec_new<T>
     v.cap = 0
 }
 
+open flow vec_view<T>
+    <- v: Vec<T>
+    <- start: u64
+    <- end: u64
+    => [T]
+{
+    // Zero-copy borrowed window over the vector's live prefix. The vector
+    // cannot be grown, cleared or moved while the returned view is live.
+    => view(v.data, start, end)
+}
+
 open flow vec_len<T>
     <- v: Vec<T>
     => u64

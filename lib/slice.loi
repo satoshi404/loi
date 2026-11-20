@@ -112,6 +112,17 @@ sealed flow slice_fail_empty
 // Inspection
 // ---------------------------------------------------------------------------
 
+open flow slice_view<T>
+    <- values: [T]
+    <- start: u64
+    <- end: u64
+    => [T]
+{
+    // Zero-copy subslice: the result aliases `values`, which stays borrowed
+    // while the view is live. `view` checks `start <= end <= values.len`.
+    => view(values, start, end)
+}
+
 open flow slice_len<T>
     <- values: [T]
     => u64

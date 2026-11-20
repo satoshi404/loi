@@ -4,7 +4,37 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-20, Block B3):** standard-library linear handles built
+- **Current task (2026-11-20, Block A3 — real views):** `view(xs, start, end)` is
+  a zero-copy subslice intrinsic. The checker computes per-flow view summaries
+  to a fixpoint: a borrowed slice may escape through `=>`, a composite result
+  containing a slice, or a `->` parameter whose type contains a slice. Loans
+  carry both the source place and the holder slot storing the view, so they
+  survive sibling writes and sub-place reads, and are released only when that
+  slot is overwritten or its scope ends. Writing, moving or mutably borrowing
+  an overlapping source path is rejected while a view is live; the existing
+  region taints still stop block/`protect` storage from escaping. `lib/slice.loi`
+  adds `slice_view<T>` and `lib/vec.loi` adds `vec_view<T>`;
+  `vec_as_slice<T>` keeps its detached-copy behaviour. Rules are in `SINTAXE.md`
+  §6 and §14, `LOI_SPEC.md` §4.4a and §5.9, `DECISIONS.md`, `FRICTION.md` and
+  `website/docs.html`; runnable example: `examples/views.loi` (`head=10 body=7`).
+- **Verification for Block A3:** before implementation, 11 of 12 new tests in
+  `tests/views.rs` failed with `unknown function 'view'`. Added 12 checker/codegen
+  tests (borrowed returns, forwarding, view-of-view, region escape, write/move
+  conflicts, scope end, clone, argument checks, helper lowering) plus 2 runtime
+  tests in `tests/lib.rs` (real aliasing through `view`, `slice_view<T>` and
+  `vec_view<T>`, and the runtime bounds trap). An independent review found three
+  soundness holes in the first loan model (sibling-field overwrite, composite
+  and `->` escapes, incompatible source/slot path comparisons); five failing
+  regression tests now pin the fixes. The example was checked, built and run.
+  Final gate command:
+  `export PATH="/root/.cargo/bin:$PATH"; export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets && python3 tools/sync_examples.py --check && git diff --check`.
+  All five checks exited 0; `cargo test --all-targets` reported **442 passed,
+  0 failed** (the B3 total of 423 plus 17 view tests and 2 runtime tests). The
+  C11 backend gained one additive static helper, `loi_view`, and one intrinsic
+  lowering; existing helpers, headers and the ABI of existing programs are
+  unchanged, so `benchmark/run.py` is not applicable. ASan execution is still
+  not claimed in this PRoot container.
+- **Previous task (2026-11-20, Block B3):** standard-library linear handles built
   on `guard`. `lib/os.loi` adds `File` with `file_open_read`, `file_open_write`,
   `file_read`, `file_write` and the convention-named `file_release`;
   `lib/net.loi` adds `TcpStream` with `tcp_stream_connect`, `tcp_stream_send`,
@@ -101,7 +131,7 @@
   slot. Gate exited 0 with **375 passed, 0 failed**; see git history for the full
   test breakdown. Rules remain documented in `SINTAXE.md` §12, `LOI_SPEC.md` §4,
   `FRICTION.md`, `DECISIONS.md` and `website/docs.html`.
-- **Previous task (2026-11-19, Block A3):** a partially consumed composite can
+- **Previous task (2026-11-19, partial Block A3):** a partially consumed composite can
   be passed to a read-only flow when that flow only reads live fields. The
   checker records, per `<-` parameter, the root-relative paths a flow reads
   (`FunctionScan::direct_reads` plus `collect_direct_reads`), forwards whole
@@ -112,9 +142,10 @@
   use of the moved value. Five checker tests (three positive, two negative)
   and one codegen test cover the feature, including the realistic
   `vec_len(v)`-after-`give(v.data[0])` case that prints `27` and exits 0. The
-  view is lexical to the call: returning or storing a `<-`-borrowed value stays
-  rejected, and returning a borrowed slice view remains a separate limitation.
-  Rules are documented in `SINTAXE.md` §11, `LOI_SPEC.md` §4.2–4.4,
+  read view was lexical to the call: returning or storing a `<-`-borrowed value
+  stayed rejected, and returning a borrowed slice view was a separate limitation,
+  now resolved by the 2026-11-20 real-view work above. Rules are documented in
+  `SINTAXE.md` §11, `LOI_SPEC.md` §4.2–4.4,
   `FRICTION.md`, `DECISIONS.md` and `website/docs.html`.
 - **Verification for Block A3:** the three positive checker
   tests failed with `use of moved value` before the change; the two negative
@@ -906,9 +937,9 @@ Remaining implementation or secondary choices:
 
 1. Block A2: done — recursive deep `clone` with `protect`-scoped allocation;
    `Vec<[u8]>` works and the library docs no longer require slice-free `T`.
-2. Block A3: done — call-scoped read views let a partially consumed composite
-   be passed to a read-only flow that only touches live fields. Returning a
-   borrowed slice view remains a separate escape-lifetime feature.
+2. Block A3: done — read-path summaries let a partially consumed composite be
+   passed to a read-only flow that only touches live fields, and the real-view
+   work adds zero-copy borrowed slice views with lexical loans and safe returns.
 3. Block A4: done — empty slice literals escape freely, `.len` is writable, and
    `vec_new<T>` no longer needs `protect`. Non-empty literals stay block-local.
 4. Block A5: done — `Clone`, `Copy` and `Eq` bounds let library flows state

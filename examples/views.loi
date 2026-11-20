@@ -1,0 +1,44 @@
+// Zero-copy slice views with lexical lifetimes.
+//
+// `view(data, start, end)` returns a subslice that aliases `data`; no element
+// is copied and no allocation happens. The source stays borrowed while the
+// view variable is in scope, so writing or moving it is a checker error.
+
+open flow prefix
+    <- data: [u8]
+    => [u8]
+{
+    => view(data, 0, 4)
+}
+
+open flow payload
+    <- data: [u8]
+    => [u8]
+{
+    header <- prefix(data)
+    => view(header, 2, 4)
+}
+
+open flow sum
+    <- data: [u8]
+    => u64
+{
+    mut total: u64 <- 0
+    for i in 0..data.len {
+        total += data[i] as u64
+    }
+    => total
+}
+
+open flow main
+    => i32
+{
+    protect {
+        frame: [u8] <- [u8: 1, 2, 3, 4, 5, 6]
+        head <- prefix(frame)
+        body <- payload(frame)
+        printf("head=%d body=%d\n", sum(head), sum(body))
+        // frame[0] = 9 would be rejected here: head and body still borrow it.
+    }
+    => 0
+}

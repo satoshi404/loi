@@ -515,6 +515,59 @@ open flow main
 }
 
 #[test]
+fn borrowed_views_alias_their_source_without_copying() {
+    assert_ok(
+        "borrowed-views",
+        &["vec.loi", "slice.loi"],
+        r#"open flow main
+    => i32
+{
+    protect {
+        mut data: [i32] <- [i32: 1, 2, 3, 4]
+        mut part: [i32] <- view(data, 1, 3)
+        part[0] = 20
+        if data[1] != 20 { => 1 }
+        if data[0] != 1 { => 2 }
+        window <- slice_view<i32>(data, 2, 4)
+        if slice_len<i32>(window) != 2 { => 3 }
+        if window[0] != 3 or window[1] != 4 { => 4 }
+        mut vector: Vec<i32>
+        vec_new<i32>(-> vector)
+        vec_push<i32>(<-> vector, 7)
+        vec_push<i32>(<-> vector, 8)
+        vec_push<i32>(<-> vector, 9)
+        borrowed <- vec_view<i32>(vector, 1, 3)
+        if slice_len<i32>(borrowed) != 2 { => 5 }
+        if borrowed[0] != 8 or borrowed[1] != 9 { => 6 }
+        print("views ok\n")
+    }
+    => 0
+}
+"#,
+        "views ok\n",
+    );
+}
+
+#[test]
+fn view_rejects_out_of_bounds_ranges_at_runtime() {
+    assert_runtime_error(
+        "view-bounds",
+        &[],
+        r#"open flow main
+{
+    protect {
+        data: [u8] <- "abc"
+        part <- view(data, 2, 4)
+        print_int(part.len)
+        print("unreachable\n")
+    }
+}
+"#,
+        "loi: view range out of bounds at 5:17\n",
+    );
+}
+
+#[test]
 fn vec_new_does_not_require_a_protect_region() {
     assert_ok(
         "vec-new-no-protect",
