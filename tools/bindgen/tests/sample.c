@@ -65,3 +65,19 @@ int sample_mode_code(Mode mode) {
 int sample_sparse_code(SparseMode mode) {
     return (int)mode;
 }
+
+int sample_checksum(const unsigned char *bytes, size_t len) {
+    int total = 0;
+    for (size_t i = 0; i < len; i++) {
+        total += (int)bytes[i];
+    }
+    return total;
+}
+
+int sample_sum_i32(const int *values, size_t len) {
+    int total = 0;
+    for (size_t i = 0; i < len; i++) {
+        total += values[i];
+    }
+    return total;
+}

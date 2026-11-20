@@ -96,6 +96,15 @@ open flow main
     if n != Mode.MODE_B { => 15 }
     mode_code <- sample_mode_code(n)
     if mode_code != 1 { => 16 }
+
+    protect {
+        bytes: [u8] <- [u8: 1, 2, 3]
+        checksum <- sample_checksum(bytes, bytes.len)
+        if checksum != 6 { => 17 }
+        values: [i32] <- [i32: 4, 5]
+        total <- sample_sum_i32(values, values.len)
+        if total != 9 { => 18 }
+    }
     => 0
 }
 "#;
@@ -151,8 +160,34 @@ fn bindgen_generates_buildable_bindings() {
         "a sparse C enum should keep open integer constants without a mark:\n{bindings}"
     );
     assert!(
+        bindings.contains(
+            "open extern flow sample_checksum as loi_bind_sample_sample_checksum\n    <- bytes: [u8]\n    <- len: u64\n    => i32\n"
+        ),
+        "a const scalar pointer should become a borrowed slice through the shim:\n{bindings}"
+    );
+    assert!(
+        bindings.contains(
+            "open extern flow sample_sum_i32 as loi_bind_sample_sample_sum_i32\n    <- values: [i32]\n    <- len: u64\n    => i32\n"
+        ),
+        "a const int pointer should become a borrowed i32 slice:\n{bindings}"
+    );
+    assert!(
+        bindings.contains("open extern flow sample_open\n    <- name: cstr\n    => Opaque\n"),
+        "const char * must stay a cstr, not become a slice:\n{bindings}"
+    );
+    assert!(
         !bindings.contains("__clang__"),
         "compiler predefined macros must not leak into bindings:\n{bindings}"
+    );
+
+    let shim = fs::read_to_string(dir.join("sample_shim.c")).expect("shim should be readable");
+    assert!(
+        shim.contains("#ifndef LOI_SLICE_DEFINED\n#define LOI_SLICE_DEFINED\ntypedef struct {\n    void* data;\n    size_t len;\n} LoiSlice;\n#endif"),
+        "the shim must use the compiler's shared LoiSlice layout:\n{shim}"
+    );
+    assert!(
+        shim.contains("sample_checksum((const uint8_t *)bytes.data, len)"),
+        "a slice input must reach C through the shim's data pointer:\n{shim}"
     );
 
     let skipped = fs::read_to_string(dir.join("skipped.txt")).expect("skip report should exist");
@@ -163,6 +198,15 @@ fn bindgen_generates_buildable_bindings() {
     assert!(
         skipped.contains("sample_varargs: variadic function"),
         "variadic functions should be reported:\n{skipped}"
+    );
+    assert!(
+        skipped.contains("sample_bad_pointer_return: returns unsupported pointer type"),
+        "const scalar pointer returns should stay unsupported:\n{skipped}"
+    );
+    assert!(
+        skipped
+            .contains("sample_bad_pointer_to_pointer: parameter 'values' is a pointer-to-pointer"),
+        "pointer-to-pointer parameters should stay unsupported:\n{skipped}"
     );
 
     let program = dir.join("main.loi");

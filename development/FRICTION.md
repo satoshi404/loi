@@ -384,3 +384,24 @@ non-empty slice literal or a buffer that escapes its `protect` region is
 rejected by the existing ownership and region rules. Callers allocate the
 buffer in an enclosing `protect` block and pass it with `<->`; the release flow
 then runs before that region is restored.
+
+## Block B4 — binding generator input buffers
+
+### `const T *` parameters were reported as skipped
+
+Real headers pass read-only buffers as `const unsigned char *` or `const int *`
+plus a separate length. The generator reported them as unusable:
+
+```text
+error-equivalent skip: sample_checksum: parameter 'bytes' is a const pointer to a scalar
+```
+
+Those functions appeared in `vendor/sdl2/skipped.txt` and
+`vendor/raylib/skipped.txt` even though the C call is safe: the callee only
+reads the buffer for the duration of the call. **Resolved by Block B4:** the
+parameter now binds as a borrowed `[T]` slice and the generated shim passes
+`slice.data`. The C length parameter stays explicit rather than being guessed
+from a neighbouring argument name, so the caller writes
+`sample_checksum(bytes, bytes.len)`. `const char *` remains `cstr`, and const
+pointer results remain skipped because no Loi type expresses who owns the
+returned storage.

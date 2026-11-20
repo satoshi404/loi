@@ -473,9 +473,16 @@ files; application code imports them.
   inline arrays, pointer-to-pointer, mutable `char *` buffers, wide strings and
   pointers to records that are not layout-safe are skipped and reported rather
   than guessed.
+- A `const T *` parameter is an input buffer and maps to a borrowed `[T]` slice;
+  the shim passes `slice.data`. A companion C length parameter is not inferred
+  and remains an explicit Loi argument, so the caller passes `bytes.len` when
+  the API requires a count. `const char *` is still `cstr`, and a `const T *`
+  result stays unsupported because ownership of the buffer is unspecified.
 - Safe records passed or returned by value, shape pointers and scalar out
   parameters go through generated `memcpy` shims with `_Static_assert`
-  size/alignment checks. Generated symbol names are `loi_bind_<module>_<name>`.
+  size/alignment checks. A shim that takes a slice emits the same guarded
+  `LoiSlice` layout as the C backend (`void * data`, `size_t len`).
+  Generated symbol names are `loi_bind_<module>_<name>`.
 - `vendor/sdl2/` is the reference generated binding, including its shim,
   skipped report and build command. `vendor/raylib/` is the raylib 5.5 binding.
 

@@ -4,7 +4,32 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-20, Block A6 — official `Option<T>` and `Result<T, E>`):**
+- **Current task (2026-11-20, Block B4 — binding generator input buffers):**
+  `tools/bindgen/bindgen.py` now maps a C `const T *` parameter to a borrowed
+  Loi `[T]` slice. The generated shim takes the shared `LoiSlice` layout and
+  passes `slice.data` to C; a companion length parameter remains explicit, so a
+  call is `sample_checksum(bytes, bytes.len)`. `const char *` still binds as
+  `cstr`, and `const T *` results remain skipped because ownership of the buffer
+  is unspecified. Callbacks, variadics, unions, bitfields, inline arrays,
+  pointer-to-pointer, mutable `char *` buffers, wide strings and unsafe record
+  pointers are still reported in the skip file. Rules are in `SINTAXE.md` §15.5,
+  `LOI_SPEC.md` §4.9, `DECISIONS.md`, `FRICTION.md` and `website/docs.html`.
+- **Verification for Block B4:** before implementation, the extended
+  `tests/bindgen.rs` failed on the new positive assertions with
+  `sample_checksum: parameter 'bytes' is a const pointer to a scalar` in
+  `skipped.txt`. Added `const unsigned char *` and `const int *` input-buffer
+  functions to `tools/bindgen/tests/sample.h`/`.c`, asserted the generated
+  `[u8]`/`[i32]` flows, the guarded `LoiSlice` typedef and the shim cast, and
+  kept negative checks for const pointer returns, pointer-to-pointer, mutable
+  `char *` and variadics. The generated program is built with the shim under
+  strict C11 flags and run. Final gate command:
+  `export PATH="/root/.cargo/bin:$PATH"; export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets && python3 tools/sync_examples.py --check && git diff --check`.
+  All five checks exited 0; `cargo test --all-targets` reported **448 passed,
+  0 failed** across 19 suites (unchanged count: the existing bindgen test was
+  extended, not split). Only `bindgen.py`, its fixture and its test changed; no
+  compiler, ABI or generated header changed, so `benchmark/run.py` is not
+  applicable. ASan execution is still not claimed in this PRoot container.
+- **Previous task (2026-11-20, Block A6 — official `Option<T>` and `Result<T, E>`):**
   `lib/option.loi` and `lib/result.loi` provide optional and error-carrying values
   as generic shapes with an explicit `bool` tag: `Option<T>` has `present` and
   `value`, `Result<T, E>` has `ok`, `value` and `error`. They are shapes, not
@@ -639,7 +664,7 @@
 | C backend | Working | One C11 translation unit, ordered shape layouts, checked arithmetic, bitwise/shift helpers, growable arena, recursive on-demand deep-clone helpers, bounds checks, defaults, headers, source maps, multi-file objects, statics, file/stdin I/O, numeric printing and implicit `guard` releases on normal/return/`break`/`continue` paths with LIFO unwinding |
 | C interop | Working | `opaque` → `void *`, `cstr` → `const char *`, bodyless `extern flow`, `--c-source`, `--cc-flag`; string literals coerce to `cstr` |
 | Library | Working | `lib/std.loi` (scalar/string helpers), `lib/math.loi` (generic and `comptime`), `lib/ctype.loi` (pure ASCII helpers), `lib/os.loi`/`lib/net.loi` (thin POSIX bindings with C shims and linear `File`/`TcpStream` handles); prefixed names, explicitly imported |
-| Binding generator | Working | `tools/bindgen/bindgen.py` emits `opaque` handles, safe `shape`s, typed constants, `extern flow`s, a `memcpy` shim with `_Static_assert` checks and a skip report |
+| Binding generator | Working | `tools/bindgen/bindgen.py` emits `opaque` handles, safe `shape`s, typed constants, `extern flow`s, a `memcpy` shim with `_Static_assert` checks and a skip report; C `const T *` parameters bind as borrowed `[T]` slices with a shared-layout `LoiSlice` shim |
 | Vendored bindings | Working (syntax-verified) | `vendor/sdl2/` (SDL2 2.32.10) and `vendor/raylib/` (raylib 5.5), each with generated `.loi`, shim, skip report and README |
 | IR | Draft | `src/ir.rs`; `--emit-ir` writes text. Globals and some literals are not lowered |
 | Assembly | Disabled draft | `src/asm.rs` cannot generate runnable code; the CLI rejects `--emit-asm` with exit 2 |
@@ -976,9 +1001,10 @@ Remaining implementation or secondary choices:
 5. Blocks A, B1, B2 and B3 are done: generics/ownership, real modules, `guard`
    resources and stdlib `File`/`TcpStream` handles.
 6. Block A6: done — official `Option<T>` and `Result<T, E>` are pure-Loi generic
-   shapes with guarded readers; generic choices remain out of scope. Next:
-   revisit binding-generator gaps and the opt-in LLVM question; keep the C11
-   backend as the production oracle.
-7. Keep the docs in sync: `SINTAXE.md` is canonical, `website/docs.html`
+   shapes with guarded readers; generic choices remain out of scope.
+7. Block B4: done — C `const T *` parameters bind as borrowed slices through the
+   generated shim. Next: revisit the remaining binding-generator gaps and the
+   opt-in LLVM question; keep the C11 backend as the production oracle.
+8. Keep the docs in sync: `SINTAXE.md` is canonical, `website/docs.html`
    mirrors it, and `python3 tools/sync_examples.py --check` guards the example
    mirror.

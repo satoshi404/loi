@@ -1389,8 +1389,12 @@ python3 -m http.server -d web 8000   # abra http://localhost:8000</code></pre>
 
           <p>
             Complete pointer-free records become <code>shape</code>s; incomplete or unsafe records
-            become <code>opaque</code> handles. Struct and out-parameter conversions go through a
-            generated <code>memcpy</code> shim with <code>_Static_assert</code> layout checks.
+            become <code>opaque</code> handles. A <code>const T *</code> parameter becomes a
+            borrowed <code>[T]</code> slice; the shim passes its <code>data</code> pointer and a C
+            length parameter stays explicit, so the call is
+            <code>sample_checksum(bytes, bytes.len)</code>. <code>const char *</code> remains
+            <code>cstr</code>. Struct and out-parameter conversions go through a generated
+            <code>memcpy</code> shim with <code>_Static_assert</code> layout checks.
             Callbacks, variadics, unions, bitfields, inline arrays, pointer-to-pointer, mutable
             <code>char *</code> buffers, wide strings and pointers to unsafe records are skipped and
             reported in <code>skipped.txt</code>. <code>vendor/sdl2/</code> and

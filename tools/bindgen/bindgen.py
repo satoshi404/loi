@@ -898,13 +898,19 @@ class Bindgen:
                     False,
                 )
             if kind == "scalar":
-                if is_const:
-                    self.skips.append(
-                        f"{function_name}: parameter '{param_name}' is a const "
-                        f"pointer to a scalar"
-                    )
-                    return None
                 loi, c = value  # type: ignore[misc]
+                if is_const:
+                    # A read-only scalar pointer is an input buffer. Loi's
+                    # `[T]` carries pointer and length, and the shim extracts
+                    # the pointer; a separate C length parameter, when present,
+                    # stays explicit so the caller controls the count.
+                    return (
+                        "<-",
+                        Mapped("in_slice", f"[{loi}]", f"const {c} *", c),
+                        True,
+                        True,
+                    )
+
                 return (
                     "->",
                     Mapped("out_scalar", loi, f"{c} *", c),
@@ -1152,6 +1158,22 @@ class Bindgen:
         lines.append(f"#include \"{Path(relative).as_posix()}\"")
         lines.append("")
 
+        if any(
+            param.mapped.kind == "in_slice"
+            for function in self.bound_functions
+            for param in function.params
+        ):
+            # Must match the compiler's shared LoiSlice layout exactly; the
+            # guard allows this shim to be included beside emitted Loi headers.
+            lines.append("#ifndef LOI_SLICE_DEFINED")
+            lines.append("#define LOI_SLICE_DEFINED")
+            lines.append("typedef struct {")
+            lines.append("    void* data;")
+            lines.append("    size_t len;")
+            lines.append("} LoiSlice;")
+            lines.append("#endif")
+            lines.append("")
+
         for record in self.used_shapes:
             c_name = record.c_name or (
                 f"struct {record.tag}" if record.tag else ""
@@ -1253,6 +1275,8 @@ class Bindgen:
                 pre.append(f"    {temp_type} {temp} = ({temp_type})0;")
                 args.append(f"&{temp}")
                 post.append(f"    *{param.name} = (int32_t){temp};")
+            elif mapped.kind == "in_slice":
+                args.append(f"({mapped.c}){param.name}.data")
             else:
                 args.append(param.name)
 
@@ -1345,6 +1369,8 @@ def shim_param_type(param: BoundParam) -> str:
         return f"{loi_c_type(mapped.loi)} *"
     if mapped.kind == "out_enum":
         return "int32_t *"
+    if mapped.kind == "in_slice":
+        return "LoiSlice"
     return "void *"
 
 

@@ -1128,6 +1128,9 @@ python3 tools/bindgen/bindgen.py \
 ```
 
 - Scalars and enums become `i32`/`u32`/... parameters and results.
+- A `const T *` parameter becomes a borrowed `[T]` slice. The generated shim
+  passes the slice's `data` pointer; any C length parameter stays explicit, so
+  the call is `sample_checksum(bytes, bytes.len)`. `const char *` remains `cstr`.
 - Complete, pointer-free C records become `shape`s; incomplete or unsafe
   records become `opaque` handles.
 - Integer `#define` macros and enum constants become typed globals.
