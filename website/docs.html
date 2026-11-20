@@ -731,6 +731,46 @@ protect {
             points into a <code>&lt;-</code> parameter; that needs a separate escape-lifetime design.
           </p>
 
+          <h3>Linear resources and <code>guard</code></h3>
+          <p>
+            A non-memory resource is a <code>shape</code> with a convention-named release flow:
+            <code>Connection</code> uses <code>connection_release</code>, <code>HttpClient</code>
+            uses <code>http_client_release</code>. The release must be a flow with exactly one
+            <code>&lt;-&gt;</code> parameter of that shape and no result. <code>guard</code> inserts
+            that call on every exit path — normal completion, <code>=&gt;</code>, <code>break</code>
+            and <code>continue</code> — with LIFO unwinding for nested guards.
+          </p>
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>guard-resource.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-loi">sealed flow connection_release
+    &lt;-&gt; conn: Connection
+{
+    conn.alive = false
+}
+
+flow exchange
+    &lt;- id: u64
+    =&gt; u64
+{
+    guard conn: Connection &lt;- connect(id) {
+        if conn.id == 0 { =&gt; 0 }   // connection_release runs first
+        print_int(conn.id)
+    }
+    =&gt; 0
+}</code></pre>
+          </div>
+          <ul>
+            <li>The type annotation is optional; the type is inferred from the initializer.</li>
+            <li>The binding is immutable. Calling the release flow explicitly, moving the
+              resource out with <code>give</code> or <code>&lt;-&gt;</code>, or returning it is a
+              compile error. Returning a scalar field is fine.</li>
+            <li><code>break</code>/<code>continue</code> release only guards entered inside the
+              loop being left; release runs before any enclosing <code>protect</code> arena is
+              restored.</li>
+            <li><code>guard</code> requires a <code>shape</code> and is not allowed in
+              <code>comptime</code> flows. <code>protect</code> remains memory-only.</li>
+          </ul>
+
           <h3>Regions and <code>protect</code></h3>
           <p>
             Allocation happens only inside a <code>protect</code> block. Everything allocated there
@@ -790,10 +830,10 @@ protect {
           <p>
             Whole-file and whole-stdin I/O is available through the <code>read_file</code>,
             <code>write_file</code>, <code>read_stdin</code> and <code>read_line</code>
-            intrinsics. A linear-resource design for long-lived files, sockets and other
-            handles (<code>guard</code> plus a compiler-known
-            <code>&lt;Shape&gt;_release</code>) is specified but not implemented yet.
-            There is no network, directory, seek, environment or process API.
+            intrinsics. Long-lived resources use <code>guard</code> with a
+            convention-named <code>&lt;Shape&gt;_release</code> flow, but there is
+            no standard-library file/socket handle API yet. There is no network,
+            directory, seek, environment or process API.
           </p>
         </section>
 
@@ -1525,7 +1565,7 @@ sealed flow winning_line
             <code>shape</code>, <code>mark</code>, <code>choice</code>, <code>flow</code>,
             <code>open</code>, <code>sealed</code>, <code>extern</code>, <code>opaque</code>,
             <code>mut</code>, <code>give</code>, <code>clone</code>, <code>protect</code>,
-            <code>alloc</code>, <code>import</code>, <code>comptime</code>, <code>if</code>,
+            <code>guard</code>, <code>alloc</code>, <code>import</code>, <code>comptime</code>, <code>if</code>,
             <code>else</code>, <code>while</code>, <code>for</code>, <code>in</code>,
             <code>continue</code>, <code>break</code>, <code>and</code>, <code>or</code>,
             <code>not</code>, <code>is</code>, <code>as</code>, <code>true</code>,
@@ -1637,18 +1677,19 @@ sealed flow winning_line
               <tr><td>Type checker</td><td>Working, including literal ranges, intrinsic signatures, checked <code>printf</code> varargs, bitwise/shift rules, shape cycle detection, generic instantiation and canonical diagnostics.</td></tr>
               <tr><td>Monomorphization</td><td>Working: generic shapes and flows are expanded into concrete declarations before checking and code generation, with mangled names, a recursion depth limit, collision diagnostics, validation of unused templates and checking of <code>Clone</code>/<code>Copy</code>/<code>Eq</code> bounds at each instantiation.</td></tr>
               <tr><td>Compile-time evaluation</td><td>Working: pure <code>comptime flow</code> and <code>comptime expr</code>, constant globals of any shape, and shape defaults, with purity checks, step/depth limits and runtime-matching overflow, cast and <code>f32</code> semantics.</td></tr>
-              <tr><td>Ownership analysis</td><td>Working: give liveness, definite assignment, exclusive <code>&lt;-&gt;</code>, region escape checks, and allocating read intrinsics.</td></tr>
+              <tr><td>Ownership analysis</td><td>Working: give liveness, definite assignment, exclusive <code>&lt;-&gt;</code>, region escape checks, allocating read intrinsics, and linear-resource <code>guard</code> validation.</td></tr>
               <tr><td>C backend</td><td>Working: one C11 translation unit, bounds checks, regions, checked arithmetic, bitwise/shift helpers, file/stdin I/O, numeric and formatted printing, source maps, headers, multi-file objects.</td></tr>
               <tr><td>C interop</td><td>Working: <code>opaque</code>, <code>cstr</code>, <code>extern flow</code>, <code>--c-source</code>, and a header-to-Loi binding generator.</td></tr>
               <tr><td>IR and assembly</td><td>Draft: <code>--emit-ir</code> emits IR text; <code>--emit-asm</code> is rejected because the assembly backend cannot generate runnable code yet. The C backend is the production path.</td></tr>
               <tr><td><code>comptime</code></td><td>Working for pure flows, expressions, globals and shape defaults. Recursive or runaway evaluation is rejected by step/depth limits.</td></tr>
-              <tr><td>Resources (<code>guard</code>)</td><td>Specified, not implemented.</td></tr>
+              <tr><td>Linear resources (<code>guard</code>)</td><td>Working: convention-named release flows are validated and the C backend inserts releases on normal, return, <code>break</code> and <code>continue</code> paths with LIFO unwinding.</td></tr>
             </tbody>
           </table>
 
           <h3>Known limitations</h3>
           <ul>
             <li>I/O is limited to whole-file and whole-stdin reads/writes plus numeric and <code>printf</code> formatting. There is no socket, directory, seek, environment or process API. User-declared variadic flows are not supported. <code>read_file</code>, <code>read_stdin</code> and <code>read_line</code> allocate in the current <code>protect</code> region and cannot escape it.</li>
+            <li><code>guard</code> derives the release flow name from the shape, so shapes whose snake-case name would collide need hand-written release flows with distinct names. There is no standard-library file/socket handle API yet; see <code>examples/guard_resources.loi</code> for a realistic resource.</li>
             <li>Modules resolve qualified names and enforce <code>sealed</code> across files, but declaration names are still unique per compilation unit; C symbols are not module-qualified. Multi-file builds give sealed flows external linkage so the first unit that loads a module defines its symbols.</li>
             <li>Globals accept any compile-time constant, including nested shapes, slices and strings; the backend folds them into strict C11 static initializers (named arrays back slice data, with no compound literals). Growable collections (<code>Vec&lt;T&gt;</code>, maps) remain library work even though generics are available.</li>
             <li>A non-empty slice literal cannot escape the block that created it, including being returned or stored into an outer variable; allocate long-lived data in a <code>protect</code> region. The empty literal <code>[T:]</code> has no backing storage and may escape.</li>
@@ -1744,21 +1785,20 @@ cargo test --all-targets</code></pre>
             <li><code>mark</code> tag sets and <code>choice</code> tagged payloads with checked reads.</li>
             <li>Generic type-parameter bounds (<code>Clone</code>, <code>Copy</code>, <code>Eq</code>).</li>
             <li>Modules, import aliases, qualified names and cross-file <code>open</code>/<code>sealed</code> enforcement.</li>
+            <li>Linear resources: <code>guard</code> blocks with convention-named release flows and automatic cleanup.</li>
             <li>Interactive raylib examples: a web-ready demo, a text editor and mathematical sound synthesis with waveform display.</li>
           </ul>
 
           <h3>In progress</h3>
           <ul>
-            <li>Composite globals through a runtime constructor.</li>
             <li>IR and assembly backend completion.</li>
             <li>Playground hardening and deployment documentation.</li>
           </ul>
 
           <h3>Next</h3>
           <ul>
-            <li><code>comptime</code>: parser support, a step-limited constant evaluator, and constant contexts for globals, defaults and extents.</li>
-            <li>The linear-resource design for <code>guard</code> and <code>&lt;Shape&gt;_release</code>.</li>
-            <li>Richer I/O once the resource model exists: directory, seek, socket and process APIs.</li>
+            <li>A standard-library file/socket handle API built on <code>guard</code>.</li>
+            <li>Richer I/O: directory, seek, socket and process APIs.</li>
             <li>An interactive example that reads stdin; the deterministic tic-tac-toe example stays for reproducible tests.</li>
           </ul>
         </section>

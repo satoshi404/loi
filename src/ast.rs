@@ -409,6 +409,14 @@ pub enum StmtKind {
         body: Block,
     },
     Protect(Block),
+    /// A linear resource binding with a compiler-inserted release on every
+    /// exit path: `guard f <- file_open() { ... }`.
+    Guard {
+        name: String,
+        ty: Option<Type>,
+        value: Expr,
+        body: Block,
+    },
     Return(Option<Expr>),
     Continue,
     Break,

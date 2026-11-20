@@ -24,7 +24,7 @@ compiler requires Rust 1.88 or newer, as declared by `rust-version` in
 
   ```text
   alloc  and  as  break  choice  clone  comptime  continue  else  extern
-  false  flow   for  give   if      import  in   is    mark    mut
+  false  flow   for  give   guard   if      import  in   is    mark    mut
   not    opaque open or     protect sealed  shape   true  while
   ```
 
@@ -660,6 +660,44 @@ flow main
 The view is lexical: it lasts for the call, and a flow still may not store or
 return any part of a `<-` parameter (use `clone(...)` to keep data).
 
+### Linear resources and `guard`
+
+`guard` binds a non-memory resource and releases it once on every exit path.
+The release flow is found by convention from the shape name: `Connection` uses
+`connection_release`, `HttpClient` uses `http_client_release`. Its signature
+must be exactly `flow <name>_release(<-> value: Shape)` with no result.
+
+```loi
+sealed flow connection_release
+    <-> conn: Connection
+{
+    conn.alive = false
+}
+
+flow exchange
+    <- id: u64
+    => u64
+{
+    guard conn: Connection <- connect(id) {
+        if conn.id == 0 { => 0 }    // connection_release runs first
+        print_int(conn.id)
+    }
+    => 0
+}
+```
+
+- The type annotation is optional; `guard conn <- connect(id)` infers it from
+  the initializer.
+- The release is inserted on normal completion, `=>`, `break` and `continue`.
+  Nested guards unwind in LIFO order, and `break`/`continue` release only the
+  guards entered inside the loop being left.
+- The binding is immutable. Explicitly calling the release flow on it, moving
+  it out with `give` or `<->`, or returning it is a compile error. Returning a
+  scalar field is fine.
+- `guard` requires a `shape`. `protect` is separate and still memory-only;
+  release runs before any enclosing `protect` arena is restored. `guard` is
+  not allowed in `comptime` flows.
+
 ---
 
 ## 12. Slices, allocation and `protect`
@@ -687,7 +725,8 @@ protect {
   later chunks grow geometrically, and a single allocation larger than the
   current chunk gets its own chunk. Chunks are never moved, so existing slices
   stay valid. Leaving the block restores the arena offset.
-- `protect` is memory-only. There is no `defer`, no `free`, no destructor.
+- `protect` is memory-only. There is no `defer`, no `free`, no destructor;
+  non-memory resources use `guard` (§11).
 - `len(xs)` and `xs.len` both return `u64`. `xs.len` is also writable through a
   mutable place (including a `->` or `<->` parameter), so a caller-owned buffer
   can be resized by a callee. The new length is used by runtime bounds checks;

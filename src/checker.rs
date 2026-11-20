@@ -260,6 +260,12 @@ struct ControlState {
     taints: Vec<RegionTaint>,
 }
 
+/// One active `guard` binding in a function body.
+struct GuardCleanup {
+    name: String,
+    release: String,
+}
+
 struct Checker {
     interfaces: HashMap<String, InterfaceInfo>,
     /// Payload-free tag sets declared with `mark`.
@@ -278,6 +284,8 @@ struct Checker {
     /// Nesting depth of loops (`while`, `for`, `for in`, `for inout`). Used to
     /// validate that `break` and `continue` only appear inside loops.
     loop_depth: usize,
+    /// Active linear-resource guards, innermost last.
+    guards: Vec<GuardCleanup>,
     /// Function names that can allocate without a lexical `protect` in this
     /// function (directly or through another such function).
     unguarded_allocators: HashSet<String>,
@@ -319,6 +327,7 @@ impl Checker {
             current_function: String::new(),
             reachable: true,
             loop_depth: 0,
+            guards: Vec::new(),
             unguarded_allocators: HashSet::new(),
             clone_allocators: HashSet::new(),
             param_consumption: HashMap::new(),
@@ -1490,6 +1499,60 @@ impl Checker {
         self.reachable = true;
         self.current_return = Ty::Void;
         self.current_function.clear();
+        self.guards.clear();
+    }
+
+    // ------------------------------------------------------------------
+    // Linear resources and `guard` blocks
+    // ------------------------------------------------------------------
+
+    /// Resolve `ty`'s convention-named release flow and validate its signature.
+    /// Emits a diagnostic and returns `None` when `ty` is not a linear resource.
+    fn checked_release_flow(&mut self, ty: &Ty, span: Span) -> Option<String> {
+        let Ty::Named(shape) = ty else {
+            self.error(span, "guard requires a named shape with a release flow");
+            return None;
+        };
+        let release = types::release_flow_name(ty).expect("named shape has a release name");
+        let Some(sig) = self.functions.get(&release) else {
+            self.error(
+                span,
+                format!("shape '{shape}' has no resource release flow '{release}'"),
+            );
+            return None;
+        };
+        let valid = sig.params.len() == 1
+            && sig.params[0].direction == Direction::Inout
+            && &sig.params[0].ty == ty
+            && sig.return_type == Ty::Void;
+        if !valid {
+            self.error(
+                span,
+                format!(
+                    "invalid resource release flow '{release}' for shape '{shape}'; expected flow {release}(<-> value: {shape}) with no return"
+                ),
+            );
+            return None;
+        }
+        Some(release)
+    }
+
+    /// True when `name` is an active `guard` binding and cannot be moved out.
+    fn is_active_guard(&self, name: &str) -> bool {
+        self.guards.iter().any(|guard| guard.name == name)
+    }
+
+    /// Find a guarded resource passed to its own release flow, which would be
+    /// a double release because `guard` inserts that call automatically.
+    fn guarded_release_target(&self, callee: &str, args: &[CallArg]) -> Option<String> {
+        self.guards.iter().find_map(|guard| {
+            if guard.release != callee {
+                return None;
+            }
+            args.iter()
+                .find_map(|arg| place_root(&arg.value))
+                .filter(|root| root == &guard.name)
+        })
     }
 
     /// Check a block and report whether control can fall out of it.
@@ -1758,6 +1821,66 @@ impl Checker {
                 self.leave_protect(region);
                 self.reachable = entry_reachable && block_reachable;
             }
+            StmtKind::Guard {
+                name,
+                ty,
+                value,
+                body,
+            } => {
+                let entry_reachable = self.reachable;
+                let value_ty = self.check_expr(value);
+                let value_regions = self.value_regions(value);
+                let resolved = match ty.as_ref() {
+                    Some(ty) => {
+                        let declared = self.resolve_type(ty);
+                        if !self.assignable_expr(&declared, &value_ty, value) {
+                            self.error(
+                                ty.span(),
+                                format!(
+                                    "cannot initialize guarded resource '{}' of type {} with {}",
+                                    name, declared, value_ty
+                                ),
+                            );
+                        }
+                        declared
+                    }
+                    None => value_ty.concretize(),
+                };
+                let release = self.checked_release_flow(&resolved, statement.span);
+
+                // The binding lives in its own scope so it disappears when the
+                // guard ends; `check_block` adds a nested scope for the body.
+                self.scopes.push(HashMap::new());
+                self.declare_variable(
+                    name,
+                    VarInfo {
+                        ty: resolved.clone(),
+                        mutable: false,
+                        initialized: true,
+                        direction: None,
+                        span: statement.span,
+                        moved: HashMap::new(),
+                        home_region: self.current_region(),
+                        taints: Vec::new(),
+                        is_global: false,
+                    },
+                );
+                if self.type_contains_slice(&resolved) {
+                    self.set_variable_regions(name, &value_regions);
+                }
+                if let Some(release) = release.clone() {
+                    self.guards.push(GuardCleanup {
+                        name: name.clone(),
+                        release,
+                    });
+                }
+                let block_reachable = self.check_block(body);
+                if release.is_some() {
+                    self.guards.pop();
+                }
+                self.scopes.pop();
+                self.reachable = entry_reachable && block_reachable;
+            }
             StmtKind::Return(value) => {
                 self.check_return(value, statement.span);
                 self.reachable = false;
@@ -1910,7 +2033,12 @@ impl Checker {
                         .lookup(&root)
                         .map(|var| var.direction == Some(Direction::In))
                         .unwrap_or(false);
-                    if from_in {
+                    if self.is_active_guard(&root) {
+                        self.error(
+                            value.span,
+                            format!("cannot return guarded resource '{root}'"),
+                        );
+                    } else if from_in {
                         self.error(
                             value.span,
                             format!(
@@ -2636,6 +2764,17 @@ impl Checker {
             }
             return Ty::Error;
         };
+
+        // A guarded resource's release flow is inserted on every exit path by
+        // `guard`; calling it explicitly would release the resource twice.
+        if let Some(resource) = self.guarded_release_target(name, args) {
+            self.error(
+                span,
+                format!(
+                    "cannot call '{name}' on guarded resource '{resource}'; it is released automatically by 'guard'"
+                ),
+            );
+        }
 
         if args.len() != signature.params.len() {
             self.error(
@@ -3576,6 +3715,15 @@ impl Checker {
     }
 
     fn record_move(&mut self, name: &str, path: &str, span: Span) {
+        if self.is_active_guard(name) {
+            self.error(
+                span,
+                format!(
+                    "cannot move guarded resource '{name}' out of its guard; it is released automatically by 'guard'"
+                ),
+            );
+            return;
+        }
         for scope in self.scopes.iter_mut().rev() {
             if let Some(info) = scope.get_mut(name) {
                 if info.is_global {
@@ -4186,6 +4334,23 @@ fn scan_statement_effects(
             scan_block_effects(checker, body, depth, scan, locals);
         }
         StmtKind::Protect(block) => scan_block_effects(checker, block, depth + 1, scan, locals),
+        StmtKind::Guard {
+            name,
+            ty,
+            value,
+            body,
+        } => {
+            scan.record_reads(value);
+            scan_expr_effects(checker, value, depth, scan, locals);
+            let inferred = ty
+                .as_ref()
+                .map(|ty| checker.resolve_type_pure(ty))
+                .unwrap_or_else(|| checker.scan_expr_ty(value, locals));
+            locals.insert(name.clone(), inferred);
+            // A guard scopes a resource, not a memory region: the body keeps
+            // the current `protect` depth.
+            scan_block_effects(checker, body, depth, scan, locals);
+        }
         StmtKind::Return(value) => {
             if let Some(value) = value {
                 if scan.returns_composite

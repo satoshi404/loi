@@ -555,6 +555,26 @@ impl PrettyPrinter {
                 self.indent -= 1;
                 self.line_at(body.close_line, "}");
             }
+            StmtKind::Guard {
+                name,
+                ty,
+                value,
+                body,
+            } => {
+                let mut text = format!("guard {name}");
+                if let Some(ty) = ty {
+                    text.push_str(": ");
+                    text.push_str(&format_type(ty));
+                }
+                text.push_str(" <- ");
+                text.push_str(&format_expr(value));
+                text.push_str(" {");
+                self.line_at(source_line, text);
+                self.indent += 1;
+                self.statements(body);
+                self.indent -= 1;
+                self.line_at(body.close_line, "}");
+            }
             StmtKind::Return(value) => {
                 let text = match value {
                     Some(value) => format!("=> {}", format_expr(value)),

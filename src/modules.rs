@@ -255,6 +255,15 @@ impl Resolver<'_> {
                 self.block(body);
             }
             StmtKind::Protect(block) => self.block(block),
+            StmtKind::Guard {
+                ty, value, body, ..
+            } => {
+                if let Some(ty) = ty {
+                    self.ty(ty);
+                }
+                self.expr(value);
+                self.block(body);
+            }
             StmtKind::Return(value) => {
                 if let Some(value) = value {
                     self.expr(value);

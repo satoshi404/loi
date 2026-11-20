@@ -785,6 +785,7 @@ impl Parser {
                 self.skip_newlines();
                 Ok(Stmt::new(StmtKind::Protect(self.parse_block()?), span))
             }
+            TokenKind::Guard => self.parse_guard(span),
             TokenKind::If => self.parse_if(span),
             TokenKind::While => self.parse_while(span),
             TokenKind::For => self.parse_for(span),
@@ -812,6 +813,35 @@ impl Parser {
             }
             _ => self.parse_expression_or_assignment(span),
         }
+    }
+
+    /// `guard name[: Type] <- value { ... }`: a resource binding whose release
+    /// flow is inserted by the checker and backend on every exit path.
+    fn parse_guard(&mut self, span: Span) -> ParseResult<Stmt> {
+        self.expect(TokenKind::Guard, "'guard'")?;
+        let name = self.parse_identifier("resource name")?;
+        let ty = if self.matches(TokenKind::Colon) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        if !self.matches(TokenKind::ArrowIn) {
+            return Err(
+                self.error_current("a guard binding needs an initializer (`guard x <- value`)")
+            );
+        }
+        let value = self.parse_expression()?;
+        self.skip_newlines();
+        let body = self.parse_block()?;
+        Ok(Stmt::new(
+            StmtKind::Guard {
+                name,
+                ty,
+                value,
+                body,
+            },
+            span,
+        ))
     }
 
     /// Flow-Syntax binding: `x <- v`, `mut x: T <- v`, or `mut x: T`.

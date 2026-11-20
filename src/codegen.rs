@@ -627,6 +627,14 @@ struct SourceMapEntry {
     kind: String,
 }
 
+/// One `guard` binding waiting for its implicit release call.
+struct GuardCleanup {
+    /// Source name of the guarded binding.
+    name: String,
+    /// Release flow derived from the guarded shape.
+    release: String,
+}
+
 struct Generator<'a> {
     program: &'a Program,
     interfaces: HashMap<String, &'a InterfaceDecl>,
@@ -668,6 +676,10 @@ struct Generator<'a> {
     scopes: Vec<HashMap<String, VarInfo>>,
     protect_saves: Vec<String>,
     loop_bases: Vec<usize>,
+    /// Active `guard` cleanups, innermost last, with the guard depth at loop
+    /// entry so `break`/`continue` only release guards they actually exit.
+    guard_cleanups: Vec<GuardCleanup>,
+    guard_bases: Vec<usize>,
     current_function: String,
     source_map_path: Option<&'a Path>,
     source_map_entries: Vec<SourceMapEntry>,
@@ -796,6 +808,8 @@ impl<'a> Generator<'a> {
             scopes: Vec::new(),
             protect_saves: Vec::new(),
             loop_bases: Vec::new(),
+            guard_cleanups: Vec::new(),
+            guard_bases: Vec::new(),
             current_function: String::new(),
             source_map_path,
             source_map_entries: Vec::new(),
@@ -2075,6 +2089,8 @@ impl<'a> Generator<'a> {
         self.scopes.clear();
         self.protect_saves.clear();
         self.loop_bases.clear();
+        self.guard_cleanups.clear();
+        self.guard_bases.clear();
         self.scopes.push(HashMap::new());
         self.current_function = name.to_string();
 
@@ -2115,6 +2131,8 @@ impl<'a> Generator<'a> {
         self.scopes.clear();
         self.protect_saves.clear();
         self.loop_bases.clear();
+        self.guard_cleanups.clear();
+        self.guard_bases.clear();
     }
 
     /// Apply interface field defaults to `out` composite parameters.
@@ -2341,8 +2359,10 @@ impl<'a> Generator<'a> {
                 let condition = self.gen_expr(condition);
                 self.emit(format!("while ({condition})"));
                 self.loop_bases.push(self.protect_saves.len());
+                self.guard_bases.push(self.guard_cleanups.len());
                 self.gen_block(body);
                 self.loop_bases.pop();
+                self.guard_bases.pop();
             }
             StmtKind::ForRange {
                 variable,
@@ -2388,10 +2408,12 @@ impl<'a> Generator<'a> {
                     self.declare_var(variable, loop_ty, Repr::Value);
                 }
                 self.loop_bases.push(self.protect_saves.len());
+                self.guard_bases.push(self.guard_cleanups.len());
                 for statement in &body.statements {
                     self.gen_stmt(statement);
                 }
                 self.loop_bases.pop();
+                self.guard_bases.pop();
                 self.scopes.pop();
                 self.depth -= 1;
                 self.emit("}");
@@ -2435,14 +2457,55 @@ impl<'a> Generator<'a> {
                     }
                 }
                 self.loop_bases.push(self.protect_saves.len());
+                self.guard_bases.push(self.guard_cleanups.len());
                 for statement in &body.statements {
                     self.gen_stmt(statement);
                 }
                 self.loop_bases.pop();
+                self.guard_bases.pop();
                 self.scopes.pop();
                 self.depth -= 1;
                 self.emit("}");
                 self.emit_close();
+            }
+            StmtKind::Guard {
+                name,
+                ty,
+                value,
+                body,
+            } => {
+                let declared = ty.as_ref().map(|ty| self.resolve_type(ty));
+                let value_ty = self.ty_of(value);
+                let resolved = declared.unwrap_or_else(|| value_ty.concretize());
+                let release = types::release_flow_name(&resolved).unwrap_or_default();
+                let initializer = self.gen_coerced_expr(value, &resolved);
+                let c_type = self.c_type(&resolved);
+                let c_name = self.c_local(name);
+
+                // A nested C block scopes the guard local exactly as the source
+                // guard scopes its binding.
+                self.scopes.push(HashMap::new());
+                self.emit_open("");
+                self.emit(format!("{c_type} {c_name} = {initializer};"));
+                self.declare_var(name, resolved, Repr::Value);
+                self.guard_cleanups.push(GuardCleanup {
+                    name: name.clone(),
+                    release,
+                });
+                for statement in &body.statements {
+                    self.gen_stmt(statement);
+                }
+                let cleanup = self
+                    .guard_cleanups
+                    .pop()
+                    .expect("a guard pushes one cleanup");
+                self.emit(format!(
+                    "{}(&({}));",
+                    self.c_func(&cleanup.release),
+                    self.c_local(&cleanup.name)
+                ));
+                self.emit_close();
+                self.scopes.pop();
             }
             StmtKind::Protect(block) => {
                 self.scopes.push(HashMap::new());
@@ -2475,10 +2538,12 @@ impl<'a> Generator<'a> {
                         let temp = self.fresh("ret");
                         let temp_ty = value_ty.unwrap_or(Ty::Error).concretize();
                         self.emit(format!("{} {temp} = {value};", self.c_type(&temp_ty)));
+                        self.emit_guard_releases(0);
                         self.restore_protects(0);
                         self.emit(format!("return {temp};"));
                     }
                     None => {
+                        self.emit_guard_releases(0);
                         self.restore_protects(0);
                         if self.current_function == "main" {
                             self.emit("return 0;");
@@ -2490,11 +2555,15 @@ impl<'a> Generator<'a> {
             }
             StmtKind::Continue => {
                 let base = self.loop_bases.last().copied().unwrap_or(0);
+                let guard_base = self.guard_bases.last().copied().unwrap_or(0);
+                self.emit_guard_releases(guard_base);
                 self.restore_protects(base);
                 self.emit("continue;");
             }
             StmtKind::Break => {
                 let base = self.loop_bases.last().copied().unwrap_or(0);
+                let guard_base = self.guard_bases.last().copied().unwrap_or(0);
+                self.emit_guard_releases(guard_base);
                 self.restore_protects(base);
                 self.emit("break;");
             }
@@ -2529,6 +2598,24 @@ impl<'a> Generator<'a> {
             line = span.line,
             column = span.column,
         ));
+    }
+
+    /// Emit implicit resource releases from `from` to the innermost guard.
+    /// Guards unwind in LIFO order, before any `protect` arena is restored, so a
+    /// release can still observe slices owned by the caller's region.
+    fn emit_guard_releases(&mut self, from: usize) {
+        let releases = self.guard_cleanups[from..]
+            .iter()
+            .rev()
+            .map(|cleanup| (cleanup.name.clone(), cleanup.release.clone()))
+            .collect::<Vec<_>>();
+        for (name, release) in releases {
+            self.emit(format!(
+                "{}(&({}));",
+                self.c_func(&release),
+                self.c_local(&name)
+            ));
+        }
     }
 
     fn restore_protects(&mut self, from: usize) {
@@ -3246,6 +3333,10 @@ fn collect_stmt_strings(
             collect_block_strings(body, indices, order);
         }
         StmtKind::Protect(block) => collect_block_strings(block, indices, order),
+        StmtKind::Guard { value, body, .. } => {
+            collect_expr_strings(value, indices, order);
+            collect_block_strings(body, indices, order);
+        }
         StmtKind::Return(value) => {
             if let Some(value) = value {
                 collect_expr_strings(value, indices, order);
@@ -3604,6 +3695,10 @@ fn gen_stmt(builder: &mut IrBuilder, stmt: &Stmt) -> Result<(), CodegenError> {
         }
         StmtKind::Protect(block) => {
             gen_block(builder, block)?;
+        }
+        StmtKind::Guard { body, .. } => {
+            // The draft IR has no resource release instruction yet.
+            gen_block(builder, body)?;
         }
         StmtKind::Return(value) => {
             if let Some(value) = value {

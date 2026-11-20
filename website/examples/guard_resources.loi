@@ -1,0 +1,51 @@
+// Linear resources: `guard` releases the resource on every exit path.
+// There is no `defer` and no destructor: the release flow is named by
+// convention from the shape, `Connection` -> `connection_release`.
+
+shape Connection [
+    id: u64
+    alive: bool
+]
+
+mut closed: u64 <- 0
+
+sealed flow connection_release
+    <-> conn: Connection
+{
+    conn.alive = false
+    closed = closed + 1
+}
+
+open flow connect
+    <- id: u64
+    => Connection
+{
+    => Connection[ id: id, alive: true ]
+}
+
+open flow exchange
+    <- id: u64
+    => u64
+{
+    guard conn <- connect(id) {
+        if conn.id == 0 {
+            => 0                    // release runs before this return
+        }
+        if not conn.alive {
+            => 1
+        }
+        print("connection ")
+        print_int(conn.id)
+        print(" exchanged\n")
+    }
+    => closed
+}
+
+open flow main
+    => i32
+{
+    total <- exchange(7)
+    print_int(total)
+    print("\n")
+    => 0
+}

@@ -958,6 +958,10 @@ impl<'a> ConstEvaluator<'a> {
                 statement.span,
                 "'protect' is not allowed in a comptime flow",
             )),
+            StmtKind::Guard { .. } => Err(ConstError::new(
+                statement.span,
+                "'guard' is not allowed in a comptime flow",
+            )),
             StmtKind::Return(value) => {
                 let expected = self.current_return.clone();
                 let value = match value {
@@ -1834,6 +1838,10 @@ fn validate_statement(
             statement.span,
             "'protect' is not allowed in a comptime flow",
         )),
+        StmtKind::Guard { .. } => errors.push(ConstError::new(
+            statement.span,
+            "'guard' is not allowed in a comptime flow",
+        )),
         StmtKind::Return(value) => {
             if let Some(value) = value {
                 validate_expr(
@@ -2052,6 +2060,10 @@ fn check_block_comptime(
                 check_block_comptime(body, evaluator, errors);
             }
             StmtKind::Protect(block) => check_block_comptime(block, evaluator, errors),
+            StmtKind::Guard { value, body, .. } => {
+                check_expr_comptime(value, evaluator, errors);
+                check_block_comptime(body, evaluator, errors);
+            }
             StmtKind::Return(value) => {
                 if let Some(value) = value {
                     check_expr_comptime(value, evaluator, errors);

@@ -285,3 +285,43 @@ error: duplicate function 'helper'
 
 Probe: `/tmp/opencode/loi-b1-friction`. Isolating declarations per module needs
 module-qualified C mangling, an ABI-visible change deferred to a later block.
+
+## Block B2 — linear resources and `guard`
+
+### The release name is the full snake-case shape name
+
+The first realistic example declared `shape Connection` with a release flow
+named `conn_release`. The checker rejected it:
+
+```text
+error: shape 'Connection' has no resource release flow 'connection_release'
+```
+
+`guard` derives the flow name from the entire shape name, not from the binding
+name or an abbreviation. `Connection` needs `connection_release`; `HttpClient`
+needs `http_client_release`. There is no alias or attribute to override it, so
+two shapes with the same snake-case name cannot both be resources in one
+compilation unit. The example was renamed to `connection_release` and now
+checks, builds and runs.
+
+### The release signature is exact
+
+A release flow with `<-` instead of `<->`, an extra parameter, or a result is
+rejected at the `guard`:
+
+```text
+error: invalid resource release flow 'file_release' for shape 'File'; expected flow file_release(<-> value: File) with no return
+```
+
+This is deliberate: the compiler synthesizes the call, so the direction,
+parameter count and void result must be unambiguous. A hand-written release
+that also returns a status code has to put that status in a mutable global or
+field instead.
+
+### No standard-library resource API yet
+
+`guard` works with any shape that has a matching release flow, but Loi still
+has no long-lived file or socket handle library. A real program must declare
+its own shape and release flow first; `examples/guard_resources.loi` shows the
+pattern. Adding OS-backed resources to `lib/net.loi`/`lib/os.loi` is future
+work and needs its own shim and ABI review.

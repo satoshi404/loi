@@ -63,7 +63,7 @@ The goal is that any new model can open `development/PROGRESS.md` and immediatel
 | Arrays               | Slices `[T]` (pointer + length, bounds checked)                          |
 | Generics             | `shape Vec<T>` / `flow f<T>`; explicit arguments, monomorphized, optional `T: Clone + Copy + Eq` bounds (§5.1a) |
 | Compile-time values  | `comptime flow` (pure) and `comptime expr`; globals require constants     |
-| Cleanup              | No `defer`. `protect` covers memory                                      |
+| Cleanup              | No `defer`. `protect` covers memory; `guard` covers linear resources (§5.6) |
 | Variables            | `name <- value` immutable, `mut name <- value` mutable                   |
 | Globals              | Top-level bindings with constant initializers of any shape               |
 | Strings              | Double-quoted literals with decoded escapes; runtime type `[u8]`         |
@@ -600,27 +600,58 @@ no_node: u32 <- 4294967295
 
 **Status:** no compiler feature is required (slices, integers and `comptime` constants suffice). Standard-library graph/arena helpers are future work.
 
-### 5.6 Non-memory resources — linear close, `guard` later (question 6)
+### 5.6 Non-memory resources — linear close with `guard` (question 6), revised by Block B2
 
-**Decision:** resources are owned linearly and closed explicitly. There is no `defer` and no hidden destructor.
+**Decision:** resources are owned linearly and released explicitly. There is no `defer` and no hidden destructor.
 
-- A resource is a shape with a compiler-known release function, written by convention as `<Shape>_release(<-> value: Shape)`.
-- The checker must prove that every path releases exactly once before the value dies, and reject use after release, double release, and leaks (returning or overwriting an unreleased resource).
-- Scoped sugar, once resource declarations exist:
+- A resource is a `shape` whose name maps by convention to a release flow:
+  `<snake_case_shape>_release`. `File` maps to `file_release`, `Connection`
+  maps to `connection_release`. The release flow must exist and have exactly
+  the signature `flow <name>_release(<-> resource: Shape)` with no `=>` result.
+  A wrong or missing flow is a compile error at the `guard`.
+- `guard name <- initializer { ... }` binds a resource for the lexical block
+  and inserts the release call on **every** exit path: normal completion,
+  `=> return`, `break` and `continue`. Nested guards unwind in LIFO order.
+  `break`/`continue` release only the guards entered inside the loop being
+  left.
+- The release call is emitted before any enclosing `protect` arena is restored,
+  so a release that reads slices stored in that region sees live data.
+- The binding is immutable in source. Explicitly calling the release flow on a
+  guarded resource, moving it out (`give`, `<->`), or returning it is a compile
+  error: the `guard` owns the release. Returning a scalar field of the resource
+  is allowed because it copies the field and leaves the resource intact.
+- Only `shape` types qualify; marks, choices, opaque handles and scalars cannot
+  be guarded. `guard` is rejected in `comptime` flows, like `protect`.
+- `protect` remains memory-only. A resource that owns memory (a file buffer)
+  simply contains a slice owned by the same region.
 
 ```loi
-guard file <- file_open("data.bin") {
-    // use file
-}   // compiler inserts file_release(<-> file) on every exit path
+sealed flow connection_release
+    <-> conn: Connection
+{
+    conn.alive = false
+}
+
+flow exchange
+    <- id: u64
+    => u64
+{
+    guard conn <- connect(id) {
+        if conn.id == 0 { => 0 }   // release runs before this return
+        print_int(conn.id)
+    }
+    => 0
+}
 ```
 
-- `protect` remains memory-only. A resource that owns memory (a file buffer) simply contains a slice owned by the same region.
+**Why:** explicit linear ownership fits the existing move rules and needs no garbage collector, no unwinding and no methods. `guard` is sugar over the same rule, not a second mechanism. Deriving the release name from the shape avoids a second declaration and keeps ownership visible at the binding.
 
-**Why:** explicit linear ownership fits the existing move rules and needs no garbage collector, no unwinding and no methods. `guard` is sugar over the same rule, not a second mechanism.
-
-**Status:** not implemented. Whole-file and stdin access exists through the
-`read_file`, `write_file`, `read_stdin` and `read_line` intrinsics, but there
-is no long-lived file/socket handle API or `guard` yet.
+**Status:** implemented (checker and C backend). The convention-named release
+flow is validated statically; release calls are inserted on normal, return,
+`break` and `continue` paths with LIFO unwinding. Whole-file and stdin access
+still goes through the `read_file`, `write_file`, `read_stdin` and `read_line`
+intrinsics; there is no long-lived OS file/socket library yet. A realistic
+example is `examples/guard_resources.loi`.
 
 ### 5.7 Scalar and composite copy — confirmed (question 7), revised by Block A2
 

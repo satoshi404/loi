@@ -149,6 +149,31 @@ impl fmt::Display for Ty {
 /// Unsuffixed literals coerce to any compatible numeric type. Other types must
 /// match exactly; there are no implicit numeric conversions between named
 /// integer widths.
+/// Name of the linear-resource release flow for a named shape.
+///
+/// The convention is `<snake_case_shape>_release`: `File` becomes
+/// `file_release`, `HttpClient` becomes `http_client_release`. Only named
+/// shapes can own a resource; other types have no release flow.
+pub fn release_flow_name(ty: &Ty) -> Option<String> {
+    let Ty::Named(name) = ty else {
+        return None;
+    };
+    let mut snake = String::new();
+    for (index, ch) in name.chars().enumerate() {
+        if ch.is_uppercase() {
+            if index > 0 && !snake.ends_with('_') {
+                snake.push('_');
+            }
+            for lower in ch.to_lowercase() {
+                snake.push(lower);
+            }
+        } else {
+            snake.push(ch);
+        }
+    }
+    Some(format!("{snake}_release"))
+}
+
 pub fn assignable(expected: &Ty, actual: &Ty) -> bool {
     if expected.is_error() || actual.is_error() {
         return true;

@@ -253,6 +253,15 @@ impl<'a> Monomorphizer<'a> {
                 self.rewrite_block(body, mapping);
             }
             StmtKind::Protect(block) => self.rewrite_block(block, mapping),
+            StmtKind::Guard {
+                ty, value, body, ..
+            } => {
+                if let Some(ty) = ty {
+                    self.rewrite_type(ty, mapping);
+                }
+                self.rewrite_expr(value, mapping);
+                self.rewrite_block(body, mapping);
+            }
             StmtKind::Return(value) => {
                 if let Some(value) = value {
                     self.rewrite_expr(value, mapping);
