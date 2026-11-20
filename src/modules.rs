@@ -11,6 +11,7 @@ use std::collections::HashMap;
 
 use crate::ast::*;
 use crate::diagnostic::Diagnostic;
+use crate::types::release_flow_name_for;
 
 /// Where a declaration was declared, for sealed-reference diagnostics.
 #[derive(Debug, Clone)]
@@ -19,6 +20,9 @@ pub struct ModuleExport {
     pub name: String,
     pub visibility: Visibility,
     pub span: Span,
+    /// Named result of a flow, used to check the release call a `guard`
+    /// synthesizes from an initializer's type.
+    pub return_type: Option<String>,
 }
 
 /// The names a module can use in qualified references. Every module can refer
@@ -262,6 +266,30 @@ impl Resolver<'_> {
                     self.ty(ty);
                 }
                 self.expr(value);
+                // `guard` inserts a call to the convention-named release flow.
+                // Resolve that implicit name too, so a sealed flow in another
+                // module cannot be called through a guard.
+                let release = if let Some(Type::Named(shape, span)) = ty.as_ref() {
+                    Some((release_flow_name_for(shape), *span))
+                } else if let ExprKind::InterfaceLiteral { name, .. } = &value.kind {
+                    Some((release_flow_name_for(name), value.span))
+                } else if let ExprKind::Call { callee, .. } = &value.kind
+                    && let ExprKind::Ident(callee) = &callee.kind
+                {
+                    self.context.exports.get(callee).and_then(|entries| {
+                        entries.iter().find_map(|entry| {
+                            entry
+                                .return_type
+                                .as_ref()
+                                .map(|shape| (release_flow_name_for(shape), value.span))
+                        })
+                    })
+                } else {
+                    None
+                };
+                if let Some((release, span)) = release {
+                    self.name(&release, span);
+                }
                 self.block(body);
             }
             StmtKind::Return(value) => {

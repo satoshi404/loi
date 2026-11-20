@@ -158,8 +158,16 @@ pub fn release_flow_name(ty: &Ty) -> Option<String> {
     let Ty::Named(name) = ty else {
         return None;
     };
+    Some(release_flow_name_for(name))
+}
+
+/// Spell the release flow name directly from a shape's source name.
+///
+/// The module resolver uses this before type checking, when only AST names are
+/// available. Keeping the spelling here avoids a second snake-case rule.
+pub fn release_flow_name_for(shape: &str) -> String {
     let mut snake = String::new();
-    for (index, ch) in name.chars().enumerate() {
+    for (index, ch) in shape.chars().enumerate() {
         if ch.is_uppercase() {
             if index > 0 && !snake.ends_with('_') {
                 snake.push('_');
@@ -171,7 +179,7 @@ pub fn release_flow_name(ty: &Ty) -> Option<String> {
             snake.push(ch);
         }
     }
-    Some(format!("{snake}_release"))
+    format!("{snake}_release")
 }
 
 pub fn assignable(expected: &Ty, actual: &Ty) -> bool {

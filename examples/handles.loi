@@ -1,0 +1,36 @@
+// Standard-library linear handles: `guard` closes files on every exit path.
+// Build with: loi build examples/handles.loi -o handles --c-source lib/os_shim.c
+
+import "../lib/os.loi"
+
+open flow main
+    => i32
+{
+    guard out <- file_open_write("/tmp/loi-handles.log") {
+        if out.fd < 0 {
+            => 1
+        }
+        written <- file_write(<- out, "guard closed this file\n")
+        if written <= 0 {
+            => 2
+        }
+    }
+
+    protect {
+        mut data: [u8]
+        alloc(-> data, u8, 64)
+        guard input <- file_open_read("/tmp/loi-handles.log") {
+            if input.fd < 0 {
+                => 3
+            }
+            n <- file_read(<- input, <-> data)
+            if n <= 0 {
+                => 4
+            }
+            print("read ")
+            print_int(n as i32)
+            print(" bytes\n")
+        }
+    }
+    => 0
+}

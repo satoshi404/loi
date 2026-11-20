@@ -1796,6 +1796,15 @@ fn build_resolution_context(registry: &ModuleRegistry) -> (Vec<ModuleView>, Reso
                         name: name.to_string(),
                         visibility: item.visibility(),
                         span: item.span(),
+                        return_type: match item {
+                            loi::Item::Function(decl) => match decl.return_type.as_ref() {
+                                Some(loi::ast::Type::Named(name, _)) => {
+                                    Some(name.rsplit("::").next().unwrap_or(name).to_string())
+                                }
+                                _ => None,
+                            },
+                            _ => None,
+                        },
                     });
             }
         }

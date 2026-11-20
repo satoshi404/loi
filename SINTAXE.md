@@ -926,9 +926,15 @@ the matching C shim, so a program that imports them must compile the shim:
 loi build main.loi -o main --c-source lib/os_shim.c --c-source lib/net_shim.c
 ```
 
-The socket helpers expose integer descriptors only; no foreign pointer type
-enters ordinary Loi values. The shims are POSIX-only and are not part of the
-closed intrinsic set.
+They also provide linear handles for `guard`: `File` from `lib/os.loi` has
+`file_open_read`, `file_open_write`, `file_read`, `file_write` and `file_release`;
+`TcpStream` from `lib/net.loi` has `tcp_stream_connect`, `tcp_stream_send`,
+`tcp_stream_recv` and `tcp_stream_release`. Both release flows are `open`, so
+the implicit call inserted by `guard` works in the importing module. Handles
+own integer descriptors only; no foreign pointer type enters ordinary Loi
+values. Read buffers passed with `<->` must be owned by an active `protect`
+region. The shims are POSIX-only and are not part of the closed intrinsic set.
+A runnable example is `examples/handles.loi`.
 
 ### Generated C headers
 

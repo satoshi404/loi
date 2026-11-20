@@ -318,10 +318,42 @@ parameter count and void result must be unambiguous. A hand-written release
 that also returns a status code has to put that status in a mutable global or
 field instead.
 
-### No standard-library resource API yet
+### No standard-library resource API yet (resolved by B3)
 
-`guard` works with any shape that has a matching release flow, but Loi still
-has no long-lived file or socket handle library. A real program must declare
-its own shape and release flow first; `examples/guard_resources.loi` shows the
-pattern. Adding OS-backed resources to `lib/net.loi`/`lib/os.loi` is future
-work and needs its own shim and ABI review.
+`guard` worked with any shape that had a matching release flow, but Loi had no
+long-lived file or socket handle library. A real program had to declare its own
+shape and release flow first; `examples/guard_resources.loi` still shows that
+pattern. Block B3 added OS-backed `File` and `TcpStream` handles to
+`lib/os.loi` and `lib/net.loi`.
+
+## Block B3 — standard-library linear handles
+
+### A cross-module release flow must be `open`
+
+The module resolver already enforced `open`/`sealed` for names written in source,
+but the release call inserted by `guard` had no source-level name to check. A
+probe with a sealed `handle_release` in another module was accepted by `check`
+and would fail at link time. The resolver now derives the release name from the
+guard's declared type or initializer result and runs it through the same
+visibility check. The exact diagnostic is:
+
+```text
+error: 'handle_release' is sealed in module 'resource' and cannot be used from module 'main'
+ --> /tmp/opencode/loi-friction-b3/main.loi:5:21
+  |
+5 |     guard handle <- make_handle() {
+  |                     ^^^^^^^^^^^^^ sealed item used here
+
+1 error
+```
+
+The stdlib release flows `file_release` and `tcp_stream_release` are therefore
+`open`. Probe: `/tmp/opencode/loi-friction-b3`.
+
+### Read buffers must be caller-owned
+
+`file_read` and `tcp_stream_recv` take the destination with `<->`. Passing a
+non-empty slice literal or a buffer that escapes its `protect` region is
+rejected by the existing ownership and region rules. Callers allocate the
+buffer in an enclosing `protect` block and pass it with `<->`; the release flow
+then runs before that region is restored.

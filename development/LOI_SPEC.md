@@ -648,10 +648,12 @@ flow exchange
 
 **Status:** implemented (checker and C backend). The convention-named release
 flow is validated statically; release calls are inserted on normal, return,
-`break` and `continue` paths with LIFO unwinding. Whole-file and stdin access
-still goes through the `read_file`, `write_file`, `read_stdin` and `read_line`
-intrinsics; there is no long-lived OS file/socket library yet. A realistic
-example is `examples/guard_resources.loi`.
+`break` and `continue` paths with LIFO unwinding. The module resolver also
+checks the synthesized release name against `open`/`sealed`, so a release flow
+used by `guard` across modules must be `open`. The standard library provides
+linear `File` and `TcpStream` handles backed by thin POSIX shims; whole-file and
+stdin access still goes through the `read_file`, `write_file`, `read_stdin` and
+`read_line` intrinsics. Verification and examples live in `PROGRESS.md`.
 
 ### 5.7 Scalar and composite copy — confirmed (question 7), revised by Block A2
 

@@ -152,3 +152,65 @@ open flow net_recv
     }
     => loi_net_recv(fd, <-> data)
 }
+
+// ---------------------------------------------------------------------------
+// Linear socket handles
+// ---------------------------------------------------------------------------
+
+//! A `TcpStream` is a linear non-memory resource. Use it with `guard`; the
+//! convention-named `tcp_stream_release` flow closes the socket on every exit
+//! path. The raw descriptor helpers above remain available for FFI bindings.
+
+/// An owned connected socket descriptor. `fd` is -1 after failure or release.
+open shape TcpStream [
+    fd: i32
+]
+
+/// Close the descriptor. `guard` calls this automatically.
+open flow tcp_stream_release
+    <-> stream: TcpStream
+{
+    if stream.fd >= 0 {
+        loi_net_close(stream.fd)
+        stream.fd = -1
+    }
+}
+
+/// Connect to a numeric IPv4 host. Invalid ports and connection failures
+/// produce a handle with `fd` -1, which is still safe to guard.
+open flow tcp_stream_connect
+    <- host: cstr
+    <- port: u32
+    => TcpStream
+{
+    if not net_port_is_valid(port) {
+        => TcpStream[ fd: -1 ]
+    }
+    => TcpStream[ fd: loi_net_tcp_connect(host, port) ]
+}
+
+/// Send every byte of `data`; returns false on a short write or error.
+open flow tcp_stream_send
+    <- stream: TcpStream
+    <- data: [u8]
+    => bool
+{
+    if stream.fd < 0 {
+        => false
+    }
+    written <- loi_net_send(stream.fd, data)
+    => written == data.len as i64
+}
+
+/// Read into the caller's buffer. A negative descriptor yields 0 without
+/// calling C; the buffer must be owned by an active `protect` region.
+open flow tcp_stream_recv
+    <- stream: TcpStream
+    <-> data: [u8]
+    => i64
+{
+    if stream.fd < 0 {
+        => 0
+    }
+    => loi_net_recv(stream.fd, <-> data)
+}

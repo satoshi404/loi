@@ -769,6 +769,9 @@ flow exchange
               restored.</li>
             <li><code>guard</code> requires a <code>shape</code> and is not allowed in
               <code>comptime</code> flows. <code>protect</code> remains memory-only.</li>
+            <li>The standard library supplies linear <code>File</code> and <code>TcpStream</code>
+              handles whose release flows are <code>open</code>. A sealed release flow cannot be
+              called by a <code>guard</code> in another module.</li>
           </ul>
 
           <h3>Regions and <code>protect</code></h3>
@@ -1022,7 +1025,10 @@ flow exchange
                 <td><code>os_pid</code>, <code>os_unix_time</code>,
                   <code>os_sleep</code>, <code>os_has_env</code>,
                   <code>os_env_i32</code>, <code>os_errno</code>,
-                  <code>os_exit</code></td>
+                  <code>os_exit</code>; linear <code>File</code> with
+                  <code>file_open_read</code>, <code>file_open_write</code>,
+                  <code>file_read</code>, <code>file_write</code>,
+                  <code>file_release</code></td>
                 <td><code>lib/os_shim.c</code></td>
               </tr>
               <tr>
@@ -1030,7 +1036,10 @@ flow exchange
                 <td><code>net_ipv4</code>, <code>net_ipv4_octet</code>,
                   <code>net_parse_ipv4</code>, <code>net_port_is_valid</code>,
                   <code>net_tcp_connect</code>, <code>net_close</code>,
-                  <code>net_send</code>, <code>net_recv</code></td>
+                  <code>net_send</code>, <code>net_recv</code>; linear
+                  <code>TcpStream</code> with <code>tcp_stream_connect</code>,
+                  <code>tcp_stream_send</code>, <code>tcp_stream_recv</code>,
+                  <code>tcp_stream_release</code></td>
                 <td><code>lib/net_shim.c</code></td>
               </tr>
             </tbody>
@@ -1084,8 +1093,12 @@ flow exchange
             has no character literals, so byte queries use numeric values while
             substring queries use string slices. <code>lib/os.loi</code> and
             <code>lib/net.loi</code> are thin POSIX bindings: compile their
-            shims with the program. Sockets are integer descriptors, so no
-            foreign pointer enters ordinary Loi values.</p>
+            shims with the program. They also provide the linear handles
+            <code>File</code> and <code>TcpStream</code> for <code>guard</code>;
+            their <code>open</code> release flows close the descriptors on every
+            exit path. Read buffers passed with <code>&lt;-&gt;</code> must be
+            owned by an active <code>protect</code> region. See
+            <code>examples/handles.loi</code>.</p>
 
           <div class="doc-code">
             <div class="doc-code-bar"><span>shims.loi</span><button type="button" data-copy>copy</button></div>
@@ -1688,8 +1701,8 @@ sealed flow winning_line
 
           <h3>Known limitations</h3>
           <ul>
-            <li>I/O is limited to whole-file and whole-stdin reads/writes plus numeric and <code>printf</code> formatting. There is no socket, directory, seek, environment or process API. User-declared variadic flows are not supported. <code>read_file</code>, <code>read_stdin</code> and <code>read_line</code> allocate in the current <code>protect</code> region and cannot escape it.</li>
-            <li><code>guard</code> derives the release flow name from the shape, so shapes whose snake-case name would collide need hand-written release flows with distinct names. There is no standard-library file/socket handle API yet; see <code>examples/guard_resources.loi</code> for a realistic resource.</li>
+            <li>I/O intrinsics are limited to whole-file and whole-stdin reads/writes plus numeric and <code>printf</code> formatting. There is no directory or seek API; <code>lib/os.loi</code> covers environment/process queries and <code>lib/net.loi</code> covers TCP streams. User-declared variadic flows are not supported. <code>read_file</code>, <code>read_stdin</code> and <code>read_line</code> allocate in the current <code>protect</code> region and cannot escape it.</li>
+            <li><code>guard</code> derives the release flow name from the shape, so shapes whose snake-case name would collide need hand-written release flows with distinct names. A release flow called by a <code>guard</code> in another module must be <code>open</code>.</li>
             <li>Modules resolve qualified names and enforce <code>sealed</code> across files, but declaration names are still unique per compilation unit; C symbols are not module-qualified. Multi-file builds give sealed flows external linkage so the first unit that loads a module defines its symbols.</li>
             <li>Globals accept any compile-time constant, including nested shapes, slices and strings; the backend folds them into strict C11 static initializers (named arrays back slice data, with no compound literals). Growable collections (<code>Vec&lt;T&gt;</code>, maps) remain library work even though generics are available.</li>
             <li>A non-empty slice literal cannot escape the block that created it, including being returned or stored into an outer variable; allocate long-lived data in a <code>protect</code> region. The empty literal <code>[T:]</code> has no backing storage and may escape.</li>
@@ -1786,6 +1799,7 @@ cargo test --all-targets</code></pre>
             <li>Generic type-parameter bounds (<code>Clone</code>, <code>Copy</code>, <code>Eq</code>).</li>
             <li>Modules, import aliases, qualified names and cross-file <code>open</code>/<code>sealed</code> enforcement.</li>
             <li>Linear resources: <code>guard</code> blocks with convention-named release flows and automatic cleanup.</li>
+            <li>Standard-library linear <code>File</code> and <code>TcpStream</code> handles using <code>guard</code>.</li>
             <li>Interactive raylib examples: a web-ready demo, a text editor and mathematical sound synthesis with waveform display.</li>
           </ul>
 
@@ -1797,8 +1811,8 @@ cargo test --all-targets</code></pre>
 
           <h3>Next</h3>
           <ul>
-            <li>A standard-library file/socket handle API built on <code>guard</code>.</li>
-            <li>Richer I/O: directory, seek, socket and process APIs.</li>
+            <li>Richer I/O: directory and seek APIs, plus binding-generator gaps.</li>
+            <li>Evaluate the opt-in LLVM path while keeping the C11 backend as the semantic oracle.</li>
             <li>An interactive example that reads stdin; the deterministic tic-tac-toe example stays for reproducible tests.</li>
           </ul>
         </section>

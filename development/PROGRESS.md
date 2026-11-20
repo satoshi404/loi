@@ -4,31 +4,39 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-20, Block B2):** linear non-memory resources with
-  `guard` blocks. A `shape` whose snake-case name has a matching
-  `<shape>_release(<-> value: Shape)` flow is a resource. `guard f <- init {
-  ... }` declares an immutable binding, validates the release flow, and inserts
-  that call on normal exit, `=>`, `break` and `continue`; nested guards unwind
-  in LIFO order and `break`/`continue` release only guards entered inside the
-  loop being left. The release runs before any enclosing `protect` arena is
-  restored. Explicit release, moving or returning the resource, and guarding a
-  non-`shape` type are compile errors; `guard` is rejected in `comptime`. Rules
-  are in `SINTAXE.md` §11, `LOI_SPEC.md` §5.6, `DECISIONS.md`, `FRICTION.md` and
-  `website/docs.html`; a runnable example is `examples/guard_resources.loi`.
-- **Verification for Block B2:** 12 tests in `tests/guard.rs` cover the keyword,
-  parser/codegen output, matching and missing release flows, wrong release
-  signatures, moving/returning an explicit release, scalar-field returns,
-  release-before-`protect`-restore and a compiled harness that checks release
-  order (normal, return, `break`, `continue`, nested LIFO). Before implementation
-  the test module failed to
-  compile with `no variant ... Guard found for enum TokenKind`. Final gate
+- **Current task (2026-11-20, Block B3):** standard-library linear handles built
+  on `guard`. `lib/os.loi` adds `File` with `file_open_read`, `file_open_write`,
+  `file_read`, `file_write` and the convention-named `file_release`;
+  `lib/net.loi` adds `TcpStream` with `tcp_stream_connect`, `tcp_stream_send`,
+  `tcp_stream_recv` and `tcp_stream_release`. Both release flows are `open`, so
+  a `guard` in an importing module can call them. The POSIX details stay in
+  `lib/os_shim.c` and `lib/net_shim.c`; descriptors are `i32`, so no foreign
+  pointer enters Loi. The module resolver now checks the synthesized release
+  name against `open`/`sealed`, closing the B1 gap for compiler-inserted calls.
+  Rules are in `SINTAXE.md` §14, `LOI_SPEC.md` §5.6, `DECISIONS.md`,
+  `FRICTION.md` and `website/docs.html`; runnable example:
+  `examples/handles.loi`.
+- **Verification for Block B3:** 5 tests in `tests/handles.rs` cover file write
+  plus release, file read inside `protect`, stream release on return, rejection
+  of a raw descriptor and rejection of an explicit release; 1 new test in
+  `tests/modules.rs` reject sealed release flows from another module for call
+  and shape-literal initializers. Before implementation 4 handle tests failed
+  with unknown functions and the sealed release tests were accepted. The example
+  was checked, built with
+  `--c-source lib/os_shim.c` and run, printing `read 23 bytes`. Final gate
   command:
   `export PATH="/root/.cargo/bin:$PATH"; export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets && python3 tools/sync_examples.py --check && git diff --check`.
-  All five checks exited 0; `cargo test --all-targets` reported **416 passed,
-  0 failed** (the B1 total of 404 plus 12 guard tests). The new release call
-  adds one C statement per guarded exit path but does not change existing
-  generated C, headers, runtime helpers or ABI; `benchmark/run.py` is not
+  All five checks exited 0; `cargo test --all-targets` reported **423 passed,
+  0 failed** (the B2 total of 416 plus 5 handle tests and 2 module tests). New C
+  symbols live only in `lib/os_shim.c`; generated C, headers, runtime helpers
+  and the ABI of existing programs are unchanged, so `benchmark/run.py` is not
   applicable. No ASan execution is claimed in this PRoot container.
+- **Previous task (2026-11-20, Block B2):** linear non-memory resources with
+  `guard`: convention-named `<shape>_release(<-> value: Shape)` flows called on
+  normal exit, `=>`, `break` and `continue` with LIFO unwinding and before
+  `protect` restore; explicit release, moves and returns rejected. 12 tests in
+  `tests/guard.rs`, gate exited 0 with **416 passed, 0 failed**; see git history
+  for the full breakdown.
 - **Previous task (2026-11-20, Block B1):** real modules/namespaces. Each source
   file is a module; `import "..."` binds its file stem or an explicit `as` alias,
   and `module::item` works in value, type and constructor positions. A new driver
@@ -556,8 +564,7 @@
 - **Overall health:** good; the full test suite, `cargo fmt --check` and
   `cargo clippy --all-targets -- -D warnings` pass.
 - **Not done:** module-qualified C mangling, growable collections (`Vec<T>`/maps),
-  a long-lived OS file/socket resource API, the IR/ASM backends and browser
-  integration tests.
+  the IR/ASM backends and browser integration tests.
 
 ## Component Status
 
@@ -572,7 +579,7 @@
 | Ownership | Working | Give liveness, path-sensitive partial moves, field-sensitive lexical read views, definite assignment/return, exclusive `->`/`<->`, cross-flow consumption, `protect` taints and lexical-block escape analysis for non-empty slice literals and deep-clone results (empty literals are untainted), writable slice length, `read_file`/`read_stdin`/`read_line`, linear-resource `guard` scoping; gives from globals are rejected and move state is per function body |
 | C backend | Working | One C11 translation unit, ordered shape layouts, checked arithmetic, bitwise/shift helpers, growable arena, recursive on-demand deep-clone helpers, bounds checks, defaults, headers, source maps, multi-file objects, statics, file/stdin I/O, numeric printing and implicit `guard` releases on normal/return/`break`/`continue` paths with LIFO unwinding |
 | C interop | Working | `opaque` → `void *`, `cstr` → `const char *`, bodyless `extern flow`, `--c-source`, `--cc-flag`; string literals coerce to `cstr` |
-| Library | Working | `lib/std.loi` (scalar/string helpers), `lib/math.loi` (generic and `comptime`), `lib/ctype.loi` (pure ASCII helpers), `lib/os.loi`/`lib/net.loi` (thin POSIX bindings with C shims); prefixed names, explicitly imported, 7 integration tests |
+| Library | Working | `lib/std.loi` (scalar/string helpers), `lib/math.loi` (generic and `comptime`), `lib/ctype.loi` (pure ASCII helpers), `lib/os.loi`/`lib/net.loi` (thin POSIX bindings with C shims and linear `File`/`TcpStream` handles); prefixed names, explicitly imported |
 | Binding generator | Working | `tools/bindgen/bindgen.py` emits `opaque` handles, safe `shape`s, typed constants, `extern flow`s, a `memcpy` shim with `_Static_assert` checks and a skip report |
 | Vendored bindings | Working (syntax-verified) | `vendor/sdl2/` (SDL2 2.32.10) and `vendor/raylib/` (raylib 5.5), each with generated `.loi`, shim, skip report and README |
 | IR | Draft | `src/ir.rs`; `--emit-ir` writes text. Globals and some literals are not lowered |
@@ -582,7 +589,7 @@
 
 ## Verification
 
-Last verified 2026-11-20 for Block B2 with:
+Last verified 2026-11-20 for Block B3 with:
 
 ```sh
 export PATH="/root/.cargo/bin:$PATH"
@@ -594,15 +601,24 @@ python3 tools/sync_examples.py --check
 git diff --check
 ```
 
+- All five checks exited 0. `cargo test --all-targets` reported **423 passed,
+  0 failed** (the B2 total of 416 plus 5 handle tests and 2 module tests). New C
+  symbols live only in `lib/os_shim.c`; generated C, headers, runtime helpers
+  and the ABI of existing programs are unchanged, so `benchmark/run.py` is not
+  applicable. No ASan execution is claimed in this PRoot container.
+- `examples/handles.loi` was checked, built with `--c-source lib/os_shim.c` and
+  run (`read 23 bytes`), and mirrored into `website/examples/` with
+  `python3 tools/sync_examples.py`.
+
+Previously verified 2026-11-20 for Block B2 with the same gate command:
+
 - All five checks exited 0. `cargo test --all-targets` reported **416 passed,
   0 failed** (the B1 total of 404 plus 12 guard tests: lexer 1, checker 10 and a
   compiled C harness). B2 adds one implicit release call per guarded exit path;
   all pre-existing generated C, headers, runtime helpers and ABI are unchanged,
-  so `benchmark/run.py` is not applicable. No ASan execution is claimed in this
-  PRoot container.
+  so `benchmark/run.py` is not applicable.
 - `examples/guard_resources.loi` was checked, built and run (`connection 7
-  exchanged`, then `1`), and mirrored into `website/examples/` with
-  `python3 tools/sync_examples.py`.
+  exchanged`, then `1`), and mirrored into `website/examples/`.
 
 Previously verified 2026-11-20 for Block B1 with the same gate command:
 
@@ -808,13 +824,12 @@ for f in lib/std.loi lib/math.loi lib/ctype.loi lib/os.loi lib/net.loi; do ./tar
   literal format string and rejects dynamic `*` width/precision; user-declared
   variadic flows are not supported. `read_file`, `read_stdin` and `read_line`
   allocate in the current `protect` region and cannot escape it. There is no
-  directory, seek or process API in the intrinsic set. `lib/os.loi` and
-  `lib/net.loi` wrap a few POSIX calls through shims (process/environment
-  queries and a minimal TCP client); those shims are POSIX-only, expose sockets
-  as plain integer descriptors and have no `guard`/release discipline.
-  Loi `guard` supports user-declared linear resources (see
-  `examples/guard_resources.loi`), but there is no standard-library file/socket
-  handle API using it yet.
+  directory or seek API. `lib/os.loi` and `lib/net.loi` wrap POSIX calls through
+  shims (process/environment queries, file handles and a minimal TCP client).
+  The shims are POSIX-only and expose descriptors as `i32`; `File` and
+  `TcpStream` are linear resources whose `guard` release flows close them.
+  User-declared resources remain supported (`examples/guard_resources.loi`),
+  and the stdlib handle example is `examples/handles.loi`.
 - Library limits: `lib/ctype.loi` classifies ASCII bytes only (Loi strings are
   UTF-8 bytes), and `math_factorial`/`math_pow_u64` follow unsigned Loi
   arithmetic, so large results wrap at 64 bits.
@@ -850,8 +865,8 @@ for f in lib/std.loi lib/math.loi lib/ctype.loi lib/os.loi lib/net.loi; do ./tar
   this development environment does not provide.
 - `guard` derives the release flow name from the shape (`Connection` →
   `connection_release`), so two shapes with the same snake-case name cannot both
-  be resources in one compilation unit. There is no standard-library
-  file/socket handle API yet; `examples/guard_resources.loi` shows the pattern.
+  be resources in one compilation unit. A release flow called by a `guard` in
+  another module must be `open`; the module resolver rejects a sealed one.
 - The playground executes arbitrary Loi with the server process's privileges.
   It is a local development tool, not a sandbox, and must not be exposed
   publicly without real isolation.
@@ -864,9 +879,8 @@ Remaining implementation or secondary choices:
 - Give modules distinct C symbols (module-qualified mangling) so two modules can
   declare the same name without a duplicate-name error; this changes the ABI.
 - Decide whether resources need an explicit `resource` declaration instead of
-  the `<shape>_release` naming convention, and whether a standard-library
-  file/socket handle API should adopt it. B2 keeps the convention to avoid a
-  second declaration form.
+  the `<shape>_release` naming convention. B2/B3 keep the convention to avoid a
+  second declaration form; the stdlib `File` and `TcpStream` handles use it.
 - Define structural equality for shapes, choices and non-byte slices, or keep
   the current field-by-field rule permanently; that would let the existing `Eq`
   bound cover more types without changing its spelling. Ordering needs a
@@ -900,10 +914,10 @@ Remaining implementation or secondary choices:
 4. Block A5: done — `Clone`, `Copy` and `Eq` bounds let library flows state
    their element requirements; equality search is no longer numeric-only.
    Ordering still needs a future `Ord` constraint.
-5. Block A complete. Blocks B1 (real modules) and B2 (linear resources with
-   `guard`) are done. Next: add a standard-library file/socket handle API that
-   uses `guard`, revisit binding-generator gaps and the opt-in LLVM question;
-   keep the C11 backend as the production oracle.
+5. Blocks A, B1, B2 and B3 are done: generics/ownership, real modules, `guard`
+   resources and stdlib `File`/`TcpStream` handles. Next: revisit
+   binding-generator gaps and the opt-in LLVM question; keep the C11 backend as
+   the production oracle.
 6. Keep the docs in sync: `SINTAXE.md` is canonical, `website/docs.html`
    mirrors it, and `python3 tools/sync_examples.py --check` guards the example
    mirror.

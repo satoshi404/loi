@@ -279,3 +279,52 @@ fn multi_file_build_with_aliases_links_and_runs() {
     let _ = fs::remove_dir_all(&dir);
     assert_eq!(run_output.status.code(), Some(42));
 }
+
+#[test]
+fn a_sealed_release_flow_from_another_module_is_rejected_by_guard() {
+    let dir = test_dir("sealed-guard-release");
+    write(
+        &dir,
+        "resource.loi",
+        "open shape Handle [\n    fd: i32\n]\n\nsealed flow handle_release\n    <-> handle: Handle\n{\n}\n\nopen flow make_handle\n    => Handle\n{\n    => Handle[ fd: 7 ]\n}\n",
+    );
+    let main = write(
+        &dir,
+        "main.loi",
+        "import \"resource.loi\"\nopen flow main\n    => i32\n{\n    guard handle <- make_handle() {\n    }\n    => 0\n}\n",
+    );
+
+    let output = run(&[Path::new("check"), &main]);
+    let text = stderr(&output);
+    let _ = fs::remove_dir_all(&dir);
+    assert!(!output.status.success(), "sealed release was accepted");
+    assert!(text.contains("sealed"), "unexpected diagnostics: {text}");
+    assert!(
+        text.contains("handle_release"),
+        "unexpected diagnostics: {text}"
+    );
+}
+
+#[test]
+fn a_sealed_release_flow_is_rejected_for_a_shape_literal_guard() {
+    let dir = test_dir("sealed-guard-literal");
+    write(
+        &dir,
+        "resource.loi",
+        "open shape Handle [\n    fd: i32\n]\n\nsealed flow handle_release\n    <-> handle: Handle\n{\n}\n",
+    );
+    let main = write(
+        &dir,
+        "main.loi",
+        "import \"resource.loi\"\nopen flow main\n    => i32\n{\n    guard handle <- Handle[ fd: 7 ] {\n    }\n    => 0\n}\n",
+    );
+
+    let output = run(&[Path::new("check"), &main]);
+    let text = stderr(&output);
+    let _ = fs::remove_dir_all(&dir);
+    assert!(!output.status.success(), "sealed release was accepted");
+    assert!(
+        text.contains("handle_release") && text.contains("sealed"),
+        "unexpected diagnostics: {text}"
+    );
+}
