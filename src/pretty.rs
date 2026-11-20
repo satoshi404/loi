@@ -212,10 +212,17 @@ impl PrettyPrinter {
 
     fn item(&mut self, item: &Item) {
         match item {
-            Item::Import(import) => self.line_at(
-                import.span.line,
-                format!("import \"{}\"", escape_string(&import.path)),
-            ),
+            Item::Import(import) => {
+                let alias = import
+                    .alias
+                    .as_ref()
+                    .map(|name| format!(" as {name}"))
+                    .unwrap_or_default();
+                self.line_at(
+                    import.span.line,
+                    format!("import \"{}\"{alias}", escape_string(&import.path)),
+                )
+            }
             Item::Interface(interface) => self.interface(interface),
             Item::Mark(mark) => self.mark(mark),
             Item::Choice(choice) => self.choice(choice),

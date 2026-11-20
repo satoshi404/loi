@@ -201,13 +201,42 @@ impl Item {
             Item::Function(decl) => Some(&decl.name),
         }
     }
+
+    /// The start of the declaration, for diagnostics about references to it.
+    pub fn span(&self) -> Span {
+        match self {
+            Item::Import(decl) => decl.span,
+            Item::Interface(decl) => decl.span,
+            Item::Mark(decl) => decl.span,
+            Item::Choice(decl) => decl.span,
+            Item::Opaque(decl) => decl.span,
+            Item::Global(decl) => decl.span,
+            Item::Function(decl) => decl.span,
+        }
+    }
+
+    /// How other modules may refer to this declaration. Imports are not
+    /// declarations and have no visibility.
+    pub fn visibility(&self) -> Visibility {
+        match self {
+            Item::Import(_) => Visibility::Hidden,
+            Item::Interface(decl) => decl.visibility,
+            Item::Mark(decl) => decl.visibility,
+            Item::Choice(decl) => decl.visibility,
+            Item::Opaque(decl) => decl.visibility,
+            Item::Global(decl) => decl.visibility,
+            Item::Function(decl) => decl.visibility,
+        }
+    }
 }
 
-/// `import "path.loi"` pulls another source file into the compilation unit.
+/// `import "path.loi" [as name]` loads another source file into the
+/// compilation unit and binds it under `alias`, or its file stem when absent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportDecl {
     pub span: Span,
     pub path: String,
+    pub alias: Option<String>,
 }
 
 /// A top-level `let`/`var` declaration. Globals are initialized once, before

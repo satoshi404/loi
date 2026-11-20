@@ -1002,6 +1002,70 @@ fn parses_variant_reference_constructor_and_is() {
     ));
 }
 
+#[test]
+fn parses_import_aliases_and_qualified_names() {
+    let program = parse_source(
+        r#"import "lib/math.loi" as m
+import "lib/geo.loi"
+
+flow main
+    <- p: m::Point
+    => i32
+{
+    v <- m::math_sum<i32>([i32: 1, 2])
+    q <- m::Point[ x: 1 ]
+    if v != geo::origin { => 1 }
+    => v
+}
+"#,
+    );
+
+    let Item::Import(first) = &program.items[0] else {
+        panic!("expected an import");
+    };
+    assert_eq!(first.path, "lib/math.loi");
+    assert_eq!(first.alias.as_deref(), Some("m"));
+
+    let Item::Import(second) = &program.items[1] else {
+        panic!("expected a second import");
+    };
+    assert_eq!(second.path, "lib/geo.loi");
+    assert_eq!(second.alias, None);
+
+    let Item::Function(main) = &program.items[2] else {
+        panic!("expected main");
+    };
+    assert_eq!(main.name, "main");
+    assert_eq!(main.params[0].ty, Type::named("m::Point"));
+
+    let StmtKind::Let {
+        value: Some(value), ..
+    } = &main.body.statements[0].kind
+    else {
+        panic!("expected the call binding");
+    };
+    let ExprKind::Call { callee, .. } = kind(value) else {
+        panic!("expected a call");
+    };
+    assert_eq!(kind(callee), &ExprKind::Ident("m::math_sum".to_string()));
+
+    let StmtKind::Let {
+        value: Some(value), ..
+    } = &main.body.statements[1].kind
+    else {
+        panic!("expected the shape literal");
+    };
+    match kind(value) {
+        ExprKind::InterfaceLiteral { name, .. } => assert_eq!(name, "m::Point"),
+        other => panic!("expected a shape literal, got {other:?}"),
+    }
+
+    let StmtKind::If { condition, .. } = &main.body.statements[2].kind else {
+        panic!("expected an if");
+    };
+    assert!(format!("{:?}", kind(condition)).contains("geo::origin"));
+}
+
 fn collect_binary_ops(expr: &Expr, ops: &mut Vec<BinaryOp>) {
     if let ExprKind::Binary { op, left, right } = kind(expr) {
         ops.push(*op);

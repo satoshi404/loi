@@ -576,13 +576,12 @@ for i in 0..len(explicit) {
             be constructed without allocating.
           </div>
 
-          <h3>Globals and imports</h3>
+          <h3>Globals, imports and modules</h3>
           <p>
             A top-level binding is a global. It is initialized once, before any flow runs, and its
             initializer must be a compile-time constant. Globals may hold any constant shape,
             including nested shapes, slices, strings, mark variants and choice values; the C
-            backend emits them as strict C11 static initializers. Imports are textual:
-            <code>import "lib/std.loi"</code>.
+            backend emits them as strict C11 static initializers.
           </p>
 
           <div class="doc-code">
@@ -605,16 +604,43 @@ open flow main
           </div>
 
           <p>
-            Relative imports resolve from the importing file's directory. A file is visited at most
-            once per compilation unit, so diamond imports do not duplicate declarations. Visibility
-            is not yet enforced across files; that is an implementation gap, not a language rule.
+            Each source file is a <strong>module</strong>. <code>import "lib/std.loi"</code> loads a
+            file and binds its name (<code>std</code>) in the importing module; add
+            <code>as alias</code> to choose another name. A declaration can then be referenced
+            unqualified, exactly as before, or qualified as <code>module::item</code> in value,
+            type and constructor positions. Relative paths resolve from the importing file's
+            directory. Each canonical file is loaded once per compilation unit, so diamond
+            imports do not duplicate declarations; import cycles are errors.
           </p>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>main.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-loi">import "lib/math.loi" as m
+import "lib/geo.loi"
+
+open flow main
+    &lt;- p: m::Point
+    =&gt; i32
+{
+    total &lt;- m::math_sum&lt;i32&gt;([i32: 1, 2, 3])
+    q &lt;- m::Point[ x: p.x ]
+    if q.x != geo::origin.x { =&gt; 1 }
+    =&gt; total
+}</code></pre>
+          </div>
 
           <h3>Visibility</h3>
           <p>
-            <code>open</code> exports a declaration. <code>sealed</code> is the default and may be
-            written for emphasis. Visibility applies to flows, shapes and globals. <code>main</code>
-            is the implicit entry point.
+            <code>open</code> exports a declaration so other modules may reference it, qualified or
+            not. <code>sealed</code> is the default and keeps a declaration private to its module;
+            referring to one from another module is an error. Visibility applies to flows, shapes,
+            globals, marks, choices and opaque handles. A module may always use its own sealed
+            items, including through its own name. <code>main</code> is the implicit entry point.
+          </p>
+          <p>
+            Qualified access disambiguates <em>references</em>, not declarations: names are still
+            unique across a compilation unit because C symbols are derived from the declared name.
+            Two modules cannot both declare <code>helper</code>, even if every use is qualified.
           </p>
         </section>
 
@@ -832,8 +858,11 @@ protect {
             (<code>math_*</code>, <code>ctype_*</code>, <code>vec_*</code>,
             <code>slice_*</code>, <code>str_*</code>, <code>hash_*</code>,
             <code>crc32_*</code>, <code>map_*</code>, <code>rng_*</code>,
-            <code>os_*</code>, <code>net_*</code>) because imports are
-            textual.</p>
+            <code>os_*</code>, <code>net_*</code>) because declarations are still
+            unique across a compilation unit. The prefix is a naming convention,
+            not a namespace: you can also import under an alias and use
+            <code>m::math_sum</code>, but two files cannot both declare the same
+            name.</p>
 
           <table class="doc-table">
             <thead>
@@ -1549,7 +1578,7 @@ sealed flow winning_line
               <tr><td>Slice loop</td><td><code>for &lt;- p in xs { }</code>, <code>for &lt;-&gt; p in xs { }</code></td></tr>
               <tr><td>Region</td><td><code>protect { alloc(-&gt; xs, T, n) }</code></td></tr>
               <tr><td>Return</td><td><code>=&gt; value</code> or <code>=&gt;</code></td></tr>
-              <tr><td>Import</td><td><code>import "lib/std.loi"</code></td></tr>
+              <tr><td>Import</td><td><code>import "lib/std.loi"</code>, <code>import "lib/math.loi" as m</code> (qualify with <code>m::item</code>)</td></tr>
               <tr><td>Opaque handle</td><td><code>opaque SDL_Window</code></td></tr>
               <tr><td>Extern flow</td><td><code>extern flow SDL_Init &lt;- flags: u32 =&gt; i32</code></td></tr>
             </tbody>
@@ -1620,7 +1649,7 @@ sealed flow winning_line
           <h3>Known limitations</h3>
           <ul>
             <li>I/O is limited to whole-file and whole-stdin reads/writes plus numeric and <code>printf</code> formatting. There is no socket, directory, seek, environment or process API. User-declared variadic flows are not supported. <code>read_file</code>, <code>read_stdin</code> and <code>read_line</code> allocate in the current <code>protect</code> region and cannot escape it.</li>
-            <li>Imports are textual and cross-file visibility is not enforced. Multi-file builds give sealed flows external linkage so cross-file calls link.</li>
+            <li>Modules resolve qualified names and enforce <code>sealed</code> across files, but declaration names are still unique per compilation unit; C symbols are not module-qualified. Multi-file builds give sealed flows external linkage so the first unit that loads a module defines its symbols.</li>
             <li>Globals accept any compile-time constant, including nested shapes, slices and strings; the backend folds them into strict C11 static initializers (named arrays back slice data, with no compound literals). Growable collections (<code>Vec&lt;T&gt;</code>, maps) remain library work even though generics are available.</li>
             <li>A non-empty slice literal cannot escape the block that created it, including being returned or stored into an outer variable; allocate long-lived data in a <code>protect</code> region. The empty literal <code>[T:]</code> has no backing storage and may escape.</li>
             <li><code>&lt;-</code> composite parameters are passed to C by value (slice headers still point at the caller's data). The checker forbids storing or returning the borrowed value, so the parameter stays observationally read-only.</li>
@@ -1713,12 +1742,13 @@ cargo test --all-targets</code></pre>
             <li>Bitwise/shift operators, file/stdin I/O, numeric printing and comment-preserving <code>fmt</code>.</li>
             <li>Canonical Flow Syntax migration and legacy cleanup.</li>
             <li><code>mark</code> tag sets and <code>choice</code> tagged payloads with checked reads.</li>
+            <li>Generic type-parameter bounds (<code>Clone</code>, <code>Copy</code>, <code>Eq</code>).</li>
+            <li>Modules, import aliases, qualified names and cross-file <code>open</code>/<code>sealed</code> enforcement.</li>
             <li>Interactive raylib examples: a web-ready demo, a text editor and mathematical sound synthesis with waveform display.</li>
           </ul>
 
           <h3>In progress</h3>
           <ul>
-            <li>Cross-file visibility enforcement and module semantics.</li>
             <li>Composite globals through a runtime constructor.</li>
             <li>IR and assembly backend completion.</li>
             <li>Playground hardening and deployment documentation.</li>

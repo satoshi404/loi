@@ -38,6 +38,9 @@ compiler requires Rust 1.88 or newer, as declared by `rust-version` in
   ```
 
 - Identifiers start with a letter or `_`. The single name `_` is a discard.
+  A qualified name such as `math::sum` or `geo::Point` is one identifier token
+  whose parts are separated by `::`; member access still uses `.`
+  (`geo::Color.Red`).
 - Integer literals: decimal, `0x` hexadecimal, `0b` binary, with `_` separators.
 - Float literals: decimal point and/or exponent (`1.0`, `1e9`, `2.5e-3`).
 - String literals use double quotes. Escapes: `\n`, `\t`, `\r`, `\0`, `\\`,
@@ -714,19 +717,35 @@ bounds-checked at runtime, so it aborts rather than dereferencing null.
 
 ---
 
-## 13. Imports
+## 13. Imports and modules
 
 ```loi
-import "lib/std.loi"
+import "lib/std.loi"              // binds module `std`
+import "lib/math.loi" as m        // binds module `m`
+
+sum <- m::math_sum<u8>([u8: 1, 2, 3])
+p   <- m::Point[ x: 1, y: 2 ]
 ```
 
-- Imports are textual inclusion resolved by the driver.
-- Relative paths are resolved from the importing file's directory; absolute
-  paths are accepted.
-- Each file is included at most once per compilation unit.
-- Imports must appear as top-level items.
-- Common import for the standard library: `import "lib/std.loi"`.
-- The standard library is explicit; there is no implicit prelude.
+- Each source file is a **module**. Its default name is the file stem
+  (`math.loi` → `math`); `as name` overrides that name for one import.
+- An import brings the imported module's items into the program and binds its
+  name in the importing file. Relative paths resolve from the importing file's
+  directory; absolute paths are accepted. Each canonical file is loaded once
+  per compilation unit; a diamond import does not duplicate declarations.
+- A module's items may be named **unqualified**, exactly as before, or
+  **qualified** as `module::item` in value, type and constructor positions
+  (`m::flow`, `m::Shape`, `m::MARK.Variant`, `m::gen<i32>(x)`).
+- `open` items are usable from other modules. `sealed` items (the default) are
+  private: referring to one from another module is an error, qualified or not.
+  A module may always use its own sealed items unqualified.
+- Import cycles are errors. A file that appears twice under different aliases
+  is one module with two names.
+- Declared names are still unique across a whole compilation unit: qualified
+  access disambiguates *references*, not declarations or generated C symbols.
+  Two modules may not both declare `helper` (see `LOI_SPEC.md` §4.8).
+- Imports must appear as top-level items. The standard library is explicit;
+  there is no implicit prelude. Common import: `import "lib/std.loi"`.
 
 ---
 
@@ -808,9 +827,11 @@ print("\n")
 ### Library modules
 
 Every library file is imported explicitly with the canonical `import` form.
-Names are prefixed by module (`math_*`, `ctype_*`, `vec_*`, `slice_*`, `str_*`,
-`hash_*`, `crc32_*`, `map_*`, `rng_*`, `os_*`, `net_*`) because imports are
-textual and there are no namespaces yet.
+Each file is a module (§13); items may be named unqualified or as
+`module::item`. Library names keep their established prefixes (`math_*`,
+`ctype_*`, `vec_*`, `slice_*`, `str_*`, `hash_*`, `crc32_*`, `map_*`, `rng_*`,
+`os_*`, `net_*`) because declaration names remain unique across a compilation
+unit.
 
 | File | Helpers | Needs a shim? |
 |---|---|---|

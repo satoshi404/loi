@@ -119,36 +119,36 @@ fn bindgen_generates_buildable_bindings() {
 
     let bindings = fs::read_to_string(dir.join("sample.loi")).expect("bindings should be readable");
     assert!(
-        bindings.contains("opaque Opaque"),
-        "incomplete record should become an opaque handle:\n{bindings}"
+        bindings.contains("open opaque Opaque"),
+        "incomplete record should become an open opaque handle:\n{bindings}"
     );
     assert!(
-        bindings.contains("shape Rect ["),
-        "complete record should become a shape:\n{bindings}"
+        bindings.contains("open shape Rect ["),
+        "complete record should become an open shape:\n{bindings}"
     );
     assert!(
-        bindings.contains("SAMPLE_FLAG: u32 <- 4"),
-        "integer macro should be bound:\n{bindings}"
+        bindings.contains("open SAMPLE_FLAG: u32 <- 4"),
+        "integer macro should be bound as open:\n{bindings}"
     );
     assert!(
-        bindings.contains("SAMPLE_SHIFT: i32 <- 8"),
-        "expression macro should be evaluated:\n{bindings}"
+        bindings.contains("open SAMPLE_SHIFT: i32 <- 8"),
+        "expression macro should be evaluated as open:\n{bindings}"
     );
     assert!(
-        bindings.contains("extern flow sample_copy_rect as loi_bind_sample_sample_copy_rect"),
+        bindings.contains("open extern flow sample_copy_rect as loi_bind_sample_sample_copy_rect"),
         "struct pointer conversion should use the shim symbol:\n{bindings}"
     );
     assert!(
-        bindings.contains("mark Mode [\n    MODE_A\n    MODE_B\n]"),
-        "a zero-based contiguous C enum should become a mark:\n{bindings}"
+        bindings.contains("open mark Mode [\n    MODE_A\n    MODE_B\n]"),
+        "a zero-based contiguous C enum should become an open mark:\n{bindings}"
     );
     assert!(
-        bindings.contains("extern flow sample_next_mode as loi_bind_sample_sample_next_mode"),
+        bindings.contains("open extern flow sample_next_mode as loi_bind_sample_sample_next_mode"),
         "enum marks should use the shim for exact C enum types:\n{bindings}"
     );
     assert!(
-        bindings.contains("SPARSE_B: i32 <- 2") && !bindings.contains("mark SparseMode"),
-        "a sparse C enum should keep integer constants without a mark:\n{bindings}"
+        bindings.contains("open SPARSE_B: i32 <- 2") && !bindings.contains("mark SparseMode"),
+        "a sparse C enum should keep open integer constants without a mark:\n{bindings}"
     );
     assert!(
         !bindings.contains("__clang__"),

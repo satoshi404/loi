@@ -2,7 +2,7 @@
 
 **Version:** 0.3.0-draft  
 **Status:** Active Development  
-**Last Updated:** 2026-11-14
+**Last Updated:** 2026-11-20
 **Author:** Clayton Pedro (Satoshi)
 
 Items marked **(provisional)** are temporary decisions made to close a gap. They can change. The nine former *Open Design Questions* are resolved in section 5. The distinctive surface (Loi Flow Syntax) is the only surface, adopted in 5.10 and fully cleaned up: legacy forms are no longer accepted, and `fmt` emits the canonical Flow Syntax.
@@ -69,7 +69,7 @@ The goal is that any new model can open `development/PROGRESS.md` and immediatel
 | Strings              | Double-quoted literals with decoded escapes; runtime type `[u8]`         |
 | Slice literals       | `[a, b]` (inferred) or `[T: a, b]` (explicit)                           |
 | Length               | `len(xs)` and `xs.len`, both `u64`                                       |
-| Imports              | `import "path.loi"` textual inclusion, resolved by the driver (provisional) |
+| Imports              | `import "path.loi"` loads a module (file); `as` aliases it, `module::item` qualifies references (§4.8) |
 | Operators            | `and`, `or`, `not`, `is`, `as`, bitwise `&` `\|` `^` `~`, shifts `<<` `>>`, compound `+=` and friends |
 
 ---
@@ -282,8 +282,9 @@ protect {
 
 ### 4.6 Visibility
 
-- `open` makes a function or type usable from other modules. `sealed` keeps it private to its module.
-- The default when neither is written is `sealed` (see 5.3).
+- `open` makes a function or type usable from other modules. `sealed` keeps it private to its module (§4.8).
+- The default when neither is written is `sealed` (see 5.3). Visibility is now
+  enforced by the driver's module resolver, not only by header emission.
 
 ### 4.7 Performance annotations (deferred, experimental)
 
@@ -325,11 +326,30 @@ These rules were added to unblock real programs and are implemented and tested. 
 - The C backend emits every constant global as a strict C11 static initializer, including nested shapes, slices, strings, marks and choices. Diagnostics for a forbidden subexpression point at that subexpression.
 - A global name may not collide with a function or another global. Non-`mut` globals are immutable, as for locals.
 
-**Imports**
+**Modules and imports (Block B1)**
 
-- `import "path.loi"` loads another source file. A relative path is resolved from the importing file's directory; absolute paths are accepted.
-- Imports are textual: the imported items join the importing program's namespace. Each canonical file is visited at most once per compilation unit, so diamond imports do not duplicate declarations.
-- Visibility is not yet enforced across files: all declarations in an imported file are visible to the importer, and multi-file builds currently give sealed functions external linkage so cross-file calls link. This is provisional.
+- A source file is a module. `import "path.loi"` loads it and binds its file
+  stem as a module name; `import "path.loi" as name` binds `name` instead.
+  Paths resolve as before. Each canonical file is loaded once per compilation
+  unit, so diamond imports do not duplicate declarations; a cycle is an error
+  rather than a silently resolved dedup.
+- Imported items still join the compilation unit, so unqualified references keep
+  working and no generated C symbol or ABI changes. Qualified references
+  `module::item` are resolved by the driver before monomorphization and rewritten
+  to the same plain name; the canonical spelling is in `SINTAXE.md` §13.
+- `open` items may be referenced from any module; `sealed` items (the default)
+  may only be referenced from their own module, whether the reference is
+  qualified or unqualified. The resolver reports a sealed cross-module reference
+  with both module names and the item's declaration span. A module may refer to
+  itself by its own name, so self-qualified access to a sealed item is legal.
+- Qualified names support one level (`module::item`) in this version. There are
+  no nested modules, re-exports, module-wide visibility or search paths.
+- **Implementation limitation:** declaration names remain unique across the
+  whole compilation unit, because C symbols are still derived only from the
+  declared name. Two modules declaring the same name are a duplicate-name error
+  in the checker even if every reference is qualified. Module names therefore
+  organize references and enforce privacy; they do not isolate C symbols.
+  Module-qualified C mangling is a later, ABI-visible change.
 
 **Equality**
 
@@ -530,11 +550,11 @@ keywords, and an unknown name is a parse error.
 - Applies to functions, shapes and globals.
 - `sealed` may be written for emphasis, but is redundant.
 - `main` is exported implicitly by the C backend; the language treats it as the entry point.
-- Imports do not yet enforce visibility across files (textual inclusion). That is an implementation gap, not a language rule.
+- Cross-file visibility is enforced by the driver's module resolver: `open` items are visible from any module, `sealed` items only from their own (§4.8).
 
 **Why:** least privilege, and it matches the compiler's existing `Visibility::Hidden` default. It also removes the inconsistency between the spec and the AST.
 
-**Status:** implemented in AST, parser, checker and codegen; cross-file enforcement is pending.
+**Status:** implemented in AST, parser, checker, codegen and the driver's module resolver; §4.8 defines the cross-file rule.
 
 ### 5.4 Long-lived data — lexical regions, no named region (question 4)
 
@@ -647,7 +667,7 @@ slices, so their helpers stay bit-wise.
    They cannot be redeclared by user code and are always available (no import).
    `read_file`, `read_stdin` and `read_line` allocate in the current `protect`
    region and follow the same escape rules as `alloc`.
-2. **The library** is ordinary Loi in `lib/std.loi`, `lib/math.loi` and `lib/ctype.loi`, plus thin `extern flow` bindings in `lib/os.loi` and `lib/net.loi` with matching C shims. Files are explicitly imported; there is no implicit prelude. Names are prefixed (`min_i32`, `math_sum`, `ctype_is_digit`, ...) until a module/namespace design exists.
+2. **The library** is ordinary Loi in `lib/std.loi`, `lib/math.loi` and `lib/ctype.loi`, plus thin `extern flow` bindings in `lib/os.loi` and `lib/net.loi` with matching C shims. Files are explicitly imported; there is no implicit prelude. Each file is a module with a `module::item` qualified form (§4.8); library names keep their established prefixes (`min_i32`, `math_sum`, `ctype_is_digit`, ...) because declaration names remain unique across a compilation unit.
 
 New functionality goes into the library by default; an intrinsic is added only when the operation must be implemented by the backend or the OS.
 

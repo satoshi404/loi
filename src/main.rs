@@ -4,8 +4,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command};
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
+use loi::modules::{ModuleExport, ModuleView, ResolutionContext};
 use loi::{ColorChoice, ErrorFormat};
 
 const USAGE: &str = "usage:\n  loi <lex|parse|fmt|check> <file.loi>\n  loi gen <file.loi> [-o output.c] [--emit-h header.h] [--source-map map.json]\n  loi build <file.loi> [-o output] [--emit exe|obj|lib]\n                    [--debug|--release] [--rebuild] [--emit-c file.c] [--emit-h header.h]\n                    [--arena-size BYTES] [--source-map map.json] [--cc-flag FLAG]...\n                    [--c-source FILE]...\n  loi clean <file.loi> [-o output]\n\n'gen', 'build' and 'clean' accept -o/--output.\n'--emit', '--debug', '--release', '--rebuild', '--emit-c', '--emit-h', '--arena-size', '--source-map', '--cc-flag' and '--c-source'\nare only supported by 'build'. '--c-source' compiles an extra C file (a vendored\nFFI shim) and links it into an executable or library; it is rejected with '--emit obj'.\n'--emit-h' and '--source-map' are also supported by 'gen'.\nWith '--emit obj' the default output is '<input stem>.o'; with '--emit lib'\nit is 'lib<input stem>.a'; otherwise it is './a.out'.\n'build' invokes 'cc' and 'ar'; set 'CC'/'AR' to override them. Those values\nmay contain arguments, split like a POSIX shell command line ('...' quotes,\n\"...\" quotes and backslash escapes).\nWithout -o, 'clean' removes ./a.out, <input stem>.o and lib<input stem>.a\nwhen their .loi-stamp files exist; with -o it removes exactly that output\nand its stamp. Both forms also remove generated C retained for that output\nthrough 'build --emit-c'. It does not read or check the source.\n\noptions:\n  -h, --help     show this help\n  -V, --version  show the compiler version\n  -g, --debug    compile with debug info (-g)\n      --release  compile with optimizations (-O2)\n      --rebuild  force recompilation, ignoring the incremental stamp\n      --arena-size BYTES  set the protect arena size (default 67108864 = 64 MiB)\n      --source-map FILE  write source map JSON Lines to FILE\n      --error-format FMT  diagnostic format: human, short or json (default human)\n      --color WHEN   colorize diagnostics: auto, always or never (default auto)";
@@ -946,11 +947,11 @@ fn build_source(
     // unit that pulls them in) and link the objects.
     // ------------------------------------------------------------------
 
-    let mut merged_items = Vec::new();
-    let mut visited = HashSet::new();
-    let mut units: Vec<(PathBuf, HashSet<String>, String)> = Vec::new();
+    let mut registry = ModuleRegistry::default();
+    let mut seen_inputs = HashSet::new();
+    let mut roots: Vec<(PathBuf, HashSet<usize>, String)> = Vec::new();
     for input_path in paths {
-        if !visited.insert(canonical_key(input_path)) {
+        if !seen_inputs.insert(canonical_key(input_path)) {
             continue;
         }
         let source = match fs::read_to_string(input_path) {
@@ -960,16 +961,29 @@ fn build_source(
                 process::exit(1);
             }
         };
-        let mut defined = HashSet::new();
-        expand_program(
+        let before = registry.modules.len();
+        load_module(
             &source,
             input_path,
-            &mut visited,
-            &mut merged_items,
-            &mut defined,
             diagnostics,
+            &mut registry,
+            &mut Vec::new(),
         );
-        units.push((input_path.clone(), defined, source));
+        // Only the unit that first loaded a module defines its symbols. Later
+        // roots see the same module as an external prototype, as before.
+        let owned = (before..registry.modules.len()).collect::<HashSet<usize>>();
+        roots.push((input_path.clone(), owned, source));
+    }
+    let (merged_items, names_by_module) = resolve_and_flatten(&registry, diagnostics);
+    let mut units: Vec<(PathBuf, HashSet<String>, String)> = Vec::new();
+    for (input_path, owned, source) in &roots {
+        let defined = owned
+            .iter()
+            .filter_map(|id| names_by_module.get(id))
+            .flatten()
+            .cloned()
+            .collect();
+        units.push((input_path.clone(), defined, source.clone()));
     }
     let merged = loi::Program {
         items: merged_items,
@@ -1644,39 +1658,183 @@ fn resolve_import_path(import: &str, from: &Path) -> PathBuf {
     }
 }
 
-/// Expand `import` declarations in `source`, appending every non-import item to
-/// `items`. Imported files are visited at most once per compilation unit.
-fn expand_program(
+/// One loaded source file. Imports keep their aliases so the resolver can
+/// tell which module a qualified name refers to.
+struct LoadedModule {
+    name: String,
+    path: PathBuf,
+    source: String,
+    items: Vec<loi::Item>,
+    imports: Vec<(String, usize)>,
+}
+
+#[derive(Default)]
+struct ModuleRegistry {
+    modules: Vec<LoadedModule>,
+    by_path: HashMap<PathBuf, usize>,
+}
+
+fn module_name(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("module")
+        .to_string()
+}
+
+/// Parse one file and recursively load its imports, registering each file once
+/// by canonical path. `stack` holds the files currently being expanded, so a
+/// re-import from an ancestor is reported as a cycle rather than deduplicated.
+fn load_module(
     source: &str,
     path: &Path,
-    visited: &mut HashSet<PathBuf>,
-    items: &mut Vec<loi::Item>,
-    names: &mut HashSet<String>,
     diagnostics: DiagnosticOptions,
-) {
+    registry: &mut ModuleRegistry,
+    stack: &mut Vec<PathBuf>,
+) -> usize {
+    let key = canonical_key(path);
+    if let Some(&id) = registry.by_path.get(&key) {
+        return id;
+    }
     let program = load_program(source, path, diagnostics);
-    for item in program.items {
-        if let loi::Item::Import(import) = &item {
-            let child = resolve_import_path(&import.path, path);
-            let key = canonical_key(&child);
-            if !visited.insert(key) {
+    let id = registry.modules.len();
+    registry.by_path.insert(key.clone(), id);
+    registry.modules.push(LoadedModule {
+        name: module_name(path),
+        path: path.to_path_buf(),
+        source: source.to_string(),
+        items: program.items,
+        imports: Vec::new(),
+    });
+
+    let imports = registry.modules[id]
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            loi::Item::Import(decl) => Some(decl.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let mut aliases = HashMap::new();
+    aliases.insert(module_name(path), id);
+    for import in imports {
+        let child = resolve_import_path(&import.path, path);
+        let child_key = canonical_key(&child);
+        if stack.contains(&child_key) {
+            report_one_diagnostic(
+                path,
+                source,
+                loi::Diagnostic::from_error(
+                    format!("import cycle detected while loading '{}'", child.display()),
+                    import.span,
+                )
+                .with_label("this import returns to a file already being loaded"),
+                diagnostics,
+            );
+        }
+        let alias = import.alias.unwrap_or_else(|| module_name(&child));
+        let child_source = match fs::read_to_string(&child) {
+            Ok(source) => source,
+            Err(error) => {
+                eprintln!("loi: {}: {error}", child.display());
+                process::exit(1);
+            }
+        };
+        stack.push(key.clone());
+        let target = load_module(&child_source, &child, diagnostics, registry, stack);
+        stack.pop();
+        // Binding the same name to the same module twice is a harmless dedup;
+        // it is an error only when two different modules claim one alias.
+        if let Some(&existing) = aliases.get(&alias)
+            && existing != target
+        {
+            report_one_diagnostic(
+                path,
+                source,
+                loi::Diagnostic::from_error(
+                    format!("duplicate module alias '{alias}'"),
+                    import.span,
+                )
+                .with_label("this alias is already bound in this module"),
+                diagnostics,
+            );
+        }
+        aliases.insert(alias.clone(), target);
+        registry.modules[id].imports.push((alias, target));
+    }
+    id
+}
+
+/// Build the alias table for each module and the global declaration index used
+/// by the resolver. Duplicate declaration names are kept so the checker can
+/// report them; sealed checks only apply when a name has a single declaration.
+fn build_resolution_context(registry: &ModuleRegistry) -> (Vec<ModuleView>, ResolutionContext) {
+    let mut views = registry
+        .modules
+        .iter()
+        .map(|module| ModuleView {
+            name: module.name.clone(),
+            aliases: HashMap::new(),
+        })
+        .collect::<Vec<_>>();
+    for (id, module) in registry.modules.iter().enumerate() {
+        views[id].aliases.insert(module.name.clone(), id);
+        for (alias, target) in &module.imports {
+            views[id].aliases.insert(alias.clone(), *target);
+        }
+    }
+
+    let mut context = ResolutionContext::default();
+    for (id, module) in registry.modules.iter().enumerate() {
+        for item in &module.items {
+            if let Some(name) = item.declared_name() {
+                context
+                    .exports
+                    .entry(name.to_string())
+                    .or_default()
+                    .push(ModuleExport {
+                        module: id,
+                        name: name.to_string(),
+                        visibility: item.visibility(),
+                        span: item.span(),
+                    });
+            }
+        }
+    }
+    (views, context)
+}
+
+/// Resolve every module's references and flatten the items into the single
+/// program the checker and backend consume. Also returns the names each module
+/// contributes, which multi-file builds use to decide what to define.
+fn resolve_and_flatten(
+    registry: &ModuleRegistry,
+    diagnostics: DiagnosticOptions,
+) -> (Vec<loi::Item>, HashMap<usize, Vec<String>>) {
+    let (views, context) = build_resolution_context(registry);
+    let mut items = Vec::new();
+    let mut names = HashMap::new();
+    for (id, module) in registry.modules.iter().enumerate() {
+        let mut module_items = module.items.clone();
+        if let Some(error) = loi::modules::resolve_items(&mut module_items, id, &views, &context)
+            .into_iter()
+            .next()
+        {
+            report_one_diagnostic(&module.path, &module.source, error, diagnostics);
+        }
+        for item in module_items {
+            if let loi::Item::Import(_) = item {
                 continue;
             }
-            let child_source = match fs::read_to_string(&child) {
-                Ok(source) => source,
-                Err(error) => {
-                    eprintln!("loi: {}: {error}", child.display());
-                    process::exit(1);
-                }
-            };
-            expand_program(&child_source, &child, visited, items, names, diagnostics);
-            continue;
+            if let Some(name) = item.declared_name() {
+                names
+                    .entry(id)
+                    .or_insert_with(Vec::new)
+                    .push(name.to_string());
+            }
+            items.push(item);
         }
-        if let Some(name) = item.declared_name() {
-            names.insert(name.to_string());
-        }
-        items.push(item);
     }
+    (items, names)
 }
 
 /// Load a source file together with everything it imports.
@@ -1685,18 +1843,9 @@ fn load_program_with_imports(
     path: &Path,
     diagnostics: DiagnosticOptions,
 ) -> loi::Program {
-    let mut visited = HashSet::new();
-    visited.insert(canonical_key(path));
-    let mut items = Vec::new();
-    let mut names = HashSet::new();
-    expand_program(
-        source,
-        path,
-        &mut visited,
-        &mut items,
-        &mut names,
-        diagnostics,
-    );
+    let mut registry = ModuleRegistry::default();
+    load_module(source, path, diagnostics, &mut registry, &mut Vec::new());
+    let (items, _) = resolve_and_flatten(&registry, diagnostics);
     loi::Program { items }
 }
 

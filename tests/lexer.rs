@@ -42,6 +42,36 @@ fn lexes_the_reference_program() {
 }
 
 #[test]
+fn qualified_names_lex_as_single_identifiers() {
+    let tokens = tokenize("m::sum geo::Color.Red math::Vec<i32>", "<test>").unwrap();
+    let identifiers: Vec<&str> = tokens
+        .iter()
+        .filter(|token| token.kind == TokenKind::Identifier)
+        .map(|token| token.lexeme.as_str())
+        .collect();
+
+    assert_eq!(
+        identifiers,
+        vec!["m::sum", "geo::Color", "Red", "math::Vec", "i32"]
+    );
+    let kinds: Vec<TokenKind> = tokens.iter().map(|token| token.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![
+            TokenKind::Identifier,
+            TokenKind::Identifier,
+            TokenKind::Dot,
+            TokenKind::Identifier,
+            TokenKind::Identifier,
+            TokenKind::Lt,
+            TokenKind::Identifier,
+            TokenKind::Gt,
+            TokenKind::Eof,
+        ]
+    );
+}
+
+#[test]
 fn all_flow_keywords_are_recognized() {
     let source = "import shape flow open sealed mut in give clone protect alloc \
                   comptime if else while for continue break and or not as true false";

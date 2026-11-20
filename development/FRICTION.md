@@ -256,3 +256,32 @@ bounded draws, picking and Fisher–Yates shuffling all fit in pure Loi without
 allocation. The only earlier test mistakes were ordinary language rules: a
 binding passed with `<->` must be declared `mut`, and two inout calls cannot be
 sequenced inside one expression. Neither is a blocked design.
+
+## Block B1 — real modules and namespaces
+
+### Public library items had to become `open`
+
+Once `open`/`sealed` was enforced across module boundaries, calls to default-
+sealed public stdlib flows were rejected:
+
+```text
+error: 'ctype_is_digit' is sealed in module 'ctype' and cannot be used from module 'main'
+```
+
+Public flows, shapes, globals, marks and choices in `ctype`, `math`, `net`, `os`
+and `random` were changed to `open`, and `tools/bindgen/bindgen.py` now emits
+`open` on every generated declaration. Internal helpers stay `sealed`, and a
+module still accesses its own sealed items.
+
+### Declaration names remain global per compilation unit
+
+Module qualification disambiguates references, not declarations or C symbols.
+Two imported modules that both declare `helper` still fail in the checker even
+when every call is qualified:
+
+```text
+error: duplicate function 'helper'
+```
+
+Probe: `/tmp/opencode/loi-b1-friction`. Isolating declarations per module needs
+module-qualified C mangling, an ABI-visible change deferred to a later block.

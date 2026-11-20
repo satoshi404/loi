@@ -20,7 +20,7 @@ open shape NetIpv4Result [
 ]
 
 /// Build a big-endian IPv4 address from four octets.
-flow net_ipv4
+open flow net_ipv4
     <- a: u8
     <- b: u8
     <- c: u8
@@ -31,7 +31,7 @@ flow net_ipv4
 }
 
 /// Read octet 0 (most significant) through 3; out-of-range indices return 0.
-flow net_ipv4_octet
+open flow net_ipv4_octet
     <- addr: u32
     <- index: u32
     => u8
@@ -43,7 +43,7 @@ flow net_ipv4_octet
     => (addr >> shift) as u8
 }
 
-flow net_port_is_valid
+open flow net_port_is_valid
     <- port: u32
     => bool
 {
@@ -51,7 +51,7 @@ flow net_port_is_valid
 }
 
 /// Parse dotted decimal notation. Leading zeroes are accepted.
-flow net_parse_ipv4
+open flow net_parse_ipv4
     <- text: [u8]
     => NetIpv4Result
 {
@@ -102,13 +102,13 @@ extern flow loi_net_send
     <- data: [u8]
     => i64
 
-extern flow loi_net_recv
+open extern flow loi_net_recv
     <- fd: i32
     <-> data: [u8]
     => i64
 
 /// Connect to a numeric IPv4 host. Returns -1 on failure.
-flow net_tcp_connect
+open flow net_tcp_connect
     <- host: cstr
     <- port: u32
     => i32
@@ -119,7 +119,7 @@ flow net_tcp_connect
     => loi_net_tcp_connect(host, port)
 }
 
-flow net_close
+open flow net_close
     <- fd: i32
 {
     if fd >= 0 {
@@ -128,7 +128,7 @@ flow net_close
 }
 
 /// Send every byte of `data`; returns false on a short write or error.
-flow net_send
+open flow net_send
     <- fd: i32
     <- data: [u8]
     => bool
@@ -142,7 +142,7 @@ flow net_send
 
 /// Read up to `data.len` bytes into the caller's buffer; a negative descriptor
 /// yields 0 without calling C.
-flow net_recv
+open flow net_recv
     <- fd: i32
     <-> data: [u8]
     => i64

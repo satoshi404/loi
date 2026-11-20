@@ -15,7 +15,7 @@
 
 /// Nonzero replacement for `rng_new(0)`. The golden-ratio constant gives a
 /// deterministic, well-distributed state.
-RNG_FALLBACK_SEED: u64 <- 0x9e3779b97f4a7c15
+open RNG_FALLBACK_SEED: u64 <- 0x9e3779b97f4a7c15
 
 open shape Rng [
     state: u64

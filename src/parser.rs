@@ -211,9 +211,15 @@ impl Parser {
     fn parse_import(&mut self, span: Span) -> ParseResult<Item> {
         self.expect(TokenKind::Import, "'import'")?;
         let path = self.expect(TokenKind::String, "an import path string")?;
+        let alias = if self.matches(TokenKind::As) {
+            Some(self.expect(TokenKind::Identifier, "a module alias")?.lexeme)
+        } else {
+            None
+        };
         Ok(Item::Import(ImportDecl {
             span,
             path: path.lexeme,
+            alias,
         }))
     }
 

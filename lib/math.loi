@@ -16,7 +16,7 @@ open MATH_E: f64 <- 2.718281828459045
 open MATH_TAU: f64 <- comptime 2.0 * MATH_PI
 
 /// Compile-time factorial; usable in globals and `comptime` expressions.
-comptime flow math_factorial
+open comptime flow math_factorial
     <- n: u32
     => u64
 {
@@ -29,7 +29,7 @@ comptime flow math_factorial
     => result
 }
 
-flow math_min<T: Copy>
+open flow math_min<T: Copy>
     <- a: T
     <- b: T
     => T
@@ -40,7 +40,7 @@ flow math_min<T: Copy>
     => b
 }
 
-flow math_max<T: Copy>
+open flow math_max<T: Copy>
     <- a: T
     <- b: T
     => T
@@ -51,7 +51,7 @@ flow math_max<T: Copy>
     => b
 }
 
-flow math_clamp<T: Copy>
+open flow math_clamp<T: Copy>
     <- value: T
     <- low: T
     <- high: T
@@ -67,7 +67,7 @@ flow math_clamp<T: Copy>
 }
 
 /// Sum every element of a slice; the element type is supplied explicitly.
-flow math_sum<T: Copy>
+open flow math_sum<T: Copy>
     <- xs: [T]
     => T
 {
@@ -78,7 +78,7 @@ flow math_sum<T: Copy>
     => total
 }
 
-flow math_clamp_f64
+open flow math_clamp_f64
     <- value: f64
     <- low: f64
     <- high: f64
@@ -93,7 +93,7 @@ flow math_clamp_f64
     => value
 }
 
-flow math_lerp
+open flow math_lerp
     <- a: f64
     <- b: f64
     <- t: f64
@@ -102,7 +102,7 @@ flow math_lerp
     => a + (b - a) * t
 }
 
-flow math_smoothstep
+open flow math_smoothstep
     <- edge0: f64
     <- edge1: f64
     <- x: f64
@@ -112,21 +112,21 @@ flow math_smoothstep
     => t * t * (3.0 - 2.0 * t)
 }
 
-flow math_deg_to_rad
+open flow math_deg_to_rad
     <- degrees: f64
     => f64
 {
     => degrees * MATH_PI / 180.0
 }
 
-flow math_rad_to_deg
+open flow math_rad_to_deg
     <- radians: f64
     => f64
 {
     => radians * 180.0 / MATH_PI
 }
 
-flow math_hypot
+open flow math_hypot
     <- x: f64
     <- y: f64
     => f64
@@ -134,7 +134,7 @@ flow math_hypot
     => sqrt(x * x + y * y)
 }
 
-flow math_near
+open flow math_near
     <- a: f64
     <- b: f64
     <- epsilon: f64
@@ -143,7 +143,7 @@ flow math_near
     => fabs(a - b) <= epsilon
 }
 
-flow math_sign_i32
+open flow math_sign_i32
     <- value: i32
     => i32
 {
@@ -157,7 +157,7 @@ flow math_sign_i32
 }
 
 /// Greatest common divisor. Both zero arguments produce zero.
-flow math_gcd_u64
+open flow math_gcd_u64
     <- a: u64
     <- b: u64
     => u64
@@ -173,7 +173,7 @@ flow math_gcd_u64
 }
 
 /// Exponentiation by squaring. Unsigned overflow wraps, as in Loi arithmetic.
-flow math_pow_u64
+open flow math_pow_u64
     <- base: u64
     <- exponent: u32
     => u64
@@ -192,7 +192,7 @@ flow math_pow_u64
 }
 
 /// Dot product over the shorter of the two slices.
-flow math_dot_f64
+open flow math_dot_f64
     <- a: [f64]
     <- b: [f64]
     => f64

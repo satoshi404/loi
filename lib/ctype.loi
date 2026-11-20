@@ -10,63 +10,63 @@
 //! represented. Names are prefixed so several libraries can be imported at
 //! once without collisions.
 
-flow ctype_is_digit
+open flow ctype_is_digit
     <- byte: u8
     => bool
 {
     => byte >= 48 and byte <= 57
 }
 
-flow ctype_is_upper
+open flow ctype_is_upper
     <- byte: u8
     => bool
 {
     => byte >= 65 and byte <= 90
 }
 
-flow ctype_is_lower
+open flow ctype_is_lower
     <- byte: u8
     => bool
 {
     => byte >= 97 and byte <= 122
 }
 
-flow ctype_is_alpha
+open flow ctype_is_alpha
     <- byte: u8
     => bool
 {
     => ctype_is_upper(byte) or ctype_is_lower(byte)
 }
 
-flow ctype_is_alnum
+open flow ctype_is_alnum
     <- byte: u8
     => bool
 {
     => ctype_is_alpha(byte) or ctype_is_digit(byte)
 }
 
-flow ctype_is_hex_digit
+open flow ctype_is_hex_digit
     <- byte: u8
     => bool
 {
     => ctype_is_digit(byte) or (byte >= 65 and byte <= 70) or (byte >= 97 and byte <= 102)
 }
 
-flow ctype_is_space
+open flow ctype_is_space
     <- byte: u8
     => bool
 {
     => byte == 32 or (byte >= 9 and byte <= 13)
 }
 
-flow ctype_is_ascii
+open flow ctype_is_ascii
     <- byte: u8
     => bool
 {
     => byte < 128
 }
 
-flow ctype_to_lower
+open flow ctype_to_lower
     <- byte: u8
     => u8
 {
@@ -76,7 +76,7 @@ flow ctype_to_lower
     => byte
 }
 
-flow ctype_to_upper
+open flow ctype_to_upper
     <- byte: u8
     => u8
 {
@@ -87,7 +87,7 @@ flow ctype_to_upper
 }
 
 /// Value of a hexadecimal digit, or -1 when `byte` is not one.
-flow ctype_hex_value
+open flow ctype_hex_value
     <- byte: u8
     => i32
 {
@@ -111,7 +111,7 @@ open shape CTypeParseResult [
 ]
 
 /// Parse an unsigned decimal prefix; `consumed` counts the digits read.
-flow ctype_parse_u64
+open flow ctype_parse_u64
     <- text: [u8]
     => CTypeParseResult
 {
@@ -135,7 +135,7 @@ flow ctype_parse_u64
     => CTypeParseResult[ ok: true, value: value, consumed: index ]
 }
 
-flow ctype_count_digits
+open flow ctype_count_digits
     <- text: [u8]
     => u64
 {
@@ -148,7 +148,7 @@ flow ctype_count_digits
     => count
 }
 
-flow ctype_equals_ignore_case
+open flow ctype_equals_ignore_case
     <- left: [u8]
     <- right: [u8]
     => bool

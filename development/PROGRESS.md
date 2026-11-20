@@ -4,7 +4,37 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-19, Block A5):** generic type parameters can declare
+- **Current task (2026-11-20, Block B1):** real modules/namespaces. Each source
+  file is a module; `import "..."` binds its file stem or an explicit `as` alias,
+  and `module::item` works in value, type and constructor positions. A new driver
+  loader (`src/main.rs`) tracks modules by canonical path, detects cycles,
+  deduplicates diamonds and resolves references through `src/modules.rs` before
+  monomorphization; qualified names are rewritten to plain names, so the checker,
+  C backend, headers and ABI are unchanged. `open`/`sealed` are now enforced on
+  cross-module references, qualified or not; a module may always use its own
+  sealed items. The stdlib files that expose public flows without `open`
+  (`ctype`, `math`, `net`, `os`, `random`) and generated bindings now declare
+  them `open`; cross-module test wrappers were updated too. Declaration names
+  stay unique per compilation unit (documented limitation). Rules are in
+  `SINTAXE.md` §13, `LOI_SPEC.md` §4.8, `DECISIONS.md`, `FRICTION.md` and
+  `website/docs.html`.
+- **Verification for Block B1:** 12 new integration tests in `tests/modules.rs`
+  cover qualified/unqualified open and sealed access, aliases, file-stem names,
+  qualified types and constructors, unknown modules/items, duplicate aliases,
+  cycles, diamond dedup and a two-file build that links and returns 42. Three
+  frontend tests cover `::` lexing, alias parsing and formatting; one bindgen
+  test now requires `open` bindings. Before implementation the parser/tests did
+  not compile; during implementation sealed cross-module stdlib and fixture
+  calls were rejected until their public items became `open`. Final gate
+  command:
+  `export PATH="/root/.cargo/bin:$PATH"; export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets && python3 tools/sync_examples.py --check && git diff --check`.
+  All five checks exited 0; `cargo test --all-targets` reported **404 passed,
+  0 failed** (lib 22 + main 6 + bindgen 1 + checker 147 + cli 42 + codegen 61 +
+  const_values 5 + errors 3 + header 4 + lexer 9 + lib-integration 37 + modules 12
+  + msrv 1 + order 6 + parser 29 + pretty 19). No generated C, header, runtime
+  helper or ABI changed; qualified names are resolved before the monomorphizer,
+  so `benchmark/run.py` is not applicable.
+- **Previous task (2026-11-19, Block A5):** generic type parameters can declare
   `T: Clone + Copy + Eq` bounds on shapes and flows. `ast::TypeParam` carries a
   list of `TypeBound`; the parser accepts the three constraint names and rejects
   unknown ones, and the pretty-printer round-trips them. Bounds are validated in
@@ -500,8 +530,8 @@
   synthetic and cross-file spans.
 - **Overall health:** good; the full test suite, `cargo fmt --check` and
   `cargo clippy --all-targets -- -D warnings` pass.
-- **Not done:** resources/`guard`, real module namespaces, growable collections
-  (`Vec<T>`/maps), the IR/ASM backends and browser integration tests.
+- **Not done:** resources/`guard`, module-qualified C mangling, growable
+  collections (`Vec<T>`/maps), the IR/ASM backends and browser integration tests.
 
 ## Component Status
 
@@ -526,7 +556,7 @@
 
 ## Verification
 
-Last verified 2026-11-19 for Block A5 with:
+Last verified 2026-11-20 for Block B1 with:
 
 ```sh
 export PATH="/root/.cargo/bin:$PATH"
@@ -538,6 +568,18 @@ python3 tools/sync_examples.py --check
 git diff --check
 ```
 
+- All five checks exited 0. `cargo test --all-targets` reported **404 passed,
+  0 failed** (lib 22, main 6, bindgen 1, checker 147, cli 42, codegen 61,
+  const_values 5, errors 3, header 4, lexer 9, lib-integration 37, modules 12,
+  msrv 1, order 6, parser 29, pretty 19). B1 changes no generated C, header,
+  runtime helper or ABI: qualified names are resolved before monomorphization,
+  so `benchmark/run.py` is not applicable. No ASan execution is claimed in this
+  PRoot container.
+- `LOI_TEST_CLANG=/definitely/not/clang cargo test --test order -- --nocapture`
+  ran all 6 order tests with no failure.
+
+Previously verified 2026-11-19 for Block A5 with the same gate command:
+
 - All five checks exited 0. `cargo test --all-targets` reported **389 passed,
   0 failed** (lib 22, main 6, bindgen 1, checker 147, cli 42, codegen 61,
   const_values 5, errors 3, header 4, lexer 8, lib-integration 37, msrv 1,
@@ -546,7 +588,7 @@ git diff --check
 - `LOI_TEST_CLANG=/definitely/not/clang cargo test --test order -- --nocapture`
   ran all 6 order tests and printed one skip message per test with no failure.
   With clang present, all 6 ran differentially against GCC 15.2.0 (`cc`) and
-  clang 21.1.8. No ASan execution is claimed in this PRoot container.
+  clang 21.1.8.
 - `benchmark/run.py --output /tmp/opencode/bench_{a1_after,a2_after}.json`
   (minimum of 9 runs, pinned CPU 6, GCC 15.2.0, identical checksums) measured
   these Loi/C ratios:
@@ -721,9 +763,9 @@ for f in lib/std.loi lib/math.loi lib/ctype.loi lib/os.loi lib/net.loi; do ./tar
   initializers: brace/designated initializers for shapes and named `static`
   arrays for slice data, with no compound literals.
 - `==`/`!=` are defined for scalars, `bool` and `[u8]` only.
-- Imports are textual inclusion without namespaces or cross-file visibility
-  enforcement. Multi-file builds give sealed flows external linkage so
-  cross-file calls link.
+- Imports bind modules with `module::item` qualified references, and `open`/
+  `sealed` is enforced across module boundaries (§13). Declaration names remain
+  unique per compilation unit; C mangling is still unqualified.
 - I/O intrinsics are limited to `print`, `eprint`, `panic`, numeric/`printf`
   formatting and whole-file / whole-stdin reads and writes. `printf` needs a
   literal format string and rejects dynamic `*` width/precision; user-declared
@@ -776,8 +818,8 @@ for f in lib/std.loi lib/math.loi lib/ctype.loi lib/os.loi lib/net.loi; do ./tar
 Language-level questions are resolved in `development/LOI_SPEC.md` section 5.
 Remaining implementation or secondary choices:
 
-- Enforce cross-file visibility and replace textual imports with a real module
-  and namespace design.
+- Give modules distinct C symbols (module-qualified mangling) so two modules can
+  declare the same name without a duplicate-name error; this changes the ABI.
 - Define structural equality for shapes, choices and non-byte slices, or keep
   the current field-by-field rule permanently; that would let the existing `Eq`
   bound cover more types without changing its spelling. Ordering needs a

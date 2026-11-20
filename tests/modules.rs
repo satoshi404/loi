@@ -1,0 +1,281 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+fn loi() -> &'static str {
+    env!("CARGO_BIN_EXE_loi")
+}
+
+fn test_dir(name: &str) -> PathBuf {
+    let dir =
+        PathBuf::from("/tmp/opencode").join(format!("loi-modules-{}-{name}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("test directory should be creatable");
+    dir
+}
+
+fn write(dir: &Path, name: &str, source: &str) -> PathBuf {
+    let path = dir.join(name);
+    fs::write(&path, source).expect("source should be writable");
+    path
+}
+
+fn run(args: &[&Path]) -> Output {
+    Command::new(loi())
+        .args(args.iter().map(|arg| arg.as_os_str()))
+        .output()
+        .expect("loi should run")
+}
+
+fn stderr(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stderr).to_string()
+}
+
+const UTIL: &str = "open flow answer\n    => i32\n{\n    => 42\n}\n\nsealed flow secret\n    => i32\n{\n    => 7\n}\n";
+
+#[test]
+fn qualified_open_item_from_an_aliased_module_is_callable() {
+    let dir = test_dir("qualified-open");
+    write(&dir, "util.loi", UTIL);
+    let main = write(
+        &dir,
+        "main.loi",
+        "import \"util.loi\" as u\nopen flow main\n    => i32\n{\n    => u::answer()\n}\n",
+    );
+
+    let output = run(&[Path::new("check"), &main]);
+    let _ = fs::remove_dir_all(&dir);
+    assert!(output.status.success(), "check failed: {}", stderr(&output));
+}
+
+#[test]
+fn plain_import_binds_the_file_stem_as_a_module_name() {
+    let dir = test_dir("file-stem");
+    write(&dir, "util.loi", UTIL);
+    let main = write(
+        &dir,
+        "main.loi",
+        "import \"util.loi\"\nopen flow main\n    => i32\n{\n    => util::answer()\n}\n",
+    );
+
+    let output = run(&[Path::new("check"), &main]);
+    let _ = fs::remove_dir_all(&dir);
+    assert!(output.status.success(), "check failed: {}", stderr(&output));
+}
+
+#[test]
+fn qualified_sealed_item_is_rejected() {
+    let dir = test_dir("qualified-sealed");
+    write(&dir, "util.loi", UTIL);
+    let main = write(
+        &dir,
+        "main.loi",
+        "import \"util.loi\" as u\nopen flow main\n    => i32\n{\n    => u::secret()\n}\n",
+    );
+
+    let output = run(&[Path::new("check"), &main]);
+    let text = stderr(&output);
+    let _ = fs::remove_dir_all(&dir);
+    assert!(!output.status.success(), "sealed item was accepted");
+    assert!(text.contains("sealed"), "unexpected diagnostics: {text}");
+    assert!(text.contains("secret"), "unexpected diagnostics: {text}");
+}
+
+#[test]
+fn unqualified_sealed_item_from_another_module_is_rejected() {
+    let dir = test_dir("unqualified-sealed");
+    write(&dir, "util.loi", UTIL);
+    let main = write(
+        &dir,
+        "main.loi",
+        "import \"util.loi\"\nopen flow main\n    => i32\n{\n    => secret()\n}\n",
+    );
+
+    let output = run(&[Path::new("check"), &main]);
+    let text = stderr(&output);
+    let _ = fs::remove_dir_all(&dir);
+    assert!(!output.status.success(), "sealed item was accepted");
+    assert!(text.contains("sealed"), "unexpected diagnostics: {text}");
+}
+
+#[test]
+fn a_module_may_use_its_own_sealed_items() {
+    let dir = test_dir("own-sealed");
+    let main = write(
+        &dir,
+        "main.loi",
+        "sealed flow helper\n    => i32\n{\n    => 9\n}\nopen flow main\n    => i32\n{\n    => helper() + main::helper()\n}\n",
+    );
+
+    let output = run(&[Path::new("check"), &main]);
+    let _ = fs::remove_dir_all(&dir);
+    assert!(output.status.success(), "check failed: {}", stderr(&output));
+}
+
+#[test]
+fn qualified_types_and_constructors_resolve() {
+    let dir = test_dir("qualified-types");
+    write(
+        &dir,
+        "geo.loi",
+        "open shape Point [\n    x: i32\n]\nopen mark Color [ Red, Green ]\n",
+    );
+    let main = write(
+        &dir,
+        "main.loi",
+        "import \"geo.loi\" as g\nopen flow main\n    <- p: g::Point\n    <- c: g::Color\n    => i32\n{\n    q <- g::Point[ x: p.x ]\n    if c == g::Color.Red { => q.x }\n    => 0\n}\n",
+    );
+
+    let output = run(&[Path::new("check"), &main]);
+    let _ = fs::remove_dir_all(&dir);
+    assert!(output.status.success(), "check failed: {}", stderr(&output));
+}
+
+#[test]
+fn unknown_module_is_rejected() {
+    let dir = test_dir("unknown-module");
+    let main = write(
+        &dir,
+        "main.loi",
+        "open flow main\n    => i32\n{\n    => missing::answer()\n}\n",
+    );
+
+    let output = run(&[Path::new("check"), &main]);
+    let text = stderr(&output);
+    let _ = fs::remove_dir_all(&dir);
+    assert!(!output.status.success(), "unknown module was accepted");
+    assert!(
+        text.contains("unknown module 'missing'"),
+        "unexpected diagnostics: {text}"
+    );
+}
+
+#[test]
+fn missing_item_in_a_module_is_rejected() {
+    let dir = test_dir("missing-item");
+    write(&dir, "util.loi", UTIL);
+    let main = write(
+        &dir,
+        "main.loi",
+        "import \"util.loi\" as u\nopen flow main\n    => i32\n{\n    => u::absent()\n}\n",
+    );
+
+    let output = run(&[Path::new("check"), &main]);
+    let text = stderr(&output);
+    let _ = fs::remove_dir_all(&dir);
+    assert!(!output.status.success(), "missing item was accepted");
+    assert!(
+        text.contains("module 'u' has no item 'absent'"),
+        "unexpected diagnostics: {text}"
+    );
+}
+
+#[test]
+fn duplicate_module_aliases_are_rejected() {
+    let dir = test_dir("duplicate-alias");
+    write(&dir, "a.loi", "open flow a\n    => i32\n{\n    => 1\n}\n");
+    write(&dir, "b.loi", "open flow b\n    => i32\n{\n    => 2\n}\n");
+    let main = write(
+        &dir,
+        "main.loi",
+        "import \"a.loi\" as m\nimport \"b.loi\" as m\nopen flow main\n    => i32\n{\n    => m::a()\n}\n",
+    );
+
+    let output = run(&[Path::new("check"), &main]);
+    let text = stderr(&output);
+    let _ = fs::remove_dir_all(&dir);
+    assert!(!output.status.success(), "duplicate alias was accepted");
+    assert!(
+        text.contains("duplicate module alias 'm'"),
+        "unexpected diagnostics: {text}"
+    );
+}
+
+#[test]
+fn import_cycles_are_rejected() {
+    let dir = test_dir("cycle");
+    write(
+        &dir,
+        "a.loi",
+        "import \"b.loi\"\nopen flow a\n    => i32\n{\n    => 1\n}\n",
+    );
+    write(
+        &dir,
+        "b.loi",
+        "import \"a.loi\"\nopen flow b\n    => i32\n{\n    => 2\n}\n",
+    );
+    let main = write(
+        &dir,
+        "main.loi",
+        "import \"a.loi\"\nopen flow main\n    => i32\n{\n    => a() + b()\n}\n",
+    );
+
+    let output = run(&[Path::new("check"), &main]);
+    let text = stderr(&output);
+    let _ = fs::remove_dir_all(&dir);
+    assert!(!output.status.success(), "import cycle was accepted");
+    assert!(
+        text.contains("import cycle"),
+        "unexpected diagnostics: {text}"
+    );
+}
+
+#[test]
+fn diamond_imports_still_deduplicate() {
+    let dir = test_dir("diamond");
+    write(
+        &dir,
+        "leaf.loi",
+        "open flow leaf\n    => i32\n{\n    => 3\n}\n",
+    );
+    write(
+        &dir,
+        "left.loi",
+        "import \"leaf.loi\"\nopen flow left\n    => i32\n{\n    => leaf()\n}\n",
+    );
+    write(
+        &dir,
+        "right.loi",
+        "import \"leaf.loi\"\nopen flow right\n    => i32\n{\n    => leaf()\n}\n",
+    );
+    let main = write(
+        &dir,
+        "main.loi",
+        "import \"left.loi\" as l\nimport \"right.loi\" as r\nopen flow main\n    => i32\n{\n    => l::left() + r::right()\n}\n",
+    );
+
+    let output = run(&[Path::new("check"), &main]);
+    let _ = fs::remove_dir_all(&dir);
+    assert!(output.status.success(), "check failed: {}", stderr(&output));
+}
+
+#[test]
+fn multi_file_build_with_aliases_links_and_runs() {
+    let dir = test_dir("multi-file");
+    write(&dir, "util.loi", UTIL);
+    let first = write(
+        &dir,
+        "first.loi",
+        "import \"util.loi\" as u\nopen flow first\n    => i32\n{\n    => u::answer()\n}\n\nopen flow main\n    => i32\n{\n    => first()\n}\n",
+    );
+    let second = write(
+        &dir,
+        "second.loi",
+        "import \"util.loi\"\nopen flow second\n    => i32\n{\n    => util::answer() + 1\n}\n",
+    );
+    let out = dir.join("program");
+
+    let output = Command::new(loi())
+        .arg("build")
+        .arg(&first)
+        .arg(&second)
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("loi build should run");
+    assert!(output.status.success(), "build failed: {}", stderr(&output));
+
+    let run_output = Command::new(&out).output().expect("program should run");
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(run_output.status.code(), Some(42));
+}

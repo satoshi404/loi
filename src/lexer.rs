@@ -193,12 +193,27 @@ impl Lexer {
 
     fn scan_identifier(&mut self, line: usize, column: usize) {
         let start = self.offset;
-        while let Some(ch) = self.peek() {
-            if ch.is_alphanumeric() || ch == '_' {
-                self.advance();
-            } else {
-                break;
+        loop {
+            while let Some(ch) = self.peek() {
+                if ch.is_alphanumeric() || ch == '_' {
+                    self.advance();
+                } else {
+                    break;
+                }
             }
+            // `module::item` is one identifier token. A trailing or malformed
+            // `::` is left for the operator scanner so the parser reports it.
+            if self.peek() == Some(':')
+                && self.peek_at(1) == Some(':')
+                && self
+                    .peek_at(2)
+                    .is_some_and(|ch| ch.is_alphabetic() || ch == '_')
+            {
+                self.advance();
+                self.advance();
+                continue;
+            }
+            break;
         }
 
         let lexeme: String = self.source[start..self.offset].iter().collect();

@@ -38,21 +38,21 @@ extern flow loi_os_errno
 extern flow loi_os_exit
     <- code: i32
 
-flow os_pid
+open flow os_pid
     => i32
 {
     => loi_os_pid()
 }
 
 /// Seconds since the Unix epoch, or -1 when the platform cannot provide it.
-flow os_unix_time
+open flow os_unix_time
     => i64
 {
     => loi_os_unix_time()
 }
 
 /// Sleep for whole milliseconds. Returns false for a negative duration.
-flow os_sleep
+open flow os_sleep
     <- millis: i32
     => bool
 {
@@ -63,7 +63,7 @@ flow os_sleep
     => true
 }
 
-flow os_has_env
+open flow os_has_env
     <- name: cstr
     => bool
 {
@@ -72,7 +72,7 @@ flow os_has_env
 
 /// Read an integer environment variable, using `fallback` when it is absent,
 /// empty or malformed.
-flow os_env_i32
+open flow os_env_i32
     <- name: cstr
     <- fallback: i32
     => i32
@@ -80,14 +80,14 @@ flow os_env_i32
     => loi_os_env_i32(name, fallback)
 }
 
-flow os_errno
+open flow os_errno
     => i32
 {
     => loi_os_errno()
 }
 
 /// Terminate the process immediately; no Loi cleanup runs.
-flow os_exit
+open flow os_exit
     <- code: i32
 {
     loi_os_exit(code)

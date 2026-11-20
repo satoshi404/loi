@@ -893,7 +893,7 @@ fn two_libraries_can_import_vec_and_slice() {
         &dir,
         "wrapper_a.loi",
         &format!(
-            "import \"{}\"\n\nflow sum_i32\n    <- values: [i32]\n    => i32\n{{\n    mut total: i32 <- 0\n    for i in 0..values.len {{\n        total += values[i]\n    }}\n    => total\n}}\n",
+            "import \"{}\"\n\nopen flow sum_i32\n    <- values: [i32]\n    => i32\n{{\n    mut total: i32 <- 0\n    for i in 0..values.len {{\n        total += values[i]\n    }}\n    => total\n}}\n",
             vec_path.display()
         ),
     );
@@ -901,7 +901,7 @@ fn two_libraries_can_import_vec_and_slice() {
         &dir,
         "wrapper_b.loi",
         &format!(
-            "import \"{}\"\n\nflow count_i32\n    <- values: [i32]\n    => u64\n{{\n    => slice_len<i32>(values)\n}}\n",
+            "import \"{}\"\n\nopen flow count_i32\n    <- values: [i32]\n    => u64\n{{\n    => slice_len<i32>(values)\n}}\n",
             slice_path.display()
         ),
     );
@@ -1314,7 +1314,7 @@ open flow main
         &dir,
         "wrapper_a.loi",
         &format!(
-            "import \"{}\"\n\nflow clean_word\n    <- text: [u8]\n    => [u8]\n{{\n    => str_trim(text)\n}}\n",
+            "import \"{}\"\n\nopen flow clean_word\n    <- text: [u8]\n    => [u8]\n{{\n    => str_trim(text)\n}}\n",
             string_path.display()
         ),
     );
@@ -1322,7 +1322,7 @@ open flow main
         &dir,
         "wrapper_b.loi",
         &format!(
-            "import \"{}\"\n\nflow word_hash\n    <- text: [u8]\n    => u64\n{{\n    => hash_str(text)\n}}\n",
+            "import \"{}\"\n\nopen flow word_hash\n    <- text: [u8]\n    => u64\n{{\n    => hash_str(text)\n}}\n",
             hash_path.display()
         ),
     );
@@ -1396,8 +1396,7 @@ open flow main
     if crc32_bytes("a") != 3904355907 { => 4 }
     if crc32_bytes("hello") != 907060870 { => 5 }
     if crc32_bytes("123456789") != 3421780262 { => 6 }
-    if crc32_nibble(0) != 0 or crc32_nibble(1) != 498536548 { => 7 }
-    if crc32_nibble(15) != 3183342108 { => 8 }
+    if CRC32_TABLE[0] >> 32 != 498536548 or CRC32_TABLE[7] >> 32 != 3183342108 { => 7 }
     if CRC32_TABLE.len != 8 { => 9 }
 
     first <- crc32_update(CRC32_INIT, "1234")
@@ -1545,7 +1544,7 @@ open flow main
         &dir,
         "wrapper_a.loi",
         &format!(
-            "import \"{}\"\n\nflow digest\n    <- data: [u8]\n    => u32\n{{\n    => crc32_bytes(data)\n}}\n",
+            "import \"{}\"\n\nopen flow digest\n    <- data: [u8]\n    => u32\n{{\n    => crc32_bytes(data)\n}}\n",
             crc_path.display()
         ),
     );
@@ -1553,7 +1552,7 @@ open flow main
         &dir,
         "wrapper_b.loi",
         &format!(
-            "import \"{}\"\n\nflow digest_twice\n    <- data: [u8]\n    => u32\n{{\n    => crc32_update(crc32_update(CRC32_INIT, data), data)\n}}\n",
+            "import \"{}\"\n\nopen flow digest_twice\n    <- data: [u8]\n    => u32\n{{\n    => crc32_update(crc32_update(CRC32_INIT, data), data)\n}}\n",
             crc_path.display()
         ),
     );
@@ -1908,7 +1907,7 @@ open flow main
         &dir,
         "wrapper_a.loi",
         &format!(
-            "import \"{}\"\n\nflow int_digest\n    <- values: [i64]\n    => i64\n{{\n    protect {{\n        mut m: IntMap<i64>\n        map_int_new<i64>(-> m)\n        mut i: u64 <- 0\n        while i < values.len {{\n            map_int_set<i64>(<-> m, i, values[i])\n            i += 1\n        }}\n        mut total: i64 <- 0\n        i = 0\n        while i < values.len {{\n            total += map_int_get<i64>(m, i)\n            i += 1\n        }}\n        => total\n    }}\n}}\n",
+            "import \"{}\"\n\nopen flow int_digest\n    <- values: [i64]\n    => i64\n{{\n    protect {{\n        mut m: IntMap<i64>\n        map_int_new<i64>(-> m)\n        mut i: u64 <- 0\n        while i < values.len {{\n            map_int_set<i64>(<-> m, i, values[i])\n            i += 1\n        }}\n        mut total: i64 <- 0\n        i = 0\n        while i < values.len {{\n            total += map_int_get<i64>(m, i)\n            i += 1\n        }}\n        => total\n    }}\n}}\n",
             map_path.display()
         ),
     );
@@ -1916,7 +1915,7 @@ open flow main
         &dir,
         "wrapper_b.loi",
         &format!(
-            "import \"{}\"\n\nflow str_digest\n    <- keys: [u8]\n    => i64\n{{\n    protect {{\n        mut m: StrMap<i64>\n        map_str_new<i64>(-> m)\n        map_str_set<i64>(<-> m, keys, 7)\n        => map_str_get<i64>(m, keys)\n    }}\n}}\n",
+            "import \"{}\"\n\nopen flow str_digest\n    <- keys: [u8]\n    => i64\n{{\n    protect {{\n        mut m: StrMap<i64>\n        map_str_new<i64>(-> m)\n        map_str_set<i64>(<-> m, keys, 7)\n        => map_str_get<i64>(m, keys)\n    }}\n}}\n",
             map_path.display()
         ),
     );
@@ -2167,7 +2166,7 @@ open flow main
         &dir,
         "wrapper_a.loi",
         &format!(
-            "import \"{}\"\n\nflow mixed\n    <- seed: u64\n    => u64\n{{\n    mut rng: Rng <- rng_new(seed)\n    first <- rng_next_u64(<-> rng)\n    second <- rng_next_u64(<-> rng)\n    => first ^ second\n}}\n",
+            "import \"{}\"\n\nopen flow mixed\n    <- seed: u64\n    => u64\n{{\n    mut rng: Rng <- rng_new(seed)\n    first <- rng_next_u64(<-> rng)\n    second <- rng_next_u64(<-> rng)\n    => first ^ second\n}}\n",
             random_path.display()
         ),
     );
@@ -2175,7 +2174,7 @@ open flow main
         &dir,
         "wrapper_b.loi",
         &format!(
-            "import \"{}\"\n\nflow shuffled_first\n    <- seed: u64\n    => i32\n{{\n    mut rng: Rng <- rng_new(seed)\n    mut xs: [i32] <- [i32: 1, 2, 3, 4]\n    rng_shuffle<i32>(<-> rng, <-> xs)\n    => xs[0]\n}}\n",
+            "import \"{}\"\n\nopen flow shuffled_first\n    <- seed: u64\n    => i32\n{{\n    mut rng: Rng <- rng_new(seed)\n    mut xs: [i32] <- [i32: 1, 2, 3, 4]\n    rng_shuffle<i32>(<-> rng, <-> xs)\n    => xs[0]\n}}\n",
             random_path.display()
         ),
     );

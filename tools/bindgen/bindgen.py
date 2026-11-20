@@ -1083,22 +1083,26 @@ class Bindgen:
         lines.append("// `loi build ... --c-source <shim>.c`.")
         lines.append("")
 
+        # Generated declarations are always `open`: bindings live in their own
+        # module and are consumed from the importing program's module. `sealed`
+        # is the default, so without this the module resolver would reject every
+        # cross-module reference to a bound name.
         opaque_names = sorted(self.used_opaque)
         for name in opaque_names:
-            lines.append(f"opaque {name}")
+            lines.append(f"open opaque {name}")
         if opaque_names:
             lines.append("")
 
         for record in self.used_shapes:
             fields = record.shape_fields or []
-            lines.append(f"shape {record.loi_name} [")
+            lines.append(f"open shape {record.loi_name} [")
             for field_name, mapped in fields:
                 lines.append(f"    {field_name}: {mapped.loi}")
             lines.append("]")
             lines.append("")
 
         for enum in self.used_marks:
-            lines.append(f"mark {enum.loi_name} [")
+            lines.append(f"open mark {enum.loi_name} [")
             for variant in enum.mark_variants or []:
                 lines.append(f"    {variant}")
             lines.append("]")
@@ -1106,11 +1110,11 @@ class Bindgen:
 
         if self.constants:
             for name, ty, value in self.constants:
-                lines.append(f"{name}: {ty} <- {value}")
+                lines.append(f"open {name}: {ty} <- {value}")
             lines.append("")
 
         for function in self.bound_functions:
-            header = f"extern flow {function.loi_name}"
+            header = f"open extern flow {function.loi_name}"
             if function.link_name and function.link_name != function.loi_name:
                 header += f" as {function.link_name}"
             lines.append(header)
