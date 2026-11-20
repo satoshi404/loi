@@ -1,0 +1,81 @@
+import "../lib/option.loi"
+import "../lib/result.loi"
+import "../lib/string.loi"
+
+/// Parse a decimal number, reporting the failure as a byte-slice message.
+open flow parse_u64
+    <- digits: [u8]
+    => Result<u64, [u8]>
+{
+    if digits.len == 0 {
+        mut bad: Result<u64, [u8]>
+        result_err<u64, [u8]>("empty number", -> bad)
+        => bad
+    }
+    mut value: u64 <- 0
+    for i in 0..digits.len {
+        byte <- digits[i]
+        if byte < 48 or byte > 57 {
+            mut bad: Result<u64, [u8]>
+            result_err<u64, [u8]>("not a number", -> bad)
+            => bad
+        }
+        value = value * 10 + (byte - 48) as u64
+    }
+    mut ok: Result<u64, [u8]>
+    result_ok<u64, [u8]>(value, -> ok)
+    => ok
+}
+
+/// Read `name=<number>` from a settings line. A missing or malformed setting
+/// becomes an absent `Option<u64>` instead of a panic.
+open flow setting
+    <- line: [u8]
+    <- name: [u8]
+    => Option<u64>
+{
+    start <- str_index_of(line, name)
+    if start < 0 {
+        mut none: Option<u64>
+        option_none<u64>(-> none)
+        => none
+    }
+    from <- (start as u64) + name.len
+    if from >= line.len or line[from] != 61 {
+        mut none: Option<u64>
+        option_none<u64>(-> none)
+        => none
+    }
+    digits <- view(line, from + 1, line.len)
+    parsed <- parse_u64(digits)
+    if result_is_ok<u64, [u8]>(parsed) {
+        mut some: Option<u64>
+        option_some<u64>(result_unwrap<u64, [u8]>(parsed), -> some)
+        => some
+    }
+    mut none: Option<u64>
+    option_none<u64>(-> none)
+    => none
+}
+
+open flow main
+    => i32
+{
+    protect {
+        line: [u8] <- "workers=8"
+        value <- setting(line, "workers")
+        if option_is_some<u64>(value) {
+            print("workers=")
+            print_int(option_unwrap<u64>(value))
+            print("\n")
+        }
+        missing <- setting(line, "port")
+        if option_is_some<u64>(missing) { print("unexpected port\n") }
+        bad <- parse_u64("abc")
+        if result_is_err<u64, [u8]>(bad) {
+            print(result_unwrap_err<u64, [u8]>(bad))
+            print("\n")
+        }
+    }
+    => 0
+}

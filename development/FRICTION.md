@@ -154,6 +154,30 @@ also still unavailable; a future `Eq` implementation would need code generation
 for those types. Language requirement: an `Ord` constraint (and broader
 structural `Eq`) before ordering helpers can be honest about arbitrary `T`.
 
+### Generic sum types cannot be `choice` declarations
+
+Attempted design: a generic `choice Option<T> [ Some: T, None ]` or
+`choice Result<T, E> [ Ok: T, Err: E ]` as the official optional/error types.
+The checker rejects generic choices twice: the parser has no type parameters on
+`choice` declarations, and `valid_choice_payload` in `src/checker.rs` permits
+only scalars, marks and slice-free shapes as payloads. A payload such as `T` or
+`[u8]` is neither.
+
+Exact diagnostic for a slice payload:
+
+```text
+error: choice 'Option' variant 'Some' cannot hold [u8]; payloads must be scalars, marks or slice-free shapes
+```
+
+**Resolved by Block A6 with a documented shape-based representation.**
+`lib/option.loi` and `lib/result.loi` use generic shapes with a `bool` tag and
+typed payload fields, following the same `found`-plus-default pattern as
+`map_*_lookup`. The unselected field is zero-initialized and is only read by
+the library's guarded flows. This keeps the ABI and the closed `choice` rules
+unchanged and lets `T` contain slices, at the cost of no exhaustive pattern
+match: callers test the tag explicitly. A future generic-choice design would
+need parser, monomorphizer and C-union changes and is not planned here.
+
 ## Phase 2 — `lib/string.loi` and `lib/hash.loi`
 
 ### Character literals do not exist

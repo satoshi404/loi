@@ -1,0 +1,81 @@
+//! Success-or-error values written in pure Loi.
+//!
+//! `Result<T, E>` is a generic shape: `ok` selects between `value` and
+//! `error`. As with `Option<T>`, it is a shape rather than a `choice` because
+//! choices are not generic and cannot carry slices. The field that is not
+//! selected is zero-initialized and must not be read directly; use the
+//! `result_*` flows below.
+//!
+//! Import it explicitly:
+//!
+//! ```loi
+//! import "lib/result.loi"
+//! ```
+
+open shape Result<T, E> [
+    ok: bool = true
+    value: T
+    error: E
+]
+
+/// Build a successful result. Cloning `value` needs a caller `protect` when
+/// `T` contains slices.
+open flow result_ok<T: Clone, E>
+    <- value: T
+    -> out: Result<T, E>
+{
+    out.ok = true
+    out.value = clone(value)
+}
+
+/// Build a failed result. Cloning `error` needs a caller `protect` when `E`
+/// contains slices.
+open flow result_err<T, E: Clone>
+    <- error: E
+    -> out: Result<T, E>
+{
+    out.ok = false
+    out.error = clone(error)
+}
+
+open flow result_is_ok<T, E>
+    <- r: Result<T, E>
+    => bool
+{
+    => r.ok
+}
+
+open flow result_is_err<T, E>
+    <- r: Result<T, E>
+    => bool
+{
+    => not r.ok
+}
+
+/// Return the success value or `fallback`, cloning either one.
+open flow result_unwrap_or<T: Clone, E>
+    <- r: Result<T, E>
+    <- fallback: T
+    => T
+{
+    if r.ok { => clone(r.value) }
+    => clone(fallback)
+}
+
+/// Return the success value or abort with a flow-naming message.
+open flow result_unwrap<T: Clone, E>
+    <- r: Result<T, E>
+    => T
+{
+    if not r.ok { panic("result_unwrap: value is an error\n") }
+    => clone(r.value)
+}
+
+/// Return the error or abort with a flow-naming message.
+open flow result_unwrap_err<T, E: Clone>
+    <- r: Result<T, E>
+    => E
+{
+    if r.ok { panic("result_unwrap_err: value is not an error\n") }
+    => clone(r.error)
+}

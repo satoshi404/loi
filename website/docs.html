@@ -952,9 +952,10 @@ flow exchange
           <p>Every library file is imported explicitly, for example
             <code>import "lib/std.loi"</code>. Names are prefixed by module
             (<code>math_*</code>, <code>ctype_*</code>, <code>vec_*</code>,
-            <code>slice_*</code>, <code>str_*</code>, <code>hash_*</code>,
-            <code>crc32_*</code>, <code>map_*</code>, <code>rng_*</code>,
-            <code>os_*</code>, <code>net_*</code>) because declarations are still
+            <code>slice_*</code>, <code>str_*</code>, <code>option_*</code>,
+            <code>result_*</code>, <code>hash_*</code>, <code>crc32_*</code>,
+            <code>map_*</code>, <code>rng_*</code>, <code>os_*</code>,
+            <code>net_*</code>) because declarations are still
             unique across a compilation unit. The prefix is a naming convention,
             not a namespace: you can also import under an alias and use
             <code>m::math_sum</code>, but two files cannot both declare the same
@@ -995,6 +996,27 @@ flow exchange
                   <code>ctype_count_digits</code>,
                   <code>ctype_equals_ignore_case</code></td>
                 <td>no</td>
+              </tr>
+              <tr>
+                <td><code>lib/option.loi</code></td>
+                <td><code>Option&lt;T&gt;</code>, <code>option_none&lt;T&gt;</code>,
+                  <code>option_some&lt;T&gt;</code>,
+                  <code>option_is_some&lt;T&gt;</code>,
+                  <code>option_is_none&lt;T&gt;</code>,
+                  <code>option_get_or&lt;T&gt;</code>,
+                  <code>option_unwrap&lt;T&gt;</code></td>
+                <td>no; cloning slice payloads needs <code>protect</code></td>
+              </tr>
+              <tr>
+                <td><code>lib/result.loi</code></td>
+                <td><code>Result&lt;T, E&gt;</code>, <code>result_ok&lt;T, E&gt;</code>,
+                  <code>result_err&lt;T, E&gt;</code>,
+                  <code>result_is_ok&lt;T, E&gt;</code>,
+                  <code>result_is_err&lt;T, E&gt;</code>,
+                  <code>result_unwrap_or&lt;T, E&gt;</code>,
+                  <code>result_unwrap&lt;T, E&gt;</code>,
+                  <code>result_unwrap_err&lt;T, E&gt;</code></td>
+                <td>no; cloning slice payloads needs <code>protect</code></td>
               </tr>
               <tr>
                 <td><code>lib/vec.loi</code></td>
@@ -1116,6 +1138,20 @@ flow exchange
             marks and <code>[u8]</code>. <code>slice_view&lt;T&gt;</code> and
             <code>vec_view&lt;T&gt;</code> return zero-copy borrowed subslices;
             <code>vec_as_slice&lt;T&gt;</code> still allocates and copies.
+            <code>lib/option.loi</code> and <code>lib/result.loi</code> provide the
+            official optional and error-carrying values. <code>Option&lt;T&gt;</code>
+            is a shape with a <code>present: bool</code> tag and a <code>value: T</code>
+            field; <code>Result&lt;T, E&gt;</code> adds <code>ok: bool</code> and an
+            <code>error: E</code> field. They are shapes, not <code>choice</code>
+            values: choices are not generic and their payloads may not contain
+            slices. The field that is not selected is zero-initialized and must be
+            read only through <code>option_get_or</code>,
+            <code>option_unwrap</code>, <code>result_unwrap_or</code>,
+            <code>result_unwrap</code> or <code>result_unwrap_err</code>; the last
+            three abort with a flow-naming message. Constructors clone their
+            input, so a <code>protect</code> region is required when <code>T</code>
+            or <code>E</code> contains slices. See
+            <a href="examples/options_results.loi">examples/options_results.loi</a>.
             Ordering flows still accept numeric <code>T</code> only because Loi has no
             <code>Ord</code> bound. The arena
             keeps older growth blocks until <code>protect</code> ends, so
@@ -1515,6 +1551,10 @@ node website/server.mjs
             <a class="feature-card" href="examples/views.loi">
               <h3>Slice views</h3>
               <p>Zero-copy subslices, borrowed returns and lexical loans enforced by the checker.</p>
+            </a>
+            <a class="feature-card" href="examples/options_results.loi">
+              <h3>Options and results</h3>
+              <p>Official <code>Option&lt;T&gt;</code> and <code>Result&lt;T, E&gt;</code> in a settings parser: explicit presence checks, fallbacks and typed error messages.</p>
             </a>
             <a class="feature-card" href="examples/iteration.loi">
               <h3>Iteration</h3>

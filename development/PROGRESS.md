@@ -4,7 +4,35 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-20, Block A3 — real views):** `view(xs, start, end)` is
+- **Current task (2026-11-20, Block A6 — official `Option<T>` and `Result<T, E>`):**
+  `lib/option.loi` and `lib/result.loi` provide optional and error-carrying values
+  as generic shapes with an explicit `bool` tag: `Option<T>` has `present` and
+  `value`, `Result<T, E>` has `ok`, `value` and `error`. They are shapes, not
+  generic `choice` declarations, because choices are not generic and forbid
+  slice payloads. The unselected field is zero-initialized by the `->` out-param
+  and is only read through `option_get_or`, `option_unwrap`, `result_unwrap_or`,
+  `result_unwrap` or `result_unwrap_err`; the three `unwrap` flows abort with a
+  flow-naming message. Constructors and readers clone their `<-` inputs, so a
+  caller needs `protect` when `T` or `E` contains slices. No compiler, parser or
+  C-backend change was needed. Rules are in `LOI_SPEC.md` §4.8, canonical names
+  in `SINTAXE.md` §14, rationale in `DECISIONS.md` and `FRICTION.md`, public docs
+  in `website/docs.html`; runnable example: `examples/options_results.loi`
+  (`workers=8`, `not a number`).
+- **Verification for Block A6:** before implementation, the 6 new tests in
+  `tests/lib.rs` failed with
+  `loi: /root/loi/lib/option.loi: No such file or directory (os error 2)`.
+  Added 5 runtime tests (presence/fallback, independent slice payloads,
+  `option_unwrap` on an absent value, ok/error reporting, `result_unwrap` on an
+  error), 1 checker test for a slice payload outside `protect`, and extended
+  `every_library_source_checks_cleanly` and `all_libraries_can_be_imported_together`
+  to include both modules. Both libraries were checked directly with
+  `loi check`; the example was checked, built and run. Final gate command:
+  `export PATH="/root/.cargo/bin:$PATH"; export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets && python3 tools/sync_examples.py --check && git diff --check`.
+  All five checks exited 0; `cargo test --all-targets` reported **448 passed,
+  0 failed** across 19 suites (the A3 total of 442 plus 6 new tests). No C code,
+  ABI or generated header changed, so `benchmark/run.py` is not applicable.
+  ASan execution is still not claimed in this PRoot container.
+- **Previous task (2026-11-20, Block A3 — real views):** `view(xs, start, end)` is
   a zero-copy subslice intrinsic. The checker computes per-flow view summaries
   to a fixpoint: a borrowed slice may escape through `=>`, a composite result
   containing a slice, or a `->` parameter whose type contains a slice. Loans
@@ -946,9 +974,11 @@ Remaining implementation or secondary choices:
    their element requirements; equality search is no longer numeric-only.
    Ordering still needs a future `Ord` constraint.
 5. Blocks A, B1, B2 and B3 are done: generics/ownership, real modules, `guard`
-   resources and stdlib `File`/`TcpStream` handles. Next: revisit
-   binding-generator gaps and the opt-in LLVM question; keep the C11 backend as
-   the production oracle.
-6. Keep the docs in sync: `SINTAXE.md` is canonical, `website/docs.html`
+   resources and stdlib `File`/`TcpStream` handles.
+6. Block A6: done — official `Option<T>` and `Result<T, E>` are pure-Loi generic
+   shapes with guarded readers; generic choices remain out of scope. Next:
+   revisit binding-generator gaps and the opt-in LLVM question; keep the C11
+   backend as the production oracle.
+7. Keep the docs in sync: `SINTAXE.md` is canonical, `website/docs.html`
    mirrors it, and `python3 tools/sync_examples.py --check` guards the example
    mirror.

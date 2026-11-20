@@ -404,7 +404,26 @@ These rules were added to unblock real programs and are implemented and tested. 
 **Builtin intrinsics and standard library**
 
 - Intrinsics: `print(<- [u8])`, `eprint(<- [u8])`, `panic(<- [u8])`, `print_int(<- integer)`, `print_float(<- f64)`, `printf(<- [u8], ...)` (literal format string plus typed varargs), `sqrt/floor/ceil/fabs(<- f64) => f64`, `pow/fmod(<- f64, <- f64) => f64` and `len([T]) => u64`.
-- The library is a set of explicitly imported files: `lib/std.loi` (integer/float and byte-string helpers), `lib/math.loi` (generic and `comptime` math), `lib/ctype.loi` (ASCII byte helpers), `lib/os.loi` and `lib/net.loi` (thin POSIX bindings with C shims). The first three are pure Loi and use only the features above; the last two use `extern flow` declarations and must be linked with their shims.
+- The library is a set of explicitly imported files: `lib/std.loi` (integer/float and byte-string helpers), `lib/math.loi` (generic and `comptime` math), `lib/ctype.loi` (ASCII byte helpers), `lib/option.loi` and `lib/result.loi` (optional and error-carrying values), `lib/os.loi` and `lib/net.loi` (thin POSIX bindings with C shims). The pure files use only the features above; the last two use `extern flow` declarations and must be linked with their shims.
+
+**Optional and error values (Block A6).**
+
+- `Option<T>` is `shape Option<T> [ present: bool = false, value: T ]` and
+  `Result<T, E>` is `shape Result<T, E> [ ok: bool = true, value: T, error: E ]`,
+  both declared in the standard library. They are shapes because Loi choices
+  are not generic and their payloads may not contain slices.
+- A `->` out-parameter zero-initializes fields with no default, so the field
+  that is not selected is safe to hold as bytes but is not a meaningful value.
+  Read it only through the library flows: `option_get_or`, `option_unwrap`,
+  `result_unwrap_or`, `result_unwrap` and `result_unwrap_err`. The three
+  `unwrap` flows abort with a flow-naming message when the value is absent or
+  an error is present.
+- Constructors and readers take `<-` inputs and clone them, so a caller needs
+  an active `protect` region when `T` or `E` contains slices. With scalar
+  payloads the flows are pure and need no region.
+- There is no `nil` and no implicit optional unwrapping; presence is always an
+  explicit `bool` checked by `option_is_some` / `option_is_none` or
+  `result_is_ok` / `result_is_err`.
 
 ### 4.9 Foreign C interop
 

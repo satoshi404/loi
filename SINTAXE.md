@@ -923,8 +923,9 @@ print("\n")
 Every library file is imported explicitly with the canonical `import` form.
 Each file is a module (§13); items may be named unqualified or as
 `module::item`. Library names keep their established prefixes (`math_*`,
-`ctype_*`, `vec_*`, `slice_*`, `str_*`, `hash_*`, `crc32_*`, `map_*`, `rng_*`,
-`os_*`, `net_*`) because declaration names remain unique across a compilation
+`ctype_*`, `vec_*`, `slice_*`, `str_*`, `option_*`, `result_*`, `hash_*`,
+`crc32_*`, `map_*`, `rng_*`, `os_*`, `net_*`) because declaration names remain
+unique across a compilation
 unit.
 
 | File | Helpers | Needs a shim? |
@@ -932,6 +933,8 @@ unit.
 | `lib/std.loi` | `min_i32`, `max_i32`, `abs_i32`, `clamp_i32`, `min_f64`, `max_f64`, `abs_f64`, `clamp_f64`, `str_len`, `str_eq`, `str_starts_with`, `str_find` | no |
 | `lib/math.loi` | `MATH_PI`, `MATH_E`, `MATH_TAU`, `math_factorial`, generic `math_min<T>` / `math_max<T>` / `math_clamp<T>` / `math_sum<T>`, `math_lerp`, `math_smoothstep`, `math_deg_to_rad`, `math_rad_to_deg`, `math_hypot`, `math_near`, `math_sign_i32`, `math_gcd_u64`, `math_pow_u64`, `math_dot_f64` | no |
 | `lib/ctype.loi` | `ctype_is_digit`, `ctype_is_upper`, `ctype_is_lower`, `ctype_is_alpha`, `ctype_is_alnum`, `ctype_is_hex_digit`, `ctype_is_space`, `ctype_is_ascii`, `ctype_to_lower`, `ctype_to_upper`, `ctype_hex_value`, `ctype_parse_u64`, `ctype_count_digits`, `ctype_equals_ignore_case` | no |
+| `lib/option.loi` | `Option<T>`, `option_none<T>`, `option_some<T>`, `option_is_some<T>`, `option_is_none<T>`, `option_get_or<T>`, `option_unwrap<T>` | no; cloning slice payloads needs `protect` |
+| `lib/result.loi` | `Result<T, E>`, `result_ok<T, E>`, `result_err<T, E>`, `result_is_ok<T, E>`, `result_is_err<T, E>`, `result_unwrap_or<T, E>`, `result_unwrap<T, E>`, `result_unwrap_err<T, E>` | no; cloning slice payloads needs `protect` |
 | `lib/vec.loi` | `Vec<T>`, `vec_new<T>`, `vec_len<T>`, `vec_capacity<T>`, `vec_is_empty<T>`, `vec_get<T>`, `vec_set<T>`, `vec_push<T>`, `vec_pop<T>`, `vec_find<T>`, `vec_from_slice<T>`, `vec_view<T>`, `vec_as_slice<T>`, `vec_reserve<T>`, `vec_clear<T>`, `vec_reverse<T>`, `vec_sort<T>`, `vec_binary_search<T>` | no; `vec_new<T>` needs no `protect`, growing flows do |
 | `lib/slice.loi` | `slice_view<T>`, `slice_len<T>`, `slice_is_empty<T>`, `slice_get<T>`, `slice_first<T>`, `slice_last<T>`, `slice_find<T>`, `slice_equals_u8`, `slice_clone<T>`, `slice_copy<T>`, `slice_reverse<T>` | no; allocators need `protect` |
 | `lib/string.loi` | `STRING_MAX_LEN`, `str_is_ascii_space`, `str_trim`, `str_concat`, `str_reverse`, `str_repeat`, `str_count`, `str_index_of`, `str_contains` | no; owned results need `protect` |
@@ -947,6 +950,15 @@ flows and a `comptime flow` for factorials. Documented library flows and their
 shapes are `open` so generated headers can expose them; internal helpers stay
 `sealed`. An exported allocator still needs a caller's `protect` region — Loi
 callers are checked, and foreign callers follow the same contract.
+`lib/option.loi` and `lib/result.loi` provide the official optional and
+error-carrying values. `Option<T>` is a shape with `present: bool` and a `value: T`
+field; `Result<T, E>` adds `ok: bool` and an `error: E` field. They are shapes,
+not `choice` values: choices are not generic and their payloads may not contain
+slices. The unselected field is zero-initialized and must be read only through
+`option_get_or`, `option_unwrap`, `result_unwrap_or`, `result_unwrap` or
+`result_unwrap_err`; the last three abort with a flow-naming message. The
+constructors clone their input, so a `protect` region is required when `T` or
+`E` contains slices. See `examples/options_results.loi`.
 `lib/vec.loi` and `lib/slice.loi` are pure Loi; `Vec<T>` stores cloned values,
 so `clone<T>` must be available — including recursive deep clones for `T` that
 contain slices. Ordering/search flows accept numeric `T` only. The arena keeps
@@ -1248,5 +1260,6 @@ Reference programs:
 - `examples/marks.loi` — finite tag sets, equality and state transitions.
 - `examples/choices.loi` — tagged payloads, `is` tests and checked reads.
 - `examples/views.loi` — zero-copy slice views and their lexical loans.
+- `examples/options_results.loi` — official `Option<T>` and `Result<T, E>` in a settings parser.
 - `examples/systems.loi` — bitwise flags, shifts and file/stdin I/O.
 - `lib/std.loi` — standard library written in canonical Loi.

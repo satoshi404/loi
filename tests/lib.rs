@@ -261,7 +261,15 @@ fn assert_runtime_error(name: &str, imports: &[&str], body: &str, stderr: &str) 
 fn every_library_source_checks_cleanly() {
     // Allocator-backed libraries are checked through the programs below: the
     // checker only accepts their `alloc` calls when a caller uses `protect`.
-    for name in ["std.loi", "math.loi", "ctype.loi", "os.loi", "net.loi"] {
+    for name in [
+        "std.loi",
+        "math.loi",
+        "ctype.loi",
+        "option.loi",
+        "result.loi",
+        "os.loi",
+        "net.loi",
+    ] {
         let path = repo_root().join("lib").join(name);
         let output = check(&path);
         assert!(
@@ -2274,6 +2282,8 @@ fn all_libraries_can_be_imported_together() {
             "std.loi",
             "math.loi",
             "ctype.loi",
+            "option.loi",
+            "result.loi",
             "vec.loi",
             "slice.loi",
             "string.loi",
@@ -2406,4 +2416,148 @@ open flow main
         assert!(text.contains(needle), "header missing {needle:?}");
     }
     let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn option_library_reports_presence_and_fallback() {
+    assert_ok(
+        "option-basic",
+        &["option.loi"],
+        r#"
+open flow main
+    => i32
+{
+    protect {
+        mut some: Option<i32>
+        option_some<i32>(7, -> some)
+        mut none: Option<i32>
+        option_none<i32>(-> none)
+        print_int(option_get_or<i32>(some, -1))
+        print("\n")
+        print_int(option_get_or<i32>(none, -1))
+        print("\n")
+        if option_is_some<i32>(some) { print("some\n") }
+        if option_is_none<i32>(none) { print("none\n") }
+    }
+    => 0
+}
+"#,
+        "7\n-1\nsome\nnone\n",
+    );
+}
+
+#[test]
+fn option_library_keeps_slice_payloads_independent() {
+    assert_ok(
+        "option-slices",
+        &["option.loi"],
+        r#"
+open flow main
+    => i32
+{
+    protect {
+        mut data: [u8] <- [u8: 1, 2, 3]
+        mut held: Option<[u8]>
+        option_some<[u8]>(data, -> held)
+        data[0] = 9
+        payload <- option_unwrap<[u8]>(held)
+        print_int(payload[0])
+        print_int(data[0])
+        print("\n")
+    }
+    => 0
+}
+"#,
+        "19\n",
+    );
+}
+
+#[test]
+fn option_unwrap_rejects_an_absent_value() {
+    assert_runtime_error(
+        "option-unwrap-none",
+        &["option.loi"],
+        r#"
+open flow main
+{
+    protect {
+        mut none: Option<i32>
+        option_none<i32>(-> none)
+        print_int(option_unwrap<i32>(none))
+    }
+}
+"#,
+        "option_unwrap: no value\n",
+    );
+}
+
+#[test]
+fn option_some_with_a_slice_payload_requires_protect() {
+    let dir = test_dir("option-no-protect");
+    let program = write_program(
+        &dir,
+        &["option.loi"],
+        r#"
+open flow main {
+    data: [u8] <- "abc"
+    mut held: Option<[u8]>
+    option_some<[u8]>(data, -> held)
+}
+"#,
+    );
+    let output = check(&program);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("can allocate outside a 'protect' block"),
+        "{stderr}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn result_library_reports_ok_and_error() {
+    assert_ok(
+        "result-basic",
+        &["result.loi"],
+        r#"
+open flow main
+    => i32
+{
+    protect {
+        mut ok: Result<i32, [u8]>
+        result_ok<i32, [u8]>(42, -> ok)
+        mut bad: Result<i32, [u8]>
+        result_err<i32, [u8]>("bad", -> bad)
+        print_int(result_unwrap<i32, [u8]>(ok))
+        print("\n")
+        print_int(result_unwrap_or<i32, [u8]>(bad, -1))
+        print("\n")
+        if result_is_ok<i32, [u8]>(ok) { print("ok\n") }
+        if result_is_err<i32, [u8]>(bad) { print("err\n") }
+    }
+    => 0
+}
+"#,
+        "42\n-1\nok\nerr\n",
+    );
+}
+
+#[test]
+fn result_unwrap_rejects_an_error() {
+    assert_runtime_error(
+        "result-unwrap-err",
+        &["result.loi"],
+        r#"
+open flow main
+{
+    protect {
+        mut bad: Result<i32, [u8]>
+        result_err<i32, [u8]>("bad", -> bad)
+        print_int(result_unwrap<i32, [u8]>(bad))
+    }
+}
+"#,
+        "result_unwrap: value is an error\n",
+    );
 }
