@@ -132,8 +132,9 @@ if c != Color.Red { ... }
   trailing comma is optional. A bare variant name is not a value.
 - Visibility follows the usual rule: `open mark ...` exports it, the default is
   `sealed`, and `sealed mark ...` is allowed for emphasis.
-- Marks are scalar-like values. `==` and `!=` are defined only between two
-  values of the **same** mark; ordering and arithmetic are not.
+- Marks are scalar-like values. `==`, `!=` and the ordering operators are
+  defined only between two values of the **same** mark; variants compare in
+  declaration order. Arithmetic is not defined for marks.
 - A mark may be stored in a flow parameter, a shape field or a `choice` payload.
   It copies like a scalar.
 
@@ -366,9 +367,9 @@ index <- find<i32>([i32: 1, 2], 2)
 ```
 
 - A type parameter may list constraints after a colon: `T: Clone`,
-  `T: Clone + Eq`, `T: Clone + Copy + Eq`. Separate several parameters with
+  `T: Clone + Eq`, `T: Clone + Copy + Ord`. Separate several parameters with
   commas: `find<T: Eq, U>`. Bounds apply to shapes and flows alike.
-- `Clone`, `Copy` and `Eq` are the only accepted constraint names in this
+- `Clone`, `Copy`, `Eq` and `Ord` are the only accepted constraint names in this
   version. They are ordinary identifiers recognized only in bound position,
   not new keywords; any other name is a parse error naming the unknown
   constraint.
@@ -380,7 +381,9 @@ index <- find<i32>([i32: 1, 2], 2)
 - Bounds are documentation and validation only: they do not change mangled
   names, generated C or the ABI. `Clone` is satisfied by every Loi type,
   but cloning a value with slices still allocates and needs `protect`.
-- Ordering remains numeric-only; there is no `Ord` constraint in this version.
+- `Ord` guarantees `<`, `<=`, `>` and `>=` for the instantiated type;
+  `vec_sort<T>` and `vec_binary_search<T>` declare it. Opaque handles and
+  callbacks have no order.
 
 ### 5.5 `comptime`
 
@@ -516,9 +519,15 @@ break
 - `for <-> x in xs` mutably aliases each element in turn.
 - Conditions are `bool`; there is no truthiness.
 - `and`, `or`, `not` are the logical operators. `&&`, `||`, `!` are invalid.
-- Equality `==` / `!=` works for scalars, `bool`, values of the same `mark`,
-  and `[u8]` (byte-wise). Shapes, choices and other slices must be compared by
-  testing fields, variants and payloads explicitly.
+- Equality `==` / `!=` is structural: numbers, `bool`, values of the same
+  `mark`, `cstr`, opaque handles, shapes, choices and slices whose elements
+  support equality. Shapes compare fields in declaration order, choices
+  compare the active variant before its payload, and slices compare length and
+  then elements. Operands must have the same type, except that numeric
+  operands of different widths coerce to their common type.
+- Ordering `<`, `<=`, `>` and `>=` follows the same lexicographic rule for
+  numbers, `bool`, marks, `cstr`, shapes, choices and slices. Opaque handles
+  and callbacks are not orderable; callbacks cannot be compared at all.
 
 ---
 
@@ -558,6 +567,8 @@ xs.len         // u64
   explicit way to wrap a value.
 - `value is Name.Variant` tests a `choice` tag and yields `bool`. Its right
   operand is variant syntax, not a general expression.
+- `==`, `!=`, `<`, `<=`, `>` and `>=` compare structurally; the full rule is
+  in §9.
 - `as` is the only cast form. No `(T)x`.
 - Precedence, from lowest to highest:
   `or` → `and` → comparisons (including `is`) → `|` → `^` → `&` → shifts → `+` `-` →
@@ -966,8 +977,10 @@ constructors clone their input, so a `protect` region is required when `T` or
 `E` contains slices. See `examples/options_results.loi`.
 `lib/vec.loi` and `lib/slice.loi` are pure Loi; `Vec<T>` stores cloned values,
 so `clone<T>` must be available — including recursive deep clones for `T` that
-contain slices. Ordering/search flows accept numeric `T` only. The arena keeps
-older growth blocks until `protect` ends, so
+contain slices. Search flows declare `T: Eq` and ordering flows such as
+`vec_sort<T>` declare `T: Clone + Ord`, so both work with whole composite
+values; see `examples/ordering.loi`. The arena keeps older growth blocks until
+`protect` ends, so
 pre-size with `vec_reserve<T>` when the final length is known to avoid repeated
 growth and its peak memory. `lib/string.loi` returns owned `[u8]` values, so
 its transforming flows need the caller's `protect`; its queries do not.

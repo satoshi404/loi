@@ -143,8 +143,13 @@ pub enum TypeBound {
     /// The type may be copied implicitly (no `give`/`clone` needed): numbers,
     /// bool, marks, opaque handles and `cstr`.
     Copy,
-    /// The type supports `==` and `!=`: numbers, bool, marks and `[u8]`.
+    /// The type supports `==` and `!=`: numbers, bool, marks, `cstr`, opaque
+    /// handles, shapes, choices and slices whose elements support `Eq`.
     Eq,
+    /// The type supports `<`, `<=`, `>` and `>=`: numbers, bool, marks, `cstr`,
+    /// shapes, choices and slices whose elements support `Ord`. Opaque handles
+    /// and callbacks have no meaningful order.
+    Ord,
 }
 
 impl std::fmt::Display for TypeBound {
@@ -153,6 +158,7 @@ impl std::fmt::Display for TypeBound {
             Self::Clone => write!(f, "Clone"),
             Self::Copy => write!(f, "Copy"),
             Self::Eq => write!(f, "Eq"),
+            Self::Ord => write!(f, "Ord"),
         }
     }
 }

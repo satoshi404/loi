@@ -8,8 +8,8 @@
 //!
 //! Imports are textual, so names are prefixed (`math_*`, `MATH_*`) to avoid
 //! clashes with user code and with the other library files. Generic helpers
-//! declare `T: Copy` because they pass `T` by value; ordering and arithmetic
-//! still require numeric `T` (Loi has no `Ord` constraint).
+//! declare `T: Copy` because they pass `T` by value; arithmetic still requires
+//! numeric `T` even though ordering also has an `Ord` bound.
 
 open MATH_PI: f64 <- 3.141592653589793
 open MATH_E: f64 <- 2.718281828459045

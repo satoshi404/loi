@@ -225,8 +225,9 @@ if c == Color.Green and r is Result.Ok {
           </div>
 
           <p>
-            Marks copy like scalars and compare with <code>==</code> / <code>!=</code> only
-            against the same mark. Choice constructors require exactly one payload argument.
+            Marks copy like scalars and compare with <code>==</code> / <code>!=</code> and the
+            ordering operators only against the same mark, in declaration order. Choice
+            constructors require exactly one payload argument.
             <code>value is Name.Variant</code> tests the active variant; <code>value.Variant</code>
             reads its payload and aborts with the declaration, variant and source position if
             the wrong variant is active. Payloads may be numeric scalars, <code>bool</code>,
@@ -284,8 +285,8 @@ flow main
 
           <h4>Constraints on type parameters</h4>
           <p>
-            A type parameter may list bounds after a colon. The three accepted constraints are
-            <code>Clone</code>, <code>Copy</code> and <code>Eq</code>; combine them with
+            A type parameter may list bounds after a colon. The four accepted constraints are
+            <code>Clone</code>, <code>Copy</code>, <code>Eq</code> and <code>Ord</code>; combine them with
             <code>+</code> and separate several parameters with commas:
           </p>
           <div class="doc-code">
@@ -319,18 +320,20 @@ flow find&lt;T: Clone + Eq&gt;
             deep clone allocates in the active <code>protect</code> region. <code>Copy</code> is
             satisfied by numbers, <code>bool</code>, marks, <code>opaque</code> handles and
             <code>cstr</code>, the types the checker copies implicitly. <code>Eq</code> is
-            satisfied by numbers, <code>bool</code>, marks and <code>[u8]</code>, the types that
-            support <code>==</code> and <code>!=</code>. For example, <code>vec_find&lt;T&gt;</code>
-            and <code>slice_find&lt;T&gt;</code> now declare <code>T: Eq</code>, so equality search
-            works on booleans and marks as well as numbers.
+            satisfied by numbers, <code>bool</code>, marks, <code>cstr</code>, opaque handles,
+            shapes, choices and slices whose parts support equality. <code>Ord</code> covers
+            the same types except opaque handles and callbacks, and guarantees the ordering
+            operators. For example, <code>vec_find&lt;T&gt;</code> declares <code>T: Eq</code>
+            and <code>vec_sort&lt;T&gt;</code> declares <code>T: Clone + Ord</code>, so both
+            work on whole composite values; see <code>examples/ordering.loi</code>.
           </p>
           <p>
             Bounds are checked when a template is instantiated with concrete type arguments; an
             error points at the call or type use and shows the source spelling, such as
             <code>Vec&lt;i32&gt;</code>. Unknown constraint names are parse errors. Bounds do not
-            change generated names, C code or the ABI. Ordering is still numeric-only: there is no
-            <code>Ord</code> constraint, so helpers such as <code>math_min&lt;T&gt;</code> and
-            <code>vec_sort&lt;T&gt;</code> keep their numeric restriction.
+            change generated names, C code or the ABI. Arithmetic helpers such as
+            <code>math_min&lt;T&gt;</code> still require numeric <code>T</code> because they
+            compute, not because ordering is unavailable.
           </p>
           <p>
             A template that is never instantiated is still checked once with <code>i32</code>
@@ -457,9 +460,13 @@ count &lt;- total as i32         // numeric cast with `as`</code></pre>
             <code>&amp;</code>, shifts, additive, multiplicative, casts, unary.
           </p>
           <p>
-            <code>==</code> and <code>!=</code> are defined for scalar numeric types, <code>bool</code>,
-            values of the same <code>mark</code> and <code>[u8]</code>. Byte slices compare
-            structurally. Other shapes and slices must be compared field by field.
+            <code>==</code> and <code>!=</code> are structural: numbers, <code>bool</code>, values
+            of the same <code>mark</code>, <code>cstr</code>, opaque handles, shapes, choices and
+            slices whose elements support equality. Shapes compare fields in declaration order,
+            choices compare the active variant before its payload, and slices compare length and
+            then elements. <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code> and
+            <code>&gt;=</code> use the same lexicographic rule; opaque handles and callbacks have
+            no order, and callbacks cannot be compared at all.
           </p>
           <p>
             <strong>Integer arithmetic is checked.</strong> Signed <code>+</code>, <code>-</code>,
@@ -1138,8 +1145,10 @@ flow exchange
             flows declare <code>T: Clone</code> — including recursive deep
             clones for <code>T</code> that contain slices;
             <code>vec_find&lt;T&gt;</code> and <code>slice_find&lt;T&gt;</code>
-            declare <code>T: Eq</code>, so equality search also works on bool,
-            marks and <code>[u8]</code>. <code>slice_view&lt;T&gt;</code> and
+            declare <code>T: Eq</code>, so equality search works on whole shapes, choices,
+            marks and slices; <code>vec_sort&lt;T&gt;</code> and
+            <code>vec_binary_search&lt;T&gt;</code> declare <code>T: Clone + Ord</code>.
+            <code>slice_view&lt;T&gt;</code> and
             <code>vec_view&lt;T&gt;</code> return zero-copy borrowed subslices;
             <code>vec_as_slice&lt;T&gt;</code> still allocates and copies.
             <code>lib/option.loi</code> and <code>lib/result.loi</code> provide the

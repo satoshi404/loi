@@ -23,7 +23,7 @@ use std::path::Path;
 use crate::ast::*;
 use crate::const_eval::ConstValue;
 use crate::ir::*;
-use crate::types::{self, Ty};
+use crate::types::{self, ComparisonEnv, Ty};
 
 /// A failure that prevents C emission.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -686,6 +686,11 @@ struct Generator<'a> {
     /// it reaches, so a clone never aliases its source.
     clone_helpers: String,
     clone_helpers_emitted: HashSet<String>,
+    /// Structural `==`, `<` helpers emitted on demand for shapes, choices,
+    /// slices and handles. Each helper returns a C `int`: equality helpers
+    /// return 0/1, ordering helpers -1/0/1.
+    cmp_helpers: String,
+    cmp_helpers_emitted: HashSet<String>,
     out: String,
     depth: usize,
     temp_counter: usize,
@@ -699,6 +704,26 @@ struct Generator<'a> {
     current_function: String,
     source_map_path: Option<&'a Path>,
     source_map_entries: Vec<SourceMapEntry>,
+}
+
+impl ComparisonEnv for Generator<'_> {
+    fn shape_fields(&self, name: &str) -> Option<Vec<Ty>> {
+        self.interfaces.get(name).map(|decl| {
+            decl.fields
+                .iter()
+                .map(|field| self.resolve_type(&field.ty))
+                .collect()
+        })
+    }
+
+    fn choice_payloads(&self, name: &str) -> Option<Vec<Ty>> {
+        self.choices.get(name).map(|decl| {
+            decl.variants
+                .iter()
+                .map(|variant| self.resolve_type(&variant.ty))
+                .collect()
+        })
+    }
 }
 
 impl<'a> Generator<'a> {
@@ -819,6 +844,8 @@ impl<'a> Generator<'a> {
             function_order,
             clone_helpers: String::new(),
             clone_helpers_emitted: HashSet::new(),
+            cmp_helpers: String::new(),
+            cmp_helpers_emitted: HashSet::new(),
             out: String::new(),
             depth: 0,
             temp_counter: 0,
@@ -863,7 +890,8 @@ impl<'a> Generator<'a> {
         self.emit_globals();
         self.emit_prototypes();
         self.emit_functions();
-        let helpers = std::mem::take(&mut self.clone_helpers);
+        let mut helpers = std::mem::take(&mut self.clone_helpers);
+        helpers.push_str(&std::mem::take(&mut self.cmp_helpers));
         self.out.insert_str(helpers_at, &helpers);
 
         if let Some(map_path) = self.source_map_path {
@@ -1469,9 +1497,9 @@ impl<'a> Generator<'a> {
         }
     }
 
-    /// Stable C identifier suffix for a Loi type, used only to name clone
-    /// helpers. Nested slices spell out their element type so `[[u8]]` and
-    /// `[u8]` cannot collide.
+    /// Stable C identifier suffix for a Loi type, used to name clone and
+    /// comparison helpers. Nested slices spell out their element type so
+    /// `[[u8]]` and `[u8]` cannot collide.
     fn clone_suffix(&self, ty: &Ty) -> String {
         let raw = match ty {
             Ty::Slice(element) => format!("slice_{}", self.clone_suffix(element)),
@@ -1560,6 +1588,237 @@ impl<'a> Generator<'a> {
         }
         body.push_str("}\n\n");
         self.clone_helpers.push_str(&body);
+    }
+
+    fn native_eq(&self, ty: &Ty) -> bool {
+        matches!(
+            ty,
+            Ty::I8
+                | Ty::I16
+                | Ty::I32
+                | Ty::I64
+                | Ty::U8
+                | Ty::U16
+                | Ty::U32
+                | Ty::U64
+                | Ty::F32
+                | Ty::F64
+                | Ty::Bool
+                | Ty::Mark(_)
+                | Ty::Opaque(_)
+                | Ty::IntLiteral
+                | Ty::FloatLiteral
+        )
+    }
+
+    fn native_ord(&self, ty: &Ty) -> bool {
+        matches!(
+            ty,
+            Ty::I8
+                | Ty::I16
+                | Ty::I32
+                | Ty::I64
+                | Ty::U8
+                | Ty::U16
+                | Ty::U32
+                | Ty::U64
+                | Ty::F32
+                | Ty::F64
+                | Ty::Bool
+                | Ty::Mark(_)
+                | Ty::IntLiteral
+                | Ty::FloatLiteral
+        )
+    }
+
+    fn cmp_helper_name(&self, ty: &Ty, ord: bool) -> String {
+        format!(
+            "loi_{}_{}",
+            if ord { "ord" } else { "eq" },
+            self.clone_suffix(ty)
+        )
+    }
+
+    /// Build the expression that compares two values of `ty`, emitting a
+    /// structural helper on demand for composite types.
+    fn cmp_expr(&mut self, ty: &Ty, ord: bool, left: &str, right: &str) -> String {
+        let native = if ord {
+            self.native_ord(ty)
+        } else {
+            self.native_eq(ty)
+        };
+        if native {
+            if ord {
+                format!("(({left} > {right}) - ({left} < {right}))")
+            } else {
+                format!("({left} == {right})")
+            }
+        } else {
+            self.ensure_cmp_helper(ty, ord);
+            let helper = self.cmp_helper_name(ty, ord);
+            format!("{helper}({left}, {right})")
+        }
+    }
+
+    fn ensure_cmp_helper(&mut self, ty: &Ty, ord: bool) {
+        let caps = types::comparison_caps(ty, self);
+        let supported = if ord { caps.ord } else { caps.eq };
+        if !supported {
+            return;
+        }
+        let key = format!(
+            "{}:{}",
+            if ord { "ord" } else { "eq" },
+            self.clone_suffix(ty)
+        );
+        if !self.cmp_helpers_emitted.insert(key) {
+            return;
+        }
+        // Forward declaration first: shapes and choices may compare fields of
+        // types whose helpers are emitted later.
+        let c_ty = self.c_type(ty);
+        let return_ty = if ord { "int" } else { "bool" };
+        let name = self.cmp_helper_name(ty, ord);
+        self.cmp_helpers.push_str(&format!(
+            "static inline {return_ty} {name}({c_ty} loi_a, {c_ty} loi_b);\n"
+        ));
+
+        let mut body = format!("static inline {return_ty} {name}({c_ty} loi_a, {c_ty} loi_b) {{\n");
+        match ty {
+            Ty::CStr => {
+                if ord {
+                    body.push_str("    int loi_r = strcmp(loi_a, loi_b);\n");
+                    body.push_str("    return (loi_r > 0) - (loi_r < 0);\n");
+                } else {
+                    body.push_str("    return strcmp(loi_a, loi_b) == 0;\n");
+                }
+            }
+            Ty::Slice(element) => {
+                let element_c = self.c_type(element);
+                body.push_str(&format!(
+                    "    const {element_c}* loi_pa = (const {element_c}*)loi_a.data;\n"
+                ));
+                body.push_str(&format!(
+                    "    const {element_c}* loi_pb = (const {element_c}*)loi_b.data;\n"
+                ));
+                if ord {
+                    body.push_str(
+                        "    size_t loi_n = loi_a.len < loi_b.len ? loi_a.len : loi_b.len;\n",
+                    );
+                    body.push_str("    for (size_t loi_i = 0; loi_i < loi_n; ++loi_i) {\n");
+                    let element_cmp =
+                        self.cmp_expr(element, true, "loi_pa[loi_i]", "loi_pb[loi_i]");
+                    body.push_str(&format!("        int loi_c = {element_cmp};\n"));
+                    body.push_str("        if (loi_c != 0) return loi_c;\n");
+                    body.push_str("    }\n");
+                    body.push_str(
+                        "    return (loi_a.len > loi_b.len) - (loi_a.len < loi_b.len);\n",
+                    );
+                } else {
+                    body.push_str("    if (loi_a.len != loi_b.len) return false;\n");
+                    body.push_str("    for (size_t loi_i = 0; loi_i < loi_a.len; ++loi_i) {\n");
+                    let element_cmp =
+                        self.cmp_expr(element, false, "loi_pa[loi_i]", "loi_pb[loi_i]");
+                    body.push_str(&format!("        if (!{element_cmp}) return false;\n"));
+                    body.push_str("    }\n");
+                    body.push_str("    return true;\n");
+                }
+            }
+            Ty::Named(shape) => {
+                let fields = self
+                    .interfaces
+                    .get(shape)
+                    .map(|decl| {
+                        decl.fields
+                            .iter()
+                            .map(|field| (self.c_field(&field.name), self.resolve_type(&field.ty)))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                if ord {
+                    for (index, (field, field_ty)) in fields.iter().enumerate() {
+                        let cmp = self.cmp_expr(
+                            field_ty,
+                            true,
+                            &format!("loi_a.{field}"),
+                            &format!("loi_b.{field}"),
+                        );
+                        body.push_str(&format!("    int loi_c_{index} = {cmp};\n"));
+                        body.push_str(&format!(
+                            "    if (loi_c_{index} != 0) return loi_c_{index};\n"
+                        ));
+                    }
+                    body.push_str("    return 0;\n");
+                } else {
+                    let mut conditions = Vec::new();
+                    for (field, field_ty) in &fields {
+                        conditions.push(self.cmp_expr(
+                            field_ty,
+                            false,
+                            &format!("loi_a.{field}"),
+                            &format!("loi_b.{field}"),
+                        ));
+                    }
+                    if conditions.is_empty() {
+                        body.push_str("    return true;\n");
+                    } else {
+                        body.push_str(&format!("    return {};\n", conditions.join(" && ")));
+                    }
+                }
+            }
+            Ty::Choice(choice) => {
+                let variants = self
+                    .choices
+                    .get(choice)
+                    .map(|decl| {
+                        decl.variants
+                            .iter()
+                            .map(|variant| (variant.name.clone(), self.resolve_type(&variant.ty)))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                if ord {
+                    body.push_str("    if (loi_a.loi_f_tag != loi_b.loi_f_tag) {\n");
+                    body.push_str("        return (loi_a.loi_f_tag > loi_b.loi_f_tag) - (loi_a.loi_f_tag < loi_b.loi_f_tag);\n");
+                    body.push_str("    }\n");
+                    body.push_str("    switch (loi_a.loi_f_tag) {\n");
+                    for (index, (variant, payload_ty)) in variants.iter().enumerate() {
+                        let member = self.c_choice_payload(variant);
+                        let cmp = self.cmp_expr(
+                            payload_ty,
+                            true,
+                            &format!("loi_a.loi_u_payload.{member}"),
+                            &format!("loi_b.loi_u_payload.{member}"),
+                        );
+                        body.push_str(&format!("    case {index}u: return {cmp};\n"));
+                    }
+                    body.push_str("    default: return 0;\n");
+                    body.push_str("    }\n");
+                } else {
+                    body.push_str("    if (loi_a.loi_f_tag != loi_b.loi_f_tag) return false;\n");
+                    body.push_str("    switch (loi_a.loi_f_tag) {\n");
+                    for (index, (variant, payload_ty)) in variants.iter().enumerate() {
+                        let member = self.c_choice_payload(variant);
+                        let cmp = self.cmp_expr(
+                            payload_ty,
+                            false,
+                            &format!("loi_a.loi_u_payload.{member}"),
+                            &format!("loi_b.loi_u_payload.{member}"),
+                        );
+                        body.push_str(&format!("    case {index}u: return {cmp};\n"));
+                    }
+                    body.push_str("    default: return true;\n");
+                    body.push_str("    }\n");
+                }
+            }
+            _ => body.push_str(if ord {
+                "    return 0;\n"
+            } else {
+                "    return true;\n"
+            }),
+        }
+        body.push_str("}\n\n");
+        self.cmp_helpers.push_str(&body);
     }
 
     fn emit_marks(&mut self, visible_only: bool) {
@@ -2846,9 +3105,37 @@ impl<'a> Generator<'a> {
                 let (steps, values) = self.order_values(vec![(left, None), (right, None)]);
                 let left = &values[0];
                 let right = &values[1];
-                let code = if matches!(op, BinaryOp::Eq | BinaryOp::Neq)
-                    && matches!(left_ty, Ty::Slice(_))
-                {
+                let is_eq = matches!(op, BinaryOp::Eq | BinaryOp::Neq);
+                let is_ord = matches!(
+                    op,
+                    BinaryOp::Lt | BinaryOp::Lte | BinaryOp::Gt | BinaryOp::Gte
+                );
+                let byte_slice_eq =
+                    is_eq && matches!(&left_ty, Ty::Slice(element) if **element == Ty::U8);
+                let helper = if is_eq && !byte_slice_eq && !self.native_eq(&left_ty) {
+                    Some((false, left_ty.clone()))
+                } else if is_ord && !self.native_ord(&left_ty) {
+                    Some((true, left_ty.clone()))
+                } else {
+                    None
+                };
+                let code = if let Some((ord, ty)) = helper {
+                    let call = self.cmp_expr(&ty, ord, left, right);
+                    if is_eq && *op == BinaryOp::Neq {
+                        format!("(!{call})")
+                    } else if is_ord {
+                        let operator = match op {
+                            BinaryOp::Lt => "<",
+                            BinaryOp::Lte => "<=",
+                            BinaryOp::Gt => ">",
+                            BinaryOp::Gte => ">=",
+                            _ => unreachable!(),
+                        };
+                        format!("({call} {operator} 0)")
+                    } else {
+                        call
+                    }
+                } else if byte_slice_eq {
                     let call = format!("loi_slice_eq({left}, {right})");
                     if *op == BinaryOp::Eq {
                         call

@@ -681,9 +681,9 @@ impl Parser {
     /// Parse `flow f<T, U>` or `flow f<T: Clone + Eq, U>` type parameters.
     /// Returns an empty list when the current token is not `<`.
     ///
-    /// Constraint names (`Clone`, `Copy`, `Eq`) stay ordinary identifiers in
-    /// the token stream; only this position gives them meaning. An unknown
-    /// name is a parse error so a typo cannot silently be ignored.
+    /// Constraint names (`Clone`, `Copy`, `Eq`, `Ord`) stay ordinary
+    /// identifiers in the token stream; only this position gives them meaning.
+    /// An unknown name is a parse error so a typo cannot silently be ignored.
     fn parse_type_params(&mut self) -> ParseResult<Vec<TypeParam>> {
         if !self.at(TokenKind::Lt) {
             return Ok(Vec::new());
@@ -701,10 +701,11 @@ impl Parser {
                         "Clone" => TypeBound::Clone,
                         "Copy" => TypeBound::Copy,
                         "Eq" => TypeBound::Eq,
+                        "Ord" => TypeBound::Ord,
                         other => {
                             return Err(ParseError::new(
                                 format!(
-                                    "unknown constraint '{other}' on type parameter '{name}'; expected Clone, Copy or Eq"
+                                    "unknown constraint '{other}' on type parameter '{name}'; expected Clone, Copy, Eq or Ord"
                                 ),
                                 token.line,
                                 token.column,

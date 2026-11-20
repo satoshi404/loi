@@ -762,11 +762,21 @@ fn parses_bounded_type_params() {
 }
 
 #[test]
-fn rejects_unknown_type_param_bound() {
-    let tokens = tokenize("flow f<T: Ord> {\n}\n", "<test>").expect("source should lex");
+fn parses_ord_and_rejects_unknown_type_param_bound() {
+    let tokens = tokenize("flow f<T: Clone + Ord> {\n}\n", "<test>").expect("source should lex");
+    let program = parse(tokens).expect("Ord is a valid constraint");
+    let Item::Function(decl) = &program.items[0] else {
+        panic!("expected a flow declaration");
+    };
+    assert_eq!(
+        decl.type_params[0].bounds,
+        vec![TypeBound::Clone, TypeBound::Ord]
+    );
+
+    let tokens = tokenize("flow f<T: Hash> {\n}\n", "<test>").expect("source should lex");
     let error = parse(tokens).expect_err("an unknown constraint should fail to parse");
     assert!(
-        error.message.contains("unknown constraint 'Ord'"),
+        error.message.contains("unknown constraint 'Hash'"),
         "unexpected error: {error}"
     );
 }

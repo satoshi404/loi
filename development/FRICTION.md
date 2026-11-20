@@ -130,7 +130,7 @@ member places now use the real `LoiSlice` field name (`len`) in generated C, so
 constraint is unchanged: growing a vector still calls `alloc` and therefore
 needs a caller `protect` region.
 
-### Generic comparisons fail for composite `T`
+### Generic comparisons fail for composite `T` — resolved
 
 Attempted design: generic ordering helpers (`math_min<T>`, `math_max<T>`) over
 arbitrary `T`. The Phase 0 probe `d_generic_cmp.loi` confirmed:
@@ -139,20 +139,25 @@ arbitrary `T`. The Phase 0 probe `d_generic_cmp.loi` confirmed:
 error: operator requires numeric operands, found Bad and Bad
 ```
 
-**Partially resolved by Block A5.** Generic type parameters can now declare
-`T: Clone + Copy + Eq` bounds. The `Eq` bound makes equality search work for
-every type the checker already accepts with `==`: numbers, bool, marks and
-`[u8]`. `vec_find<T>` and `slice_find<T>` now declare `T: Eq` instead of being
-numeric-only, and `vec_find<bool>` is covered by a library test. `Copy` marks
-flows that pass `T` by value; `Clone` documents flows that copy elements.
+Block A5 first added `T: Clone + Copy + Eq` bounds so `vec_find<T>` and
+`slice_find<T>` could search numbers, bool, marks and `[u8]`. `Copy` marks flows
+that pass `T` by value; `Clone` documents flows that copy elements.
 
-Still open: ordering. No `Ord` bound was added, so `<`/`>` on generic `T` are
-still numeric-only and `math_min<T>`, `math_max<T>`, `math_clamp<T>`,
-`math_sum<T>`, `vec_sort<T>` and `vec_binary_search<T>` keep their numeric
-restriction. Structural equality for shapes, choices and non-byte slices is
-also still unavailable; a future `Eq` implementation would need code generation
-for those types. Language requirement: an `Ord` constraint (and broader
-structural `Eq`) before ordering helpers can be honest about arbitrary `T`.
+**Resolved by structural `Eq` + `Ord`.** `==`/`!=` now compare numbers, bool,
+marks, `cstr`, opaque handles, shapes, choices and slices structurally; the
+new `Ord` bound covers `<`, `<=`, `>` and `>=` with a lexicographic rule, except
+for opaque handles and callbacks, which have no order. `vec_find<T>` now works
+on whole-shape needles and `vec_sort<T>`/`vec_binary_search<T>` declare
+`T: Clone + Ord`; `examples/ordering.loi` sorts and searches `Vec<Task>` by
+priority, status, id and label. Checker, monomorphizer and C backend share the
+rule via `types::ComparisonCaps`/`ComparisonEnv`.
+
+Still open: compile-time comparison of non-numeric values. `const_eval`'s
+`compare_values` remains numeric-only, so ordering a shape, mark or slice in a
+`comptime` expression or global initializer reports
+`comparison requires numeric compile-time values`; runtime comparisons are
+unaffected. `math_min<T>`/`math_max<T>`/`math_sum<T>` still require numeric `T`
+because they perform arithmetic, not because ordering is unavailable.
 
 ### Generic sum types cannot be `choice` declarations
 

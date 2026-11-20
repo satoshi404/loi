@@ -308,10 +308,13 @@ fn conditions_must_be_bool() {
 }
 
 #[test]
-fn ordering_operators_require_numeric_operands() {
-    assert_message(
+fn bool_values_are_orderable() {
+    assert_clean(
         "flow f\n    <- a: bool\n    <- b: bool\n{\n    if a < b {\n        =>\n    }\n}\n",
-        "operator requires numeric operands, found bool and bool",
+    );
+    assert_message(
+        "opaque Handle\nflow f\n    <- a: Handle\n    <- b: Handle\n{\n    if a < b {\n        =>\n    }\n}\n",
+        "cannot order Handle with Handle",
     );
 }
 
@@ -1236,11 +1239,13 @@ flow main
 }
 
 #[test]
-fn eq_bound_rejects_a_shape_at_the_call_site() {
+fn eq_bound_rejects_a_callback_at_the_call_site() {
     assert_message(
-        r#"shape Point [
-    x: i32
-]
+        r#"extern flow apply_cb
+    <- cb: callback
+    <- a: i32
+    <- b: i32
+    => i32
 
 flow same<T: Eq>
     <- a: T
@@ -1250,12 +1255,19 @@ flow same<T: Eq>
     => a == b
 }
 
+flow add
+    <- a: i32
+    <- b: i32
+    => i32
+{
+    => a + b
+}
+
 flow main
     => i32
 {
-    p <- Point[ x: 1 ]
-    q <- Point[ x: 1 ]
-    if same<Point>(p, q) { => 1 }
+    cb <- callback(add)
+    if same<callback>(cb, cb) { => 1 }
     => 0
 }
 "#,
@@ -1396,9 +1408,8 @@ flow main
 }
 
 #[test]
-fn bound_diagnostics_show_source_spelling_for_nested_types() {
-    assert_message(
-        r#"shape Vec<T> [
+fn nested_generic_types_use_the_structural_comparison_rule() {
+    let source = r#"shape Vec<T> [
     data: [T]
 ]
 
@@ -1409,17 +1420,15 @@ flow same<T: Eq>
 {
     => a == b
 }
-
-flow main
-    => i32
-{
-    a <- Vec<i32>[ data: [i32:] ]
-    b <- Vec<i32>[ data: [i32:] ]
-    if same<Vec<i32>>(a, b) { => 1 }
-    => 0
-}
-"#,
-        "type 'Vec<i32>' does not satisfy the 'Eq' bound",
+"#;
+    assert_clean(&format!(
+        "{source}\nflow main\n    => i32\n{{\n    a <- Vec<i32>[ data: [i32:] ]\n    b <- Vec<i32>[ data: [i32:] ]\n    if same<Vec<i32>>(a, b) {{ => 1 }}\n    => 0\n}}\n"
+    ));
+    assert_message(
+        &format!(
+            "{source}\nflow main\n    => i32\n{{\n    a <- Vec<callback>[ data: [callback:] ]\n    b <- Vec<callback>[ data: [callback:] ]\n    if same<Vec<callback>>(a, b) {{ => 1 }}\n    => 0\n}}\n"
+        ),
+        "cannot compare Vec<callback> with Vec<callback>",
     );
 }
 
@@ -1745,18 +1754,9 @@ fn opaque_names_cannot_collide_with_other_declarations() {
 }
 
 #[test]
-fn equality_is_limited_to_scalars_and_byte_slices() {
+fn structural_equality_covers_shapes_choices_and_slices() {
     assert_clean(
-        "shape Vec2 [\n    x: i32\n    y: i32\n]\n\nflow same\n    <- a: [u8]\n    <- b: [u8]\n    => bool\n{\n    => a == b\n}\n\nflow different\n    <- a: [u8]\n    <- b: [u8]\n    => bool\n{\n    => a != b\n}\n\nflow scalar\n    <- a: i32\n    <- b: i32\n    => bool\n{\n    => a == b\n}\n",
-    );
-
-    assert_message(
-        "shape Vec2 [\n    x: i32\n    y: i32\n]\n\nflow same\n    <- a: Vec2\n    <- b: Vec2\n    => bool\n{\n    => a == b\n}\n",
-        "only scalars and [u8] values support == and !=",
-    );
-    assert_message(
-        "flow same\n    <- a: [i32]\n    <- b: [i32]\n    => bool\n{\n    => a == b\n}\n",
-        "only scalars and [u8] values support == and !=",
+        "shape Vec2 [\n    x: i32\n    y: i32\n]\nchoice Maybe [\n    None: bool\n    Some: i32\n]\n\nflow same_shape\n    <- a: Vec2\n    <- b: Vec2\n    => bool\n{\n    => a == b\n}\n\nflow same_choice\n    <- a: Maybe\n    <- b: Maybe\n    => bool\n{\n    => a != b\n}\n\nflow same_slice\n    <- a: [i32]\n    <- b: [i32]\n    => bool\n{\n    => a == b\n}\n\nflow same_bytes\n    <- a: [u8]\n    <- b: [u8]\n    => bool\n{\n    => a == b\n}\n",
     );
 }
 
@@ -2148,9 +2148,10 @@ fn marks_are_only_comparable_to_the_same_mark() {
         "mark A [ X ]\nmark B [ Y ]\nflow main {\n    a <- A.X\n    b <- B.Y\n    if a == b { }\n}\n",
         "cannot compare A with B",
     );
+    assert_clean("mark A [ X ]\nflow main {\n    a <- A.X\n    if a < A.X { }\n}\n");
     assert_message(
-        "mark A [ X ]\nflow main {\n    a <- A.X\n    if a < A.X { }\n}\n",
-        "operator requires numeric operands",
+        "mark A [ X ]\nmark B [ Y ]\nflow main {\n    a <- A.X\n    b <- B.Y\n    if a < b { }\n}\n",
+        "cannot order A with B",
     );
 }
 
@@ -2330,7 +2331,7 @@ fn callbacks_reject_bad_directions_arithmetic_comparison_and_calls() {
         &format!(
             "{CALLBACK_SOURCE}\nflow main {{\n    if callback(add) == callback(add) {{ => 1 }}\n    => 0\n}}\n"
         ),
-        "cannot compare callback with callback; only scalars and [u8] values support == and !=",
+        "cannot compare callback with callback; both operands must have the same comparable type",
     );
     assert_message(
         &format!("{CALLBACK_SOURCE}\nflow main {{\n    x <- apply_cb(1, 2, 3)\n}}\n"),

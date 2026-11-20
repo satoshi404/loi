@@ -161,8 +161,9 @@ requirement, and the workaround that was actually implemented.
 
 4. **Generic comparisons fail for composite `T`.** Ordering helpers over
    arbitrary `T` produced `operator requires numeric operands, found Bad and
-   Bad`. Requirement: trait constraints or `Ord`-style bounds. Workaround:
-   document ordering/search/sort flows as numeric-only.
+   Bad`. Requirement: trait constraints or `Ord`-style bounds. Workaround at
+   the time: document ordering/search/sort flows as numeric-only. Resolved
+   later by structural `Eq` and the `Ord` bound; see `development/FRICTION.md`.
 
 ### Phase 2 — `lib/string.loi`, `lib/hash.loi`
 

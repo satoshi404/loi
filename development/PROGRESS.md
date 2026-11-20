@@ -4,7 +4,34 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-20, Block B6 — C callbacks):** Loi now has a fixed-ABI
+- **Current task (2026-11-20, structural `Eq` + `Ord`):** `==`/`!=` are now
+  structural for numbers, bool, marks, `cstr`, opaque handles, shapes, choices
+  and slices whose elements support equality; `<`, `<=`, `>` and `>=` follow
+  the same lexicographic rule except for opaque handles and callbacks, which
+  have no order. A fourth bound, `Ord`, joins `Clone`, `Copy` and `Eq`. The
+  checker, monomorphizer and C backend share one rule via
+  `types::ComparisonCaps`/`ComparisonEnv`; the backend emits on-demand
+  `loi_eq_*`/`loi_ord_*` helpers while `[u8]` keeps `loi_slice_eq`.
+  `vec_find<T>`/`slice_find<T>` use structural `Eq` and
+  `vec_sort<T>`/`vec_binary_search<T>` declare `T: Clone + Ord`.
+  `examples/ordering.loi` sorts and searches `Vec<Task>` by priority, status,
+  id and label. Rules are in `LOI_SPEC.md` §4.8/§5.1a and `SINTAXE.md` §3.2,
+  §5.4, §9/§10; rationale in `DECISIONS.md`; limits in `FRICTION.md`.
+- **Verification for structural `Eq`/`Ord`:** the seven new tests in
+  `tests/comparison.rs` failed 7/7 before the implementation and pass 7/7 now;
+  they cover positive and negative checker cases, `Ord` bounds, and a
+  strict-C11 harness that runs generated helpers. Older narrow assertions were
+  updated, and library tests now sort and search `Vec<Point>` with whole-shape
+  comparisons. The example was checked, built and run (`ordering ok`, exit 0)
+  and mirrored with `python3 tools/sync_examples.py`. Final gate command:
+  `export PATH="/root/.cargo/bin:$PATH"; export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets && python3 tools/sync_examples.py --check && git diff --check`.
+  All five checks exited 0; `cargo test --all-targets` reported **465 passed,
+  0 failed** across 20 suites (was 455; ten new tests: 7 comparison, 2 library,
+  1 CLI). Existing generated names, headers and ABI are unchanged; the C
+  backend only adds helpers used by structural comparisons, so
+  `benchmark/run.py` is not applicable. ASan execution is still not claimed in
+  this PRoot container.
+- **Previous task (2026-11-20, Block B6 — C callbacks):** Loi now has a fixed-ABI
   FFI type `callback` (`int32_t (*)(int32_t, int32_t)`) and a closed
   `callback(flow)` intrinsic. Only a non-extern flow with exactly
   `<- a: i32, <- b: i32 => i32` is accepted; the generated C passes that flow's
@@ -709,13 +736,13 @@
 | Lexer | Working | Canonical Flow Syntax only; strings with decoded escapes; decimal/hex/binary integers; floats; `<-`/`->`/`<->`/`=>` glyphs; bitwise/shift/compound tokens; `guard` keyword; `//` comments collected for `fmt` |
 | AST / parser | Working | Shapes and generic shapes, flows and generic flows, `extern flow ... as`, `opaque`, imports, globals, slice/shape literals, `give`/`clone`/`alloc`, `protect`, `guard`, loops, bitwise/shift precedence, `comptime flow`/`comptime expr`, explicit type arguments |
 | Pretty-printer | Working | Emits canonical Flow Syntax including generics and `comptime`; idempotent on all canonical files; `loi fmt` preserves `//` comments (`format_program` remains comment-free) |
-| Type checker | Working | Types, literals, directions, calls, globals, intrinsics, `opaque`/`cstr`, constant folding, shape-cycle detection, bitwise/shift rules, I/O intrinsic signatures, allocation effects (including deep-clone allocators), `<-` read-view summaries and linear-resource `guard` validation (release-flow signature, no explicit release/move/return); monomorphization feeds concrete declarations into the checker and diagnostics show source generic spellings |
+| Type checker | Working | Types, literals, directions, calls, globals, intrinsics, `opaque`/`cstr`, constant folding, shape-cycle detection, bitwise/shift rules, structural `Eq`/`Ord` comparisons, I/O intrinsic signatures, allocation effects (including deep-clone allocators), `<-` read-view summaries and linear-resource `guard` validation (release-flow signature, no explicit release/move/return); monomorphization feeds concrete declarations into the checker and diagnostics show source generic spellings |
 | Compile-time evaluation | Working | `src/const_eval.rs`: pure `comptime flow` interpreter with step/depth limits, constant globals and shape defaults, `comptime expr`, purity diagnostics |
 | Diagnostics | Working | `src/diagnostic.rs`: human output with full source underlines (multi-line spans get `...`), secondary labels and an error summary; `short` keeps `path:line:column: message`; `json` emits structured objects with `end_line`/`end_column`; ANSI colors honor `NO_COLOR`/`CLICOLOR_FORCE`; unknown names get namespace-aware edit-distance suggestions; parser spans carry exact token ends and multi-line end lines with a line-scan fallback |
 | Ownership | Working | Give liveness, path-sensitive partial moves, field-sensitive lexical read views, definite assignment/return, exclusive `->`/`<->`, cross-flow consumption, `protect` taints and lexical-block escape analysis for non-empty slice literals and deep-clone results (empty literals are untainted), writable slice length, `read_file`/`read_stdin`/`read_line`, linear-resource `guard` scoping; gives from globals are rejected and move state is per function body |
-| C backend | Working | One C11 translation unit, ordered shape layouts, checked arithmetic, bitwise/shift helpers, growable arena, recursive on-demand deep-clone helpers, bounds checks, defaults, headers, source maps, multi-file objects, statics, file/stdin I/O, numeric printing and implicit `guard` releases on normal/return/`break`/`continue` paths with LIFO unwinding |
+| C backend | Working | One C11 translation unit, ordered shape layouts, checked arithmetic, bitwise/shift helpers, growable arena, recursive on-demand deep-clone helpers, on-demand structural `loi_eq_*`/`loi_ord_*` helpers, bounds checks, defaults, headers, source maps, multi-file objects, statics, file/stdin I/O, numeric printing and implicit `guard` releases on normal/return/`break`/`continue` paths with LIFO unwinding |
 | C interop | Working | `opaque` → `void *`, `cstr` → `const char *`, fixed-ABI `callback` → `LoiCallback` from `callback(flow)`, bodyless `extern flow`, `--c-source`, `--cc-flag`; string literals coerce to `cstr` |
-| Library | Working | `lib/std.loi` (scalar/string helpers), `lib/math.loi` (generic and `comptime`), `lib/ctype.loi` (pure ASCII helpers), `lib/os.loi`/`lib/net.loi` (thin POSIX bindings with C shims and linear `File`/`TcpStream` handles); prefixed names, explicitly imported |
+| Library | Working | `lib/std.loi` (scalar/string helpers), `lib/math.loi` (generic and `comptime`), `lib/ctype.loi` (pure ASCII helpers), `lib/vec.loi` (cloneable vectors with `Eq` search and `Ord` sort), `lib/slice.loi` (generic slice helpers), `lib/option.loi`/`lib/result.loi`, `lib/os.loi`/`lib/net.loi` (thin POSIX bindings with C shims and linear `File`/`TcpStream` handles); prefixed names, explicitly imported |
 | Binding generator | Working | `tools/bindgen/bindgen.py` emits `opaque` handles, safe `shape`s, typed constants, `extern flow`s, a `memcpy` shim with `_Static_assert` checks and a skip report; C `const T *` parameters bind as borrowed `[T]` slices and mutable `char *` parameters as `<-> [u8]`, with a shared-layout `LoiSlice` shim |
 | Vendored bindings | Working (syntax-verified) | `vendor/sdl2/` (SDL2 2.32.10) and `vendor/raylib/` (raylib 5.5), each with generated `.loi`, shim, skip report and README |
 | IR | Draft | `src/ir.rs`; `--emit-ir` writes text. Globals and some literals are not lowered |
@@ -724,6 +751,9 @@
 | Website / playground | Working (local only) | Static site plus `website/server.mjs` driving the real compiler with `--error-format=short --color=never`; `127.0.0.1` by default with source/output/time limits |
 
 ## Verification
+
+The most recent gate result is recorded in **Current Status** above; the
+entries below are earlier gates kept for reference.
 
 Last verified 2026-11-20 for Block B3 with:
 
@@ -975,6 +1005,10 @@ for f in lib/std.loi lib/math.loi lib/ctype.loi lib/os.loi lib/net.loi; do ./tar
   arithmetic, so large results wrap at 64 bits.
 - `comptime` is implemented for pure flows, expressions, globals and shape
   defaults. Freshness, spatial tiers and ordering blocks are not implemented.
+  `compare_values` still requires numeric `ConstValue`s, so ordering a shape,
+  mark, `cstr`, opaque handle or slice inside a `comptime` expression or global
+  initializer reports `comparison requires numeric compile-time values`;
+  runtime comparisons are structural.
 - Generic declarations are templates; only instantiations reach checking and
   code generation. There is no type inference and no user-visible `Type::Generic`
   after monomorphization. Unused templates are validated once with `i32`
@@ -1023,10 +1057,6 @@ Remaining implementation or secondary choices:
 - Decide whether resources need an explicit `resource` declaration instead of
   the `<shape>_release` naming convention. B2/B3 keep the convention to avoid a
   second declaration form; the stdlib `File` and `TcpStream` handles use it.
-- Define structural equality for shapes, choices and non-byte slices, or keep
-  the current field-by-field rule permanently; that would let the existing `Eq`
-  bound cover more types without changing its spelling. Ordering needs a
-  separate `Ord` bound and a decision on what it means for non-numeric types.
 - Decide whether callbacks with signatures beyond the fixed
   `int32_t (*)(int32_t, int32_t)` ABI deserve first-class support, and how they
   would be spelled without making flows first-class values. B6 keeps other C
@@ -1057,7 +1087,7 @@ Remaining implementation or secondary choices:
    `vec_new<T>` no longer needs `protect`. Non-empty literals stay block-local.
 4. Block A5: done — `Clone`, `Copy` and `Eq` bounds let library flows state
    their element requirements; equality search is no longer numeric-only.
-   Ordering still needs a future `Ord` constraint.
+   `Ord` and structural comparisons are now implemented as well; see item 10.
 5. Blocks A, B1, B2 and B3 are done: generics/ownership, real modules, `guard`
    resources and stdlib `File`/`TcpStream` handles.
 6. Block A6: done — official `Option<T>` and `Result<T, E>` are pure-Loi generic
@@ -1067,9 +1097,12 @@ Remaining implementation or secondary choices:
 8. Block B5: done — C mutable `char *` parameters bind as `<-> [u8]` slices, with
    the shim matching the compiler's `LoiSlice *` ABI.
 9. Block B6: done — fixed-ABI `callback` values pass exact-signature Loi flows
-   to C directly. Next: revisit the remaining binding-generator gaps (other C
-   function-pointer signatures), structural equality/ordering and the opt-in
-   LLVM question; keep the C11 backend as the production oracle.
-10. Keep the docs in sync: `SINTAXE.md` is canonical, `website/docs.html`
+   to C directly.
+10. Structural `Eq`/`Ord`: done — one shared structural rule for `==`, `!=`,
+    `<`, `<=`, `>` and `>=`, an `Ord` bound, and on-demand C helpers. Next:
+    module-qualified mangling, callbacks beyond the fixed ABI, the opt-in LLVM
+    question and the IR/ASM drafts; keep the C11 backend as the production
+    oracle.
+11. Keep the docs in sync: `SINTAXE.md` is canonical, `website/docs.html`
     mirrors it, and `python3 tools/sync_examples.py --check` guards the example
     mirror.

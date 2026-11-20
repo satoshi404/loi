@@ -602,15 +602,29 @@ fn vec_find_reports_the_eq_bound_at_the_call_site() {
         &dir,
         &["vec.loi"],
         r#"
-shape Point [ x: i32 ]
+extern flow apply_cb
+    <- cb: callback
+    <- a: i32
+    <- b: i32
+    => i32
+
+flow add
+    <- a: i32
+    <- b: i32
+    => i32
+{
+    => a + b
+}
 
 open flow main
     => i32
 {
-    mut xs: Vec<Point>
-    vec_new<Point>(-> xs)
-    p <- Point[ x: 1 ]
-    found <- vec_find<Point>(xs, p)
+    protect {
+        mut xs: Vec<callback>
+        vec_new<callback>(-> xs)
+        cb <- callback(add)
+        found <- vec_find<callback>(xs, cb)
+    }
     => 0
 }
 "#,
@@ -650,6 +664,72 @@ open flow main
 }
 "#,
         "vec find bool ok\n",
+    );
+}
+
+#[test]
+fn vec_find_uses_structural_equality_for_shapes() {
+    assert_ok(
+        "vec-find-shape",
+        &["vec.loi"],
+        r#"
+shape Point [
+    x: i32
+    y: i32
+]
+
+open flow main
+    => i32
+{
+    protect {
+        mut xs: Vec<Point>
+        vec_new<Point>(-> xs)
+        vec_push<Point>(<-> xs, Point[ x: 1, y: 2 ])
+        vec_push<Point>(<-> xs, Point[ x: 3, y: 4 ])
+        if vec_find<Point>(xs, Point[ x: 3, y: 4 ]) != 1 { => 1 }
+        if vec_find<Point>(xs, Point[ x: 3, y: 5 ]) != -1 { => 2 }
+    }
+    print("vec find shape ok\n")
+    => 0
+}
+"#,
+        "vec find shape ok\n",
+    );
+}
+
+#[test]
+fn vec_sort_uses_ord_for_shapes() {
+    assert_ok(
+        "vec-sort-shape",
+        &["vec.loi"],
+        r#"
+shape Point [
+    x: i32
+    y: i32
+]
+
+open flow main
+    => i32
+{
+    protect {
+        mut xs: Vec<Point>
+        vec_new<Point>(-> xs)
+        vec_push<Point>(<-> xs, Point[ x: 2, y: 9 ])
+        vec_push<Point>(<-> xs, Point[ x: 1, y: 7 ])
+        vec_push<Point>(<-> xs, Point[ x: 1, y: 3 ])
+        vec_sort<Point>(<-> xs)
+        first <- vec_get<Point>(xs, 0)
+        second <- vec_get<Point>(xs, 1)
+        third <- vec_get<Point>(xs, 2)
+        if first.x != 1 or first.y != 3 { => 1 }
+        if second.x != 1 or second.y != 7 { => 2 }
+        if third.x != 2 or third.y != 9 { => 3 }
+    }
+    print("vec sort shape ok\n")
+    => 0
+}
+"#,
+        "vec sort shape ok\n",
     );
 }
 

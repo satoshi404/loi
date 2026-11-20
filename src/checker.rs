@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
 use crate::diagnostic::Diagnostic;
-use crate::types::{self, Ty};
+use crate::types::{self, ComparisonEnv, Ty};
 
 /// Check a complete program, returning every diagnostic found.
 pub fn check(program: &Program) -> Vec<Diagnostic> {
@@ -356,6 +356,23 @@ struct Checker {
     region_origins: Vec<Option<Span>>,
     /// Regions currently active, innermost last.
     region_stack: Vec<usize>,
+}
+
+impl ComparisonEnv for Checker {
+    fn shape_fields(&self, name: &str) -> Option<Vec<Ty>> {
+        self.interfaces
+            .get(name)
+            .map(|decl| decl.fields.iter().map(|field| field.ty.clone()).collect())
+    }
+
+    fn choice_payloads(&self, name: &str) -> Option<Vec<Ty>> {
+        self.choices.get(name).map(|decl| {
+            decl.variants
+                .values()
+                .map(|variant| variant.ty.clone())
+                .collect()
+        })
+    }
 }
 
 impl Checker {
@@ -2779,23 +2796,21 @@ impl Checker {
                 if left.is_error() || right.is_error() {
                     return Ty::Bool;
                 }
-                // Equality is defined for scalars and for byte slices (which is
-                // how strings are represented). Other composites are compared
-                // field by field in user code; C cannot compare structs with
-                // `==`.
-                let byte_slice = |ty: &Ty| matches!(ty, Ty::Slice(element) if **element == Ty::U8);
-                let scalar = |ty: &Ty| ty.is_numeric() || matches!(ty, Ty::Bool);
-                let same_mark = matches!((left, right), (Ty::Mark(a), Ty::Mark(b)) if a == b);
-                let comparable = (scalar(left)
-                    && scalar(right)
-                    && (left == right || types::common_numeric(left, right).is_some()))
-                    || (byte_slice(left) && byte_slice(right))
-                    || same_mark;
+                // Equality is structural: two values of the same type are
+                // equal when every field, payload or element is equal. The
+                // backend emits a type-directed helper for composites; only
+                // scalars can use C's native `==`.
+                let left_caps = types::comparison_caps(left, self);
+                let right_caps = types::comparison_caps(right, self);
+                let numeric_pair = left.is_numeric()
+                    && right.is_numeric()
+                    && types::common_numeric(left, right).is_some();
+                let comparable = (left == right && left_caps.eq && right_caps.eq) || numeric_pair;
                 if !comparable {
                     self.error(
                         span,
                         format!(
-                            "cannot compare {left} with {right}; only scalars and [u8] values support == and !="
+                            "cannot compare {left} with {right}; both operands must have the same comparable type"
                         ),
                     );
                 }
@@ -2805,10 +2820,21 @@ impl Checker {
                 if left.is_error() || right.is_error() {
                     return Ty::Bool;
                 }
-                if types::common_numeric(left, right).is_none() {
+                // Ordering is total for numbers, bool, marks, cstr, shapes,
+                // choices and slices. Opaque handles and callbacks are not
+                // orderable; composites use a lexicographic helper.
+                let left_caps = types::comparison_caps(left, self);
+                let right_caps = types::comparison_caps(right, self);
+                let numeric_pair = left.is_numeric()
+                    && right.is_numeric()
+                    && types::common_numeric(left, right).is_some();
+                let orderable = (left == right && left_caps.ord && right_caps.ord) || numeric_pair;
+                if !orderable {
                     self.error(
                         span,
-                        format!("operator requires numeric operands, found {left} and {right}"),
+                        format!(
+                            "cannot order {left} with {right}; both operands must have the same orderable type"
+                        ),
                     );
                 }
                 Ty::Bool

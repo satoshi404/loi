@@ -10,9 +10,9 @@
 //! the storage lives until that block ends. Flows that copy elements declare
 //! `T: Clone`; every Loi type satisfies it because `clone` is recursive, but
 //! cloning a value containing slices still allocates. `vec_find<T>` declares
-//! `T: Eq`, so equality search works for numbers, bool, marks and `[u8]`.
-//! Ordering flows are still numeric-only because Loi has no `Ord` constraint;
-//! see `development/FRICTION.md`. The arena keeps older growth
+//! `T: Eq`, so equality search is structural for shapes, choices and slices.
+//! Ordering flows declare `T: Ord`, which gives every comparable field a
+//! lexicographic order; opaque handles and callbacks have no order. The arena keeps older growth
 //! blocks until the enclosing `protect` ends, so call `vec_reserve<T>` when the
 //! final size is known: pre-reserving once avoids the peak memory of repeated
 //! geometric growth.
@@ -308,7 +308,7 @@ open flow vec_reverse<T: Clone>
     }
 }
 
-sealed flow vec_sift_down<T: Clone>
+sealed flow vec_sift_down<T: Clone + Ord>
     <-> v: Vec<T>
     <- start: u64
     <- end: u64
@@ -333,7 +333,7 @@ sealed flow vec_sift_down<T: Clone>
     }
 }
 
-open flow vec_sort<T: Clone>
+open flow vec_sort<T: Clone + Ord>
     <-> v: Vec<T>
 {
     if v.len >= 2 {
@@ -352,7 +352,7 @@ open flow vec_sort<T: Clone>
     }
 }
 
-open flow vec_binary_search<T: Clone>
+open flow vec_binary_search<T: Clone + Ord>
     <- v: Vec<T>
     <- value: T
     => i64

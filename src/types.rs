@@ -150,12 +150,123 @@ impl fmt::Display for Ty {
     }
 }
 
+/// Which comparison operators a type supports.
+///
+/// Both flags are structural: a composite supports an operator only when every
+/// part it contains supports it. Mark and choice variant order follows source
+/// declaration order, so both are orderable. Opaque handles have identity but
+/// no meaningful order, and callbacks are deliberately neither comparable nor
+/// orderable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ComparisonCaps {
+    pub eq: bool,
+    pub ord: bool,
+}
+
+impl ComparisonCaps {
+    pub const NONE: Self = Self {
+        eq: false,
+        ord: false,
+    };
+    pub const BOTH: Self = Self {
+        eq: true,
+        ord: true,
+    };
+    pub const IDENTITY: Self = Self {
+        eq: true,
+        ord: false,
+    };
+
+    /// Combine the capabilities of all fields or elements of a composite.
+    pub fn and(self, other: Self) -> Self {
+        Self {
+            eq: self.eq && other.eq,
+            ord: self.ord && other.ord,
+        }
+    }
+}
+
+/// Access to the fields of shapes and the payloads of choices.
+///
+/// The checker and the C backend already own those declaration tables; this
+/// trait lets both use the same structural comparison rule without a second
+/// copy of it. The monomorphizer has only names at bound-validation time and
+/// supplies the coarse rule there (see `coarse_caps` in `monomorphize.rs`).
+pub trait ComparisonEnv {
+    fn shape_fields(&self, name: &str) -> Option<Vec<Ty>>;
+    fn choice_payloads(&self, name: &str) -> Option<Vec<Ty>>;
+}
+
+/// Compute the comparison capabilities of a resolved type.
+pub fn comparison_caps(ty: &Ty, env: &impl ComparisonEnv) -> ComparisonCaps {
+    comparison_caps_inner(ty, env, &mut std::collections::HashSet::new())
+}
+
+fn comparison_caps_inner(
+    ty: &Ty,
+    env: &impl ComparisonEnv,
+    visited: &mut std::collections::HashSet<String>,
+) -> ComparisonCaps {
+    match ty {
+        Ty::I8
+        | Ty::I16
+        | Ty::I32
+        | Ty::I64
+        | Ty::U8
+        | Ty::U16
+        | Ty::U32
+        | Ty::U64
+        | Ty::F32
+        | Ty::F64
+        | Ty::Bool
+        | Ty::Mark(_)
+        | Ty::CStr
+        | Ty::IntLiteral
+        | Ty::FloatLiteral => ComparisonCaps::BOTH,
+        Ty::Opaque(_) => ComparisonCaps::IDENTITY,
+        Ty::Callback | Ty::Void | Ty::Error => ComparisonCaps::NONE,
+        Ty::Slice(element) => comparison_caps_inner(element, env, visited),
+        Ty::Named(name) => {
+            let key = format!("shape:{name}");
+            if !visited.insert(key.clone()) {
+                return ComparisonCaps::BOTH;
+            }
+            let caps = env
+                .shape_fields(name)
+                .unwrap_or_default()
+                .iter()
+                .fold(ComparisonCaps::BOTH, |acc, field| {
+                    acc.and(comparison_caps_inner(field, env, visited))
+                });
+            visited.remove(&key);
+            caps
+        }
+        Ty::Choice(name) => {
+            let key = format!("choice:{name}");
+            if !visited.insert(key.clone()) {
+                return ComparisonCaps::BOTH;
+            }
+            let caps = env
+                .choice_payloads(name)
+                .unwrap_or_default()
+                .iter()
+                .fold(ComparisonCaps::BOTH, |acc, payload| {
+                    acc.and(comparison_caps_inner(payload, env, visited))
+                });
+            visited.remove(&key);
+            caps
+        }
+    }
+}
+
 /// Whether a value of `actual` can be used where `expected` is required.
 ///
 /// Unsuffixed literals coerce to any compatible numeric type. Other types must
 /// match exactly; there are no implicit numeric conversions between named
 /// integer widths.
 /// Name of the linear-resource release flow for a named shape.
+///
+/// The convention is `<snake_case_shape>_release`: `File` becomes
 ///
 /// The convention is `<snake_case_shape>_release`: `File` becomes
 /// `file_release`, `HttpClient` becomes `http_client_release`. Only named

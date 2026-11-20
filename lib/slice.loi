@@ -9,9 +9,8 @@
 //! `slice_get`, `slice_first`, `slice_last`, `slice_clone` and `slice_copy` are
 //! open public APIs. The copying flows allocate from the caller's `protect`
 //! arena and declare `T: Clone`. `slice_find<T>` declares `T: Eq`, so equality
-//! search supports numbers, bool, marks and byte slices. Ordering constraints
-//! are not available yet, so `development/FRICTION.md` still records the
-//! numeric-only limitation for ordering helpers.
+//! search is structural for shapes, choices and slices of comparable values.
+//! Ordering helpers such as `vec_sort<T>` declare `T: Ord`.
 
 // ---------------------------------------------------------------------------
 // Runtime error formatting

@@ -10,7 +10,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
-use crate::types::Ty;
+use crate::types::{self, ComparisonCaps, ComparisonEnv, Ty};
 
 /// A diagnostic produced by monomorphization.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,7 +67,10 @@ fn run(
         named_interfaces: HashSet::new(),
         named_functions: HashSet::new(),
         marks: HashSet::new(),
+        choices: HashSet::new(),
         opaques: HashSet::new(),
+        shape_fields: HashMap::new(),
+        choice_payloads: HashMap::new(),
         requested: HashMap::new(),
         instantiated: HashSet::new(),
         queue: Vec::new(),
@@ -87,12 +90,26 @@ fn run(
             }
             Item::Interface(decl) => {
                 pass.named_interfaces.insert(decl.name.clone());
+                pass.shape_fields.insert(
+                    decl.name.clone(),
+                    decl.fields.iter().map(|field| field.ty.clone()).collect(),
+                );
             }
             Item::Function(decl) => {
                 pass.named_functions.insert(decl.name.clone());
             }
             Item::Mark(decl) => {
                 pass.marks.insert(decl.name.clone());
+            }
+            Item::Choice(decl) => {
+                pass.choices.insert(decl.name.clone());
+                pass.choice_payloads.insert(
+                    decl.name.clone(),
+                    decl.variants
+                        .iter()
+                        .map(|variant| variant.ty.clone())
+                        .collect(),
+                );
             }
             Item::Opaque(decl) => {
                 pass.opaques.insert(decl.name.clone());
@@ -164,10 +181,15 @@ struct Monomorphizer<'a> {
     functions: HashMap<String, &'a FunctionDecl>,
     named_interfaces: HashSet<String>,
     named_functions: HashSet<String>,
-    /// Non-shape named types that satisfy `Copy` and/or `Eq`. Choices and
-    /// shapes are composite by construction and are not listed here.
+    /// Named types classified for the coarse bound check. Shapes and choices
+    /// are composite by construction and need no set entry.
     marks: HashSet<String>,
+    choices: HashSet<String>,
     opaques: HashSet<String>,
+    /// Rewritten field/payload types for shapes and choices, used by the
+    /// shared structural comparison rule when validating bounds.
+    shape_fields: HashMap<String, Vec<Type>>,
+    choice_payloads: HashMap<String, Vec<Type>>,
     /// Concrete name -> readable instantiation, used to detect mangling
     /// collisions as well as collisions with user declarations.
     requested: HashMap<String, String>,
@@ -179,6 +201,20 @@ struct Monomorphizer<'a> {
     /// rewriting it are one level deeper.
     current_depth: usize,
     depth_error_reported: bool,
+}
+
+impl ComparisonEnv for Monomorphizer<'_> {
+    fn shape_fields(&self, name: &str) -> Option<Vec<Ty>> {
+        self.shape_fields
+            .get(name)
+            .map(|fields| fields.iter().map(|field| self.mono_ty(field)).collect())
+    }
+
+    fn choice_payloads(&self, name: &str) -> Option<Vec<Ty>> {
+        self.choice_payloads
+            .get(name)
+            .map(|variants| variants.iter().map(|ty| self.mono_ty(ty)).collect())
+    }
 }
 
 impl<'a> Monomorphizer<'a> {
@@ -562,6 +598,10 @@ impl<'a> Monomorphizer<'a> {
                 decl.name = request.name;
                 decl.type_params.clear();
                 self.rewrite_interface(&mut decl, &mapping);
+                self.shape_fields.insert(
+                    decl.name.clone(),
+                    decl.fields.iter().map(|field| field.ty.clone()).collect(),
+                );
                 self.generated.push(Item::Interface(decl));
             }
             RequestKind::Function => {
@@ -657,7 +697,9 @@ impl<'a> Monomorphizer<'a> {
                 .collect::<Vec<_>>()
                 .join(" and ");
             let hint = if missing.contains(&TypeBound::Eq) {
-                "Eq requires a numeric type, bool, a mark or [u8]"
+                "Eq requires a number, bool, mark, cstr, opaque handle, shape, choice or a slice of Eq elements"
+            } else if missing.contains(&TypeBound::Ord) {
+                "Ord requires a number, bool, mark, cstr, shape, choice or a slice of Ord elements"
             } else if missing.contains(&TypeBound::Copy) {
                 "Copy requires a numeric type, bool, a mark, an opaque handle or cstr"
             } else {
@@ -679,8 +721,43 @@ impl<'a> Monomorphizer<'a> {
         match bound {
             TypeBound::Clone => true,
             TypeBound::Copy => self.is_copy_type(ty),
-            TypeBound::Eq => self.is_eq_type(ty),
+            TypeBound::Eq => self.coarse_caps(ty).eq,
+            TypeBound::Ord => self.coarse_caps(ty).ord,
         }
+    }
+
+    /// Interpret a syntactic type with the declarations known to this pass.
+    /// Instantiated generics already carry a mangled name, which maps back to
+    /// the shape fields recorded when that instance was generated.
+    fn mono_ty(&self, ty: &Type) -> Ty {
+        match ty {
+            Type::Named(name, _) => {
+                if let Some(scalar) = Ty::from_name(name) {
+                    scalar
+                } else {
+                    match name.as_str() {
+                        "cstr" => Ty::CStr,
+                        "callback" => Ty::Callback,
+                        _ if self.marks.contains(name) => Ty::Mark(name.clone()),
+                        _ if self.choices.contains(name)
+                            || self.choice_payloads.contains_key(name) =>
+                        {
+                            Ty::Choice(name.clone())
+                        }
+                        _ if self.opaques.contains(name) => Ty::Opaque(name.clone()),
+                        _ => Ty::Named(name.clone()),
+                    }
+                }
+            }
+            Type::Slice(element, _) => Ty::Slice(Box::new(self.mono_ty(element))),
+            Type::Generic(name, args, _) => Ty::Named(instantiation_name(name, args)),
+        }
+    }
+
+    /// Validate `Eq`/`Ord` with the same structural rule the checker and the
+    /// backend use, so a bound never disagrees with the comparison it enables.
+    fn coarse_caps(&self, ty: &Type) -> ComparisonCaps {
+        types::comparison_caps(&self.mono_ty(ty), self)
     }
 
     /// Mirror the checker's implicit-copy rule: scalars, marks, opaque handles
@@ -695,19 +772,6 @@ impl<'a> Monomorphizer<'a> {
                     || name == "callback"
             }
             Type::Slice(_, _) | Type::Generic(..) => false,
-        }
-    }
-
-    /// Mirror the checker's `==`/`!=` rule: numbers, bool, two values of the
-    /// same mark, and byte slices. Structural equality for shapes, choices and
-    /// other slices is deliberately not part of `Eq`.
-    fn is_eq_type(&self, ty: &Type) -> bool {
-        match ty {
-            Type::Named(name, _) => Ty::from_name(name).is_some() || self.marks.contains(name),
-            Type::Slice(element, _) => {
-                matches!(&**element, Type::Named(name, _) if name == "u8")
-            }
-            Type::Generic(..) => false,
         }
     }
 

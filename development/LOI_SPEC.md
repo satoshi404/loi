@@ -61,7 +61,7 @@ The goal is that any new model can open `development/PROGRESS.md` and immediatel
 | Aliasing             | Two names for the same address are a compile error (double reference)    |
 | Memory scope         | `protect { }` — everything allocated inside lives only there             |
 | Arrays               | Slices `[T]` (pointer + length, bounds checked)                          |
-| Generics             | `shape Vec<T>` / `flow f<T>`; explicit arguments, monomorphized, optional `T: Clone + Copy + Eq` bounds (§5.1a) |
+| Generics             | `shape Vec<T>` / `flow f<T>`; explicit arguments, monomorphized, optional `T: Clone + Copy + Eq + Ord` bounds (§5.1a) |
 | Compile-time values  | `comptime flow` (pure) and `comptime expr`; globals require constants     |
 | Cleanup              | No `defer`. `protect` covers memory; `guard` covers linear resources (§5.6) |
 | Variables            | `name <- value` immutable, `mut name <- value` mutable                   |
@@ -395,11 +395,13 @@ These rules were added to unblock real programs and are implemented and tested. 
   organize references and enforce privacy; they do not isolate C symbols.
   Module-qualified C mangling is a later, ABI-visible change.
 
-**Equality**
+**Equality and ordering**
 
-- `==` and `!=` are defined for scalar numeric types and `bool`, with the usual literal coercion rules.
-- They are also defined between two values of the same `mark`, and for `[u8]` values, which compare bytes structurally (equal length and equal contents), not by pointer identity.
-- Other shapes, choices and slices cannot be compared with `==`/`!=`; compare their fields, variants and payloads explicitly. This avoids emitting invalid C struct comparisons.
+- `==` and `!=` are defined for scalar numeric types and `bool`, with the usual literal coercion rules, and for two values of the same `mark`, `cstr`, `opaque` handle, shape, choice or slice.
+- Comparisons are structural: both operands must have the same type (numeric operands of different widths coerce to their common type). A shape compares fields in declaration order; a choice compares the active variant first, then its payload; a slice compares length and then elements. `[u8]` slices compare bytes by content, not pointer identity.
+- `<`, `<=`, `>` and `>=` use the same lexicographic rule for numbers, `bool`, marks, `cstr`, shapes, choices and slices of orderable elements. `cstr` compares as a NUL-terminated byte string. `opaque` handles have identity but no order, and `callback` values are neither comparable nor orderable.
+- The checker, monomorphizer and C backend share this rule through `types::ComparisonCaps`/`ComparisonEnv`. The backend emits on-demand `loi_eq_*`/`loi_ord_*` helpers; `[u8]` keeps the `loi_slice_eq` fast path.
+- **Implementation limit:** compile-time (`comptime`/global initializer) comparisons still require numeric `ConstValue`s; ordering a composite at compile time reports `comparison requires numeric compile-time values` (see `FRICTION.md`). Runtime comparisons are unaffected.
 
 **Builtin intrinsics and standard library**
 
@@ -592,9 +594,9 @@ All nine questions from the 0.2 draft are decided. Each entry states the rule, t
 - A generated name that collides with a user declaration, or two instantiations that mangle to the same identifier, are reported as collisions with both the readable instantiation and the generated name.
 - Growable collections remain library work; generics make a future `Vec<T>` implementation possible without changing the language.
 
-**Generic constraints (Block A5).** A type parameter may declare bounds with
-`T: Clone + Copy + Eq`; the canonical spelling is in `SINTAXE.md` §5.4. There
-are exactly three constraints in this version:
+**Generic constraints (Block A5, extended with `Ord`).** A type parameter may
+declare bounds with `T: Clone + Copy + Eq + Ord`; the canonical spelling is in
+`SINTAXE.md` §5.4. There are exactly four constraints in this version:
 
 - `Clone` is satisfied by every Loi type. It documents that a flow copies its
   argument; since deep clone (§4.3) is recursive, this includes shapes and
@@ -606,22 +608,26 @@ are exactly three constraints in this version:
 - `Copy` is satisfied by numbers, `bool`, marks, `opaque` handles and `cstr`:
   exactly the types the checker may copy implicitly without `give` or
   `clone`. Shapes, choices and slices are composite and do not satisfy it.
-- `Eq` is satisfied by numbers, `bool`, marks and `[u8]`: exactly the types
-  for which the checker accepts `==` and `!=`. Structural equality for other
-  slices, shapes and choices is not implemented, so they do not satisfy `Eq`.
+- `Eq` is satisfied by exactly the types the checker accepts with `==`/`!=`:
+  numbers, `bool`, marks, `cstr`, `opaque` handles, and shapes, choices or slices
+  whose fields, payloads and elements all satisfy `Eq`. `callback` does not.
+- `Ord` is satisfied by the types the checker accepts with `<`, `<=`, `>` and
+  `>=`: numbers, `bool`, marks, `cstr`, and shapes, choices or slices whose parts
+  all satisfy `Ord`. `opaque` handles and `callback` do not.
 
 Bounds are checked in the monomorphizer, when concrete type arguments are
 known; a violation is reported at the call site or type use that triggered the
 instantiation, with source type spelling. An unused template is still checked
-with `i32` for every parameter, and `i32` satisfies all three bounds. Bounds
-do not affect mangling, generated C or ABI. Because no `Ord` constraint is
-introduced, ordering helpers (`math_min`, `vec_sort`) remain numeric-only; see
-`development/FRICTION.md`. Constraint names are ordinary identifiers, not
-keywords, and an unknown name is a parse error.
+with `i32` for every parameter, and `i32` satisfies all four bounds. Bounds
+do not affect mangling, generated C or ABI. `vec_find<T>`/`slice_find<T>`
+declare `T: Eq`, while `vec_sort<T>`/`vec_binary_search<T>` declare
+`T: Clone + Ord`; `math_min<T>` and friends still require numeric `T` because
+arithmetic, not ordering, is their requirement. Constraint names are ordinary
+identifiers, not keywords, and an unknown name is a parse error.
 
-**Why:** explicit arguments make monomorphization predictable and keep the first implementation small. Inference can be added later without changing the surface syntax. Deferring bound validation to the monomorphizer avoids re-checking abstract `T` bodies with speculative type rules and keeps the diagnostic on code the user wrote; keeping `Clone`, `Copy` and `Eq` aligned with existing checker operations avoids promising comparisons or copies the backend cannot emit.
+**Why:** explicit arguments make monomorphization predictable and keep the first implementation small. Inference can be added later without changing the surface syntax. Deferring bound validation to the monomorphizer avoids re-checking abstract `T` bodies with speculative type rules and keeps the diagnostic on code the user wrote; sharing one structural rule between checker, monomorphizer and backend means a bound never promises a comparison the C backend cannot emit.
 
-**Status:** implemented and tested for shapes, flows, nested instantiations, speculative `>>` token splitting, depth limits, name collisions, unused-template validation and the three bounds (positive and negative cases at call sites and type uses).
+**Status:** implemented and tested for shapes, flows, nested instantiations, speculative `>>` token splitting, depth limits, name collisions, unused-template validation and all four bounds (positive and negative cases at call sites and type uses).
 
 ### 5.2 Pointers — none (question 2)
 
