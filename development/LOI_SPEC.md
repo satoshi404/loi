@@ -813,7 +813,10 @@ places it in the document's own directory so relative imports keep working, and
 falls back to reading the real file only for notifications with no text. The
 server advertises full-document synchronization and the diagnostics provider in
 `initialize`. `os_env` reads the `LOI_COMPILER` setting used to locate the
-compiler. Verification and examples live in `PROGRESS.md`.
+compiler. The server is shipped as a separate `loi-lsp` executable (like
+`clangd` beside `clang`); `cargo build` creates it next to `loi`, and its
+launcher caches the compiled Loi server on first use. Verification and examples
+live in `PROGRESS.md`.
 
 ### 5.7 Scalar and composite copy — confirmed (question 7), revised by Block A2
 

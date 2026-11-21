@@ -800,3 +800,30 @@ deletes the shadow immediately. Keeping the shadow beside the original avoids
 breaking relative imports such as `import "../lib/std.loi"`. A regression test
 asserts that the client's file is byte-for-byte unchanged and that no shadow
 survives the notification.
+
+## L7 follow-up — standalone LSP and WebAssembly preview
+
+The first preview used `generate_audio(-> samples)`. A `->` parameter is a fresh
+output, so codegen zeroes the incoming slice and the first `out[i]` aborts with
+`loi: slice index out of bounds at 170:9`; the canvas stayed black because the
+loop never reached `BeginDrawing`. The caller already allocates the buffer once,
+so the flow now borrows it with `<->` and writes in place.
+
+The browser also logged `Cannot read properties of undefined (reading 'buffer')`
+from raylib's miniaudio `onaudioprocess` on every tick. Emscripten had not yet
+published `Module.HEAPF32` when miniaudio started its deprecated
+`ScriptProcessorNode`. Since the examples play through WebAudio directly,
+`examples/sound_shim.c` now exposes `loi_init_audio_device` /
+`loi_close_audio_device` as no-ops on Emscripten and real raylib calls natively.
+The prebuilt `website/web/audio_visualizer.*` and `sound_synth.*` bundles were
+rebuilt; a headless browser probe reports no page errors, `audioState: running`,
+`playing: true` and an empty program output panel.
+
+For the LSP, `examples/lsp_server.loi` plus `tools/build_lsp_server.sh` required
+the user to know a separate build command while `cargo build` only produced the
+compiler. `src/bin/loi-lsp.rs` now makes the server a normal Cargo binary next to
+`loi`: it embeds the Loi source and shims, caches a compiled server keyed by a
+FNV fingerprint of those sources, and execs it with `LOI_COMPILER` pointing at
+the sibling compiler. The protocol, capabilities and shadow-file safety are
+unchanged; the playground prefers the binary when available and still falls
+back to compiling the example for compiler-only checkouts.

@@ -1161,6 +1161,11 @@ directory, which keeps relative imports valid, and removes it with
 `lsp_remove_document(shadow)` after the check. A `didSave` with no text only
 reads the file on disk.
 
+`cargo build` ships the server as the separate `loi-lsp` executable, following
+the `clang`/`clangd` model. It is a stdio language server; the launcher compiles
+and caches `examples/lsp_server.loi` on first use and hands `LOI_COMPILER` to
+the server so both binaries use the same compiler.
+
 `lsp_publish_diagnostics(<- uri, <- diagnostics_json)` emits
 `textDocument/publishDiagnostics`. Compiler spans are 1-based while LSP uses
 0-based lines and characters, so both are decremented; severity strings map

@@ -1394,7 +1394,9 @@ open flow main
 
           <div class="doc-code">
             <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
-            <pre><code class="language-sh">sh tools/build_lsp_server.sh
+            <pre><code class="language-sh">cargo build                  # creates loi and the separate loi-lsp launcher
+# optional: build a plain server binary from a checkout
+sh tools/build_lsp_server.sh
 # equivalent to:
 loi build examples/lsp_server.loi -o loi-lsp \
     --c-source lib/stdio_shim.c --c-source lib/process_shim.c \
@@ -1867,10 +1869,12 @@ node website/server.mjs
         <section id="editors">
           <h2>Editor plugins (LSP)</h2>
           <p>
-            The same server used by the playground works in real editors. Build it once from the
-            repository root, then point your editor at the resulting binary. The server speaks
-            LSP over stdio, advertises full-document synchronization and publishes compiler
-            diagnostics after every <code>didOpen</code> and <code>didChange</code>. It never
+            The same server used by the playground is shipped as a separate
+            <code>loi-lsp</code> executable, like <code>clangd</code> beside <code>clang</code>.
+            <code>cargo build</code> creates it next to <code>loi</code>; the launcher compiles
+            and caches the server written in Loi on first use, then speaks LSP over stdio. It
+            advertises full-document synchronization and publishes compiler diagnostics after
+            every <code>didOpen</code> and <code>didChange</code>. It never
             writes over the file you are editing; it checks a hidden shadow file in the same
             directory and deletes it after each check. Relative imports therefore resolve exactly
             as they do for the real file.
@@ -1878,14 +1882,15 @@ node website/server.mjs
 
           <div class="doc-code">
             <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
-            <pre><code class="language-sh">cargo build
-sh tools/build_lsp_server.sh          # creates ./loi-lsp
-export LOI_COMPILER=/absolute/path/to/loi/target/debug/loi</code></pre>
+            <pre><code class="language-sh">cargo build                          # creates loi and loi-lsp
+export LOI_COMPILER=/absolute/path/to/loi/target/debug/loi
+/path/to/loi/target/debug/loi-lsp    # stdio language server</code></pre>
           </div>
           <p>
-            <code>LOI_COMPILER</code> is read by the server when it spawns
-            <code>loi check</code>. If <code>loi</code> is already on your
-            <code>PATH</code>, you can leave the variable unset.
+            <code>LOI_COMPILER</code> selects the compiler used both to build the cached server
+            and for the <code>loi check</code> calls it spawns. By default <code>loi-lsp</code>
+            uses the <code>loi</code> binary installed beside it, so the variable can usually be
+            left unset. <code>LOI_LSP_CACHE_DIR</code> moves the cached server.
           </p>
 
           <h3>Emacs</h3>
@@ -1897,7 +1902,7 @@ export LOI_COMPILER=/absolute/path/to/loi/target/debug/loi</code></pre>
           </p>
           <div class="doc-code">
             <div class="doc-code-bar"><span>~/.emacs.d/init.el</span><button type="button" data-copy>copy</button></div>
-            <pre><code class="language-elisp">(setq loi-lsp-command '("/absolute/path/to/loi/loi-lsp"))
+            <pre><code class="language-elisp">(setq loi-lsp-command '("/absolute/path/to/loi/target/debug/loi-lsp"))
 (load "/absolute/path/to/loi/editors/emacs-loi.el")
 (add-hook 'loi-mode-hook #'eglot-ensure)   ; optional: start automatically</code></pre>
           </div>
@@ -1926,15 +1931,15 @@ code .</code></pre>
           </p>
           <div class="doc-code">
             <div class="doc-code-bar"><span>~/.config/nvim/init.lua</span><button type="button" data-copy>copy</button></div>
-            <pre><code class="language-lua">vim.g.loi_lsp_cmd = "/absolute/path/to/loi/loi-lsp"
+            <pre><code class="language-lua">vim.g.loi_lsp_cmd = "/absolute/path/to/loi/target/debug/loi-lsp"
 dofile("/absolute/path/to/loi/editors/nvim/loi.lua")</code></pre>
           </div>
 
           <p>
             In all three editors, diagnostics come from the real compiler. A clean check emits
             no JSON, which the server turns into an empty diagnostic list so old markers
-            disappear. The server is stdio-only and has no dependencies beyond the C shims
-            linked by <code>tools/build_lsp_server.sh</code>.
+            disappear. The server is stdio-only; <code>tools/build_lsp_server.sh</code> can also
+            build a plain server binary from a source checkout without the Cargo launcher.
           </p>
         </section>
 

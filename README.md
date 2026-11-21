@@ -70,7 +70,7 @@ open flow main
 ## Quick start
 
 ```sh
-cargo build
+cargo build                         # builds both loi and the separate loi-lsp
 ./target/debug/loi check examples/flow_syntax.loi
 ./target/debug/loi build examples/flow_syntax.loi -o flow_demo
 ./flow_demo
@@ -87,6 +87,12 @@ loi build FILE... [-o out] [--emit exe|obj|lib] [--debug|--release] [--rebuild]
           [--cc-flag F]... [--c-source FILE]...
 loi clean FILE [-o out]
 ```
+
+`cargo build` also produces `target/debug/loi-lsp`, a separate stdio language
+server like `clangd`. Editors start it directly; it compiles and caches the
+server written in `examples/lsp_server.loi` on first launch and uses the
+compiler next to it for `loi check`. Set `LOI_COMPILER` to override that
+compiler, or `LOI_LSP_CACHE_DIR` to move the cached server.
 
 Every mode accepts `--error-format human|short|json` (default `human`) and
 `--color auto|always|never` (default `auto`). Human diagnostics show the source
@@ -145,7 +151,7 @@ their build commands.
 
 | Path | Contents |
 |---|---|
-| `src/` | Lexer, parser, type/ownership checker, C backend, draft IR/assembly |
+| `src/` | Compiler binaries (`loi` and the `loi-lsp` launcher), lexer, parser, type/ownership checker, C backend, draft IR/assembly |
 | `tests/` | Lexer/parser/checker/codegen/CLI/bindgen integration tests |
 | `lib/*.loi`, `lib/*_shim.c` | Modular library: pure Loi helpers plus POSIX shims for `os`/`net` |
 | `examples/` | Reference programs, including `flow_syntax.loi`, `marks.loi`, `choices.loi`, `systems.loi` and `tictactoe.loi` |
