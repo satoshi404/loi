@@ -1037,13 +1037,63 @@ open flow request_method
 
 A realistic `initialize` request decoder is `examples/json_rpc.loi`.
 
+### JSON-RPC over stdio
+
+`lib/jsonrpc.loi` combines the two previous blocks into a minimal JSON-RPC 2.0
+transport: `lib/stdio.loi` supplies the framing and `lib/json.loi` validates the
+payload. It still needs the stdio shim at link time:
+
+```loi
+import "lib/jsonrpc.loi"
+
+open flow serve_one
+    => bool
+{
+    protect {
+        mut body: [u8]
+        if not jsonrpc_read_frame(-> body) {
+            => false
+        }
+        mut request: JsonRpcRequest
+        if not jsonrpc_parse_request(body, -> request) {
+            jsonrpc_send_error(0, -32700, "Parse error")
+            => true
+        }
+        if str_eq(request.method, "shutdown") {
+            jsonrpc_send_result(request.id, "null")
+            => false
+        }
+        jsonrpc_send_result(request.id, "{\"capabilities\":{}}")
+    }
+    => true
+}
+```
+
+- `jsonrpc_read_frame(-> body) => bool` reads one `Content-Length` frame. It
+  returns `false` on EOF, a malformed header, or a zero-length frame (the
+  shutdown sentinel); `body` lives in the caller's `protect` region.
+- `jsonrpc_parse_request(<- body, -> request) => bool` fills a
+  `JsonRpcRequest` with `doc: JsonDoc`, `id: i64` and a borrowed `method: [u8]`.
+  It rejects malformed JSON, a non-object root, a version other than `"2.0"`,
+  and a missing or wrongly typed `id`/`method`. Both `doc` and `method` stay
+  live until `protect` ends.
+- `jsonrpc_send_result(<- id, <- result)` and
+  `jsonrpc_send_error(<- id, <- code, <- message)` write a framed, flushed
+  response. `result` is raw JSON copied verbatim; `message` must not need
+  escaping.
+
+All four allocating flows require the caller's `protect`. The complete
+initialize/shutdown/unknown-method server is `examples/lsp_server.loi`; build it
+with `loi build examples/lsp_server.loi -o lsp_server --c-source lib/stdio_shim.c`.
+
 ### Library modules
 
 Every library file is imported explicitly with the canonical `import` form.
 Each file is a module (§13); items may be named unqualified or as
 `module::item`. Library names keep their established prefixes (`math_*`,
 `ctype_*`, `vec_*`, `slice_*`, `str_*`, `option_*`, `result_*`, `hash_*`,
-`crc32_*`, `map_*`, `rng_*`, `os_*`, `net_*`, `stdio_*`, `json_*`) so their C symbols stay stable even
+`crc32_*`, `map_*`, `rng_*`, `os_*`, `net_*`, `stdio_*`, `json_*`,
+`jsonrpc_*`) so their C symbols stay stable even
 when a user module declares the same name; module-qualified mangling applies only
 to names that actually repeat.
 
@@ -1065,6 +1115,7 @@ to names that actually repeat.
 | `lib/net.loi` | `NetIpv4Result`, `net_ipv4`, `net_ipv4_octet`, `net_port_is_valid`, `net_parse_ipv4`, `net_tcp_connect`, `net_close`, `net_send`, `net_recv` | `lib/net_shim.c` |
 | `lib/stdio.loi` | `stdio_read_exact`, `stdio_write_all`, `stdio_flush` | `lib/stdio_shim.c` |
 | `lib/json.loi` | `JsonKind`, `JsonDoc`, `json_parse`, `json_root`, `json_kind`, `json_bool`, `json_string`, `json_number_text`, `json_number_i64`, `json_array_len`, `json_array_get`, `json_object_get`, `json_stringify` | no; parsing and stringifying need `protect` |
+| `lib/jsonrpc.loi` | `JsonRpcRequest`, `jsonrpc_read_frame`, `jsonrpc_parse_request`, `jsonrpc_send_result`, `jsonrpc_send_error` | `lib/stdio_shim.c`; all flows need `protect` |
 
 `lib/math.loi` and `lib/ctype.loi` are pure Loi: the math module uses generic
 flows and a `comptime flow` for factorials. Documented library flows and their

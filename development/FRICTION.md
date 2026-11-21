@@ -564,6 +564,35 @@ fields were never initialized. Workaround for L2: call `vec_new<JsonNode>`,
 serializer output, before the first push. This matches the existing
 `Vec<T>` contract that `vec_new<T>` needs no `protect` but growing flows do.
 
+## Block L3 — JSON-RPC over stdio
+
+### Responses cannot be built with the JSON parser
+
+Attempted design: build a response `JsonDoc` and call `json_stringify` on it,
+just as the request side uses `json_parse` and `json_object_get`. The library
+only parses existing text: it has no constructor flow for a node, no way to set
+a scalar on a fresh node, and `json_stringify` always emits the document rooted
+at the parsed node table. There is no language diagnostic — the API simply has
+no verb for "make a number node" or "attach a string key". Library requirement:
+a JSON *builder* (`json_new`, `json_set_*`, `json_push_*`) that allocates in
+`protect` and shares the node/child-arena representation with the parser.
+Workaround for L3: `jsonrpc_send_result` and `jsonrpc_send_error` append raw
+bytes to a `Vec<u8>`. The `result` argument is documented as a raw JSON literal
+and `message` must not need escaping, which keeps the narrow contract honest.
+
+### There is no integer-to-bytes conversion in the library
+
+Attempted design: use the `print_int` intrinsic to write the response `id`
+into the output buffer. `print_int` only writes to stdout, which would put the
+number *before* the rest of the frame, and it returns no bytes. No conversion
+such as `i64_to_string` exists in `lib/std.loi` or `lib/string.loi` (verified by
+searching every `lib/*.loi`). Library requirement: an allocating
+`i64_to_bytes` / `u64_to_bytes` helper in `lib/std.loi` or `lib/string.loi`.
+Workaround for L3: a private `jsonrpc_append_i64` flow handles the sign and
+builds decimal digits with `% 10` / `/ 10`, pushes them in reverse into a small
+`Vec<u8>`, then emits them in order. It also avoids `-(value + 1)` overflow for
+the minimum `i64` by widening through `u64` before negating.
+
 ## Opt-in LLVM backend
 
 ### The draft IR was not compilable LLVM IR

@@ -1,0 +1,49 @@
+// A tiny LSP-style JSON-RPC server written in Loi (Block L3).
+// It reads framed requests from stdin and writes framed replies to stdout.
+// Build with: loi build examples/lsp_server.loi -o lsp_server --c-source lib/stdio_shim.c
+// A zero-length frame or EOF ends the loop.
+
+import "../lib/jsonrpc.loi"
+import "../lib/std.loi"
+
+/// Dispatch one validated request. Returns false only for `exit`.
+open flow dispatch
+    <- request: JsonRpcRequest
+    => bool
+{
+    if str_eq(request.method, "initialize") {
+        jsonrpc_send_result(request.id, "{\"capabilities\":{}}")
+        => true
+    }
+    if str_eq(request.method, "shutdown") {
+        jsonrpc_send_result(request.id, "null")
+        => true
+    }
+    if str_eq(request.method, "exit") {
+        => false
+    }
+    jsonrpc_send_error(request.id, -32601, "Method not found")
+    => true
+}
+
+open flow main
+    => i32
+{
+    while true {
+        protect {
+            mut body: [u8]
+            if not jsonrpc_read_frame(-> body) {
+                break
+            }
+            mut request: JsonRpcRequest
+            if not jsonrpc_parse_request(body, -> request) {
+                jsonrpc_send_error(0, -32700, "Parse error")
+                continue
+            }
+            if not dispatch(request) {
+                break
+            }
+        }
+    }
+    => 0
+}

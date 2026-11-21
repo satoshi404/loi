@@ -419,7 +419,7 @@ These rules were added to unblock real programs and are implemented and tested. 
 
 - Intrinsics: `print(<- [u8])`, `eprint(<- [u8])`, `panic(<- [u8])`, `print_int(<- integer)`, `print_float(<- f64)`, `printf(<- [u8], ...)` (literal format string plus typed varargs), `sqrt/floor/ceil/fabs(<- f64) => f64`, `pow/fmod(<- f64, <- f64) => f64`, `len([T]) => u64` and
 `callback(<- flow) => callback`.
-- The library is a set of explicitly imported files: `lib/std.loi` (integer/float and byte-string helpers), `lib/math.loi` (generic and `comptime` math), `lib/ctype.loi` (ASCII byte helpers), `lib/option.loi` and `lib/result.loi` (optional and error-carrying values), `lib/json.loi` (JSON documents), `lib/os.loi` and `lib/net.loi` (thin POSIX bindings with C shims), and `lib/stdio.loi` (deterministic byte I/O on the standard streams, also via a C shim). The pure files use only the features above; the three shim-backed files use `extern flow` declarations and must be linked with their shims.
+- The library is a set of explicitly imported files: `lib/std.loi` (integer/float and byte-string helpers), `lib/math.loi` (generic and `comptime` math), `lib/ctype.loi` (ASCII byte helpers), `lib/option.loi` and `lib/result.loi` (optional and error-carrying values), `lib/json.loi` (JSON documents), `lib/jsonrpc.loi` (JSON-RPC 2.0 transport), `lib/os.loi` and `lib/net.loi` (thin POSIX bindings with C shims), and `lib/stdio.loi` (deterministic byte I/O on the standard streams, also via a C shim). The pure files use only the features above; the three shim-backed files use `extern flow` declarations and must be linked with their shims.
 
 **Optional and error values (Block A6).**
 
@@ -777,6 +777,12 @@ arena and a separate child-handle arena, `json_*` accessors, and compact
 `\uXXXX` surrogate pairs), numbers keep their raw lexeme, object order is
 preserved, and malformed input or trailing bytes make `json_parse` return
 `false`. Parsing and stringifying allocate, so callers need a `protect` region.
+`lib/jsonrpc.loi` composes the framing of `lib/stdio.loi` with the validation of
+`lib/json.loi`: `jsonrpc_read_frame` reads one `Content-Length` body,
+`jsonrpc_parse_request` fills a `JsonRpcRequest` (`doc`, `id`, `method`) after
+checking the JSON-RPC 2.0 envelope, and `jsonrpc_send_result` /
+`jsonrpc_send_error` emit framed, flushed replies. EOF, a malformed header and a
+zero-length frame end the exchange; all allocating flows require `protect`.
 Verification and examples live in `PROGRESS.md`.
 
 ### 5.7 Scalar and composite copy — confirmed (question 7), revised by Block A2
@@ -828,7 +834,7 @@ slices, so their helpers stay bit-wise.
    that flow's C symbol; it likewise cannot use one fixed AST-level signature.
    `read_file`, `read_stdin` and `read_line` allocate in the current `protect`
    region and follow the same escape rules as `alloc`.
-2. **The library** is ordinary Loi in `lib/std.loi`, `lib/math.loi` and `lib/ctype.loi`, plus thin `extern flow` bindings in `lib/os.loi`, `lib/net.loi` and `lib/stdio.loi` with matching C shims. Files are explicitly imported; there is no implicit prelude. Each file is a module with a `module::item` qualified form (§4.8); library names keep their established prefixes (`min_i32`, `math_sum`, `ctype_is_digit`, ...) so their C symbols stay stable even when a user module declares the same name.
+2. **The library** is ordinary Loi in `lib/std.loi`, `lib/math.loi`, `lib/ctype.loi`, `lib/json.loi` and `lib/jsonrpc.loi`, plus thin `extern flow` bindings in `lib/os.loi`, `lib/net.loi` and `lib/stdio.loi` with matching C shims. Files are explicitly imported; there is no implicit prelude. Each file is a module with a `module::item` qualified form (§4.8); library names keep their established prefixes (`min_i32`, `math_sum`, `ctype_is_digit`, ...) so their C symbols stay stable even when a user module declares the same name.
 
 New functionality goes into the library by default; an intrinsic is added only when the operation must be implemented by the backend or the OS.
 

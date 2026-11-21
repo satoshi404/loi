@@ -975,7 +975,8 @@ flow exchange
             <code>slice_*</code>, <code>str_*</code>, <code>option_*</code>,
             <code>result_*</code>, <code>hash_*</code>, <code>crc32_*</code>,
             <code>map_*</code>, <code>rng_*</code>, <code>os_*</code>,
-            <code>net_*</code>, <code>stdio_*</code>, <code>json_*</code>) so their
+            <code>net_*</code>, <code>stdio_*</code>, <code>json_*</code>,
+            <code>jsonrpc_*</code>) so their
             generated symbols stay stable even if a user
             module declares the same name. The prefix is a naming convention, not a
             namespace: you can also import under an alias and use
@@ -1157,6 +1158,14 @@ flow exchange
                   <code>json_stringify</code></td>
                 <td>no; parsing and stringifying need <code>protect</code></td>
               </tr>
+              <tr>
+                <td><code>lib/jsonrpc.loi</code></td>
+                <td><code>JsonRpcRequest</code>, <code>jsonrpc_read_frame</code>,
+                  <code>jsonrpc_parse_request</code>,
+                  <code>jsonrpc_send_result</code>,
+                  <code>jsonrpc_send_error</code></td>
+                <td><code>lib/stdio_shim.c</code>; all flows need <code>protect</code></td>
+              </tr>
             </tbody>
           </table>
 
@@ -1257,7 +1266,22 @@ flow exchange
             (including <code>\uXXXX</code> surrogate pairs) to UTF-8, numbers keep
             their raw lexeme and object order is preserved.
             <code>json_stringify(&lt;- doc) =&gt; [u8]</code> emits compact JSON.
-            See <a href="examples/json_rpc.loi">examples/json_rpc.loi</a>.</p>
+            See <a href="examples/json_rpc.loi">examples/json_rpc.loi</a>.
+            <code>lib/jsonrpc.loi</code> composes both blocks into a JSON-RPC 2.0
+            transport. <code>jsonrpc_read_frame(-&gt; body)</code> reads one
+            <code>Content-Length</code> frame; EOF, a malformed header or a
+            zero-length frame ends the exchange.
+            <code>jsonrpc_parse_request(&lt;- body, -&gt; request)</code> fills a
+            <code>JsonRpcRequest</code> with <code>doc</code>, <code>id</code> and a
+            borrowed <code>method</code> after checking the <code>2.0</code>
+            version and the field types. Replies use
+            <code>jsonrpc_send_result(id, result)</code> and
+            <code>jsonrpc_send_error(id, code, message)</code>, which write framed,
+            flushed responses; <code>result</code> is a raw JSON literal copied
+            verbatim and <code>message</code> must not need escaping. All four
+            flows allocate, so call them inside <code>protect</code>. The complete
+            initialize/shutdown/unknown-method server is
+            <a href="examples/lsp_server.loi">examples/lsp_server.loi</a>.</p>
 
           <div class="doc-code">
             <div class="doc-code-bar"><span>shims.loi</span><button type="button" data-copy>copy</button></div>
@@ -1286,6 +1310,11 @@ open flow main
           <div class="doc-code">
             <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
             <pre><code class="language-sh">loi build examples/stdio_frames.loi -o stdio_frames --c-source lib/stdio_shim.c</code></pre>
+          </div>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-sh">loi build examples/lsp_server.loi -o lsp_server --c-source lib/stdio_shim.c</code></pre>
           </div>
 
           <div class="doc-code">
