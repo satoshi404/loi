@@ -263,6 +263,50 @@ fn lsp_server_uses_did_change_text_instead_of_the_on_disk_file() {
     expected.extend(frame(&published(&uri, diagnostic)));
 
     assert_server(&dir, &input, &expected);
+    assert_eq!(
+        fs::read_to_string(&source_path).expect("original source should still be readable"),
+        "flow main => i32 {\n    => 0\n}\n",
+        "didChange must not overwrite the client's file"
+    );
+    assert_no_shadows(&dir);
+}
+
+fn assert_no_shadows(dir: &Path) {
+    let shadows: Vec<_> = fs::read_dir(dir)
+        .expect("test directory should be readable")
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with(".loi-lsp-"))
+        .collect();
+    assert!(
+        shadows.is_empty(),
+        "shadow files should be removed after each check: {shadows:?}"
+    );
+}
+
+#[test]
+fn lsp_server_never_writes_the_client_file() {
+    if !has_c_compiler() {
+        eprintln!("skipping lsp_server_never_writes_the_client_file: cc not found");
+        return;
+    }
+    let dir = test_dir("shadow-file");
+    let source_path = dir.join("document.loi");
+    let original = "flow main => i32 {\n    => 0\n}\n";
+    fs::write(&source_path, original).expect("source should be writable");
+    let uri = format!("file://{}", source_path.to_string_lossy());
+    let broken = "flow main => i32 {\n    => missing\n}\n";
+
+    let input = frame(&did_open(&uri, broken));
+    let diagnostic = r#"{"range":{"start":{"line":1,"character":7},"end":{"line":1,"character":14}},"severity":1,"message":"unknown variable 'missing'"}"#;
+    let expected = frame(&published(&uri, diagnostic));
+
+    assert_server(&dir, &input, &expected);
+    assert_eq!(
+        fs::read_to_string(&source_path).expect("original source should still be readable"),
+        original,
+        "didOpen must not overwrite the client's file"
+    );
+    assert_no_shadows(&dir);
 }
 
 #[test]

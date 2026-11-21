@@ -48,3 +48,18 @@ int64_t loi_lsp_write_document(LoiSlice path, LoiSlice text) {
     }
     return (int64_t)written;
 }
+
+int64_t loi_lsp_remove_document(LoiSlice path) {
+    if (path.len == 0 || path.len > 4096 || (path.len > 0 && path.data == NULL)) {
+        return -1;
+    }
+    char* filename = (char*)malloc(path.len + 1);
+    if (filename == NULL) {
+        return -1;
+    }
+    memcpy(filename, path.data, path.len);
+    filename[path.len] = '\0';
+    int result = remove(filename);
+    free(filename);
+    return result == 0 ? 0 : -1;
+}

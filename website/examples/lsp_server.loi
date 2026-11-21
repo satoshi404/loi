@@ -9,18 +9,22 @@
 // A zero-length frame or EOF ends the loop.
 //
 // Diagnostics come from the real compiler: on `didOpen`, `didChange` and
-// `didSave` the server writes the client's text and spawns
-// `loi check <file> --error-format json`, publishing its stderr as
-// `textDocument/publishDiagnostics`. Set LOI_COMPILER to choose the compiler
-// binary (default: `loi`). The process is a guarded resource, so its captured
-// output is released on every exit path. Build with `lib/lsp_shim.c` as well.
+// `didSave` the server writes the client's text to a shadow file next to the
+// document and spawns `loi check <shadow> --error-format json`, publishing its
+// stderr as `textDocument/publishDiagnostics`. The shadow is removed right
+// after the check, so the editor's file is never overwritten and relative
+// imports still resolve. Set LOI_COMPILER to choose the compiler binary
+// (default: `loi`). The process is a guarded resource, so its captured output
+// is released on every exit path. Build with `lib/lsp_shim.c` as well.
 
+import "../lib/hash.loi"
 import "../lib/json.loi"
 import "../lib/jsonrpc.loi"
 import "../lib/lsp.loi"
 import "../lib/os.loi"
 import "../lib/process.loi"
 import "../lib/std.loi"
+import "../lib/string.loi"
 import "../lib/vec.loi"
 
 /// Strip the `file://` prefix from a document URI.
@@ -35,6 +39,39 @@ open flow document_path
         }
     }
     => uri
+}
+
+/// Byte offset of the last `/` in `path`, or -1 when the path has no directory.
+sealed flow last_slash
+    <- path: [u8]
+    => i64
+{
+    mut found: i64 <- -1
+    for i in 0..path.len {
+        if path[i] == 47 {
+            found = i as i64
+        }
+    }
+    => found
+}
+
+/// Deterministic shadow path for a document URI. It lives in the same directory
+/// as the real file so imports such as `import "../lib/std.loi"` still resolve,
+/// but its name can never collide with the editor's file.
+open flow document_shadow_path
+    <- uri: [u8]
+    => [u8]
+{
+    path <- document_path(uri)
+    slash <- last_slash(path)
+    mut dir: [u8] <- "./"
+    if slash >= 0 {
+        dir = view(path, 0, (slash + 1) as u64)
+    }
+    id <- u64_to_bytes(hash_str(uri))
+    name <- str_concat(".loi-lsp-", id)
+    with_extension <- str_concat(name, ".loi")
+    => str_concat(dir, with_extension)
 }
 
 /// Return the document text carried by a `didOpen` / `didChange` notification.
@@ -72,6 +109,27 @@ open flow document_text
     => ""
 }
 
+/// Check `path` with the real compiler and publish its diagnostics for `uri`.
+sealed flow check_and_publish
+    <- compiler: [u8]
+    <- path: [u8]
+    <- uri: [u8]
+{
+    mut args: Vec<[u8]>
+    vec_new<[u8]>(-> args)
+    vec_push<[u8]>(<-> args, "check")
+    vec_push<[u8]>(<-> args, path)
+    vec_push<[u8]>(<-> args, "--error-format")
+    vec_push<[u8]>(<-> args, "json")
+    vec_push<[u8]>(<-> args, "--color")
+    vec_push<[u8]>(<-> args, "never")
+
+    guard child <- process_spawn_args(compiler, vec_view<[u8]>(<- args, 0, args.len)) {
+        diagnostics <- process_stderr(child)
+        lsp_publish_diagnostics(uri, diagnostics)
+    }
+}
+
 /// Run the real compiler and publish its structured diagnostics for `uri`.
 open flow publish_diagnostics_for
     <- request: JsonRpcRequest
@@ -92,29 +150,24 @@ open flow publish_diagnostics_for
     uri <- json_string(<- request.doc, uri_node)
     path <- document_path(uri)
 
-    mut has_text: bool
-    text <- document_text(<- request.doc, params, -> has_text)
-    if has_text {
-        lsp_write_document(path, text)
-    }
-
     mut compiler: [u8] <- os_env("LOI_COMPILER")
     if compiler.len == 0 {
         compiler = "loi"
     }
-    mut args: Vec<[u8]>
-    vec_new<[u8]>(-> args)
-    vec_push<[u8]>(<-> args, "check")
-    vec_push<[u8]>(<-> args, path)
-    vec_push<[u8]>(<-> args, "--error-format")
-    vec_push<[u8]>(<-> args, "json")
-    vec_push<[u8]>(<-> args, "--color")
-    vec_push<[u8]>(<-> args, "never")
 
-    guard child <- process_spawn_args(compiler, vec_view<[u8]>(<- args, 0, args.len)) {
-        diagnostics <- process_stderr(child)
-        lsp_publish_diagnostics(uri, diagnostics)
+    mut has_text: bool
+    text <- document_text(<- request.doc, params, -> has_text)
+    if has_text {
+        shadow <- document_shadow_path(uri)
+        lsp_write_document(shadow, text)
+        check_and_publish(compiler, shadow, uri)
+        lsp_remove_document(shadow)
+        =>
     }
+
+    // A notification without text (for example a bare didSave) only reads the
+    // file on disk; it must never write over the editor's document.
+    check_and_publish(compiler, path, uri)
 }
 
 /// Dispatch one validated request. Returns false only for `exit`.
