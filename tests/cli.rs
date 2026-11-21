@@ -1636,6 +1636,44 @@ fn build_links_a_c_callback_example() {
 }
 
 #[test]
+fn build_links_a_typed_callback_example() {
+    if !has_c_compiler() {
+        eprintln!("skipping build_links_a_typed_callback_example: cc not found");
+        return;
+    }
+
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let dir = test_dir("build-callback-signatures");
+    let source = root.join("examples/callback_signatures.loi");
+    let shim = root.join("examples/callback_signatures_shim.c");
+    let executable = dir.join("callback_signatures");
+
+    let build = Command::new(loi())
+        .arg("build")
+        .arg(&source)
+        .arg("-o")
+        .arg(&executable)
+        .arg("--c-source")
+        .arg(&shim)
+        .output()
+        .expect("loi should run");
+    assert!(
+        build.status.success(),
+        "typed callback example build failed: {}\n{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let run = Command::new(&executable)
+        .output()
+        .expect("built executable should run");
+    let _ = fs::remove_dir_all(&dir);
+
+    assert_eq!(run.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "30\n0\n1\n2\n");
+}
+
+#[test]
 fn build_runs_the_structural_ordering_example() {
     if !has_c_compiler() {
         eprintln!("skipping build_runs_the_structural_ordering_example: cc not found");

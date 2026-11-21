@@ -935,16 +935,16 @@ flow exchange
               <tr><td><code>fmod</code></td><td><code>&lt;- f64, &lt;- f64 =&gt; f64</code></td><td>Floating remainder.</td></tr>
               <tr><td><code>len</code></td><td><code>[T] =&gt; u64</code></td><td>Slice length; also <code>xs.len</code>.</td></tr>
               <tr><td><code>view</code></td><td><code>&lt;- [T], &lt;- u64, &lt;- u64 =&gt; [T]</code></td><td>Zero-copy borrowed subslice; traps unless <code>start &lt;= end &lt;= xs.len</code>.</td></tr>
-              <tr><td><code>callback</code></td><td><code>&lt;- flow =&gt; callback</code></td><td>Fixed-ABI C function pointer from an exact-signature Loi flow.</td></tr>
+              <tr><td><code>callback</code></td><td><code>&lt;- flow =&gt; callback(T, ...) =&gt; R</code></td><td>C function pointer whose signature comes from a Loi flow.</td></tr>
             </tbody>
           </table>
           <p>
             Intrinsic names are reserved. User code may not redeclare them. <code>len</code> and the
             math intrinsics are checked against the same signatures as an ordinary flow;
             <code>view</code> is type-directed and takes its element type from the source slice.
-            <code>callback</code> takes a flow name and checks that it has exactly
-            <code>(&lt;- a: i32, &lt;- b: i32) =&gt; i32</code>; the generated C passes that flow's
-            symbol directly.
+            <code>callback</code> takes a non-<code>extern</code> flow whose parameters all use
+            <code>&lt;-</code>; its signature is inferred from that flow and checked at each use.
+            The generated C passes the flow's symbol directly, with no thunk.
             <code>printf</code> is the only variadic intrinsic: its first argument must be a string
             literal, whose conversions (<code>d i u x X o f F e E g G a A s c</code> and
             <code>%%</code>) decide how many values follow and of which kind. Flags, numeric width,
@@ -1299,6 +1299,7 @@ extern flow SDL_DestroyWindow
               <tr><td><code>opaque Name</code></td><td>A copyable foreign handle represented as <code>void *</code>; no fields or dereference.</td></tr>
               <tr><td><code>cstr</code></td><td>A <code>const char *</code> handle. A string literal may be passed or bound to it; arbitrary <code>[u8]</code> may not.</td></tr>
               <tr><td><code>callback</code></td><td>A fixed <code>int32_t (*)(int32_t, int32_t)</code> function pointer. Input-only parameter; built with <code>callback(flow)</code>.</td></tr>
+              <tr><td><code>callback(T, ...) =&gt; R</code></td><td>A function pointer with an explicit C signature; <code>R</code> may be <code>void</code>. Input-only parameter; built with <code>callback(flow)</code>.</td></tr>
               <tr><td><code>extern flow f ...</code></td><td>A bodyless declaration resolved to a C symbol at link time.</td></tr>
               <tr><td><code>extern flow f as c_f ...</code></td><td>Calls a different symbol, such as a generated shim.</td></tr>
             </tbody>
@@ -1307,9 +1308,10 @@ extern flow SDL_DestroyWindow
           <h3>C callbacks</h3>
           <p>
             A C function that takes a comparator or reducer can receive a Loi flow
-            through the fixed-ABI <code>callback</code> type. The flow must have exactly
-            <code>(&lt;- a: i32, &lt;- b: i32) =&gt; i32</code>; the generated C passes its
-            symbol directly, without a thunk:
+            through the fixed-ABI <code>callback</code> type. <code>callback(flow)</code>
+            infers the signature from a non-<code>extern</code> flow whose parameters all use
+            <code>&lt;-</code>, and the use site checks that it matches the declared type.
+            The generated C passes the flow's symbol directly, without a thunk:
           </p>
 
           <div class="doc-code">
@@ -1344,6 +1346,45 @@ flow main
             though ordinary Loi flows may. Build the example with
             <code>loi build examples/callbacks.loi --c-source examples/callbacks_shim.c -o callbacks</code>.
           </p>
+
+          <p>
+            Other C signatures are written explicitly. The example below passes a value
+            callback to <code>sum_mapped</code> and a void callback to <code>visit</code>;
+            each generated typedef is guarded and shared by the generated C and header.
+          </p>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>callback_signatures.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code>open extern flow sum_mapped
+    &lt;- count: i32
+    &lt;- f: callback(i32) =&gt; i32
+    =&gt; i32
+
+open extern flow visit
+    &lt;- count: i32
+    &lt;- f: callback(i32) =&gt; void
+
+flow square
+    &lt;- value: i32
+    =&gt; i32
+{
+    =&gt; value * value
+}
+
+flow report
+    &lt;- value: i32
+{
+    print_int(value)
+}
+
+flow main
+    =&gt; i32
+{
+    total &lt;- sum_mapped(5, callback(square))
+    visit(3, callback(report))
+    =&gt; 0
+}</code></pre>
+          </div>
 
           <p>
             <code>loi build ... --c-source shim.c --cc-flag -Ipath --cc-flag -lname</code>
@@ -1774,6 +1815,7 @@ sealed flow winning_line
               <tr><td><code>Name&lt;T, ...&gt;</code></td><td>An instantiation of a generic shape.</td></tr>
               <tr><td><code>cstr</code></td><td>An FFI-only NUL-terminated C string handle.</td></tr>
               <tr><td><code>callback</code></td><td>An FFI-only fixed-signature C function pointer, built with <code>callback(flow)</code>.</td></tr>
+              <tr><td><code>callback(T, ...) =&gt; R</code></td><td>An FFI-only C function pointer with an explicit signature, inferred from a Loi flow and checked at each use. <code>R</code> may be <code>void</code>.</td></tr>
             </tbody>
           </table>
 
@@ -1863,7 +1905,7 @@ sealed flow winning_line
               <tr><td>Compile-time evaluation</td><td>Working: pure <code>comptime flow</code> and <code>comptime expr</code>, constant globals of any shape, and shape defaults, with purity checks, step/depth limits and runtime-matching overflow, cast and <code>f32</code> semantics.</td></tr>
               <tr><td>Ownership analysis</td><td>Working: give liveness, definite assignment, exclusive <code>&lt;-&gt;</code>, region escape checks, allocating read intrinsics, lexical slice-view loans, and linear-resource <code>guard</code> validation.</td></tr>
               <tr><td>C backend</td><td>Working: one C11 translation unit, bounds checks, regions, checked arithmetic, bitwise/shift helpers, file/stdin I/O, numeric and formatted printing, source maps, headers, multi-file objects.</td></tr>
-              <tr><td>C interop</td><td>Working: <code>opaque</code>, <code>cstr</code>, fixed-ABI <code>callback</code>, <code>extern flow</code>, <code>--c-source</code>, and a header-to-Loi binding generator.</td></tr>
+              <tr><td>C interop</td><td>Working: <code>opaque</code>, <code>cstr</code>, fixed and explicit <code>callback</code> signatures, <code>extern flow</code>, <code>--c-source</code>, and a header-to-Loi binding generator.</td></tr>
               <tr><td>IR and assembly</td><td>Draft: <code>--emit-ir</code> emits IR text; <code>--emit-asm</code> is rejected because the assembly backend cannot generate runnable code yet. The C backend is the production path.</td></tr>
               <tr><td><code>comptime</code></td><td>Working for pure flows, expressions, globals and shape defaults. Recursive or runaway evaluation is rejected by step/depth limits.</td></tr>
               <tr><td>Linear resources (<code>guard</code>)</td><td>Working: convention-named release flows are validated and the C backend inserts releases on normal, return, <code>break</code> and <code>continue</code> paths with LIFO unwinding.</td></tr>

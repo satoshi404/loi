@@ -17,7 +17,11 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
 use crate::diagnostic::Diagnostic;
-use crate::types::{self, ComparisonEnv, Ty};
+use crate::types::{self, CallbackSig, ComparisonEnv, Ty};
+
+fn is_callback_void(ty: &Type) -> bool {
+    matches!(ty, Type::Named(name, _) if name == "void")
+}
 
 /// Check a complete program, returning every diagnostic found.
 pub fn check(program: &Program) -> Vec<Diagnostic> {
@@ -967,7 +971,7 @@ impl Checker {
             let mut seen = HashSet::new();
             for param in &decl.params {
                 let ty = self.resolve_type(&param.ty);
-                if ty == Ty::Callback && param.direction != Direction::In {
+                if matches!(ty, Ty::Callback(_)) && param.direction != Direction::In {
                     self.error(
                         param.span,
                         format!(
@@ -997,7 +1001,7 @@ impl Checker {
                 Some(ty) => self.resolve_type(ty),
                 None => Ty::Void,
             };
-            if decl.external && return_type == Ty::Callback {
+            if decl.external && matches!(return_type, Ty::Callback(_)) {
                 self.error(
                     decl.return_type
                         .as_ref()
@@ -1113,6 +1117,29 @@ impl Checker {
         }
     }
 
+    fn resolve_callback_sig(&mut self, params: &[Type], result: Option<&Type>) -> CallbackSig {
+        let mut resolved = Vec::new();
+        for param in params {
+            if is_callback_void(param) {
+                self.error(
+                    param.span(),
+                    "callback parameter type cannot be void; omit the parameter instead",
+                );
+                resolved.push(Ty::Error);
+            } else {
+                resolved.push(self.resolve_type(param));
+            }
+        }
+        let result = match result {
+            None => Ty::Void,
+            Some(ty) => self.resolve_type(ty),
+        };
+        CallbackSig {
+            params: resolved,
+            result: Box::new(result),
+        }
+    }
+
     /// Resolve a syntactic type to a semantic type, reporting type diagnostics
     /// on the span of the type itself rather than the enclosing declaration.
     fn resolve_type(&mut self, ty: &Type) -> Ty {
@@ -1124,7 +1151,10 @@ impl Checker {
                 } else if name == "cstr" {
                     Ty::CStr
                 } else if name == "callback" {
-                    Ty::Callback
+                    Ty::Callback(CallbackSig::fixed())
+                } else if name == "void" {
+                    self.error(span, "'void' is only allowed as a callback result");
+                    Ty::Error
                 } else if self.interfaces.contains_key(name) {
                     Ty::Named(name.clone())
                 } else if self.marks.contains_key(name) {
@@ -1144,6 +1174,9 @@ impl Checker {
                 }
             }
             Type::Slice(element, _) => Ty::Slice(Box::new(self.resolve_type(element))),
+            Type::Callback { params, result, .. } => {
+                Ty::Callback(self.resolve_callback_sig(params, result.as_deref()))
+            }
             Type::Generic(name, _, _) => {
                 self.error(
                     span,
@@ -1165,7 +1198,9 @@ impl Checker {
                 } else if name == "cstr" {
                     Ty::CStr
                 } else if name == "callback" {
-                    Ty::Callback
+                    Ty::Callback(CallbackSig::fixed())
+                } else if name == "void" {
+                    Ty::Void
                 } else if self.interfaces.contains_key(name) {
                     Ty::Named(name.clone())
                 } else if self.marks.contains_key(name) {
@@ -1179,6 +1214,20 @@ impl Checker {
                 }
             }
             Type::Slice(element, _) => Ty::Slice(Box::new(self.resolve_type_pure(element))),
+            Type::Callback { params, result, .. } => {
+                let params = params
+                    .iter()
+                    .map(|param| self.resolve_type_pure(param))
+                    .collect();
+                let result = match result.as_deref() {
+                    None => Ty::Void,
+                    Some(ty) => self.resolve_type_pure(ty),
+                };
+                Ty::Callback(CallbackSig {
+                    params,
+                    result: Box::new(result),
+                })
+            }
             Type::Generic(name, _, _) => {
                 let _ = name;
                 Ty::Error
@@ -2944,9 +2993,8 @@ impl Checker {
             return self.check_view_call(args, span);
         }
 
-        // `callback(flow)` builds a C callback value from a Loi flow. The C ABI
-        // is fixed, so only a non-extern flow with exactly two `<- i32`
-        // parameters and an `i32` result is accepted.
+        // `callback(flow)` builds a C callback value from a Loi flow. The
+        // signature is inferred from the flow and checked at each use site.
         if name == "callback" {
             return self.check_callback_call(args, span);
         }
@@ -3090,10 +3138,10 @@ impl Checker {
         Ty::Slice(element)
     }
 
-    /// Check `callback(flow)`. The value is a C function pointer with the fixed
-    /// FFI signature `int32_t (*)(int32_t, int32_t)`, so the target must be a
-    /// non-extern Loi flow with exactly that signature. The flow symbol itself
-    /// is passed to C; no thunk is generated.
+    /// Check `callback(flow)`. The value is a C function pointer whose signature
+    /// comes from the target flow. Only non-`extern` Loi flows with all `<-`
+    /// parameters can be used; the flow symbol itself is passed to C, so no
+    /// thunk is generated.
     fn check_callback_call(&mut self, args: &[CallArg], span: Span) -> Ty {
         if args.len() != 1 {
             self.error(
@@ -3120,31 +3168,50 @@ impl Checker {
             );
             return Ty::Error;
         };
-        if signature.external {
-            self.error(
-                arg.value.span,
-                format!(
-                    "extern flow '{flow}' cannot be used as a callback; declare a Loi flow with signature flow {flow}(<- a: i32, <- b: i32) => i32"
-                ),
-            );
-            return Ty::Error;
-        }
-        let valid = signature.params.len() == 2
-            && signature
+        let callback_sig = CallbackSig {
+            params: signature
                 .params
                 .iter()
-                .all(|param| param.direction == Direction::In && param.ty == Ty::I32)
+                .map(|param| param.ty.clone())
+                .collect(),
+            result: Box::new(signature.return_type.clone()),
+        };
+        let fixed_shape = signature.params.len() == 2
+            && signature.params.iter().all(|param| param.ty == Ty::I32)
             && signature.return_type == Ty::I32;
-        if !valid {
-            self.error(
-                arg.value.span,
+        if signature.external {
+            let message = if fixed_shape {
                 format!(
-                    "callback flow '{flow}' must have signature flow {flow}(<- a: i32, <- b: i32) => i32"
-                ),
-            );
+                    "extern flow '{flow}' cannot be used as a callback; declare a Loi flow with signature flow {flow}(<- a: i32, <- b: i32) => i32"
+                )
+            } else {
+                format!(
+                    "extern flow '{flow}' cannot be used as a callback; declare a Loi flow with signature {}",
+                    callback_sig.display()
+                )
+            };
+            self.error(arg.value.span, message);
             return Ty::Error;
         }
-        Ty::Callback
+        let all_input = signature
+            .params
+            .iter()
+            .all(|param| param.direction == Direction::In);
+        if !all_input {
+            let message = if fixed_shape {
+                format!(
+                    "callback flow '{flow}' must have signature flow {flow}(<- a: i32, <- b: i32) => i32"
+                )
+            } else {
+                format!(
+                    "callback flow '{flow}' must have signature {}",
+                    callback_sig.display()
+                )
+            };
+            self.error(arg.value.span, message);
+            return Ty::Error;
+        }
+        Ty::Callback(callback_sig)
     }
 
     /// Check `Name.Variant(value)`, the constructor of a `choice`. Exactly one

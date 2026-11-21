@@ -475,23 +475,26 @@ files; application code imports them.
 - Extern flows are not checked for a body, ownership effects or allocation
   regions. Their contracts are the binding author's responsibility.
 
-**C callbacks (Block B6).**
+**C callbacks (Block B6, extended with explicit signatures).**
 
-- `callback` is the FFI-only function-pointer type with the fixed C signature
-  `int32_t (*)(int32_t, int32_t)`. It is copyable and can be stored in locals,
-  shape fields and slices, but Loi cannot call, compare or dereference it.
-- `callback(flow)` is a compiler intrinsic that builds the value from a
-  non-extern flow with exactly two `<- i32` parameters and an `i32` result.
-  The checker rejects unknown, extern and wrong-signature flows; a callback
-  parameter must use `<-`, and an `extern flow` cannot return `callback`.
-  Ordinary Loi flows may return callback values.
-- The generated C passes the flow's symbol directly (`LoiCallback`). There is
-  no thunk, trampoline or userdata, so the fixed ABI must match the C
-  declaration exactly. The typedef is emitted in the same guarded shared-type
-  block as `LoiSlice`, including emitted headers.
+- `callback` is the FFI-only function-pointer type. Plain `callback` is the
+  fixed C signature `int32_t (*)(int32_t, int32_t)`; `callback(T, ...) => R`
+  names another signature, with `void` allowed only as `R`. Callback values are
+  copyable and can be stored in locals, shape fields and slices, but Loi cannot
+  call, compare or dereference them.
+- `callback(flow)` is a closed compiler intrinsic whose type is inferred from a
+  non-`extern` flow: every parameter must use `<-`, and the parameter types and
+  result form the callback signature. The checker rejects unknown or `extern`
+  flows, non-input parameters and any use whose inferred signature differs from
+  the declared callback type. A callback parameter must use `<-`, and an
+  `extern flow` cannot return a callback; ordinary Loi flows may.
+- The generated C passes the flow's symbol directly. There is no thunk,
+  trampoline or userdata, so the C declaration must use the same signature. The
+  fixed ABI keeps the shared `LoiCallback` typedef; other signatures get one
+  guarded, structurally named typedef shared by generated C and emitted headers.
 - The binding generator still skips C function-pointer parameters and results;
-  declare those `extern flow`s by hand. `examples/callbacks.loi` with
-  `examples/callbacks_shim.c` is the complete worked program.
+  declare those `extern flow`s by hand. `examples/callback_signatures.loi` with
+  `examples/callback_signatures_shim.c` is the complete worked program.
 - `loi build ... --c-source FILE` compiles and links extra C sources.
   `--cc-flag FLAG` forwards a flag to the C compiler; on link steps the flags
   follow the objects so `-l` libraries resolve normally.

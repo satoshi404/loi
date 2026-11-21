@@ -185,6 +185,14 @@ impl Resolver<'_> {
                 }
             }
             Type::Slice(element, _) => self.ty(element),
+            Type::Callback { params, result, .. } => {
+                for param in params {
+                    self.ty(param);
+                }
+                if let Some(result) = result {
+                    self.ty(result);
+                }
+            }
         }
     }
 

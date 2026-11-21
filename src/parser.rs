@@ -602,7 +602,9 @@ impl Parser {
             Ok(Type::Slice(Box::new(element), self.through_last(start)))
         } else {
             let token = self.expect(TokenKind::Identifier, "type name")?;
-            if self.at(TokenKind::Lt) {
+            if token.lexeme == "callback" && self.at(TokenKind::LParen) {
+                self.parse_callback_type(start)
+            } else if self.at(TokenKind::Lt) {
                 let args = self.parse_type_arguments()?;
                 Ok(Type::Generic(token.lexeme, args, self.through_last(start)))
             } else {
@@ -610,6 +612,42 @@ impl Parser {
                 Ok(Type::Named(token.lexeme, span))
             }
         }
+    }
+
+    /// Parse `callback(T, ...) => R` in type position. The `callback(flow)`
+    /// expression is handled by the ordinary call parser; the `(` after the
+    /// type name is what distinguishes a callback signature here.
+    fn parse_callback_type(&mut self, start: Span) -> ParseResult<Type> {
+        self.expect(TokenKind::LParen, "'('")?;
+        self.skip_newlines();
+        let mut params = Vec::new();
+        if !self.at(TokenKind::RParen) {
+            loop {
+                params.push(self.parse_type()?);
+                self.skip_newlines();
+                if !self.matches(TokenKind::Comma) {
+                    break;
+                }
+                self.skip_newlines();
+            }
+        }
+        self.expect(TokenKind::RParen, "')'")?;
+        let result = if self.matches(TokenKind::FatArrow) {
+            self.skip_newlines();
+            if self.at(TokenKind::Identifier) && self.current().lexeme == "void" {
+                self.advance();
+                None
+            } else {
+                Some(Box::new(self.parse_type()?))
+            }
+        } else {
+            None
+        };
+        Ok(Type::Callback {
+            params,
+            result,
+            span: self.through_last(start),
+        })
     }
 
     /// Parse a comma-separated type argument list enclosed in `<` and `>`.

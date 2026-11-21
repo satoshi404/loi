@@ -30,4 +30,4 @@ pub use monomorphize::{instantiation_name, monomorphize, monomorphize_for_check}
 pub use parser::{ParseError, Parser, parse};
 pub use pretty::{format_expr, format_program, format_program_with_comments, format_type};
 pub use token::{Token, TokenKind};
-pub use types::{Ty, assignable, common_numeric};
+pub use types::{CallbackSig, Ty, assignable, common_numeric};

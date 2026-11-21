@@ -60,6 +60,11 @@ fn callbacks_example_type_checks() {
 }
 
 #[test]
+fn callback_signatures_example_type_checks() {
+    assert_clean(include_str!("../examples/callback_signatures.loi"));
+}
+
+#[test]
 fn unsuffixed_literals_coerce_to_numeric_types() {
     assert_clean(
         "flow whole\n    => f64\n{\n    => 1\n}\n\nflow add\n    <- x: u32\n    => u32\n{\n    => x + 1\n}\n\nflow div\n    => f64\n{\n    => 1.0 / 60\n}\n",
@@ -2290,9 +2295,9 @@ fn callbacks_accept_only_exact_loi_flow_signatures() {
     );
     assert_message(
         &format!(
-            "{CALLBACK_SOURCE}\nflow wrong\n    <- a: i32\n    => i32\n{{\n    => a\n}}\n\nflow main {{\n    cb <- callback(wrong)\n}}\n"
+            "{CALLBACK_SOURCE}\nflow wrong\n    <- a: i32\n    => i32\n{{\n    => a\n}}\n\nflow main {{\n    cb <- callback(wrong)\n    result <- apply_cb(1, 2, cb)\n}}\n"
         ),
-        "callback flow 'wrong' must have signature flow wrong(<- a: i32, <- b: i32) => i32",
+        "argument 'cb' has type callback(i32) => i32, expected callback",
     );
     assert_message(
         &format!("{CALLBACK_SOURCE}\nflow main {{\n    cb <- callback(apply_cb)\n}}\n"),

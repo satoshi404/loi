@@ -62,9 +62,11 @@ compiler requires Rust 1.88 or newer, as declared by `rust-version` in
 | `Name` | a declared `opaque` foreign handle |
 | `cstr` | NUL-terminated C string handle (FFI only) |
 | `callback` | C function pointer with fixed ABI (FFI only) |
+| `callback(T, ...) => R` | C function pointer with an explicit signature (FFI only); `R` may be `void` |
 
-There is no `void`, no pointer type, no array type and no `nil`. A function
-with no `=> T` returns nothing.
+There is no general `void`, no pointer type, no array type and no `nil`. A
+function with no `=> T` returns nothing; `void` is written only as a callback
+result.
 
 - Slices are written **`[T]`**, never `[]T`.
 - Generic instantiations are written **`Vec<T>`**. There is no type inference:
@@ -74,8 +76,9 @@ with no `=> T` returns nothing.
   `extern flow` declarations. They can be passed back to C but not indexed,
   measured or compared.
 - `callback` values are constructed only with `callback(flow)` (section 15.6).
-  They are copyable and may be stored in locals, shapes and slices, but Loi
-  cannot call, index or dereference them.
+  The signature is inferred from the target flow and must match the declared
+  callback type at each use. They are copyable and may be stored in locals,
+  shapes and slices, but Loi cannot call, index or dereference them.
 
 ---
 
@@ -884,7 +887,7 @@ Compiler intrinsics (always available, cannot be redeclared):
 | `pow` `fmod` | `(<- f64, <- f64) => f64` |
 | `len` | `([T]) => u64` |
 | `view` | `(<- [T], <- u64, <- u64) => [T]` — zero-copy borrowed subslice |
-| `callback` | `(<- flow) => callback` — fixed-ABI C function pointer (section 15.6) |
+| `callback` | `(<- flow) => callback(T, ...) => R` — C function pointer whose signature comes from the flow (section 15.6) |
 | `give` | ownership transfer |
 | `clone` | explicit duplicate |
 | `alloc` | `(-> [T], T, u64)` inside `protect` |
@@ -1178,7 +1181,7 @@ build instructions.
 
 ### 15.6 C callbacks
 
-`callback` is a fixed C ABI: `int32_t (*)(int32_t, int32_t)`. Declare a C
+`callback` is the fixed C ABI `int32_t (*)(int32_t, int32_t)`. Declare a C
 function that takes one with `extern flow`, then pass a Loi flow through the
 `callback(flow)` intrinsic:
 
@@ -1206,19 +1209,56 @@ flow main
 }
 ```
 
-- `callback(flow)` accepts exactly one non-`extern` flow declared as
-  `flow name(<- a: i32, <- b: i32) => i32`. The flow's generated C symbol is
-  passed directly; no thunk or userdata is emitted.
+Other C function-pointer signatures are written with an explicit callback type.
+`=> void` may be omitted when the callback returns nothing:
+
+```loi
+extern flow visit
+    <- count: i32
+    <- f: callback(i32) => void
+
+extern flow sum_mapped
+    <- count: i32
+    <- f: callback(i32) => i32
+    => i32
+
+flow report
+    <- value: i32
+{
+    print_int(value)
+}
+
+flow square
+    <- value: i32
+    => i32
+{
+    => value * value
+}
+
+flow main
+    => i32
+{
+    visit(3, callback(report))
+    => sum_mapped(3, callback(square))
+}
+```
+
+- `callback(flow)` accepts exactly one non-`extern` Loi flow. Its parameters
+  must all use `<-`; their types and result become the callback's signature.
+  The flow's generated C symbol is passed directly; no thunk or userdata is
+  emitted, and `callback` remains a closed intrinsic that cannot be redeclared.
+- The inferred signature must match the callback type at the use site. The
+  plain `callback` type is exactly `callback(i32, i32) => i32`.
 - Callback values are copyable. They can be stored in locals, `shape` fields
-  and `[callback]` slices, and passed back to C, but they cannot be called,
-  compared, used in arithmetic or dereferenced from Loi.
+  and slices, and passed back to C, but they cannot be called, compared, used
+  in arithmetic or dereferenced from Loi.
 - A `callback` parameter must use `<-`; C owns the call, so the value is
   input-only. An `extern flow` cannot return `callback`; ordinary Loi flows may
   return callback values.
-- `callback` is a compiler intrinsic and cannot be redeclared.
 - The generator still skips C function-pointer declarations; declare the
-  `extern flow` by hand. See `examples/callbacks.loi` and
-  `examples/callbacks_shim.c` for a complete buildable program.
+  `extern flow` by hand. The C backend emits one guarded typedef per signature.
+  See `examples/callbacks.loi` and `examples/callback_signatures.loi` with their
+  matching `_shim.c` files for complete buildable programs.
 
 ---
 

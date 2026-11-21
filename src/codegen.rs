@@ -16,14 +16,14 @@
 //!   Allocations made by callees use the nearest caller arena because the arena
 //!   is global.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::path::Path;
 
 use crate::ast::*;
 use crate::const_eval::ConstValue;
 use crate::ir::*;
-use crate::types::{self, ComparisonEnv, Ty};
+use crate::types::{self, CallbackSig, ComparisonEnv, Ty};
 
 /// A failure that prevents C emission.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -806,6 +806,9 @@ struct Generator<'a> {
     strings: HashMap<String, usize>,
     string_order: Vec<String>,
     intrinsic_return_ty: HashMap<String, Ty>,
+    /// Callback signatures used anywhere in the program, keyed by their stable
+    /// structural name so headers and generated C agree on typedefs.
+    callback_sigs: BTreeMap<String, CallbackSig>,
     interface_order: Vec<String>,
     mark_order: Vec<String>,
     choice_order: Vec<String>,
@@ -888,7 +891,7 @@ impl<'a> Generator<'a> {
         intrinsic_return_ty.insert("fabs".to_string(), Ty::F64);
         intrinsic_return_ty.insert("fmod".to_string(), Ty::F64);
         intrinsic_return_ty.insert("len".to_string(), Ty::U64);
-        intrinsic_return_ty.insert("callback".to_string(), Ty::Callback);
+        intrinsic_return_ty.insert("callback".to_string(), Ty::Callback(CallbackSig::fixed()));
         intrinsic_return_ty.insert("read_file".to_string(), Ty::Slice(Box::new(Ty::U8)));
         intrinsic_return_ty.insert("read_stdin".to_string(), Ty::Slice(Box::new(Ty::U8)));
         intrinsic_return_ty.insert("read_line".to_string(), Ty::Slice(Box::new(Ty::U8)));
@@ -968,6 +971,7 @@ impl<'a> Generator<'a> {
             strings,
             string_order,
             intrinsic_return_ty,
+            callback_sigs: BTreeMap::new(),
             interface_order,
             mark_order,
             choice_order,
@@ -1009,10 +1013,12 @@ impl<'a> Generator<'a> {
         }
 
         self.type_order = self.compute_type_order()?;
+        self.collect_callback_sigs();
 
         self.out.push_str(PRELUDE);
         self.out.push_str(SHARED_SLICE_TYPE);
         self.out.push('\n');
+        self.emit_callback_typedefs();
         self.out.push_str(PRELUDE_TYPES);
         self.out.push('\n');
         self.emit_interfaces();
@@ -1055,6 +1061,7 @@ impl<'a> Generator<'a> {
     /// Emit only declarations for `visible` items into a C header.
     fn generate_header(mut self, guard_override: Option<&str>) -> Result<String, CodegenError> {
         self.type_order = self.compute_type_order()?;
+        self.collect_callback_sigs();
 
         let header_name = guard_override
             .map(str::to_string)
@@ -1070,6 +1077,7 @@ impl<'a> Generator<'a> {
         self.emit("");
         self.emit(SHARED_SLICE_TYPE.trim_end());
         self.emit("");
+        self.emit_callback_typedefs();
         self.emit("#ifdef __cplusplus");
         self.emit("extern \"C\" {");
         self.emit("#endif");
@@ -1442,6 +1450,86 @@ impl<'a> Generator<'a> {
     // Types and declarations
     // ------------------------------------------------------------------
 
+    /// Find every callback signature the emitted translation unit may mention,
+    /// including signatures inferred from `callback(flow)` calls.
+    fn collect_callback_sigs(&mut self) {
+        let mut types = Vec::new();
+        let mut flows = Vec::new();
+        collect_callback_types_program(self.program, &mut types, &mut flows);
+
+        for ty in types {
+            if let Type::Callback { params, result, .. } = ty {
+                let sig = CallbackSig {
+                    params: params
+                        .iter()
+                        .map(|param| self.resolve_type(param))
+                        .collect(),
+                    result: Box::new(
+                        result
+                            .as_deref()
+                            .map(|ty| self.resolve_type(ty))
+                            .unwrap_or(Ty::Void),
+                    ),
+                };
+                self.note_callback_sig(sig);
+            }
+        }
+        for flow in flows {
+            let Some(decl) = self.functions.get(flow).copied() else {
+                continue;
+            };
+            let sig = CallbackSig {
+                params: decl
+                    .params
+                    .iter()
+                    .map(|param| self.resolve_type(&param.ty))
+                    .collect(),
+                result: Box::new(
+                    decl.return_type
+                        .as_ref()
+                        .map(|ty| self.resolve_type(ty))
+                        .unwrap_or(Ty::Void),
+                ),
+            };
+            self.note_callback_sig(sig);
+        }
+    }
+
+    fn note_callback_sig(&mut self, sig: CallbackSig) {
+        if sig.is_fixed() {
+            return;
+        }
+        self.callback_sigs.entry(sig.c_name()).or_insert(sig);
+    }
+
+    fn emit_callback_typedefs(&mut self) {
+        let definitions: Vec<String> = self
+            .callback_sigs
+            .values()
+            .map(|sig| {
+                let name = sig.c_name();
+                let guard = sig.c_guard();
+                let params = if sig.params.is_empty() {
+                    "void".to_string()
+                } else {
+                    sig.params
+                        .iter()
+                        .map(|ty| self.c_type(ty))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                format!(
+                    "#ifndef {guard}\n#define {guard}\ntypedef {} (*{name})({params});\n#endif",
+                    self.c_type(&sig.result)
+                )
+            })
+            .collect();
+        for definition in definitions {
+            self.emit(definition);
+            self.emit("");
+        }
+    }
+
     fn resolve_type(&self, ty: &Type) -> Ty {
         match ty {
             Type::Named(name, _) => {
@@ -1450,7 +1538,9 @@ impl<'a> Generator<'a> {
                 } else if name == "cstr" {
                     Ty::CStr
                 } else if name == "callback" {
-                    Ty::Callback
+                    Ty::Callback(CallbackSig::fixed())
+                } else if name == "void" {
+                    Ty::Void
                 } else if self.marks.contains_key(name) {
                     Ty::Mark(name.clone())
                 } else if self.choices.contains_key(name) {
@@ -1462,6 +1552,18 @@ impl<'a> Generator<'a> {
                 }
             }
             Type::Slice(element, _) => Ty::Slice(Box::new(self.resolve_type(element))),
+            Type::Callback { params, result, .. } => Ty::Callback(CallbackSig {
+                params: params
+                    .iter()
+                    .map(|param| self.resolve_type(param))
+                    .collect(),
+                result: Box::new(
+                    result
+                        .as_deref()
+                        .map(|ty| self.resolve_type(ty))
+                        .unwrap_or(Ty::Void),
+                ),
+            }),
             Type::Generic(name, _, _) => Ty::Named(name.clone()),
         }
     }
@@ -1481,7 +1583,7 @@ impl<'a> Generator<'a> {
             Ty::Bool => "bool".to_string(),
             Ty::Named(name) | Ty::Mark(name) | Ty::Choice(name) => self.c_interface(name),
             Ty::Opaque(_) => "void *".to_string(),
-            Ty::Callback => "LoiCallback".to_string(),
+            Ty::Callback(sig) => sig.c_name(),
             Ty::CStr => "const char *".to_string(),
             Ty::Slice(_) => "LoiSlice".to_string(),
             Ty::IntLiteral => "int32_t".to_string(),
@@ -3113,6 +3215,30 @@ impl<'a> Generator<'a> {
                         _ => Ty::Error,
                     })
                     .unwrap_or(Ty::Error),
+                // The callback signature comes from the target flow rather than
+                // from a fixed intrinsic signature.
+                ExprKind::Ident(name) if name == "callback" => args
+                    .first()
+                    .and_then(|arg| match &arg.value.kind {
+                        ExprKind::Ident(flow) => self.functions.get(flow).copied(),
+                        _ => None,
+                    })
+                    .map(|decl| {
+                        Ty::Callback(CallbackSig {
+                            params: decl
+                                .params
+                                .iter()
+                                .map(|param| self.resolve_type(&param.ty))
+                                .collect(),
+                            result: Box::new(
+                                decl.return_type
+                                    .as_ref()
+                                    .map(|ty| self.resolve_type(ty))
+                                    .unwrap_or(Ty::Void),
+                            ),
+                        })
+                    })
+                    .unwrap_or(Ty::Error),
                 ExprKind::Ident(name) => self.function_return_ty(name),
                 ExprKind::Member { base, field } => {
                     if let ExprKind::Ident(choice) = &base.kind
@@ -3555,7 +3681,7 @@ impl<'a> Generator<'a> {
                 let ExprKind::Ident(flow) = &arg.value.kind else {
                     return None;
                 };
-                // The flow's C symbol already has the fixed callback ABI, so it
+                // The flow's C symbol already has the callback signature, so it
                 // is passed directly instead of generating a thunk.
                 Some(self.c_func(flow))
             }
@@ -3723,6 +3849,212 @@ impl<'a> Generator<'a> {
 
     fn default_interface_literal(&mut self, name: &str) -> String {
         self.interface_literal_code(name, &[])
+    }
+}
+
+/// Collect callback type nodes and `callback(flow)` targets in source order.
+fn collect_callback_types_program<'a>(
+    program: &'a Program,
+    types: &mut Vec<&'a Type>,
+    flows: &mut Vec<&'a str>,
+) {
+    for item in &program.items {
+        match item {
+            Item::Import(_) => {}
+            Item::Interface(decl) => {
+                for field in &decl.fields {
+                    collect_callback_type(&field.ty, types);
+                    if let Some(default) = &field.default {
+                        collect_callback_expr(default, types, flows);
+                    }
+                }
+            }
+            Item::Mark(_) => {}
+            Item::Choice(decl) => {
+                for variant in &decl.variants {
+                    collect_callback_type(&variant.ty, types);
+                }
+            }
+            Item::Opaque(_) => {}
+            Item::Global(decl) => {
+                if let Some(ty) = &decl.ty {
+                    collect_callback_type(ty, types);
+                }
+                collect_callback_expr(&decl.value, types, flows);
+            }
+            Item::Function(decl) => {
+                for param in &decl.params {
+                    collect_callback_type(&param.ty, types);
+                }
+                if let Some(ty) = &decl.return_type {
+                    collect_callback_type(ty, types);
+                }
+                collect_callback_block(&decl.body, types, flows);
+            }
+        }
+    }
+}
+
+fn collect_callback_type<'a>(ty: &'a Type, types: &mut Vec<&'a Type>) {
+    if matches!(ty, Type::Callback { .. }) {
+        types.push(ty);
+    }
+    match ty {
+        Type::Slice(element, _) => collect_callback_type(element, types),
+        Type::Generic(_, args, _) => {
+            for arg in args {
+                collect_callback_type(arg, types);
+            }
+        }
+        Type::Named(_, _) | Type::Callback { .. } => {}
+    }
+}
+
+fn collect_callback_block<'a>(
+    block: &'a Block,
+    types: &mut Vec<&'a Type>,
+    flows: &mut Vec<&'a str>,
+) {
+    for statement in &block.statements {
+        collect_callback_stmt(statement, types, flows);
+    }
+}
+
+fn collect_callback_stmt<'a>(
+    statement: &'a Stmt,
+    types: &mut Vec<&'a Type>,
+    flows: &mut Vec<&'a str>,
+) {
+    match &statement.kind {
+        StmtKind::Let { ty, value, .. } => {
+            if let Some(ty) = ty {
+                collect_callback_type(ty, types);
+            }
+            if let Some(value) = value {
+                collect_callback_expr(value, types, flows);
+            }
+        }
+        StmtKind::Guard { ty, value, .. } => {
+            if let Some(ty) = ty {
+                collect_callback_type(ty, types);
+            }
+            collect_callback_expr(value, types, flows);
+        }
+        StmtKind::Assign { target, value, .. } => {
+            collect_callback_expr(target, types, flows);
+            collect_callback_expr(value, types, flows);
+        }
+        StmtKind::Expr(expr) => collect_callback_expr(expr, types, flows),
+        StmtKind::If {
+            condition,
+            then_block,
+            else_branch,
+        } => {
+            collect_callback_expr(condition, types, flows);
+            collect_callback_block(then_block, types, flows);
+            match else_branch {
+                Some(ElseBranch::Block(block)) => collect_callback_block(block, types, flows),
+                Some(ElseBranch::If(stmt)) => collect_callback_stmt(stmt, types, flows),
+                None => {}
+            }
+        }
+        StmtKind::While { condition, body } => {
+            collect_callback_expr(condition, types, flows);
+            collect_callback_block(body, types, flows);
+        }
+        StmtKind::ForRange {
+            start, end, body, ..
+        } => {
+            collect_callback_expr(start, types, flows);
+            collect_callback_expr(end, types, flows);
+            collect_callback_block(body, types, flows);
+        }
+        StmtKind::ForEach { iterable, body, .. } => {
+            collect_callback_expr(iterable, types, flows);
+            collect_callback_block(body, types, flows);
+        }
+        StmtKind::Protect(block) => collect_callback_block(block, types, flows),
+        StmtKind::Return(value) => {
+            if let Some(value) = value {
+                collect_callback_expr(value, types, flows);
+            }
+        }
+        StmtKind::Continue | StmtKind::Break => {}
+    }
+}
+
+fn collect_callback_expr<'a>(expr: &'a Expr, types: &mut Vec<&'a Type>, flows: &mut Vec<&'a str>) {
+    match &expr.kind {
+        ExprKind::String(_) | ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) => {}
+        ExprKind::Ident(_) => {}
+        ExprKind::SliceLiteral {
+            element_type,
+            elements,
+        } => {
+            if let Some(ty) = element_type {
+                collect_callback_type(ty, types);
+            }
+            for element in elements {
+                collect_callback_expr(element, types, flows);
+            }
+        }
+        ExprKind::InterfaceLiteral {
+            type_args, fields, ..
+        } => {
+            for ty in type_args {
+                collect_callback_type(ty, types);
+            }
+            for field in fields {
+                collect_callback_expr(&field.value, types, flows);
+            }
+        }
+        ExprKind::Unary { operand, .. } | ExprKind::Move(operand) | ExprKind::Copy(operand) => {
+            collect_callback_expr(operand, types, flows)
+        }
+        ExprKind::Binary { left, right, .. } => {
+            collect_callback_expr(left, types, flows);
+            collect_callback_expr(right, types, flows);
+        }
+        ExprKind::Cast { expr: operand, ty } => {
+            collect_callback_type(ty, types);
+            collect_callback_expr(operand, types, flows);
+        }
+        ExprKind::Call {
+            callee,
+            type_args,
+            args,
+            ..
+        } => {
+            if let ExprKind::Ident(name) = &callee.kind
+                && name == "callback"
+                && let Some(arg) = args.first()
+                && let ExprKind::Ident(flow) = &arg.value.kind
+            {
+                flows.push(flow);
+            }
+            collect_callback_expr(callee, types, flows);
+            for ty in type_args {
+                collect_callback_type(ty, types);
+            }
+            for arg in args {
+                collect_callback_expr(&arg.value, types, flows);
+            }
+        }
+        ExprKind::Alloc {
+            target,
+            element_type,
+            count,
+        } => {
+            collect_callback_type(element_type, types);
+            collect_callback_expr(target, types, flows);
+            collect_callback_expr(count, types, flows);
+        }
+        ExprKind::Member { base, .. } => collect_callback_expr(base, types, flows),
+        ExprKind::Index { base, index } => {
+            collect_callback_expr(base, types, flows);
+            collect_callback_expr(index, types, flows);
+        }
+        ExprKind::Comptime(inner) => collect_callback_expr(inner, types, flows),
     }
 }
 
@@ -4011,6 +4343,7 @@ fn resolve_ir_type(ty: &Type) -> Result<IrType, CodegenError> {
             Ok(IrType::Slice(Box::new(elem_ty)))
         }
         Type::Generic(name, _, _) => Ok(IrType::Named(name.clone())),
+        Type::Callback { .. } => Ok(IrType::Ptr(Box::new(IrType::Void))),
     }
 }
 
@@ -4028,6 +4361,7 @@ fn resolve_primitive(name: &str) -> Option<IrType> {
         "f64" => Some(IrType::Float(64)),
         "bool" => Some(IrType::Bool),
         "void" => Some(IrType::Void),
+        "callback" | "cstr" => Some(IrType::Ptr(Box::new(IrType::Void))),
         _ => None,
     }
 }

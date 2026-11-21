@@ -236,7 +236,7 @@ impl<'a> ConstEvaluator<'a> {
                 }
             }
             Type::Slice(element, _) => Some(Ty::Slice(Box::new(self.resolve_type(element)?))),
-            Type::Generic(_, _, _) => None,
+            Type::Generic(_, _, _) | Type::Callback { .. } => None,
         }
     }
 

@@ -84,6 +84,14 @@ pub enum Type {
     /// A generic instantiation such as `Vec<i32>`. It is resolved to a
     /// `Named` type by monomorphization before type checking.
     Generic(String, Vec<Type>, Span),
+    /// A C callback signature such as `callback(i32) => void`. A plain
+    /// `callback` remains a `Named` type and resolves to the fixed ABI.
+    Callback {
+        params: Vec<Type>,
+        /// `None` means `=> void`.
+        result: Option<Box<Type>>,
+        span: Span,
+    },
 }
 
 impl Type {
@@ -107,6 +115,7 @@ impl Type {
     pub fn span(&self) -> Span {
         match self {
             Self::Named(_, span) | Self::Slice(_, span) | Self::Generic(_, _, span) => *span,
+            Self::Callback { span, .. } => *span,
         }
     }
 }
@@ -122,6 +131,18 @@ impl PartialEq for Type {
             (Self::Generic(left_name, left_args, _), Self::Generic(right_name, right_args, _)) => {
                 left_name == right_name && left_args == right_args
             }
+            (
+                Self::Callback {
+                    params: left_params,
+                    result: left_result,
+                    ..
+                },
+                Self::Callback {
+                    params: right_params,
+                    result: right_result,
+                    ..
+                },
+            ) => left_params == right_params && left_result == right_result,
             _ => false,
         }
     }

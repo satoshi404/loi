@@ -460,3 +460,22 @@ The generator still skips C function pointers: automatically choosing a thunk
 would have to guess closure state and lifetime, which Loi does not express.
 Declare those `extern flow`s by hand; `examples/callbacks.loi` and
 `examples/callbacks_shim.c` show the complete pattern.
+
+### The fixed callback ABI excluded common C callbacks
+
+Attempted design: bind a C visitor that takes a value callback such as
+`int32_t (*)(int32_t)` and a notifier such as `void (*)(int32_t)`. Writing the
+`extern flow` parameter as plain `callback` made the checker reject the Loi
+flow with:
+
+```text
+error: argument 'f' has type callback(i32) => i32, expected callback
+```
+
+Language requirement: let a callback type carry the C signature while keeping
+flows non-first-class and thunk-free. **Resolved:** callback types may now be
+written as `callback(T, ...) => R`, with `void` as a result; `callback(flow)`
+infers the signature from a non-extern, all-`<-` flow and the use site checks
+that it matches. The backend emits one guarded typedef per signature and still
+passes the flow symbol directly. `examples/callback_signatures.loi` and
+`examples/callback_signatures_shim.c` show the complete pattern.

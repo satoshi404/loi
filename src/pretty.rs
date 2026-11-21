@@ -53,6 +53,17 @@ pub fn format_type(ty: &Type) -> String {
             "{name}<{}>",
             args.iter().map(format_type).collect::<Vec<_>>().join(", ")
         ),
+        Type::Callback { params, result, .. } => {
+            let params = params
+                .iter()
+                .map(format_type)
+                .collect::<Vec<_>>()
+                .join(", ");
+            match result {
+                Some(result) => format!("callback({params}) => {}", format_type(result)),
+                None => format!("callback({params})"),
+            }
+        }
     }
 }
 

@@ -4,7 +4,38 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-20, module-qualified mangling):** two modules may now
+- **Current task (2026-11-20, typed C callbacks):** a callback type now carries
+  its C signature (`callback(T, ...) => R`), and `callback(flow)` infers it from
+  a non-`extern` Loi flow whose parameters all use `<-`. The inferred signature
+  is checked against the declared callback type at every use, so a shim cannot
+  silently receive a pointer with the wrong C type. Plain `callback` stays
+  exactly `callback(i32, i32) => i32` for source and ABI compatibility; `void`
+  is allowed only as a result. The C backend emits one guarded, structurally
+  named typedef per signature (`LoiCallback_1_i32_i32`,
+  `LoiCallback_1_i32_void`, `LoiCallback_0_i32`) shared by generated C and
+  emitted headers, and still passes the flow symbol directly with no thunk or
+  userdata. Rules are in `LOI_SPEC.md` §4.9, canonical spelling in `SINTAXE.md`
+  §2/§15.6, rationale in `DECISIONS.md`, resolved friction in `FRICTION.md`,
+  public docs in `website/docs.html`. `examples/callback_signatures.loi` with
+  `examples/callback_signatures_shim.c` is the complete buildable program.
+- **Verification for typed callbacks:** the nine new tests in
+  `tests/callback_signatures.rs` failed 9/9 before the implementation (the
+  `callback(T) => R` type spelling did not parse) and pass 9/9 now; they cover
+  positive inference, fixed-alias identity, mismatched signatures and results,
+  `void` parameters, non-input flow parameters, generated C typedefs, a strict
+  C11 harness that runs three callback shapes, emitted headers, and copyability
+  without comparability. One legacy checker assertion was updated to the new
+  use-site diagnostic, and the example was added to the checker, codegen and CLI
+  suites. The example was checked, built and run (`30`, `0`, `1`, `2`, exit 0)
+  and mirrored with `python3 tools/sync_examples.py`. Final gate command:
+  `export PATH="/root/.cargo/bin:$PATH"; export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets && python3 tools/sync_examples.py --check && git diff --check`.
+  All five checks exited 0; `cargo test --all-targets` reported **487 passed,
+  0 failed** across 22 suites (was 475; twelve new tests: 9
+  `callback_signatures`, 1 checker, 1 codegen, 1 CLI). The C backend ABI changed
+  only by adding guarded typedefs for non-fixed signatures; plain `callback`
+  programs keep their symbols, so `benchmark/run.py` is not applicable.
+  ASan execution is still not claimed in this PRoot container.
+- **Previous task (2026-11-20, module-qualified mangling):** two modules may now
   declare the same item name. The driver computes an internal `<module>::<name>`
   spelling for names declared in several modules and rewrites references before
   monomorphization; unique names are untouched, so single-module programs keep

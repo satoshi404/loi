@@ -32,11 +32,12 @@ pub enum Ty {
     Choice(String),
     /// A foreign handle declared with `opaque Name`.
     Opaque(String),
-    /// A C callback: a function pointer with the fixed FFI signature
-    /// `int32_t (*)(int32_t, int32_t)`. Constructed with `callback(flow)` from a
-    /// non-extern Loi flow with exactly that signature. Values are copyable but
-    /// cannot be called or dereferenced from Loi.
-    Callback,
+    /// A C callback function pointer. The plain `callback` type is the fixed
+    /// signature `int32_t (*)(int32_t, int32_t)`; `callback(T, ...) => R` names
+    /// other signatures. Constructed with `callback(flow)` from a non-extern
+    /// Loi flow with the same signature. Values are copyable but cannot be
+    /// called or dereferenced from Loi.
+    Callback(CallbackSig),
     /// A NUL-terminated C string handle. Constructed from a string literal or
     /// returned by an `extern flow`; never inspected in Loi.
     CStr,
@@ -50,6 +51,94 @@ pub enum Ty {
     Void,
     /// Placeholder used after a diagnostic to avoid cascading errors.
     Error,
+}
+
+/// The C signature carried by a [`Ty::Callback`].
+///
+/// The fixed `(i32, i32) => i32` signature keeps the historical spelling
+/// `callback` in diagnostics and the historical C typedef `LoiCallback`. Other
+/// signatures get a structural display and a distinct, guarded C typedef.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallbackSig {
+    pub params: Vec<Ty>,
+    pub result: Box<Ty>,
+}
+
+impl CallbackSig {
+    /// The original ABI: `int32_t (*)(int32_t, int32_t)`.
+    pub fn fixed() -> Self {
+        Self {
+            params: vec![Ty::I32, Ty::I32],
+            result: Box::new(Ty::I32),
+        }
+    }
+
+    pub fn is_fixed(&self) -> bool {
+        self.params == [Ty::I32, Ty::I32] && *self.result == Ty::I32
+    }
+
+    /// A stable structural key used to name the generated C typedef.
+    pub fn key(&self) -> String {
+        let mut parts: Vec<String> = self.params.iter().map(callback_key_part).collect();
+        parts.push(callback_key_part(&self.result));
+        format!("{}_{}", self.params.len(), parts.join("_"))
+    }
+
+    /// The C typedef name. The fixed signature keeps the existing public name.
+    pub fn c_name(&self) -> String {
+        if self.is_fixed() {
+            "LoiCallback".to_string()
+        } else {
+            format!("LoiCallback_{}", self.key())
+        }
+    }
+
+    /// The include guard for the generated typedef.
+    pub fn c_guard(&self) -> String {
+        format!("{}_DEFINED", self.c_name().to_ascii_uppercase())
+    }
+
+    /// Source-like rendering that expands nested callback aliases.
+    pub fn display(&self) -> String {
+        let params = self
+            .params
+            .iter()
+            .map(callback_key_display)
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "callback({params}) => {}",
+            callback_key_display(&self.result)
+        )
+    }
+}
+
+fn callback_key_part(ty: &Ty) -> String {
+    let name = match ty {
+        Ty::Callback(sig) => sig.display(),
+        other => other.to_string(),
+    };
+    let mut key = String::new();
+    let mut pending_underscore = false;
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            if pending_underscore && !key.is_empty() {
+                key.push('_');
+            }
+            pending_underscore = false;
+            key.push(ch);
+        } else {
+            pending_underscore = true;
+        }
+    }
+    key
+}
+
+fn callback_key_display(ty: &Ty) -> String {
+    match ty {
+        Ty::Callback(sig) => sig.display(),
+        other => other.to_string(),
+    }
 }
 
 impl Ty {
@@ -139,7 +228,13 @@ impl fmt::Display for Ty {
             Ty::Bool => write!(f, "bool"),
             Ty::Named(name) | Ty::Mark(name) | Ty::Choice(name) => write!(f, "{name}"),
             Ty::Opaque(name) => write!(f, "{name}"),
-            Ty::Callback => write!(f, "callback"),
+            Ty::Callback(sig) => {
+                if sig.is_fixed() {
+                    write!(f, "callback")
+                } else {
+                    write!(f, "{}", sig.display())
+                }
+            }
             Ty::CStr => write!(f, "cstr"),
             Ty::Slice(element) => write!(f, "[{element}]"),
             Ty::IntLiteral => write!(f, "integer literal"),
@@ -224,7 +319,7 @@ fn comparison_caps_inner(
         | Ty::IntLiteral
         | Ty::FloatLiteral => ComparisonCaps::BOTH,
         Ty::Opaque(_) => ComparisonCaps::IDENTITY,
-        Ty::Callback | Ty::Void | Ty::Error => ComparisonCaps::NONE,
+        Ty::Callback(_) | Ty::Void | Ty::Error => ComparisonCaps::NONE,
         Ty::Slice(element) => comparison_caps_inner(element, env, visited),
         Ty::Named(name) => {
             let key = format!("shape:{name}");

@@ -497,6 +497,7 @@ fn ast_type_to_ir(ty: &crate::ast::Type) -> Result<IrType, String> {
             Ok(IrType::Slice(Box::new(elem_ty)))
         }
         crate::ast::Type::Generic(name, _, _) => Ok(IrType::Named(name.clone())),
+        crate::ast::Type::Callback { .. } => Ok(IrType::Ptr(Box::new(IrType::Void))),
     }
 }
 
@@ -514,6 +515,7 @@ fn resolve_primitive(name: &str) -> Option<IrType> {
         "f64" => Some(IrType::Float(64)),
         "bool" => Some(IrType::Bool),
         "void" => Some(IrType::Void),
+        "callback" | "cstr" => Some(IrType::Ptr(Box::new(IrType::Void))),
         _ => None,
     }
 }

@@ -1,0 +1,40 @@
+// A C helper can accept callbacks with signatures other than the fixed
+// `callback` ABI. Here `sum_mapped` needs a value-returning callback and
+// `visit` needs a notification callback; both are ordinary Loi flows.
+//
+// Build:
+//   loi build examples/callback_signatures.loi \
+//       --c-source examples/callback_signatures_shim.c -o callback_signatures
+
+open extern flow sum_mapped
+    <- count: i32
+    <- f: callback(i32) => i32
+    => i32
+
+open extern flow visit
+    <- count: i32
+    <- f: callback(i32) => void
+
+flow square
+    <- value: i32
+    => i32
+{
+    => value * value
+}
+
+flow report
+    <- value: i32
+{
+    print_int(value)
+    print("\n")
+}
+
+flow main
+    => i32
+{
+    total <- sum_mapped(5, callback(square))
+    print_int(total)
+    print("\n")
+    visit(3, callback(report))
+    => 0
+}

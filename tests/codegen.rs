@@ -1698,6 +1698,25 @@ fn callbacks_example_compiles_and_runs() {
 }
 
 #[test]
+fn callback_signatures_example_compiles_and_runs() {
+    let c = generated(include_str!("../examples/callback_signatures.loi"));
+    assert_strict_c11("callback-signatures-example", &c);
+    let Some(run) = compile_and_run_output(
+        "callback-signatures-example",
+        &c,
+        include_str!("../examples/callback_signatures_shim.c"),
+    ) else {
+        return;
+    };
+    assert_eq!(run.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "30\n0\n1\n2\n",
+        "callback signatures should drive both C helpers"
+    );
+}
+
+#[test]
 fn headers_expose_the_callback_abi() {
     let h = generated_header(CALLBACK_SOURCE);
     assert!(

@@ -10,7 +10,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
-use crate::types::{self, ComparisonCaps, ComparisonEnv, Ty};
+use crate::types::{self, CallbackSig, ComparisonCaps, ComparisonEnv, Ty};
 
 /// A diagnostic produced by monomorphization.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -455,6 +455,20 @@ impl<'a> Monomorphizer<'a> {
                     Type::Named(name.clone(), span)
                 }
             }
+            Type::Callback {
+                params,
+                result,
+                span,
+            } => Type::Callback {
+                params: params
+                    .iter()
+                    .map(|param| self.rewrite_type(param, mapping))
+                    .collect(),
+                result: result
+                    .as_ref()
+                    .map(|ty| Box::new(self.rewrite_type(ty, mapping))),
+                span: *span,
+            },
         }
     }
 
@@ -665,6 +679,18 @@ impl<'a> Monomorphizer<'a> {
                     .join(", ");
                 format!("{base}<{rendered}>")
             }
+            Type::Callback { params, result, .. } => {
+                let rendered = params
+                    .iter()
+                    .map(|param| self.type_display_source(param))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let result = result
+                    .as_ref()
+                    .map(|ty| self.type_display_source(ty))
+                    .unwrap_or_else(|| "void".to_string());
+                format!("callback({rendered}) => {result}")
+            }
         }
     }
 
@@ -737,7 +763,7 @@ impl<'a> Monomorphizer<'a> {
                 } else {
                     match name.as_str() {
                         "cstr" => Ty::CStr,
-                        "callback" => Ty::Callback,
+                        "callback" => Ty::Callback(CallbackSig::fixed()),
                         _ if self.marks.contains(name) => Ty::Mark(name.clone()),
                         _ if self.choices.contains(name)
                             || self.choice_payloads.contains_key(name) =>
@@ -750,6 +776,15 @@ impl<'a> Monomorphizer<'a> {
                 }
             }
             Type::Slice(element, _) => Ty::Slice(Box::new(self.mono_ty(element))),
+            Type::Callback { params, result, .. } => Ty::Callback(CallbackSig {
+                params: params.iter().map(|param| self.mono_ty(param)).collect(),
+                result: Box::new(
+                    result
+                        .as_ref()
+                        .map(|ty| self.mono_ty(ty))
+                        .unwrap_or(Ty::Void),
+                ),
+            }),
             Type::Generic(name, args, _) => Ty::Named(instantiation_name(name, args)),
         }
     }
@@ -771,6 +806,7 @@ impl<'a> Monomorphizer<'a> {
                     || name == "cstr"
                     || name == "callback"
             }
+            Type::Callback { .. } => true,
             Type::Slice(_, _) | Type::Generic(..) => false,
         }
     }
@@ -798,6 +834,20 @@ fn type_mangle(ty: &Type) -> String {
         Type::Named(name, _) => name.clone(),
         Type::Slice(element, _) => format!("slice_{}", type_mangle(element)),
         Type::Generic(name, args, _) => instantiation_name(name, args),
+        Type::Callback { params, result, .. } => {
+            let parts = params
+                .iter()
+                .map(type_mangle)
+                .chain(std::iter::once(
+                    result
+                        .as_ref()
+                        .map(|ty| type_mangle(ty))
+                        .unwrap_or_else(|| "void".to_string()),
+                ))
+                .collect::<Vec<_>>()
+                .join("_");
+            format!("callback{}_{}", params.len(), parts)
+        }
     }
 }
 
@@ -818,5 +868,17 @@ fn type_display(ty: &Type) -> String {
         Type::Named(name, _) => name.clone(),
         Type::Slice(element, _) => format!("[{}]", type_display(element)),
         Type::Generic(name, args, _) => instantiation_display(name, args),
+        Type::Callback { params, result, .. } => {
+            let rendered = params
+                .iter()
+                .map(type_display)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let result = result
+                .as_ref()
+                .map(|ty| type_display(ty))
+                .unwrap_or_else(|| "void".to_string());
+            format!("callback({rendered}) => {result}")
+        }
     }
 }
