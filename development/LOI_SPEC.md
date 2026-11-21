@@ -805,11 +805,15 @@ compiler's stderr and calls `lsp_publish_diagnostics`, which maps 1-based
 compiler spans to 0-based LSP ranges, severity strings to 1/2/3, and assembles
 the notification with the JSON builder so messages and URIs are escaped by the
 serializer. Empty or malformed input clears previous markers. `lsp_write_document`
-stores the buffer sent by `didOpen` / `didChange` in the URI's path through
-`lib/lsp_shim.c`, so the compiler checks the client's text instead of the disk;
-the server advertises full-document synchronization and the diagnostics
-provider in `initialize`. `os_env` reads the `LOI_COMPILER` setting used to
-locate the compiler. Verification and examples live in `PROGRESS.md`.
+stores the buffer sent by `didOpen` / `didChange` in a caller-chosen shadow path
+through `lib/lsp_shim.c`, and `lsp_remove_document` deletes it after the check;
+the compiler therefore sees the client's text without ever overwriting the
+client's file. The example server derives the shadow from a hash of the URI and
+places it in the document's own directory so relative imports keep working, and
+falls back to reading the real file only for notifications with no text. The
+server advertises full-document synchronization and the diagnostics provider in
+`initialize`. `os_env` reads the `LOI_COMPILER` setting used to locate the
+compiler. Verification and examples live in `PROGRESS.md`.
 
 ### 5.7 Scalar and composite copy — confirmed (question 7), revised by Block A2
 

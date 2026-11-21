@@ -1,0 +1,46 @@
+{
+  "name": "loi-lsp",
+  "displayName": "Loi Language Server",
+  "description": "Minimal VS Code client for the Loi language server written in Loi.",
+  "version": "0.1.0",
+  "publisher": "loi",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:loi"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "loi",
+        "extensions": [
+          ".loi"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "configuration": {
+      "title": "Loi",
+      "properties": {
+        "loi.lsp.command": {
+          "type": "string",
+          "default": "${workspaceFolder}/loi-lsp",
+          "description": "Path to the loi-lsp server binary."
+        },
+        "loi.compiler": {
+          "type": "string",
+          "default": "loi",
+          "description": "Compiler binary passed to the server as LOI_COMPILER."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.0"
+  }
+}

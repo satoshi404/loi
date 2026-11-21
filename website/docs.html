@@ -50,6 +50,7 @@
         <h3>Tools</h3>
         <nav class="docs-nav" aria-label="Tools">
           <a href="#cli">CLI reference</a>
+          <a href="#editors">Editor plugins</a>
           <a href="#examples">Examples</a>
           <a href="playground.html">Playground</a>
         </nav>
@@ -1331,7 +1332,13 @@ flow exchange
             <code>loi check &lt;path&gt; --error-format json</code> with
             <code>process_spawn_args</code> (compiler chosen by
             <code>LOI_COMPILER</code>, default <code>loi</code>), reads its stderr
-            and calls <code>lsp_publish_diagnostics(uri, json)</code>. Compiler spans are
+            and calls <code>lsp_publish_diagnostics(uri, json)</code>. To avoid
+            overwriting the file open in the editor, <code>didOpen</code> and
+            <code>didChange</code> write the buffer to a hidden shadow file in
+            the same directory (<code>.loi-lsp-&lt;hash&gt;.loi</code>), so relative
+            imports still resolve; the shadow is deleted immediately after the
+            check. A notification without text, such as a bare
+            <code>didSave</code>, only reads the file on disk. Compiler spans are
             1-based while LSP uses 0-based lines and characters, so both endpoints
             are decremented; severities <code>error</code>, <code>warning</code>
             and <code>note</code> map to 1, 2 and 3. The notification is built
@@ -1387,7 +1394,11 @@ open flow main
 
           <div class="doc-code">
             <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
-            <pre><code class="language-sh">loi build examples/lsp_server.loi -o lsp_server --c-source lib/stdio_shim.c --c-source lib/process_shim.c --c-source lib/os_shim.c</code></pre>
+            <pre><code class="language-sh">sh tools/build_lsp_server.sh
+# equivalent to:
+loi build examples/lsp_server.loi -o loi-lsp \
+    --c-source lib/stdio_shim.c --c-source lib/process_shim.c \
+    --c-source lib/os_shim.c --c-source lib/lsp_shim.c</code></pre>
           </div>
 
           <div class="doc-code">
@@ -1844,12 +1855,86 @@ node website/server.mjs
             The <b>LSP</b> panel drives <code>examples/lsp_server.loi</code> through real framed
             stdio in short-lived batches: <code>initialize</code>, <code>didOpen</code>, optional
             <code>didChange</code> notifications for each edit and <code>shutdown</code>. The
-            server writes the editor buffer to its document path, spawns
+            server writes the editor buffer to a hidden shadow file next to the document, spawns
             <code>loi check --error-format json</code> and answers with
             <code>textDocument/publishDiagnostics</code>; those messages become the clickable
             Problems list. The preset menu includes the LSP server itself for <b>Check</b> and
             <b>Format</b>; its privileged shims are deliberately not linked into browser-submitted
             programs.
+          </p>
+        </section>
+
+        <section id="editors">
+          <h2>Editor plugins (LSP)</h2>
+          <p>
+            The same server used by the playground works in real editors. Build it once from the
+            repository root, then point your editor at the resulting binary. The server speaks
+            LSP over stdio, advertises full-document synchronization and publishes compiler
+            diagnostics after every <code>didOpen</code> and <code>didChange</code>. It never
+            writes over the file you are editing; it checks a hidden shadow file in the same
+            directory and deletes it after each check. Relative imports therefore resolve exactly
+            as they do for the real file.
+          </p>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-sh">cargo build
+sh tools/build_lsp_server.sh          # creates ./loi-lsp
+export LOI_COMPILER=/absolute/path/to/loi/target/debug/loi</code></pre>
+          </div>
+          <p>
+            <code>LOI_COMPILER</code> is read by the server when it spawns
+            <code>loi check</code>. If <code>loi</code> is already on your
+            <code>PATH</code>, you can leave the variable unset.
+          </p>
+
+          <h3>Emacs</h3>
+          <p>
+            Emacs 29+ includes <code>eglot</code>. Load the small mode definition shipped with
+            the repository, set the server command, and run <code>M-x eglot</code> in any
+            <code>.loi</code> buffer. If you prefer <code>lsp-mode</code>, load the same file
+            after <code>lsp-mode</code>; it registers a client for both.
+          </p>
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>~/.emacs.d/init.el</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-elisp">(setq loi-lsp-command '("/absolute/path/to/loi/loi-lsp"))
+(load "/absolute/path/to/loi/editors/emacs-loi.el")
+(add-hook 'loi-mode-hook #'eglot-ensure)   ; optional: start automatically</code></pre>
+          </div>
+
+          <h3>Visual Studio Code</h3>
+          <p>
+            A minimal client lives in <code>editors/vscode-loi/</code>. Install its dependency
+            with <code>npm install</code>, open that folder in VS Code and press <code>F5</code>
+            to launch an Extension Development Host. Set <code>loi.lsp.command</code> to the
+            absolute path of <code>loi-lsp</code> and <code>loi.compiler</code> to your
+            <code>loi</code> binary. The extension registers the <code>.loi</code> language and
+            starts the server in stdio mode.
+          </p>
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-sh">cd editors/vscode-loi &amp;&amp; npm install
+code .</code></pre>
+          </div>
+
+          <h3>Neovim</h3>
+          <p>
+            The repository ships <code>editors/nvim/loi.lua</code>. It uses the built-in
+            <code>vim.lsp.config</code> API on Neovim 0.11+ and falls back to
+            <code>nvim-lspconfig</code> on older versions. Source it from
+            <code>init.lua</code> and set <code>vim.g.loi_lsp_cmd</code> to the server path.
+          </p>
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>~/.config/nvim/init.lua</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-lua">vim.g.loi_lsp_cmd = "/absolute/path/to/loi/loi-lsp"
+dofile("/absolute/path/to/loi/editors/nvim/loi.lua")</code></pre>
+          </div>
+
+          <p>
+            In all three editors, diagnostics come from the real compiler. A clean check emits
+            no JSON, which the server turns into an empty diagnostic list so old markers
+            disappear. The server is stdio-only and has no dependencies beyond the C shims
+            linked by <code>tools/build_lsp_server.sh</code>.
           </p>
         </section>
 

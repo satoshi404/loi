@@ -788,3 +788,15 @@ proof of termination or an owned C-string type. Workaround for L7: add
 copies both slices into NUL-terminated buffers; `lib/lsp.loi` exposes the narrow
 `lsp_write_document` flow. The shim is linked only into the trusted server-side
 LSP build, not into browser-submitted playground programs.
+
+A first version wrote the editor buffer straight to the URI's path. That is
+safe for the playground's temporary document but destructive for a real editor:
+every `didChange` would overwrite the user's file. Resolved in the L7 follow-up:
+`lib/lsp.loi` also exposes `lsp_remove_document`, backed by
+`loi_lsp_remove_document`, and `examples/lsp_server.loi` derives a hidden shadow
+path in the document's own directory (hash of the URI, `.loi-lsp-<hash>.loi`).
+It writes there, checks there, publishes diagnostics for the original URI and
+deletes the shadow immediately. Keeping the shadow beside the original avoids
+breaking relative imports such as `import "../lib/std.loi"`. A regression test
+asserts that the client's file is byte-for-byte unchanged and that no shadow
+survives the notification.

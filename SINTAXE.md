@@ -1153,9 +1153,13 @@ guard child <- process_spawn_args(compiler, args) {
 Set `LOI_COMPILER` (default `loi`) to choose the compiler binary. The compiler
 writes its JSON to stderr; a clean check writes zero bytes. `initialize` answers
 with `textDocumentSync: 1` (full-document) and `publishDiagnosticsProvider: true`.
-`didOpen` and `didChange` call `lsp_write_document(path, text)` from
+`didOpen` and `didChange` call `lsp_write_document(shadow, text)` from
 `lib/lsp.loi` (link `--c-source lib/lsp_shim.c`) before checking, so diagnostics
-follow the editor buffer; `didSave` rechecks the file on disk.
+follow the editor buffer without overwriting the client's file. The server
+chooses `shadow` as a hidden `.loi-lsp-<hash>.loi` file in the document's own
+directory, which keeps relative imports valid, and removes it with
+`lsp_remove_document(shadow)` after the check. A `didSave` with no text only
+reads the file on disk.
 
 `lsp_publish_diagnostics(<- uri, <- diagnostics_json)` emits
 `textDocument/publishDiagnostics`. Compiler spans are 1-based while LSP uses
@@ -1242,7 +1246,7 @@ to names that actually repeat.
 | `lib/stdio.loi` | `stdio_read_exact`, `stdio_write_all`, `stdio_flush` | `lib/stdio_shim.c` |
 | `lib/json.loi` | `JsonKind`, `JsonDoc`, `json_parse`, `json_root`, `json_kind`, `json_bool`, `json_string`, `json_number_text`, `json_number_i64`, `json_array_len`, `json_array_get`, `json_object_get`, `json_stringify`, `json_new`, `json_new_null`, `json_new_bool`, `json_new_i64`, `json_new_u64`, `json_new_number`, `json_new_string`, `json_new_array`, `json_new_object`, `json_array_push`, `json_object_set`, `json_set_root` | no; parsing, building and stringifying need `protect` |
 | `lib/jsonrpc.loi` | `JsonRpcRequest`, `jsonrpc_read_frame`, `jsonrpc_parse_request`, `jsonrpc_send_result`, `jsonrpc_send_error`, `jsonrpc_send_notification` | `lib/stdio_shim.c`; all flows need `protect` |
-| `lib/lsp.loi` | `lsp_publish_diagnostics`, `lsp_write_document` | `lib/stdio_shim.c` via `jsonrpc.loi`, plus `lib/lsp_shim.c` for document writes; needs `protect` |
+| `lib/lsp.loi` | `lsp_publish_diagnostics`, `lsp_write_document`, `lsp_remove_document` | `lib/stdio_shim.c` via `jsonrpc.loi`, plus `lib/lsp_shim.c` for shadow-file writes; needs `protect` |
 | `lib/process.loi` | `Process`, `process_spawn`, `process_spawn_args`, `process_ok`, `process_stdout_len`, `process_stderr_len`, `process_read_stdout`, `process_read_stderr`, `process_stdout`, `process_stderr`, `process_exit_code`, `process_release` | `lib/process_shim.c`; use it with `guard` |
 
 `lib/math.loi` and `lib/ctype.loi` are pure Loi: the math module uses generic
