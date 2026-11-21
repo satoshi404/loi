@@ -4,7 +4,7 @@
 ;;   (setq loi-lsp-command '("/absolute/path/to/loi-lsp"))
 ;;   (load "/absolute/path/to/loi/editors/emacs-loi.el")
 ;;
-;; Build the server first with `sh tools/build_lsp_server.sh`.
+;; `cargo build` produces the separate `loi-lsp` executable next to `loi`.
 ;; Eglot is built into Emacs 29+; `M-x eglot` starts the session in a .loi buffer.
 ;; If you use lsp-mode instead, require it before loading this file.
 

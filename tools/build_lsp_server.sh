@@ -1,5 +1,10 @@
 #!/usr/bin/env sh
-# Build the Loi language server used by the editor plugins.
+# Build the Loi language server directly, without the Cargo launcher.
+#
+# Normal installs only need `cargo build`, which produces both `loi` and the
+# separate `loi-lsp` executable. This script is useful when you want a plain
+# server binary (for example to embed in an editor config) from a source
+# checkout.
 #
 # Usage (from the repository root):
 #   sh tools/build_lsp_server.sh [OUTPUT]

@@ -4,7 +4,7 @@
 --   vim.g.loi_lsp_cmd = "/absolute/path/to/loi-lsp"
 --   dofile("/absolute/path/to/loi/editors/nvim/loi.lua")
 --
--- Build the server first with `sh tools/build_lsp_server.sh`.
+-- `cargo build` produces the separate `loi-lsp` executable next to `loi`.
 -- Neovim 0.11+ uses the built-in vim.lsp.config API; older releases fall back
 -- to nvim-lspconfig when it is installed.
 

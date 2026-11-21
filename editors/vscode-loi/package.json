@@ -29,7 +29,7 @@
       "properties": {
         "loi.lsp.command": {
           "type": "string",
-          "default": "${workspaceFolder}/loi-lsp",
+          "default": "${workspaceFolder}/target/debug/loi-lsp",
           "description": "Path to the loi-lsp server binary."
         },
         "loi.compiler": {

@@ -140,7 +140,7 @@ function parseFrames(buffer) {
   return messages;
 }
 
-async function buildLspSession() {
+async function prepareLspSession() {
   const dir = await mkdtemp(path.join(os.tmpdir(), "loi-playground-lsp-"));
   try {
     const libTarget = path.join(dir, "lib");
@@ -151,6 +151,22 @@ async function buildLspSession() {
       await copyFile(path.join(libDir, name), path.join(libTarget, name));
     }
     await copyFile(lspExamplePath, path.join(examplesTarget, "lsp_server.loi"));
+
+    // Prefer the first-class `loi-lsp` executable produced by `cargo build`.
+    // It speaks the same stdio protocol and rebuilds its embedded Loi server
+    // only when the sources change. Keep the source build below as a fallback
+    // for checkouts that only have the compiler.
+    const configured = process.env.LOI_LSP_BIN
+      ? path.resolve(process.cwd(), process.env.LOI_LSP_BIN)
+      : null;
+    const candidates = [
+      configured,
+      path.join(projectDir, "target", "debug", "loi-lsp"),
+      path.join(projectDir, "target", "release", "loi-lsp"),
+    ].filter((candidate) => candidate && existsSync(candidate));
+    if (candidates.length > 0) {
+      return { dir, binary: candidates[0] };
+    }
 
     const binary = path.join(dir, "lsp-server");
     const build = await runProcess(
@@ -178,7 +194,7 @@ async function buildLspSession() {
 
 async function lspSession() {
   if (!lspSessionPromise) {
-    lspSessionPromise = buildLspSession().catch((error) => {
+    lspSessionPromise = prepareLspSession().catch((error) => {
       lspSessionPromise = null;
       throw error;
     });
@@ -186,9 +202,10 @@ async function lspSession() {
   return lspSessionPromise;
 }
 
-/// Run a batch LSP session against the real server. The binary is compiled
-/// once and reused; each request starts a short-lived process, which keeps the
-/// playground stateless and avoids leaking editor sessions between requests.
+/// Run a batch LSP session against the real server. The first-class `loi-lsp`
+/// binary is reused when available; each request starts a short-lived process,
+/// which keeps the playground stateless and avoids leaking editor sessions
+/// between requests.
 async function lspDiagnostics(source, changes = []) {
   const started = Date.now();
   const session = await lspSession();

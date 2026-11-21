@@ -323,6 +323,53 @@ fn lsp_server_accepts_notifications_without_an_id() {
 }
 
 #[test]
+fn loi_lsp_is_a_separate_stdio_executable() {
+    if !has_c_compiler() {
+        eprintln!("skipping loi_lsp_is_a_separate_stdio_executable: cc not found");
+        return;
+    }
+    let dir = test_dir("separate-binary");
+    let cache = dir.join("cache");
+    fs::create_dir_all(&cache).expect("cache directory should be creatable");
+
+    let mut input = frame(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#);
+    input.extend(frame(r#"{"jsonrpc":"2.0","id":2,"method":"shutdown"}"#));
+    input.extend(frame(r#"{"jsonrpc":"2.0","method":"exit"}"#));
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_loi-lsp"))
+        .env("LOI_COMPILER", loi())
+        .env("LOI_LSP_CACHE_DIR", &cache)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("loi-lsp launcher should start");
+    child
+        .stdin
+        .take()
+        .expect("stdin pipe should exist")
+        .write_all(&input)
+        .expect("LSP frames should be written");
+    let output = child.wait_with_output().expect("loi-lsp should exit");
+
+    assert!(
+        output.status.success(),
+        "loi-lsp failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut expected = frame(
+        r#"{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"publishDiagnosticsProvider":true}}}"#,
+    );
+    expected.extend(frame(r#"{"jsonrpc":"2.0","id":2,"result":null}"#));
+    assert_eq!(output.stdout, expected);
+    assert!(
+        output.stderr.is_empty(),
+        "launcher wrote stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn lsp_publish_diagnostics_outside_protect_is_rejected() {
     let dir = test_dir("outside-protect");
     let program = dir.join("main.loi");
