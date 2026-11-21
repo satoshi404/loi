@@ -510,6 +510,60 @@ stdio flows for stdin/stdout, keep raw descriptors for files and sockets, and
 never mix the two APIs on one stream. `examples/stdio_frames.loi` shows the
 complete framing pattern; a zero-length frame is its shutdown sentinel.
 
+## Block L2 — JSON in pure Loi
+
+### A mark cannot be passed as a flow argument across modules
+
+Attempted design: store `JsonKind` directly in `JsonNode.kind` and pass it to
+helpers such as `json_node(kind: JsonKind, ...)`. A minimal probe with the mark
+declared in the same file still failed at the call site:
+
+```text
+error: unknown variable 'JsonKind'
+```
+
+Marks work in local bindings and comparisons, but not as call arguments here.
+Language requirement: treat mark constructors as first-class values usable in
+argument position. Workaround for L2: nodes store internal `u8` kind codes
+(0 null, 1 bool, 2 number, 3 string, 4 array, 5 object) and the public
+`json_kind` flow maps them back to the `JsonKind` mark. The mark stays in the
+public surface documented in `SINTAXE.md`.
+
+### Contiguous node indices cannot represent nested containers
+
+Attempted design: give each array/object a `child_start` into the shared node
+table and compute children as `child_start + i`. That works for flat documents,
+but nested containers append their own nodes between the parent's children, so
+round-tripping `{"b":[1,2,{"x":null}]}` emitted stray `null` and empty-key
+members. The exact mismatch was:
+
+```text
+left:  {"b":[1,2,{"x":null},null],"":1,"":2,"":{"x":null},"x":null,"a":"x/y"}
+right: {"b":[1,2,{"x":null}],"a":"x/y"}
+```
+
+Language requirement: none — this is a data-structure design bug, not a
+language limit. `JsonDoc` now owns a separate `children: Vec<i64>` arena: each
+container records a window into that arena, and only the handles of its direct
+children are appended there. Nested nodes can be interleaved freely in the node
+table.
+
+### Uninitialized aggregate locals are not safe defaults
+
+Attempted design: declare `mut parser: JsonParser` and `mut out: Vec<u8>`
+without calling a constructor, then push into their vectors. Checking passed,
+but the program trapped at runtime:
+
+```text
+loi: slice index out of bounds at 235:5
+```
+
+The generated slice had length zero and no backing storage because the vector
+fields were never initialized. Workaround for L2: call `vec_new<JsonNode>`,
+`vec_new<u8>` and `vec_new<i64>` on parser state, and `vec_new<u8>` on the
+serializer output, before the first push. This matches the existing
+`Vec<T>` contract that `vec_new<T>` needs no `protect` but growing flows do.
+
 ## Opt-in LLVM backend
 
 ### The draft IR was not compilable LLVM IR

@@ -1,0 +1,867 @@
+//! JSON parsing and serialization written entirely in Loi.
+//!
+//! Import it explicitly:
+//!
+//! ```loi
+//! import "lib/json.loi"
+//! ```
+//!
+//! A `JsonDoc` keeps a copy of the input bytes, a node table and a byte arena
+//! with decoded strings. Nodes refer to their children by index, so arrays and
+//! objects need neither pointers nor a generic map. Every flow that builds or
+//! serializes a document allocates, so call it inside a `protect` block.
+//!
+//! Numbers stay as raw text; use `json_number_i64` for integral values. The
+//! serializer emits compact JSON with the original object order and decoded
+//! strings.
+
+import "ctype.loi"
+import "vec.loi"
+
+/// The six JSON value kinds returned by `json_kind`.
+open mark JsonKind [
+    Null
+    Bool
+    Number
+    String
+    Array
+    Object
+]
+
+/// One entry in a document's node table. Offsets are relative to the raw input
+/// for numbers and to the decoded string arena for strings and object keys.
+open shape JsonNode [
+    kind: u8
+    start: u64
+    len: u64
+    child_start: u64
+    child_count: u64
+    key_start: u64
+    key_len: u64
+]
+
+/// A parsed JSON document. Use the `json_*` flows to inspect it.
+open shape JsonDoc [
+    text: [u8]
+    nodes: Vec<JsonNode>
+    strings: Vec<u8>
+    children: Vec<i64>
+    root: i64
+]
+
+shape JsonParser [
+    text: [u8]
+    pos: u64
+    nodes: Vec<JsonNode>
+    strings: Vec<u8>
+    children: Vec<i64>
+    error: bool
+]
+
+// Internal kind codes: 0 null, 1 bool, 2 number, 3 string, 4 array, 5 object.
+
+sealed flow json_make_node
+    <- kind: u8
+    <- start: u64
+    <- len: u64
+    <- child_start: u64
+    <- child_count: u64
+    <- key_start: u64
+    <- key_len: u64
+    => JsonNode
+{
+    mut node: JsonNode
+    node.kind = kind
+    node.start = start
+    node.len = len
+    node.child_start = child_start
+    node.child_count = child_count
+    node.key_start = key_start
+    node.key_len = key_len
+    => node
+}
+
+sealed flow json_push
+    <-> parser: JsonParser
+    <- node: JsonNode
+    => i64
+{
+    at <- parser.nodes.len as i64
+    vec_push<JsonNode>(<-> parser.nodes, node)
+    => at
+}
+
+sealed flow json_patch_node
+    <-> parser: JsonParser
+    <- at: u64
+    <- node: JsonNode
+{
+    vec_set<JsonNode>(<-> parser.nodes, at, node)
+}
+
+sealed flow json_skip_ws
+    <-> parser: JsonParser
+{
+    while parser.pos < parser.text.len {
+        byte <- parser.text[parser.pos]
+        if byte == 32 or byte == 9 or byte == 10 or byte == 13 {
+            parser.pos += 1
+        } else {
+            break
+        }
+    }
+}
+
+sealed flow json_parse_hex4
+    <- text: [u8]
+    <- at: u64
+    -> value: u64
+    => bool
+{
+    value = 0
+    if at + 4 > text.len {
+        => false
+    }
+    mut i: u64 <- 0
+    while i < 4 {
+        digit <- ctype_hex_value(text[at + i])
+        if digit < 0 {
+            => false
+        }
+        value = value * 16 + digit as u64
+        i += 1
+    }
+    => true
+}
+
+sealed flow json_append_utf8
+    <-> strings: Vec<u8>
+    <- code: u64
+{
+    if code < 0x80 {
+        vec_push<u8>(<-> strings, code as u8)
+        => 
+    }
+    if code < 0x800 {
+        vec_push<u8>(<-> strings, (0xc0 | (code >> 6)) as u8)
+        vec_push<u8>(<-> strings, (0x80 | (code & 0x3f)) as u8)
+        => 
+    }
+    if code < 0x10000 {
+        vec_push<u8>(<-> strings, (0xe0 | (code >> 12)) as u8)
+        vec_push<u8>(<-> strings, (0x80 | ((code >> 6) & 0x3f)) as u8)
+        vec_push<u8>(<-> strings, (0x80 | (code & 0x3f)) as u8)
+        => 
+    }
+    vec_push<u8>(<-> strings, (0xf0 | (code >> 18)) as u8)
+    vec_push<u8>(<-> strings, (0x80 | ((code >> 12) & 0x3f)) as u8)
+    vec_push<u8>(<-> strings, (0x80 | ((code >> 6) & 0x3f)) as u8)
+    vec_push<u8>(<-> strings, (0x80 | (code & 0x3f)) as u8)
+}
+
+/// Decode the string starting at `parser.pos` into the string arena. Returns
+/// the node index for a value string, or 0 for a key while filling the two
+/// out-parameters. Malformed input returns -1.
+sealed flow json_parse_string
+    <-> parser: JsonParser
+    <- is_key: bool
+    -> key_start: u64
+    -> key_len: u64
+    => i64
+{
+    if parser.pos >= parser.text.len or parser.text[parser.pos] != 34 {
+        parser.error = true
+        => -1
+    }
+    parser.pos += 1
+    start <- parser.strings.len
+    while parser.pos < parser.text.len {
+        byte <- parser.text[parser.pos]
+        if byte == 34 {
+            parser.pos += 1
+            len <- parser.strings.len - start
+            if is_key {
+                key_start = start
+                key_len = len
+                => 0
+            }
+            node <- json_make_node(3, start, len, 0, 0, 0, 0)
+            => json_push(<-> parser, node)
+        }
+        if byte == 92 {
+            parser.pos += 1
+            if parser.pos >= parser.text.len {
+                break
+            }
+            escaped <- parser.text[parser.pos]
+            parser.pos += 1
+            if escaped == 34 {
+                vec_push<u8>(<-> parser.strings, 34)
+            } else if escaped == 92 {
+                vec_push<u8>(<-> parser.strings, 92)
+            } else if escaped == 47 {
+                vec_push<u8>(<-> parser.strings, 47)
+            } else if escaped == 98 {
+                vec_push<u8>(<-> parser.strings, 8)
+            } else if escaped == 102 {
+                vec_push<u8>(<-> parser.strings, 12)
+            } else if escaped == 110 {
+                vec_push<u8>(<-> parser.strings, 10)
+            } else if escaped == 114 {
+                vec_push<u8>(<-> parser.strings, 13)
+            } else if escaped == 116 {
+                vec_push<u8>(<-> parser.strings, 9)
+            } else if escaped == 117 {
+                mut code: u64
+                if not json_parse_hex4(parser.text, parser.pos, -> code) {
+                    break
+                }
+                parser.pos += 4
+                if code >= 0xd800 and code <= 0xdbff {
+                    if parser.pos + 6 > parser.text.len {
+                        break
+                    }
+                    if parser.text[parser.pos] != 92 or parser.text[parser.pos + 1] != 117 {
+                        break
+                    }
+                    mut low: u64
+                    if not json_parse_hex4(parser.text, parser.pos + 2, -> low) {
+                        break
+                    }
+                    if low < 0xdc00 or low > 0xdfff {
+                        break
+                    }
+                    parser.pos += 6
+                    code = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00)
+                } else if code >= 0xdc00 and code <= 0xdfff {
+                    break
+                }
+                json_append_utf8(<-> parser.strings, code)
+            } else {
+                break
+            }
+        } else {
+            if byte < 32 {
+                break
+            }
+            vec_push<u8>(<-> parser.strings, byte)
+            parser.pos += 1
+        }
+    }
+    parser.error = true
+    => -1
+}
+
+sealed flow json_match_literal
+    <- text: [u8]
+    <- at: u64
+    <- word: [u8]
+    => bool
+{
+    if at + word.len > text.len {
+        => false
+    }
+    for i in 0..word.len {
+        if text[at + i] != word[i] {
+            => false
+        }
+    }
+    => true
+}
+
+sealed flow json_parse_number
+    <-> parser: JsonParser
+    => i64
+{
+    start <- parser.pos
+    if parser.text[parser.pos] == 45 {
+        parser.pos += 1
+        if parser.pos >= parser.text.len {
+            parser.error = true
+            => -1
+        }
+    }
+    if parser.pos >= parser.text.len or not ctype_is_digit(parser.text[parser.pos]) {
+        parser.error = true
+        => -1
+    }
+    if parser.text[parser.pos] == 48 {
+        parser.pos += 1
+    } else {
+        while parser.pos < parser.text.len and ctype_is_digit(parser.text[parser.pos]) {
+            parser.pos += 1
+        }
+    }
+    if parser.pos < parser.text.len and parser.text[parser.pos] == 46 {
+        parser.pos += 1
+        if parser.pos >= parser.text.len or not ctype_is_digit(parser.text[parser.pos]) {
+            parser.error = true
+            => -1
+        }
+        while parser.pos < parser.text.len and ctype_is_digit(parser.text[parser.pos]) {
+            parser.pos += 1
+        }
+    }
+    if parser.pos < parser.text.len and (parser.text[parser.pos] == 101 or parser.text[parser.pos] == 69) {
+        parser.pos += 1
+        if parser.pos < parser.text.len and (parser.text[parser.pos] == 43 or parser.text[parser.pos] == 45) {
+            parser.pos += 1
+        }
+        if parser.pos >= parser.text.len or not ctype_is_digit(parser.text[parser.pos]) {
+            parser.error = true
+            => -1
+        }
+        while parser.pos < parser.text.len and ctype_is_digit(parser.text[parser.pos]) {
+            parser.pos += 1
+        }
+    }
+    node <- json_make_node(2, start, parser.pos - start, 0, 0, 0, 0)
+    => json_push(<-> parser, node)
+}
+
+/// Copy the directly collected child handles into the document's contiguous
+/// child arena and record the resulting window on the container node.
+sealed flow json_finish_container
+    <-> parser: JsonParser
+    <- at: u64
+    <- kids: Vec<i64>
+{
+    mut node: JsonNode <- vec_get<JsonNode>(<- parser.nodes, at)
+    node.child_start = parser.children.len
+    node.child_count = kids.len
+    json_patch_node(<-> parser, at, node)
+    for i in 0..kids.len {
+        handle <- vec_get<i64>(<- kids, i)
+        vec_push<i64>(<-> parser.children, handle)
+    }
+}
+
+sealed flow json_parse_array
+    <-> parser: JsonParser
+    => i64
+{
+    at <- parser.nodes.len as i64
+    placeholder <- json_make_node(4, 0, 0, 0, 0, 0, 0)
+    pushed <- json_push(<-> parser, placeholder)
+    if pushed != at {
+        parser.error = true
+        => -1
+    }
+    mut kids: Vec<i64>
+    vec_new<i64>(-> kids)
+    parser.pos += 1
+    json_skip_ws(<-> parser)
+    if parser.pos < parser.text.len and parser.text[parser.pos] == 93 {
+        parser.pos += 1
+        json_finish_container(<-> parser, at as u64, <- kids)
+        => at
+    }
+    while true {
+        item <- json_parse_value(<-> parser)
+        if item < 0 {
+            => -1
+        }
+        vec_push<i64>(<-> kids, item)
+        json_skip_ws(<-> parser)
+        if parser.pos >= parser.text.len {
+            parser.error = true
+            => -1
+        }
+        byte <- parser.text[parser.pos]
+        if byte == 44 {
+            parser.pos += 1
+        } else if byte == 93 {
+            parser.pos += 1
+            json_finish_container(<-> parser, at as u64, <- kids)
+            => at
+        } else {
+            parser.error = true
+            => -1
+        }
+    }
+    => -1
+}
+
+sealed flow json_parse_object
+    <-> parser: JsonParser
+    => i64
+{
+    at <- parser.nodes.len as i64
+    placeholder <- json_make_node(5, 0, 0, 0, 0, 0, 0)
+    pushed <- json_push(<-> parser, placeholder)
+    if pushed != at {
+        parser.error = true
+        => -1
+    }
+    mut kids: Vec<i64>
+    vec_new<i64>(-> kids)
+    parser.pos += 1
+    json_skip_ws(<-> parser)
+    if parser.pos < parser.text.len and parser.text[parser.pos] == 125 {
+        parser.pos += 1
+        json_finish_container(<-> parser, at as u64, <- kids)
+        => at
+    }
+    while true {
+        json_skip_ws(<-> parser)
+        mut key_start: u64
+        mut key_len: u64
+        key <- json_parse_string(<-> parser, true, -> key_start, -> key_len)
+        if key < 0 {
+            parser.error = true
+            => -1
+        }
+        json_skip_ws(<-> parser)
+        if parser.pos >= parser.text.len or parser.text[parser.pos] != 58 {
+            parser.error = true
+            => -1
+        }
+        parser.pos += 1
+        value <- json_parse_value(<-> parser)
+        if value < 0 {
+            => -1
+        }
+        vec_push<i64>(<-> kids, value)
+        mut value_node: JsonNode <- vec_get<JsonNode>(<- parser.nodes, value as u64)
+        value_node.key_start = key_start
+        value_node.key_len = key_len
+        json_patch_node(<-> parser, value as u64, value_node)
+        json_skip_ws(<-> parser)
+        if parser.pos >= parser.text.len {
+            parser.error = true
+            => -1
+        }
+        byte <- parser.text[parser.pos]
+        if byte == 44 {
+            parser.pos += 1
+        } else if byte == 125 {
+            parser.pos += 1
+            json_finish_container(<-> parser, at as u64, <- kids)
+            => at
+        } else {
+            parser.error = true
+            => -1
+        }
+    }
+    => -1
+}
+
+sealed flow json_parse_literal
+    <-> parser: JsonParser
+    <- word: [u8]
+    <- kind: u8
+    <- truth: u64
+    => i64
+{
+    if json_match_literal(parser.text, parser.pos, word) {
+        parser.pos += word.len
+        node <- json_make_node(kind, truth, 0, 0, 0, 0, 0)
+        => json_push(<-> parser, node)
+    }
+    parser.error = true
+    => -1
+}
+
+sealed flow json_parse_value
+    <-> parser: JsonParser
+    => i64
+{
+    json_skip_ws(<-> parser)
+    if parser.pos >= parser.text.len {
+        parser.error = true
+        => -1
+    }
+    byte <- parser.text[parser.pos]
+    if byte == 123 {
+        => json_parse_object(<-> parser)
+    }
+    if byte == 91 {
+        => json_parse_array(<-> parser)
+    }
+    if byte == 34 {
+        mut discarded_start: u64
+        mut discarded_len: u64
+        => json_parse_string(<-> parser, false, -> discarded_start, -> discarded_len)
+    }
+    if byte == 116 {
+        => json_parse_literal(<-> parser, "true", 1, 1)
+    }
+    if byte == 102 {
+        => json_parse_literal(<-> parser, "false", 1, 0)
+    }
+    if byte == 110 {
+        => json_parse_literal(<-> parser, "null", 0, 0)
+    }
+    if byte == 45 or ctype_is_digit(byte) {
+        => json_parse_number(<-> parser)
+    }
+    parser.error = true
+    => -1
+}
+
+/// Parse `text` into `doc`. Returns false on malformed input or trailing data.
+/// The document is valid until the enclosing `protect` block ends.
+open flow json_parse
+    <- text: [u8]
+    -> doc: JsonDoc
+    => bool
+{
+    mut parser: JsonParser
+    vec_new<JsonNode>(-> parser.nodes)
+    vec_new<u8>(-> parser.strings)
+    vec_new<i64>(-> parser.children)
+    parser.text = clone(text)
+    parser.pos = 0
+    parser.error = false
+    doc.text = clone(text)
+    doc.root = -1
+
+    root <- json_parse_value(<-> parser)
+    if root < 0 {
+        => false
+    }
+    json_skip_ws(<-> parser)
+    if parser.pos != parser.text.len {
+        => false
+    }
+    doc.root = root
+    doc.nodes = give(parser.nodes)
+    doc.strings = give(parser.strings)
+    doc.children = give(parser.children)
+    => true
+}
+
+/// Index of the root node, or -1 when parsing failed.
+open flow json_root
+    <- doc: JsonDoc
+    => i64
+{
+    => doc.root
+}
+
+/// Kind of a node handle. Invalid handles report `JsonKind.Null`.
+open flow json_kind
+    <- doc: JsonDoc
+    <- node: i64
+    => JsonKind
+{
+    if node < 0 or node as u64 >= doc.nodes.len {
+        => JsonKind.Null
+    }
+    entry <- vec_get<JsonNode>(<- doc.nodes, node as u64)
+    if entry.kind == 1 {
+        => JsonKind.Bool
+    }
+    if entry.kind == 2 {
+        => JsonKind.Number
+    }
+    if entry.kind == 3 {
+        => JsonKind.String
+    }
+    if entry.kind == 4 {
+        => JsonKind.Array
+    }
+    if entry.kind == 5 {
+        => JsonKind.Object
+    }
+    => JsonKind.Null
+}
+
+/// Boolean value of a `JsonKind.Bool` node; false for other kinds.
+open flow json_bool
+    <- doc: JsonDoc
+    <- node: i64
+    => bool
+{
+    if node < 0 or node as u64 >= doc.nodes.len {
+        => false
+    }
+    entry <- vec_get<JsonNode>(<- doc.nodes, node as u64)
+    if entry.kind != 1 {
+        => false
+    }
+    => entry.start != 0
+}
+
+/// Decoded bytes of a `JsonKind.String` node.
+open flow json_string
+    <- doc: JsonDoc
+    <- node: i64
+    => [u8]
+{
+    if node < 0 or node as u64 >= doc.nodes.len {
+        => [u8:]
+    }
+    entry <- vec_get<JsonNode>(<- doc.nodes, node as u64)
+    if entry.kind != 3 {
+        => [u8:]
+    }
+    => vec_view<u8>(<- doc.strings, entry.start, entry.start + entry.len)
+}
+
+/// Raw lexeme of a `JsonKind.Number` node, including exponent and sign.
+open flow json_number_text
+    <- doc: JsonDoc
+    <- node: i64
+    => [u8]
+{
+    if node < 0 or node as u64 >= doc.nodes.len {
+        => [u8:]
+    }
+    entry <- vec_get<JsonNode>(<- doc.nodes, node as u64)
+    if entry.kind != 2 {
+        => [u8:]
+    }
+    => view(doc.text, entry.start, entry.start + entry.len)
+}
+
+/// Integral approximation of a number node: the integer part, truncated.
+open flow json_number_i64
+    <- doc: JsonDoc
+    <- node: i64
+    => i64
+{
+    if node < 0 or node as u64 >= doc.nodes.len {
+        => 0
+    }
+    entry <- vec_get<JsonNode>(<- doc.nodes, node as u64)
+    if entry.kind != 2 {
+        => 0
+    }
+    mut index: u64 <- entry.start
+    mut negative: bool <- false
+    if index < entry.start + entry.len and doc.text[index] == 45 {
+        negative = true
+        index += 1
+    }
+    mut value: i64 <- 0
+    while index < entry.start + entry.len {
+        byte <- doc.text[index]
+        if not ctype_is_digit(byte) {
+            break
+        }
+        value = value * 10 + (byte as i64 - 48)
+        index += 1
+    }
+    if negative {
+        => -value
+    }
+    => value
+}
+
+/// Number of elements in an array node, or zero for other kinds.
+open flow json_array_len
+    <- doc: JsonDoc
+    <- node: i64
+    => u64
+{
+    if node < 0 or node as u64 >= doc.nodes.len {
+        => 0
+    }
+    entry <- vec_get<JsonNode>(<- doc.nodes, node as u64)
+    if entry.kind != 4 {
+        => 0
+    }
+    => entry.child_count
+}
+
+/// Handle of an array element, or -1 when the index is out of range.
+open flow json_array_get
+    <- doc: JsonDoc
+    <- node: i64
+    <- index: u64
+    => i64
+{
+    if node < 0 or node as u64 >= doc.nodes.len {
+        => -1
+    }
+    entry <- vec_get<JsonNode>(<- doc.nodes, node as u64)
+    if entry.kind != 4 or index >= entry.child_count {
+        => -1
+    }
+    if entry.child_start + index >= doc.children.len {
+        => -1
+    }
+    => vec_get<i64>(<- doc.children, entry.child_start + index)
+}
+
+sealed flow json_key_equal
+    <- doc: JsonDoc
+    <- entry: JsonNode
+    <- key: [u8]
+    => bool
+{
+    if entry.key_len != key.len {
+        => false
+    }
+    for i in 0..key.len {
+        byte <- vec_get<u8>(<- doc.strings, entry.key_start + i)
+        if byte != key[i] {
+            => false
+        }
+    }
+    => true
+}
+
+/// Handle of the value for `key` in an object node, or -1 when absent.
+open flow json_object_get
+    <- doc: JsonDoc
+    <- node: i64
+    <- key: [u8]
+    => i64
+{
+    if node < 0 or node as u64 >= doc.nodes.len {
+        => -1
+    }
+    entry <- vec_get<JsonNode>(<- doc.nodes, node as u64)
+    if entry.kind != 5 {
+        => -1
+    }
+    for i in 0..entry.child_count {
+        if entry.child_start + i >= doc.children.len {
+            => -1
+        }
+        child <- vec_get<i64>(<- doc.children, entry.child_start + i)
+        if child < 0 or child as u64 >= doc.nodes.len {
+            => -1
+        }
+        candidate <- vec_get<JsonNode>(<- doc.nodes, child as u64)
+        if json_key_equal(<- doc, candidate, key) {
+            => child
+        }
+    }
+    => -1
+}
+
+sealed flow json_write_byte
+    <-> out: Vec<u8>
+    <- byte: u8
+{
+    vec_push<u8>(<-> out, byte)
+}
+
+sealed flow json_write_bytes
+    <-> out: Vec<u8>
+    <- bytes: [u8]
+{
+    for i in 0..bytes.len {
+        json_write_byte(<-> out, bytes[i])
+    }
+}
+
+sealed flow json_write_word
+    <-> out: Vec<u8>
+    <- word: [u8]
+{
+    json_write_bytes(<-> out, word)
+}
+
+sealed flow json_write_string
+    <- doc: JsonDoc
+    <-> out: Vec<u8>
+    <- entry: JsonNode
+{
+    json_write_byte(<-> out, 34)
+    for i in 0..entry.len {
+        byte <- vec_get<u8>(<- doc.strings, entry.start + i)
+        if byte == 34 {
+            json_write_bytes(<-> out, "\\\"")
+        } else if byte == 92 {
+            json_write_bytes(<-> out, "\\\\")
+        } else if byte == 10 {
+            json_write_bytes(<-> out, "\\n")
+        } else if byte == 13 {
+            json_write_bytes(<-> out, "\\r")
+        } else if byte == 9 {
+            json_write_bytes(<-> out, "\\t")
+        } else if byte == 8 {
+            json_write_bytes(<-> out, "\\b")
+        } else if byte == 12 {
+            json_write_bytes(<-> out, "\\f")
+        } else {
+            json_write_byte(<-> out, byte)
+        }
+    }
+    json_write_byte(<-> out, 34)
+}
+
+sealed flow json_write_key
+    <- doc: JsonDoc
+    <-> out: Vec<u8>
+    <- entry: JsonNode
+{
+    json_write_byte(<-> out, 34)
+    for i in 0..entry.key_len {
+        byte <- vec_get<u8>(<- doc.strings, entry.key_start + i)
+        if byte == 34 {
+            json_write_bytes(<-> out, "\\\"")
+        } else if byte == 92 {
+            json_write_bytes(<-> out, "\\\\")
+        } else {
+            json_write_byte(<-> out, byte)
+        }
+    }
+    json_write_byte(<-> out, 34)
+}
+
+sealed flow json_write_node
+    <- doc: JsonDoc
+    <-> out: Vec<u8>
+    <- handle: i64
+{
+    if handle < 0 or handle as u64 >= doc.nodes.len {
+        json_write_word(<-> out, "null")
+        => 
+    }
+    entry <- vec_get<JsonNode>(<- doc.nodes, handle as u64)
+    if entry.kind == 0 {
+        json_write_word(<-> out, "null")
+    } else if entry.kind == 1 {
+        if entry.start != 0 {
+            json_write_word(<-> out, "true")
+        } else {
+            json_write_word(<-> out, "false")
+        }
+    } else if entry.kind == 2 {
+        json_write_bytes(<-> out, view(doc.text, entry.start, entry.start + entry.len))
+    } else if entry.kind == 3 {
+        json_write_string(<- doc, <-> out, entry)
+    } else if entry.kind == 4 {
+        json_write_byte(<-> out, 91)
+        for i in 0..entry.child_count {
+            if i != 0 {
+                json_write_byte(<-> out, 44)
+            }
+            handle <- vec_get<i64>(<- doc.children, entry.child_start + i)
+            json_write_node(<- doc, <-> out, handle)
+        }
+        json_write_byte(<-> out, 93)
+    } else if entry.kind == 5 {
+        json_write_byte(<-> out, 123)
+        for i in 0..entry.child_count {
+            if i != 0 {
+                json_write_byte(<-> out, 44)
+            }
+            child_handle <- vec_get<i64>(<- doc.children, entry.child_start + i)
+            if child_handle < 0 or child_handle as u64 >= doc.nodes.len {
+                continue
+            }
+            child <- vec_get<JsonNode>(<- doc.nodes, child_handle as u64)
+            json_write_key(<- doc, <-> out, child)
+            json_write_byte(<-> out, 58)
+            json_write_node(<- doc, <-> out, child_handle)
+        }
+        json_write_byte(<-> out, 125)
+    }
+}
+
+/// Serialize the whole document as compact JSON. Call inside `protect`.
+open flow json_stringify
+    <- doc: JsonDoc
+    => [u8]
+{
+    mut out: Vec<u8>
+    vec_new<u8>(-> out)
+    json_write_node(<- doc, <-> out, doc.root)
+    => vec_view<u8>(<- out, 0, out.len)
+}

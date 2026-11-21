@@ -419,7 +419,7 @@ These rules were added to unblock real programs and are implemented and tested. 
 
 - Intrinsics: `print(<- [u8])`, `eprint(<- [u8])`, `panic(<- [u8])`, `print_int(<- integer)`, `print_float(<- f64)`, `printf(<- [u8], ...)` (literal format string plus typed varargs), `sqrt/floor/ceil/fabs(<- f64) => f64`, `pow/fmod(<- f64, <- f64) => f64`, `len([T]) => u64` and
 `callback(<- flow) => callback`.
-- The library is a set of explicitly imported files: `lib/std.loi` (integer/float and byte-string helpers), `lib/math.loi` (generic and `comptime` math), `lib/ctype.loi` (ASCII byte helpers), `lib/option.loi` and `lib/result.loi` (optional and error-carrying values), `lib/os.loi` and `lib/net.loi` (thin POSIX bindings with C shims), and `lib/stdio.loi` (deterministic byte I/O on the standard streams, also via a C shim). The pure files use only the features above; the last three use `extern flow` declarations and must be linked with their shims.
+- The library is a set of explicitly imported files: `lib/std.loi` (integer/float and byte-string helpers), `lib/math.loi` (generic and `comptime` math), `lib/ctype.loi` (ASCII byte helpers), `lib/option.loi` and `lib/result.loi` (optional and error-carrying values), `lib/json.loi` (JSON documents), `lib/os.loi` and `lib/net.loi` (thin POSIX bindings with C shims), and `lib/stdio.loi` (deterministic byte I/O on the standard streams, also via a C shim). The pure files use only the features above; the three shim-backed files use `extern flow` declarations and must be linked with their shims.
 
 **Optional and error values (Block A6).**
 
@@ -771,6 +771,12 @@ stdin access still goes through the `read_file`, `write_file`, `read_stdin` and
 `read_line` intrinsics. `lib/stdio.loi` adds incremental `stdio_read_exact`,
 `stdio_write_all` and `stdio_flush` flows for framed protocols; they share the C
 stdio streams with the print intrinsics and require `lib/stdio_shim.c`.
+`lib/json.loi` adds pure-Loi JSON documents: a node table with a decoded-string
+arena and a separate child-handle arena, `json_*` accessors, and compact
+`json_stringify` output. Strings decode the standard escapes (including
+`\uXXXX` surrogate pairs), numbers keep their raw lexeme, object order is
+preserved, and malformed input or trailing bytes make `json_parse` return
+`false`. Parsing and stringifying allocate, so callers need a `protect` region.
 Verification and examples live in `PROGRESS.md`.
 
 ### 5.7 Scalar and composite copy — confirmed (question 7), revised by Block A2

@@ -992,13 +992,58 @@ All three flows use the same C `FILE*` streams as `print`, `printf` and
 `examples/stdio_frames.loi`; `Content-Length: 0` is that demo's shutdown
 sentinel.
 
+### JSON documents
+
+`lib/json.loi` parses and serializes JSON in pure Loi, with no shim. It uses a
+node table plus a byte arena for decoded strings; node handles are indices into
+the document, not pointers.
+
+```loi
+import "lib/json.loi"
+
+open flow request_method
+    <- request: [u8]
+    => bool
+{
+    protect {
+        mut doc: JsonDoc
+        ok <- json_parse(request, -> doc)
+        if not ok {
+            => false
+        }
+        root <- json_root(<- doc)
+        method <- json_object_get(<- doc, root, "method")
+        print(json_string(<- doc, method))
+        print("\n")
+    }
+    => true
+}
+```
+
+- `json_parse(<- text, -> doc) => bool` returns `false` on malformed input or
+  trailing bytes. It clones the input and allocates tables, so call it inside
+  `protect`. After a failed parse, `json_root(<- doc)` is `-1`.
+- `json_kind(<- doc, <- node) => JsonKind` reports `Null`, `Bool`, `Number`,
+  `String`, `Array` or `Object`; invalid handles report `Null`.
+- `json_bool`, `json_string` and `json_number_text` read scalar nodes. Strings
+  are decoded from `\"`, `\\`, `\/`, `\n`, `\r`, `\t`, `\b`, `\f` and `\uXXXX`
+  (including surrogate pairs) to UTF-8; numbers keep their raw lexeme, and
+  `json_number_i64` returns the integral part truncated toward zero.
+- `json_array_len` / `json_array_get` walk arrays, and `json_object_get` finds a
+  member by decoded key. Both accessors return `-1` on a miss; object order is
+  preserved.
+- `json_stringify(<- doc) => [u8]` emits compact JSON with decoded strings and
+  raw numbers. It allocates, so call it inside `protect`.
+
+A realistic `initialize` request decoder is `examples/json_rpc.loi`.
+
 ### Library modules
 
 Every library file is imported explicitly with the canonical `import` form.
 Each file is a module (§13); items may be named unqualified or as
 `module::item`. Library names keep their established prefixes (`math_*`,
 `ctype_*`, `vec_*`, `slice_*`, `str_*`, `option_*`, `result_*`, `hash_*`,
-`crc32_*`, `map_*`, `rng_*`, `os_*`, `net_*`, `stdio_*`) so their C symbols stay stable even
+`crc32_*`, `map_*`, `rng_*`, `os_*`, `net_*`, `stdio_*`, `json_*`) so their C symbols stay stable even
 when a user module declares the same name; module-qualified mangling applies only
 to names that actually repeat.
 
@@ -1019,6 +1064,7 @@ to names that actually repeat.
 | `lib/os.loi` | `os_pid`, `os_unix_time`, `os_sleep`, `os_has_env`, `os_env_i32`, `os_errno`, `os_exit` | `lib/os_shim.c` |
 | `lib/net.loi` | `NetIpv4Result`, `net_ipv4`, `net_ipv4_octet`, `net_port_is_valid`, `net_parse_ipv4`, `net_tcp_connect`, `net_close`, `net_send`, `net_recv` | `lib/net_shim.c` |
 | `lib/stdio.loi` | `stdio_read_exact`, `stdio_write_all`, `stdio_flush` | `lib/stdio_shim.c` |
+| `lib/json.loi` | `JsonKind`, `JsonDoc`, `json_parse`, `json_root`, `json_kind`, `json_bool`, `json_string`, `json_number_text`, `json_number_i64`, `json_array_len`, `json_array_get`, `json_object_get`, `json_stringify` | no; parsing and stringifying need `protect` |
 
 `lib/math.loi` and `lib/ctype.loi` are pure Loi: the math module uses generic
 flows and a `comptime flow` for factorials. Documented library flows and their

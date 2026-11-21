@@ -975,7 +975,8 @@ flow exchange
             <code>slice_*</code>, <code>str_*</code>, <code>option_*</code>,
             <code>result_*</code>, <code>hash_*</code>, <code>crc32_*</code>,
             <code>map_*</code>, <code>rng_*</code>, <code>os_*</code>,
-            <code>net_*</code>) so their generated symbols stay stable even if a user
+            <code>net_*</code>, <code>stdio_*</code>, <code>json_*</code>) so their
+            generated symbols stay stable even if a user
             module declares the same name. The prefix is a naming convention, not a
             namespace: you can also import under an alias and use
             <code>m::math_sum</code>. Two files may now declare the same name; only
@@ -1145,6 +1146,17 @@ flow exchange
                   <code>stdio_flush</code></td>
                 <td><code>lib/stdio_shim.c</code></td>
               </tr>
+              <tr>
+                <td><code>lib/json.loi</code></td>
+                <td><code>JsonKind</code>, <code>JsonDoc</code>,
+                  <code>json_parse</code>, <code>json_root</code>,
+                  <code>json_kind</code>, <code>json_bool</code>,
+                  <code>json_string</code>, <code>json_number_text</code>,
+                  <code>json_number_i64</code>, <code>json_array_len</code>,
+                  <code>json_array_get</code>, <code>json_object_get</code>,
+                  <code>json_stringify</code></td>
+                <td>no; parsing and stringifying need <code>protect</code></td>
+              </tr>
             </tbody>
           </table>
 
@@ -1230,7 +1242,22 @@ flow exchange
             These flows share C stdio with <code>print</code> and
             <code>printf</code>; do not mix them with raw descriptors from the os
             or net shims on the same stream. See
-            <a href="examples/stdio_frames.loi">examples/stdio_frames.loi</a>.</p>
+            <a href="examples/stdio_frames.loi">examples/stdio_frames.loi</a>.
+            <code>lib/json.loi</code> is pure Loi: <code>json_parse(&lt;- text,
+            -&gt; doc) =&gt; bool</code> builds a <code>JsonDoc</code> node table
+            and decoded-string arena, and returns <code>false</code> on malformed
+            input or trailing bytes. Both parsing and stringifying clone/allocate,
+            so call them inside <code>protect</code>. Use <code>json_root</code>,
+            <code>json_kind</code>, <code>json_bool</code>,
+            <code>json_string</code>, <code>json_number_text</code> /
+            <code>json_number_i64</code>, <code>json_array_len</code> /
+            <code>json_array_get</code> and <code>json_object_get</code> to inspect
+            a document; missing keys and out-of-range indices return
+            <code>-1</code>. Strings are decoded from the standard escapes
+            (including <code>\uXXXX</code> surrogate pairs) to UTF-8, numbers keep
+            their raw lexeme and object order is preserved.
+            <code>json_stringify(&lt;- doc) =&gt; [u8]</code> emits compact JSON.
+            See <a href="examples/json_rpc.loi">examples/json_rpc.loi</a>.</p>
 
           <div class="doc-code">
             <div class="doc-code-bar"><span>shims.loi</span><button type="button" data-copy>copy</button></div>

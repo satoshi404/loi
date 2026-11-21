@@ -1,0 +1,79 @@
+// Decode one LSP `initialize` request with the pure-Loi JSON library.
+// This is Block L2 of an LSP server written in Loi; pairing it with
+// examples/stdio_frames.loi is the next step (JSON-RPC over stdio).
+// Build with: loi build examples/json_rpc.loi -o json_rpc
+
+import "../lib/json.loi"
+import "../lib/std.loi"
+
+/// Validate a JSON-RPC 2.0 request and describe it on stdout. Returns false
+/// when the document is malformed or the request is not `initialize`.
+open flow handle_request
+    <- request: [u8]
+    => bool
+{
+    protect {
+        mut doc: JsonDoc
+        ok <- json_parse(request, -> doc)
+        if not ok {
+            print("error: invalid json\n")
+            => false
+        }
+        root <- json_root(<- doc)
+        if json_kind(<- doc, root) != JsonKind.Object {
+            print("error: request is not an object\n")
+            => false
+        }
+        version <- json_object_get(<- doc, root, "jsonrpc")
+        if version < 0 or json_kind(<- doc, version) != JsonKind.String {
+            print("error: missing jsonrpc\n")
+            => false
+        }
+        if not str_eq(json_string(<- doc, version), "2.0") {
+            print("error: unsupported jsonrpc version\n")
+            => false
+        }
+        method <- json_object_get(<- doc, root, "method")
+        if method < 0 or json_kind(<- doc, method) != JsonKind.String {
+            print("error: missing method\n")
+            => false
+        }
+        name <- json_string(<- doc, method)
+        if not str_eq(name, "initialize") {
+            print("error: unsupported method\n")
+            => false
+        }
+        id <- json_object_get(<- doc, root, "id")
+        if id < 0 or json_kind(<- doc, id) != JsonKind.Number {
+            print("error: missing id\n")
+            => false
+        }
+        print("method=")
+        print(name)
+        print(" id=")
+        print_int(json_number_i64(<- doc, id))
+        print("\n")
+
+        params <- json_object_get(<- doc, root, "params")
+        if params >= 0 and json_kind(<- doc, params) == JsonKind.Object {
+            caps <- json_object_get(<- doc, params, "capabilities")
+            if caps >= 0 and json_kind(<- doc, caps) == JsonKind.Object {
+                print("capabilities=object\n")
+            }
+        }
+        print("normalized=")
+        print(json_stringify(<- doc))
+        print("\n")
+    }
+    => true
+}
+
+open flow main
+    => i32
+{
+    request <- "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"initialize\",\"params\":{\"processId\":null,\"capabilities\":{}}}"
+    if not handle_request(request) {
+        => 1
+    }
+    => 0
+}

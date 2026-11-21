@@ -270,6 +270,7 @@ fn every_library_source_checks_cleanly() {
         "os.loi",
         "net.loi",
         "stdio.loi",
+        "json.loi",
     ] {
         let path = repo_root().join("lib").join(name);
         let output = check(&path);
