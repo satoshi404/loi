@@ -5102,29 +5102,32 @@ fn scan_view_statement(
 
 /// Names owned by the compiler. They are the closed intrinsic set from
 /// `LOI_SPEC.md` 5.9; user code may not redeclare them.
+pub fn intrinsic_names() -> &'static [&'static str] {
+    &[
+        "print",
+        "eprint",
+        "panic",
+        "sqrt",
+        "floor",
+        "ceil",
+        "fabs",
+        "pow",
+        "fmod",
+        "len",
+        "view",
+        "callback",
+        "read_file",
+        "write_file",
+        "read_stdin",
+        "read_line",
+        "print_int",
+        "print_float",
+        "printf",
+    ]
+}
+
 pub(crate) fn is_intrinsic_name(name: &str) -> bool {
-    matches!(
-        name,
-        "print"
-            | "eprint"
-            | "panic"
-            | "sqrt"
-            | "floor"
-            | "ceil"
-            | "fabs"
-            | "pow"
-            | "fmod"
-            | "len"
-            | "view"
-            | "callback"
-            | "read_file"
-            | "write_file"
-            | "read_stdin"
-            | "read_line"
-            | "print_int"
-            | "print_float"
-            | "printf"
-    )
+    intrinsic_names().contains(&name)
 }
 
 fn direction_name(direction: Direction) -> &'static str {

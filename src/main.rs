@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use loi::modules::{ModuleExport, ModuleView, ResolutionContext};
 use loi::{ColorChoice, ErrorFormat};
 
-const USAGE: &str = "usage:\n  loi <lex|parse|fmt|check> <file.loi>\n  loi gen <file.loi> [-o output.c] [--emit-h header.h] [--source-map map.json]\n                    [--emit-llvm-ir file.ll]\n  loi build <file.loi> [-o output] [--emit exe|obj|lib]\n                    [--debug|--release] [--rebuild] [--emit-c file.c] [--emit-h header.h]\n                    [--arena-size BYTES] [--source-map map.json] [--cc-flag FLAG]...\n                    [--c-source FILE]... [--backend c|llvm]\n  loi clean <file.loi> [-o output]\n\n'gen', 'build' and 'clean' accept -o/--output.\n'--emit', '--debug', '--release', '--rebuild', '--emit-c', '--emit-h', '--arena-size', '--source-map', '--cc-flag' and '--c-source'\nare only supported by 'build'. '--c-source' compiles an extra C file (a vendored\nFFI shim) and links it into an executable or library; it is rejected with '--emit obj'.\n'--emit-h', '--source-map' and '--emit-llvm-ir' are also supported by 'gen'.\n'--backend' selects the LLVM opt-in backend (C11 is the default); it supports\nonly single-file executables and rejects C-only build options.\nWith '--emit obj' the default output is '<input stem>.o'; with '--emit lib'\nit is 'lib<input stem>.a'; otherwise it is './a.out'.\n'build' invokes 'cc' and 'ar'; set 'CC'/'AR' to override them. Those values\nmay contain arguments, split like a POSIX shell command line ('...' quotes,\n\"...\" quotes and backslash escapes).\nWithout -o, 'clean' removes ./a.out, <input stem>.o and lib<input stem>.a\nwhen their .loi-stamp files exist; with -o it removes exactly that output\nand its stamp. Both forms also remove generated C retained for that output\nthrough 'build --emit-c'. It does not read or check the source.\n\noptions:\n  -h, --help     show this help\n  -V, --version  show the compiler version\n  -g, --debug    compile with debug info (-g)\n      --release  compile with optimizations (-O2)\n      --rebuild  force recompilation, ignoring the incremental stamp\n      --arena-size BYTES  set the protect arena size (default 67108864 = 64 MiB)\n      --source-map FILE  write source map JSON Lines to FILE\n      --error-format FMT  diagnostic format: human, short or json (default human)\n      --color WHEN   colorize diagnostics: auto, always or never (default auto)";
+const USAGE: &str = "usage:\n  loi <lex|parse|fmt|check> <file.loi>\n  loi complete <file.loi> --line N --column N\n  loi gen <file.loi> [-o output.c] [--emit-h header.h] [--source-map map.json]\n                    [--emit-llvm-ir file.ll]\n  loi build <file.loi> [-o output] [--emit exe|obj|lib]\n                    [--debug|--release] [--rebuild] [--emit-c file.c] [--emit-h header.h]\n                    [--arena-size BYTES] [--source-map map.json] [--cc-flag FLAG]...\n                    [--c-source FILE]... [--backend c|llvm]\n  loi clean <file.loi> [-o output]\n\n'gen', 'build' and 'clean' accept -o/--output.\n'--emit', '--debug', '--release', '--rebuild', '--emit-c', '--emit-h', '--arena-size', '--source-map', '--cc-flag' and '--c-source'\nare only supported by 'build'. '--c-source' compiles an extra C file (a vendored\nFFI shim) and links it into an executable or library; it is rejected with '--emit obj'.\n'--emit-h', '--source-map' and '--emit-llvm-ir' are also supported by 'gen'.\n'--line' and '--column' are only supported by 'complete'; positions are 1-based\nand the completion items are printed as JSON on standard output.\n'--backend' selects the LLVM opt-in backend (C11 is the default); it supports\nonly single-file executables and rejects C-only build options.\nWith '--emit obj' the default output is '<input stem>.o'; with '--emit lib'\nit is 'lib<input stem>.a'; otherwise it is './a.out'.\n'build' invokes 'cc' and 'ar'; set 'CC'/'AR' to override them. Those values\nmay contain arguments, split like a POSIX shell command line ('...' quotes,\n\"...\" quotes and backslash escapes).\nWithout -o, 'clean' removes ./a.out, <input stem>.o and lib<input stem>.a\nwhen their .loi-stamp files exist; with -o it removes exactly that output\nand its stamp. Both forms also remove generated C retained for that output\nthrough 'build --emit-c'. It does not read or check the source.\n\noptions:\n  -h, --help     show this help\n  -V, --version  show the compiler version\n  -g, --debug    compile with debug info (-g)\n      --release  compile with optimizations (-O2)\n      --rebuild  force recompilation, ignoring the incremental stamp\n      --arena-size BYTES  set the protect arena size (default 67108864 = 64 MiB)\n      --source-map FILE  write source map JSON Lines to FILE\n      --error-format FMT  diagnostic format: human, short or json (default human)\n      --color WHEN   colorize diagnostics: auto, always or never (default auto)\n      --line N      1-based line for 'complete' (LSP line + 1)\n      --column N    1-based column for 'complete' (LSP character + 1)";
 
 fn main() {
     let options = Options::parse();
@@ -43,6 +43,14 @@ fn main() {
         "parse" => parse_source(&source, primary_path, diagnostics),
         "fmt" => format_source(&source, primary_path, diagnostics),
         "check" => check_source(&source, primary_path, diagnostics),
+        "complete" => complete_source(
+            &source,
+            primary_path,
+            options.line.expect("'--line' is required for 'complete'"),
+            options
+                .column
+                .expect("'--column' is required for 'complete'"),
+        ),
         "gen" => gen_source(
             &source,
             primary_path,
@@ -73,7 +81,7 @@ fn main() {
         ),
         other => {
             eprintln!(
-                "loi: unknown mode '{other}' (expected 'lex', 'parse', 'fmt', 'check', 'gen', 'build' or 'clean')"
+                "loi: unknown mode '{other}' (expected 'lex', 'parse', 'fmt', 'check', 'complete', 'gen', 'build' or 'clean')"
             );
             process::exit(2);
         }
@@ -252,6 +260,8 @@ struct Options {
     c_sources: Vec<PathBuf>,
     error_format: ErrorFormat,
     color: ColorChoice,
+    line: Option<usize>,
+    column: Option<usize>,
 }
 
 impl Options {
@@ -292,6 +302,8 @@ impl Options {
         let mut c_sources = Vec::new();
         let mut error_format = ErrorFormat::Human;
         let mut color = ColorChoice::Auto;
+        let mut line = None;
+        let mut column = None;
         let mut index = 1;
 
         while index < args.len() {
@@ -447,6 +459,31 @@ impl Options {
                     };
                     c_sources.push(PathBuf::from(value));
                 }
+                "--line" | "--column" => {
+                    let flag = args[index].clone();
+                    index += 1;
+                    let Some(value) = args.get(index) else {
+                        eprintln!("loi: '{flag}' requires a positive integer");
+                        process::exit(2);
+                    };
+                    let Ok(parsed) = value.parse::<usize>() else {
+                        eprintln!("loi: '{flag}' requires a positive integer, got '{value}'");
+                        process::exit(2);
+                    };
+                    if parsed == 0 {
+                        eprintln!("loi: '{flag}' must be at least 1");
+                        process::exit(2);
+                    }
+                    let target = if flag == "--line" {
+                        &mut line
+                    } else {
+                        &mut column
+                    };
+                    if target.replace(parsed).is_some() {
+                        eprintln!("loi: '{flag}' specified more than once");
+                        process::exit(2);
+                    }
+                }
                 "--error-format" => {
                     index += 1;
                     let Some(value) = args.get(index) else {
@@ -569,6 +606,14 @@ impl Options {
             eprintln!("loi: '--c-source' is only supported by 'build'");
             process::exit(2);
         }
+        if (line.is_some() || column.is_some()) && mode != "complete" {
+            eprintln!("loi: '--line' and '--column' are only supported by 'complete'");
+            process::exit(2);
+        }
+        if mode == "complete" && (line.is_none() || column.is_none()) {
+            eprintln!("loi: 'complete' requires both '--line' and '--column'");
+            process::exit(2);
+        }
 
         // Multi-file build requires an output path (can't default to ./a.out with
         // multiple inputs without an explicit name).
@@ -595,6 +640,8 @@ impl Options {
             c_sources,
             error_format,
             color,
+            line,
+            column,
         }
     }
 }
@@ -667,6 +714,14 @@ fn check_source(source: &str, path: &Path, diagnostics: DiagnosticOptions) {
         &loi::check_with_warnings_from(&program, &primary),
         diagnostics,
     );
+}
+
+/// Print completion candidates for a 1-based cursor position as compact JSON.
+/// Completion runs on the raw source, so an unfinished buffer still yields
+/// candidates and never emits compiler diagnostics into the editor's log.
+fn complete_source(source: &str, path: &Path, line: usize, column: usize) {
+    let items = loi::completions(source, &path.display().to_string(), line, column);
+    println!("{}", loi::completions_to_json(&items));
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -4,6 +4,7 @@ pub mod asm;
 pub mod ast;
 pub mod checker;
 pub mod codegen;
+pub mod complete;
 pub mod const_eval;
 pub mod diagnostic;
 pub mod format;
@@ -25,6 +26,7 @@ pub use codegen::{
     CodegenError, generate_c, generate_c_subset, generate_header, generate_header_named,
     generate_ir,
 };
+pub use complete::{CompletionItem, completions, to_json as completions_to_json};
 pub use diagnostic::{ColorChoice, Diagnostic, ErrorFormat, Severity};
 pub use ir::{IrBuilder, IrModule};
 pub use lexer::{Comment, LexError, Lexer, tokenize, tokenize_with_comments};

@@ -1350,6 +1350,25 @@ flow exchange
             complete server is
             <a href="examples/lsp_server.loi">examples/lsp_server.loi</a>.</p>
 
+          <p>The server also answers <code>textDocument/completion</code> and
+            advertises <code>completionProvider</code> with
+            <code>resolveProvider: false</code> and
+            <code>triggerCharacters: ["."]</code>. It caches the text from
+            <code>didOpen</code> / <code>didChange</code> in a separate file because the
+            check shadow is deleted after each check, and removes that cache on
+            <code>didClose</code>. LSP positions are 0-based, so the server adds one
+            before calling <code>loi complete FILE --line N --column N</code>, which
+            works on the raw token stream instead of a checked program. The CLI
+            flags are required and 1-based, matching compiler diagnostics; the
+            output is a compact JSON array of
+            <code>{"label":"...","kind":5,"detail":"variable"}</code> items, sorted by
+            kind and then label. <code>kind</code> uses LSP
+            <code>CompletionItemKind</code> numbers: 3 flow/intrinsic, 5 local,
+            7 shape/opaque, 8 module, 12 mark/choice and 14 keyword. Compiler
+            <code>help</code> text has no diagnostic field in LSP, so the server
+            appends it to the displayed <code>message</code>, for example
+            <code>unknown variable 'missng': did you mean 'missing'?</code>.</p>
+
           <p><code>lib/process.loi</code> runs external programs and captures both
             output streams. The C shim forks, uses <code>/bin/sh -c</code>,
             redirects stdout and stderr to temporary files before
@@ -1703,6 +1722,7 @@ python3 -m http.server -d web 8000   # abra http://localhost:8000</code></pre>
               <tr><td><code>loi parse FILE</code></td><td>Prints the parsed program as a debug AST.</td></tr>
               <tr><td><code>loi fmt FILE</code></td><td>Prints canonical Flow Syntax to standard output.</td></tr>
               <tr><td><code>loi check FILE</code></td><td>Runs the checker and ownership analysis; no output on success.</td></tr>
+              <tr><td><code>loi complete FILE --line N --column N</code></td><td>Prints JSON completion candidates from the raw buffer at a 1-based position.</td></tr>
               <tr><td><code>loi gen FILE [-o out.c]</code></td><td>Prints or writes the generated C11 translation unit.</td></tr>
               <tr><td><code>loi gen FILE --emit-llvm-ir FILE.ll</code></td><td>Writes real LLVM textual IR for the supported scalar subset; can be combined with <code>-o out.c</code>.</td></tr>
               <tr><td><code>loi build FILE... [-o out]</code></td><td>Checks, generates C, invokes <code>cc</code> and links the output. With <code>--backend llvm</code>, compiles scalar IR with <code>clang</code> instead.</td></tr>

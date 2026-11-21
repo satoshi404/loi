@@ -66,7 +66,9 @@ the submitted source with `examples/build_web.sh` into `web-runs/<token>/`;
 otherwise it serves the matching prebuilt `web/<demo>.html` and reports that
 stage in the response. `/api/lsp` compiles the LSP server once, reuses the
 binary for short-lived framed sessions and returns the JSON-RPC messages;
-the client renders `textDocument/publishDiagnostics` in the Problems panel.
+the client renders `textDocument/publishDiagnostics` in the Problems panel and
+answers editor completion with `textDocument/completion` from the same buffer
+cache.
 
 Programs and each `didChange` entry are limited to 200 KB, output is capped at
 128 KB, compilation has a 30-second timeout, execution has a 10-second timeout,

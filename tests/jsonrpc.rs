@@ -167,7 +167,7 @@ fn lsp_server_answers_initialize_and_shutdown() {
         r#"{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}"#,
     ));
     let mut expected = frame(
-        r#"{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"publishDiagnosticsProvider":true}}}"#,
+        r#"{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"publishDiagnosticsProvider":true,"completionProvider":{"resolveProvider":false,"triggerCharacters":["."]}}}}"#,
     );
     expected.extend(frame(r#"{"jsonrpc":"2.0","id":2,"result":null}"#));
     assert_server(&test_dir("initialize-shutdown"), &input, &expected);

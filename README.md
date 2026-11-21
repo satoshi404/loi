@@ -80,6 +80,7 @@ cargo build                         # builds both loi and the separate loi-lsp
 
 ```text
 loi <lex|parse|fmt|check> FILE
+loi complete FILE --line N --column N
 loi gen FILE [-o out.c] [--emit-h header.h] [--emit-ir ir] [--source-map map.json]
 loi build FILE... [-o out] [--emit exe|obj|lib] [--debug|--release] [--rebuild]
           [--emit-c c] [--emit-h header.h] [--emit-ir ir]
@@ -92,7 +93,14 @@ loi clean FILE [-o out]
 server like `clangd`. Editors start it directly; it compiles and caches the
 server written in `examples/lsp_server.loi` on first launch and uses the
 compiler next to it for `loi check`. Set `LOI_COMPILER` to override that
-compiler, or `LOI_LSP_CACHE_DIR` to move the cached server.
+compiler, or `LOI_LSP_CACHE_DIR` to move the cached server. `initialize`
+advertises full-document sync, diagnostics and `completionProvider`; warnings
+arrive as severity 2, compiler suggestions are appended to diagnostic messages,
+and `textDocument/completion` is answered from a cache of the editor buffer.
+`loi complete FILE --line N --column N` is the same source-level completion for
+direct editor use: it prints a compact JSON array of candidates from the raw
+buffer with 1-based positions, so an unfinished program still gets names and
+keywords.
 
 Every mode accepts `--error-format human|short|json` (default `human`) and
 `--color auto|always|never` (default `auto`). Human diagnostics show the source

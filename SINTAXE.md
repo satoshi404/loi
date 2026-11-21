@@ -1106,7 +1106,7 @@ open flow serve_one
         }
         jsonrpc_send_result(
             request.id,
-            "{\"capabilities\":{\"textDocumentSync\":1,\"publishDiagnosticsProvider\":true}}"
+            "{\"capabilities\":{\"textDocumentSync\":1,\"publishDiagnosticsProvider\":true,\"completionProvider\":{\"resolveProvider\":false,\"triggerCharacters\":[\".\"]}}}"
         )
     }
     => true
@@ -1152,7 +1152,8 @@ guard child <- process_spawn_args(compiler, args) {
 
 Set `LOI_COMPILER` (default `loi`) to choose the compiler binary. The compiler
 writes its JSON to stderr; a clean check writes zero bytes. `initialize` answers
-with `textDocumentSync: 1` (full-document) and `publishDiagnosticsProvider: true`.
+with `textDocumentSync: 1` (full-document), `publishDiagnosticsProvider: true`
+and the `completionProvider` object shown in the example above.
 `didOpen` and `didChange` call `lsp_write_document(shadow, text)` from
 `lib/lsp.loi` (link `--c-source lib/lsp_shim.c`) before checking, so diagnostics
 follow the editor buffer without overwriting the client's file. The server
@@ -1178,7 +1179,26 @@ A clean check can still print `warning` diagnostics for bindings that are never
 read. Their canonical messages are `unused variable 'name'`, `unused loop
 variable 'name'` and `unused guard binding 'name'`; `_` and parameters are
 quiet. Warnings do not change the exit status, so JSON output may contain a
-warning while `check` still exits 0.
+warning while `check` still exits 0. When a diagnostic has a `help` field, the
+LSP message is `message: help`, for example
+`unknown variable 'missng': did you mean 'missing'?`.
+
+### Editor completion
+
+`loi complete FILE --line N --column N` prints a compact JSON array of
+`{"label":"name","kind":5,"detail":"variable"}` objects on standard output.
+`--line` and `--column` are 1-based, matching compiler diagnostics; LSP clients
+send 0-based positions and add one. The output order is deterministic: by
+`kind`, then by `label`. Both flags are required and must be positive; misuse
+exits 2 with a message on stderr.
+
+`lib/lsp.loi` adds `lsp_read_document(path)` and
+`lsp_send_completion(id, completion_json)`. The first reads a buffer previously
+written with `lsp_write_document`; the second translates the compiler array into
+`textDocument/completion` with `isIncomplete: false`. Both need `protect`.
+`examples/lsp_server.loi` caches the `didOpen` / `didChange` text separately from
+the short-lived check shadow, answers `textDocument/completion` from that cache,
+and removes it on `textDocument/didClose`.
 
 ### Process spawning
 

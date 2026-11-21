@@ -18,6 +18,7 @@
 import "json.loi"
 import "jsonrpc.loi"
 import "std.loi"
+import "string.loi"
 import "vec.loi"
 
 extern flow loi_lsp_write_document
@@ -27,6 +28,15 @@ extern flow loi_lsp_write_document
 
 extern flow loi_lsp_remove_document
     <- path: [u8]
+    => i64
+
+extern flow loi_lsp_document_len
+    <- path: [u8]
+    => i64
+
+extern flow loi_lsp_read_document
+    <- path: [u8]
+    <-> data: [u8]
     => i64
 
 /// Write the current text of a document to `path`, so the compiler checks the
@@ -47,6 +57,25 @@ open flow lsp_remove_document
     => bool
 {
     => loi_lsp_remove_document(path) == 0
+}
+
+/// Read a document cache written by `lsp_write_document`. The caller's active
+/// `protect` region owns the returned buffer; a missing file returns `""`.
+open flow lsp_read_document
+    <- path: [u8]
+    => [u8]
+{
+    length <- loi_lsp_document_len(path)
+    if length <= 0 {
+        => ""
+    }
+    mut data: [u8]
+    alloc(-> data, u8, length as u64)
+    got <- loi_lsp_read_document(path, <-> data)
+    if got != length {
+        => ""
+    }
+    => data
 }
 
 sealed flow lsp_zero_based
@@ -87,6 +116,23 @@ sealed flow lsp_number
         => 0
     }
     => json_number_i64(<- doc, node)
+}
+
+/// The compiler's `help` field carries concrete suggestions such as a close
+/// variable name. LSP diagnostics have no help field, so append it to the
+/// message clients actually display.
+sealed flow lsp_message
+    <- doc: JsonDoc
+    <- item: i64
+    => [u8]
+{
+    message <- json_string(<- doc, json_object_get(<- doc, item, "message"))
+    help <- json_object_get(<- doc, item, "help")
+    if help < 0 or json_kind(<- doc, help) != JsonKind.String {
+        => message
+    }
+    suggestion <- json_string(<- doc, help)
+    => str_concat(str_concat(message, ": "), suggestion)
 }
 
 /// Publish one compiler JSON document as an LSP notification. Empty or
@@ -131,8 +177,7 @@ open flow lsp_publish_diagnostics
             severity <- json_new_u64(<-> out, lsp_severity(<- doc, item))
             json_object_set(<-> out, entry, "severity", severity)
 
-            message_node <- json_object_get(<- doc, item, "message")
-            message <- json_string(<- doc, message_node)
+            message <- lsp_message(<- doc, item)
             message_value <- json_new_string(<-> out, message)
             json_object_set(<-> out, entry, "message", message_value)
             json_array_push(<-> out, array, entry)
@@ -143,4 +188,46 @@ open flow lsp_publish_diagnostics
         "textDocument/publishDiagnostics",
         json_stringify(<- out)
     )
+}
+
+/// Convert `loi complete` JSON into a `textDocument/completion` response. The
+/// compiler owns the candidate list; this flow only translates the wire shape
+/// and fills the `isIncomplete` flag. Requires the caller's `protect` region.
+open flow lsp_send_completion
+    <- id: i64
+    <- completion_json: [u8]
+{
+    mut out: JsonDoc
+    json_new(-> out)
+    items <- json_new_array(<-> out)
+    result <- json_new_object(<-> out)
+    incomplete <- json_new_bool(<-> out, false)
+    json_object_set(<-> out, result, "isIncomplete", incomplete)
+    json_object_set(<-> out, result, "items", items)
+
+    mut doc: JsonDoc
+    if json_parse(completion_json, -> doc) {
+        root <- json_root(<- doc)
+        count <- json_array_len(<- doc, root)
+        for i in 0..count {
+            compiler_item <- json_array_get(<- doc, root, i)
+            item <- json_new_object(<-> out)
+
+            label <- json_string(<- doc, json_object_get(<- doc, compiler_item, "label"))
+            label_value <- json_new_string(<-> out, label)
+            json_object_set(<-> out, item, "label", label_value)
+
+            kind <- json_number_i64(<- doc, json_object_get(<- doc, compiler_item, "kind"))
+            kind_value <- json_new_u64(<-> out, kind as u64)
+            json_object_set(<-> out, item, "kind", kind_value)
+
+            detail <- json_string(<- doc, json_object_get(<- doc, compiler_item, "detail"))
+            detail_value <- json_new_string(<-> out, detail)
+            json_object_set(<-> out, item, "detail", detail_value)
+
+            json_array_push(<-> out, items, item)
+        }
+    }
+    json_set_root(<-> out, result)
+    jsonrpc_send_result(id, json_stringify(<- out))
 }

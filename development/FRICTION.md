@@ -853,3 +853,46 @@ source and path to be actionable. `check_with_warnings_from` now checks the
 merged program for errors but takes warnings from the primary file's own AST,
 and tests assert that an unused loop variable in an import stays quiet while a
 warning in the checked file is still published with that file's path.
+
+## Block L9 — editor completion
+
+### Completion on a checked program hid names in half-typed buffers
+
+The first idea was to list names from `check` output. Editors request completion
+while an expression is incomplete, so the buffer often does not check at all and
+the useful candidates disappear behind a parse error. `src/complete.rs` now
+tokenizes the raw source directly and returns keywords, locals, module names,
+types and intrinsics from the tokens around the requested position. It never
+runs the checker, so an unfinished program still yields candidates; type names
+are not mistaken for variables because `<-` and `->` are lexed as distinct
+arrows.
+
+### The check shadow could not double as the completion buffer
+
+Diagnostics deliberately delete `.loi-lsp-<hash>.loi` after each check, so a
+completion request arriving later found only the stale on-disk file and offered
+the old binding. The server now writes `didOpen` / `didChange` text to a second
+cache (`loi-completion-<hash>.txt` under `LOI_LSP_CACHE_DIR` or `/tmp`) and reads
+that for completion; `didClose` removes it. The failing-first evidence was a
+request after `didClose` returning the cached `alpha` instead of the on-disk
+`beta`.
+
+### `<->` extern parameters use the `LoiSlice*` ABI
+
+`loi_lsp_read_document` was declared in C as taking `LoiSlice data` by value,
+but an Loi `<-> [u8]` generates a pointer to the slice struct. The mismatch
+corrupted the stack and the server died with `*** stack smashing detected ***`
+as soon as a completion request came in; ASan could not be used because this
+container's address space is too small for its default shadow mapping. The shim
+now takes `LoiSlice* data` and dereferences it, matching `process_read_stdout`
+and the other mutable-slice bindings. A temporary `eprint` trace located the
+crash between `completion_cache_path` and `process_spawn_args`; it was removed
+after the fix.
+
+### LSP diagnostics have no `help` field
+
+The compiler attaches spelling suggestions as a `help` field on `Diagnostic`,
+which LSP clients never display. Rather than invent an extension the editors do
+not understand, `lib/lsp.loi` appends it to the human-readable message with a
+colon: `unknown variable 'missng': did you mean 'missing'?`. The end-to-end test
+pins the exact string.

@@ -191,6 +191,12 @@ fn published(uri: &str, diagnostics: &str) -> String {
     )
 }
 
+fn completion(uri: &str, line: u64, character: u64) -> String {
+    format!(
+        r#"{{"jsonrpc":"2.0","id":2,"method":"textDocument/completion","params":{{"textDocument":{{"uri":"{uri}"}},"position":{{"line":{line},"character":{character}}}}}}}"#
+    )
+}
+
 #[test]
 fn lsp_server_publishes_real_compiler_diagnostics() {
     if !has_c_compiler() {
@@ -214,9 +220,134 @@ fn lsp_server_publishes_real_compiler_diagnostics() {
     // Compiler spans are 1-based; LSP line and character are 0-based.
     let diagnostic = r#"{"range":{"start":{"line":1,"character":7},"end":{"line":1,"character":14}},"severity":1,"message":"unknown variable 'missing'"}"#;
     let mut expected = frame(
-        r#"{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"publishDiagnosticsProvider":true}}}"#,
+        r#"{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"publishDiagnosticsProvider":true,"completionProvider":{"resolveProvider":false,"triggerCharacters":["."]}}}}"#,
     );
     expected.extend(frame(&published(&uri, diagnostic)));
+
+    assert_server(&dir, &input, &expected);
+}
+
+#[test]
+fn lsp_server_publishes_warnings_with_severity_two() {
+    if !has_c_compiler() {
+        eprintln!("skipping lsp_server_publishes_warnings_with_severity_two: cc not found");
+        return;
+    }
+    let dir = test_dir("publish-warning");
+    let source = "flow main => i32 {\n    mut unused: i32 <- 1\n    => 0\n}\n";
+    let (_, json) = compiler_diagnostics(&dir, source);
+    assert!(
+        json.contains(r#""severity":"warning""#),
+        "compiler should report a warning: {json}"
+    );
+    assert!(
+        json.contains(r#""message":"unused variable 'unused'""#),
+        "compiler should name the unused binding: {json}"
+    );
+    let uri = format!("file://{}", dir.join("broken.loi").to_string_lossy());
+
+    let mut input = frame(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#);
+    input.extend(frame(&did_open(&uri, source)));
+
+    // `unused variable 'unused'` points at the three-character `mut` keyword.
+    let diagnostic = r#"{"range":{"start":{"line":1,"character":4},"end":{"line":1,"character":7}},"severity":2,"message":"unused variable 'unused'"}"#;
+    let mut expected = frame(
+        r#"{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"publishDiagnosticsProvider":true,"completionProvider":{"resolveProvider":false,"triggerCharacters":["."]}}}}"#,
+    );
+    expected.extend(frame(&published(&uri, diagnostic)));
+
+    assert_server(&dir, &input, &expected);
+}
+
+#[test]
+fn lsp_server_includes_compiler_suggestions_in_diagnostic_messages() {
+    if !has_c_compiler() {
+        eprintln!(
+            "skipping lsp_server_includes_compiler_suggestions_in_diagnostic_messages: cc not found"
+        );
+        return;
+    }
+    let dir = test_dir("diagnostic-suggestion");
+    let source = "flow main => i32 {\n    mut missing: i32 <- 1\n    => missng\n}\n";
+    let (_, json) = compiler_diagnostics(&dir, source);
+    assert!(
+        json.contains(r#""help":"did you mean 'missing'?""#),
+        "compiler should suggest a close name: {json}"
+    );
+    let uri = format!("file://{}", dir.join("broken.loi").to_string_lossy());
+
+    let mut input = frame(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#);
+    input.extend(frame(&did_open(&uri, source)));
+
+    let diagnostic = r#"{"range":{"start":{"line":2,"character":7},"end":{"line":2,"character":13}},"severity":1,"message":"unknown variable 'missng': did you mean 'missing'?"}"#;
+    let mut expected = frame(
+        r#"{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"publishDiagnosticsProvider":true,"completionProvider":{"resolveProvider":false,"triggerCharacters":["."]}}}}"#,
+    );
+    expected.extend(frame(&published(&uri, diagnostic)));
+
+    assert_server(&dir, &input, &expected);
+}
+
+#[test]
+fn lsp_server_answers_completion_from_the_edited_buffer() {
+    if !has_c_compiler() {
+        eprintln!("skipping lsp_server_answers_completion_from_the_edited_buffer: cc not found");
+        return;
+    }
+    let dir = test_dir("completion");
+    let source_path = dir.join("document.loi");
+    // The on-disk file deliberately has a different binding. Completion must
+    // use the `didOpen` text cached by the server, not this stale content.
+    fs::write(
+        &source_path,
+        "flow main => i32 {\n    mut beta: i32 <- 1\n    => beta\n}\n",
+    )
+    .expect("source should be writable");
+    let uri = format!("file://{}", source_path.to_string_lossy());
+    let source = "flow main => i32 {\n    mut alpha: i32 <- 1\n    => alpha\n}\n";
+
+    let mut input = frame(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#);
+    input.extend(frame(&did_open(&uri, source)));
+    input.extend(frame(&completion(&uri, 1, 13)));
+
+    let mut expected = frame(
+        r#"{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"publishDiagnosticsProvider":true,"completionProvider":{"resolveProvider":false,"triggerCharacters":["."]}}}}"#,
+    );
+    expected.extend(frame(&published(&uri, "")));
+    expected.extend(frame(
+        r#"{"jsonrpc":"2.0","id":2,"result":{"isIncomplete":false,"items":[{"label":"alpha","kind":5,"detail":"variable"}]}}"#,
+    ));
+
+    assert_server(&dir, &input, &expected);
+}
+
+#[test]
+fn lsp_server_discards_the_completion_cache_on_did_close() {
+    if !has_c_compiler() {
+        eprintln!("skipping lsp_server_discards_the_completion_cache_on_did_close: cc not found");
+        return;
+    }
+    let dir = test_dir("completion-close");
+    let source_path = dir.join("document.loi");
+    let disk_source = "flow main => i32 {\n    mut beta: i32 <- 1\n    => beta\n}\n";
+    fs::write(&source_path, disk_source).expect("source should be writable");
+    let uri = format!("file://{}", source_path.to_string_lossy());
+    let buffer_source = "flow main => i32 {\n    mut alpha: i32 <- 1\n    => alpha\n}\n";
+
+    let mut input = frame(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#);
+    input.extend(frame(&did_open(&uri, buffer_source)));
+    input.extend(frame(&format!(
+        r#"{{"jsonrpc":"2.0","method":"textDocument/didClose","params":{{"textDocument":{{"uri":"{uri}"}}}}}}"#
+    )));
+    input.extend(frame(&completion(&uri, 1, 12)));
+
+    let mut expected = frame(
+        r#"{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"publishDiagnosticsProvider":true,"completionProvider":{"resolveProvider":false,"triggerCharacters":["."]}}}}"#,
+    );
+    expected.extend(frame(&published(&uri, "")));
+    expected.extend(frame(
+        r#"{"jsonrpc":"2.0","id":2,"result":{"isIncomplete":false,"items":[{"label":"beta","kind":5,"detail":"variable"}]}}"#,
+    ));
 
     assert_server(&dir, &input, &expected);
 }
@@ -358,7 +489,7 @@ fn loi_lsp_is_a_separate_stdio_executable() {
         String::from_utf8_lossy(&output.stderr)
     );
     let mut expected = frame(
-        r#"{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"publishDiagnosticsProvider":true}}}"#,
+        r#"{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"publishDiagnosticsProvider":true,"completionProvider":{"resolveProvider":false,"triggerCharacters":["."]}}}}"#,
     );
     expected.extend(frame(r#"{"jsonrpc":"2.0","id":2,"result":null}"#));
     assert_eq!(output.stdout, expected);

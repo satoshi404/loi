@@ -41,6 +41,27 @@ open flow document_path
     => uri
 }
 
+/// The URI of a request's text document, or `""` when it has none.
+open flow request_uri
+    <- request: JsonRpcRequest
+    => [u8]
+{
+    root <- json_root(<- request.doc)
+    params <- json_object_get(<- request.doc, root, "params")
+    if params < 0 or json_kind(<- request.doc, params) != JsonKind.Object {
+        => ""
+    }
+    document <- json_object_get(<- request.doc, params, "textDocument")
+    if document < 0 or json_kind(<- request.doc, document) != JsonKind.Object {
+        => ""
+    }
+    uri_node <- json_object_get(<- request.doc, document, "uri")
+    if uri_node < 0 {
+        => ""
+    }
+    => json_string(<- request.doc, uri_node)
+}
+
 /// Byte offset of the last `/` in `path`, or -1 when the path has no directory.
 sealed flow last_slash
     <- path: [u8]
@@ -72,6 +93,23 @@ open flow document_shadow_path
     name <- str_concat(".loi-lsp-", id)
     with_extension <- str_concat(name, ".loi")
     => str_concat(dir, with_extension)
+}
+
+/// Persistent cache for the last editor buffer of a URI. It lives in the LSP
+/// cache directory (or `/tmp`) so diagnostics can keep using a short-lived
+/// shadow in the document's own directory for relative imports.
+open flow completion_cache_path
+    <- uri: [u8]
+    => [u8]
+{
+    mut root: [u8] <- os_env("LOI_LSP_CACHE_DIR")
+    if root.len == 0 {
+        root = "/tmp"
+    }
+    id <- u64_to_bytes(hash_str(uri))
+    name <- str_concat("loi-completion-", id)
+    with_extension <- str_concat(name, ".txt")
+    => str_concat(str_concat(root, "/"), with_extension)
 }
 
 /// Return the document text carried by a `didOpen` / `didChange` notification.
@@ -158,6 +196,10 @@ open flow publish_diagnostics_for
     mut has_text: bool
     text <- document_text(<- request.doc, params, -> has_text)
     if has_text {
+        // Keep the editor buffer for later completion requests; unlike the
+        // check shadow, this cache survives until `didClose`.
+        cache <- completion_cache_path(uri)
+        lsp_write_document(cache, text)
         shadow <- document_shadow_path(uri)
         lsp_write_document(shadow, text)
         check_and_publish(compiler, shadow, uri)
@@ -170,6 +212,63 @@ open flow publish_diagnostics_for
     check_and_publish(compiler, path, uri)
 }
 
+/// Answer `textDocument/completion` by asking `loi complete` about the last
+/// editor buffer. LSP positions are 0-based; the compiler takes 1-based ones.
+sealed flow complete_for
+    <- request: JsonRpcRequest
+{
+    uri <- request_uri(request)
+    if uri.len == 0 {
+        =>
+    }
+    root <- json_root(<- request.doc)
+    params <- json_object_get(<- request.doc, root, "params")
+    if params < 0 or json_kind(<- request.doc, params) != JsonKind.Object {
+        =>
+    }
+    position <- json_object_get(<- request.doc, params, "position")
+    if position < 0 or json_kind(<- request.doc, position) != JsonKind.Object {
+        =>
+    }
+    line <- json_number_i64(
+        <- request.doc,
+        json_object_get(<- request.doc, position, "line")
+    ) + 1
+    character <- json_number_i64(
+        <- request.doc,
+        json_object_get(<- request.doc, position, "character")
+    ) + 1
+
+    cache <- completion_cache_path(uri)
+    mut source: [u8] <- lsp_read_document(cache)
+    mut checked_path: [u8] <- give(cache)
+    if source.len == 0 {
+        checked_path = document_path(uri)
+        source = lsp_read_document(checked_path)
+    }
+    if source.len == 0 {
+        =>
+    }
+
+    mut compiler: [u8] <- os_env("LOI_COMPILER")
+    if compiler.len == 0 {
+        compiler = "loi"
+    }
+    mut args: Vec<[u8]>
+    vec_new<[u8]>(-> args)
+    vec_push<[u8]>(<-> args, "complete")
+    vec_push<[u8]>(<-> args, checked_path)
+    vec_push<[u8]>(<-> args, "--line")
+    vec_push<[u8]>(<-> args, i64_to_bytes(line))
+    vec_push<[u8]>(<-> args, "--column")
+    vec_push<[u8]>(<-> args, i64_to_bytes(character))
+
+    guard child <- process_spawn_args(compiler, vec_view<[u8]>(<- args, 0, args.len)) {
+        result <- process_stdout(child)
+        lsp_send_completion(request.id, result)
+    }
+}
+
 /// Dispatch one validated request. Returns false only for `exit`.
 open flow dispatch
     <- request: JsonRpcRequest
@@ -178,7 +277,7 @@ open flow dispatch
     if str_eq(request.method, "initialize") {
         jsonrpc_send_result(
             request.id,
-            "{\"capabilities\":{\"textDocumentSync\":1,\"publishDiagnosticsProvider\":true}}"
+            "{\"capabilities\":{\"textDocumentSync\":1,\"publishDiagnosticsProvider\":true,\"completionProvider\":{\"resolveProvider\":false,\"triggerCharacters\":[\".\"]}}}"
         )
         => true
     }
@@ -199,6 +298,18 @@ open flow dispatch
     }
     if str_eq(request.method, "textDocument/didSave") {
         publish_diagnostics_for(request)
+        => true
+    }
+    if str_eq(request.method, "textDocument/didClose") {
+        uri <- request_uri(request)
+        if uri.len > 0 {
+            cache <- completion_cache_path(uri)
+            lsp_remove_document(cache)
+        }
+        => true
+    }
+    if str_eq(request.method, "textDocument/completion") {
+        complete_for(request)
         => true
     }
     // Notifications never get a reply, even when their method is unknown.

@@ -419,7 +419,7 @@ These rules were added to unblock real programs and are implemented and tested. 
 
 - Intrinsics: `print(<- [u8])`, `eprint(<- [u8])`, `panic(<- [u8])`, `print_int(<- integer)`, `print_float(<- f64)`, `printf(<- [u8], ...)` (literal format string plus typed varargs), `sqrt/floor/ceil/fabs(<- f64) => f64`, `pow/fmod(<- f64, <- f64) => f64`, `len([T]) => u64` and
 `callback(<- flow) => callback`.
-- The library is a set of explicitly imported files: `lib/std.loi` (integer/float and byte-string helpers, including integer-to-decimal conversion), `lib/math.loi` (generic and `comptime` math), `lib/ctype.loi` (ASCII byte helpers), `lib/option.loi` and `lib/result.loi` (optional and error-carrying values), `lib/json.loi` (JSON documents), `lib/jsonrpc.loi` (JSON-RPC 2.0 transport), `lib/lsp.loi` (LSP diagnostics bridge), `lib/process.loi` (process spawning with captured output), `lib/os.loi` and `lib/net.loi` (thin POSIX bindings with C shims), and `lib/stdio.loi` (deterministic byte I/O on the standard streams, also via a C shim). The pure files use only the features above; the five shim-backed files (`os`, `net`, `stdio`, `process`, `lsp`) use `extern flow` declarations and must be linked with their shims.
+- The library is a set of explicitly imported files: `lib/std.loi` (integer/float and byte-string helpers, including integer-to-decimal conversion), `lib/math.loi` (generic and `comptime` math), `lib/ctype.loi` (ASCII byte helpers), `lib/option.loi` and `lib/result.loi` (optional and error-carrying values), `lib/json.loi` (JSON documents), `lib/jsonrpc.loi` (JSON-RPC 2.0 transport), `lib/lsp.loi` (LSP diagnostics and completion bridge), `lib/process.loi` (process spawning with captured output), `lib/os.loi` and `lib/net.loi` (thin POSIX bindings with C shims), and `lib/stdio.loi` (deterministic byte I/O on the standard streams, also via a C shim). The pure files use only the features above; the five shim-backed files (`os`, `net`, `stdio`, `process`, `lsp`) use `extern flow` declarations and must be linked with their shims.
 
 **Optional and error values (Block A6).**
 
@@ -811,11 +811,25 @@ the compiler therefore sees the client's text without ever overwriting the
 client's file. The example server derives the shadow from a hash of the URI and
 places it in the document's own directory so relative imports keep working, and
 falls back to reading the real file only for notifications with no text. The
-server advertises full-document synchronization and the diagnostics provider in
+server advertises full-document synchronization, the diagnostics provider and
+`completionProvider` (`resolveProvider: false`, `triggerCharacters: ["."]`) in
 `initialize`. `os_env` reads the `LOI_COMPILER` setting used to locate the
 compiler. The server is shipped as a separate `loi-lsp` executable (like
 `clangd` beside `clang`); `cargo build` creates it next to `loi`, and its
 launcher caches the compiled Loi server on first use.
+
+`loi complete FILE --line N --column N` exposes the same source-level names to
+editors. It tokenizes the raw buffer with 1-based positions and prints a compact
+JSON array of `{ "label", "kind", "detail" }` items; it never checks or reports
+diagnostics, so a half-typed program still yields candidates. `kind` uses LSP
+`CompletionItemKind` numbers: 3 intrinsic/flow, 5 local, 7 shape/opaque, 8
+module, 12 mark/choice and 14 keyword. The LSP server keeps a separate cached
+copy of each `didOpen` / `didChange` buffer because the check shadow is deleted
+after each check; `didClose` removes that cache. Completion requests convert
+LSP's 0-based `line`/`character` to the compiler's 1-based positions, call
+`loi complete`, and translate the result into a `textDocument/completion`
+response. Compiler `help` text has no LSP diagnostic field, so the server
+appends it to the displayed message instead.
 
 The compiler also reports source-level warnings for bindings that are never
 read: local `<-` bindings, `for` variables and `guard` bindings. A `_` binding and

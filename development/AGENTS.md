@@ -41,6 +41,7 @@ surface disagree, fix the compiler or record the change explicitly.
 ### CLI
 
 - `loi <lex|parse|fmt|check> FILE`
+- `loi complete FILE --line N --column N`
 - `loi gen FILE [-o out.c] [--emit-h header.h] [--emit-ir ir] [--source-map map.json]`
 - `loi build FILE... [-o out] [--emit exe|obj|lib] [--debug|--release] [--rebuild]`
   `[--emit-c c] [--emit-h header.h] [--emit-ir ir] [--arena-size BYTES]`
