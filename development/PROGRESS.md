@@ -1117,17 +1117,13 @@ for f in lib/std.loi lib/math.loi lib/ctype.loi lib/os.loi lib/net.loi; do ./tar
 Language-level questions are resolved in `development/LOI_SPEC.md` section 5.
 Remaining implementation or secondary choices:
 
-- Give modules distinct C symbols (module-qualified mangling) so two modules can
-  declare the same name without a duplicate-name error; this changes the ABI.
 - Decide whether resources need an explicit `resource` declaration instead of
   the `<shape>_release` naming convention. B2/B3 keep the convention to avoid a
   second declaration form; the stdlib `File` and `TcpStream` handles use it.
-- Decide whether callbacks with signatures beyond the fixed
-  `int32_t (*)(int32_t, int32_t)` ABI deserve first-class support, and how they
-  would be spelled without making flows first-class values. B6 keeps other C
-  function pointers shim-only. User-declared variadics, arbitrary C unions and
-  fixed arrays also remain shim-only; Loi `choice` already covers tagged unions
-  with safe payloads (`printf` is already a variadic intrinsic).
+- User-declared variadics, arbitrary C unions, fixed arrays and C function
+  pointers whose target is not an all-`<-` Loi flow remain shim-only. Typed
+  `callback(T, ...) => R` now covers Loi flows; `printf` is a variadic intrinsic
+  and Loi `choice` covers tagged unions with safe payloads.
 - Define the byte-slice/`cstr` conversion surface beyond string literals.
 - Extend escape analysis beyond lexical blocks if programs need block-local
   slices to outlive their block without `alloc`.
@@ -1136,10 +1132,9 @@ Remaining implementation or secondary choices:
   read-only use.
 - Finish or remove the IR/ASM drafts. Until then `--emit-ir` stays diagnostic
   and `--emit-asm` stays rejected.
-- Adopt the opt-in LLVM path evaluated above, or stay C-only? If adopted, decide
-  the staged CLI surface (`--emit-llvm` before any `--backend llvm`), the
-  stdout/stderr/exit parity corpus and whether the C backend remains the
-  permanent semantic oracle. No language syntax is involved.
+- Define an LLVM ABI for `protect` regions, slice headers and flow symbols
+  before extending the opt-in backend beyond scalars. C11 remains the
+  permanent semantic oracle; no language syntax is involved.
 
 ## Next Steps
 
@@ -1166,9 +1161,13 @@ Remaining implementation or secondary choices:
 10. Structural `Eq`/`Ord`: done — one shared structural rule for `==`, `!=`,
     `<`, `<=`, `>` and `>=`, an `Ord` bound, and on-demand C helpers.
 11. Module-qualified mangling: done — duplicated declaration names get distinct
-    C symbols; unique names keep their ABI. Next: callbacks beyond the fixed
-    ABI, the opt-in LLVM question and the IR/ASM drafts; keep the C11 backend as
-    the production oracle.
-12. Keep the docs in sync: `SINTAXE.md` is canonical, `website/docs.html`
+    C symbols; unique names keep their ABI.
+12. Typed callbacks: done — `callback(T, ...) => R` infers a signature from an
+    all-`<-` Loi flow and passes the symbol directly to C.
+13. Opt-in LLVM backend: done for the scalar subset, with `clang`-compiled IR
+    and C11 output parity. Next: the IR/ASM drafts and a defined LLVM ABI for
+    memory regions and composites; keep the C11 backend as the production
+    oracle.
+14. Keep the docs in sync: `SINTAXE.md` is canonical, `website/docs.html`
     mirrors it, and `python3 tools/sync_examples.py --check` guards the example
     mirror.
