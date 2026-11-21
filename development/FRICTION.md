@@ -606,8 +606,9 @@ requirement: a process API with captured stdout/stderr and an exit status.
 Workaround for L4: the client (or test harness) writes the compiler's JSON to a
 file and names it in `params.diagnosticsPath`; the server uses the existing
 `read_file` intrinsic. This keeps the diagnostics genuinely compiler-produced,
-but it is a bridge, not in-process analysis. Recorded as an Open Design
-Question in `PROGRESS.md`.
+but it is a bridge, not in-process analysis. **Resolved in Block L5**:
+`lib/process.loi` and `lib/process_shim.c` now provide spawn with captured
+output, the server runs `loi check` itself, and `diagnosticsPath` is gone.
 
 ### A clean check emits no JSON at all
 
@@ -633,6 +634,53 @@ side. Library requirement: an allocating `json_build_string` / `json_quote`
 flow. Workaround for L4: a private `lsp_json_escape` appends the escapes for
 `"`, `\`, newline, carriage return, tab and control bytes (`\u00XX`) directly
 into a `Vec<u8>`.
+
+## Block L5 — Process spawning
+
+### Extern flows cannot own heap memory or return foreign pointers
+
+Attempted design: have the C shim return a `char*` capturing stdout and bind it
+as an extern flow returning `cstr` or `[u8]`. `extern flow` declarations are not
+checked for allocation regions (`LOI_SPEC.md` §4.9): the contract is the binding
+author's responsibility, and a raw C pointer would escape Loi's `protect`
+lifetime with no release flow. Language/library requirement: a linear resource
+plus a convention-named release flow, as `File` and `TcpStream` already use.
+Workaround for L5: the shim keeps captured buffers in a fixed C-side table and
+returns only a positive integer handle. `lib/process.loi` wraps it in a
+`Process` shape with `process_release`, so `guard` frees the buffers on every
+exit path. Output is copied into caller-owned `[u8]` buffers allocated inside
+`protect`, exactly as `file_read` and `stdio_read_exact` do.
+
+### There is no slice-of-slices FFI type for `argv`
+
+Attempted design: pass `args: [[u8]]` straight to an extern flow expecting an
+`argv` array. Nested slices lower to `LoiSlice` in C, not `LoiSlice*`, and the
+shim ABI would need to copy each byte string into a NUL-terminated `char*`
+anyway. Library requirement: an FFI-safe string-array type with a documented
+NUL/length convention. Workaround for L5: `/bin/sh -c` takes a single byte
+string, and `process_spawn_args` builds it in pure Loi, single-quoting the
+program and every argument (including the `'\''` escape for an embedded quote).
+This keeps untrusted arguments from changing the command, at the cost of one
+shell process per spawn; a direct `execvp` path would need the new FFI type.
+
+### Pipes deadlock on large child output
+
+Attempted design: capture stdout and stderr with two `pipe()` calls and read
+them in the parent after `waitpid`. A child writing more than the pipe buffer
+to stderr blocks forever while the parent is blocked in `waitpid`. Library
+requirement: a non-blocking/polling capture helper, or a documented rule to
+drain before waiting. Workaround for L5: redirect both child descriptors to
+`tmpfile()` streams with `dup2` before `exec`, then `waitpid` and `fread` the
+rewound temporary files. A 200 KB capture test verifies the no-deadlock path.
+
+### An unset environment variable has no string accessor
+
+Attempted design: use the existing `os_env_i32` to locate the compiler named by
+`LOI_COMPILER`. It parses only integers and falls back on malformed input, so a
+path cannot be read. Workaround for L5: add `loi_os_getenv` to `lib/os_shim.c` —
+it copies the value into a caller-owned byte buffer and returns its full length
+(or -1 when unset) — and expose `os_env(name: [u8]) => [u8]` in `lib/os.loi`,
+which allocates the result in the caller's `protect` region.
 
 ## Opt-in LLVM backend
 

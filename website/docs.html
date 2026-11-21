@@ -900,8 +900,10 @@ flow exchange
             convention-named <code>&lt;Shape&gt;_release</code> flow. The standard
             library also provides linear <code>File</code> and <code>TcpStream</code>
             handles, process/environment helpers, and <code>lib/stdio.loi</code>
-            for incremental byte I/O on framed protocols. There is still no
-            directory, seek or process-spawn API.
+            for incremental byte I/O on framed protocols. Block L5 adds
+            <code>lib/process.loi</code> for spawning children with captured
+            output. There is still no directory or seek API, and no
+            process-spawn intrinsic: spawning lives in the library.
           </p>
         </section>
 
@@ -976,7 +978,7 @@ flow exchange
             <code>result_*</code>, <code>hash_*</code>, <code>crc32_*</code>,
             <code>map_*</code>, <code>rng_*</code>, <code>os_*</code>,
             <code>net_*</code>, <code>stdio_*</code>, <code>json_*</code>,
-            <code>jsonrpc_*</code>, <code>lsp_*</code>) so their
+            <code>jsonrpc_*</code>, <code>lsp_*</code>, <code>process_*</code>) so their
             generated symbols stay stable even if a user
             module declares the same name. The prefix is a naming convention, not a
             namespace: you can also import under an alias and use
@@ -1123,7 +1125,8 @@ flow exchange
                 <td><code>lib/os.loi</code></td>
                 <td><code>os_pid</code>, <code>os_unix_time</code>,
                   <code>os_sleep</code>, <code>os_has_env</code>,
-                  <code>os_env_i32</code>, <code>os_errno</code>,
+                  <code>os_env</code>, <code>os_env_i32</code>,
+                  <code>os_errno</code>,
                   <code>os_exit</code>; linear <code>File</code> with
                   <code>file_open_read</code>, <code>file_open_write</code>,
                   <code>file_read</code>, <code>file_write</code>,
@@ -1171,6 +1174,18 @@ flow exchange
                 <td><code>lib/lsp.loi</code></td>
                 <td><code>lsp_publish_diagnostics</code></td>
                 <td><code>lib/stdio_shim.c</code> via <code>jsonrpc.loi</code>; needs <code>protect</code></td>
+              </tr>
+              <tr>
+                <td><code>lib/process.loi</code></td>
+                <td><code>Process</code>, <code>process_spawn</code>,
+                  <code>process_spawn_args</code>, <code>process_ok</code>,
+                  <code>process_stdout_len</code>,
+                  <code>process_stderr_len</code>,
+                  <code>process_read_stdout</code>,
+                  <code>process_read_stderr</code>,
+                  <code>process_stdout</code>, <code>process_stderr</code>,
+                  <code>process_exit_code</code>, <code>process_release</code></td>
+                <td><code>lib/process_shim.c</code>; use it with <code>guard</code></td>
               </tr>
             </tbody>
           </table>
@@ -1292,18 +1307,32 @@ flow exchange
             allocating flows need <code>protect</code>.
             <code>lib/lsp.loi</code> bridges the compiler's
             <code>--error-format json</code> output to
-            <code>textDocument/publishDiagnostics</code>. Loi has no process-spawn
-            API, so a client writes that JSON to a file named in
-            <code>params.diagnosticsPath</code> on a <code>didOpen</code> or
-            <code>didSave</code> notification; the server uses
-            <code>read_file</code> and calls
-            <code>lsp_publish_diagnostics(uri, json)</code>. Compiler spans are
+            <code>textDocument/publishDiagnostics</code>. The server spawns
+            <code>loi check &lt;path&gt; --error-format json</code> with
+            <code>process_spawn_args</code> (compiler chosen by
+            <code>LOI_COMPILER</code>, default <code>loi</code>), reads its stderr
+            and calls <code>lsp_publish_diagnostics(uri, json)</code>. Compiler spans are
             1-based while LSP uses 0-based lines and characters, so both endpoints
             are decremented; severities <code>error</code>, <code>warning</code>
             and <code>note</code> map to 1, 2 and 3. Empty or malformed input
             publishes <code>diagnostics: []</code>, clearing stale markers. The
             complete server is
             <a href="examples/lsp_server.loi">examples/lsp_server.loi</a>.</p>
+
+          <p><code>lib/process.loi</code> runs external programs and captures both
+            output streams. The C shim forks, uses <code>/bin/sh -c</code>,
+            redirects stdout and stderr to temporary files before
+            <code>exec</code> (so a chatty child cannot deadlock the parent), and
+            reaps the child with <code>waitpid</code>. A <code>Process</code> is a
+            linear resource, so put it in a <code>guard</code> block and
+            <code>process_release</code> frees the captured buffers on every exit
+            path. <code>process_spawn_args(program, args)</code> quotes the program
+            and each argument safely for the shell; <code>process_stdout</code>
+            and <code>process_stderr</code> allocate in the caller's
+            <code>protect</code> region, and <code>process_exit_code</code>
+            reports the status. <code>os_env(name: [u8])</code> reads a runtime
+            environment value as a byte slice. See
+            <a href="examples/process_run.loi">examples/process_run.loi</a>.</p>
 
           <div class="doc-code">
             <div class="doc-code-bar"><span>shims.loi</span><button type="button" data-copy>copy</button></div>
@@ -1336,7 +1365,12 @@ open flow main
 
           <div class="doc-code">
             <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
-            <pre><code class="language-sh">loi build examples/lsp_server.loi -o lsp_server --c-source lib/stdio_shim.c</code></pre>
+            <pre><code class="language-sh">loi build examples/lsp_server.loi -o lsp_server --c-source lib/stdio_shim.c --c-source lib/process_shim.c --c-source lib/os_shim.c</code></pre>
+          </div>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-sh">loi build examples/process_run.loi -o process_run --c-source lib/process_shim.c --c-source lib/os_shim.c</code></pre>
           </div>
 
           <div class="doc-code">

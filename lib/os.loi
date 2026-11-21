@@ -32,6 +32,11 @@ extern flow loi_os_env_i32
     <- fallback: i32
     => i32
 
+extern flow loi_os_getenv
+    <- name: [u8]
+    <-> data: [u8]
+    => i64
+
 extern flow loi_os_errno
     => i32
 
@@ -78,6 +83,28 @@ open flow os_env_i32
     => i32
 {
     => loi_os_env_i32(name, fallback)
+}
+
+/// Read an environment variable into a `protect`-owned byte slice. An unset
+/// name yields an empty slice. The name is a byte string, not a `cstr`, so it
+/// can be assembled at runtime.
+open flow os_env
+    <- name: [u8]
+    => [u8]
+{
+    mut probe: [u8]
+    alloc(-> probe, u8, 1)
+    length <- loi_os_getenv(name, <-> probe)
+    if length < 0 {
+        => ""
+    }
+    mut value: [u8]
+    alloc(-> value, u8, length as u64)
+    got <- loi_os_getenv(name, <-> value)
+    if got != length {
+        => ""
+    }
+    => value
 }
 
 open flow os_errno

@@ -1,0 +1,197 @@
+//! Process spawning with captured output, backed by `lib/process_shim.c`.
+//!
+//! `process_spawn` takes a shell command and returns a linear `Process` handle;
+//! put it in a `guard` block and the convention-named `process_release` flow
+//! frees the captured output on every exit path. The shim runs the command
+//! with `/bin/sh -c`, redirects stdout and stderr to temporary files before
+//! `exec`, and reaps the child, so large output cannot deadlock the parent.
+//!
+//! `process_spawn_args` is the safe entry point: it takes an explicit program
+//! and argument list and shell-quotes each byte string before calling
+//! `process_spawn`. Use it whenever any argument comes from user input.
+//!
+//! Build with:
+//! `loi build main.loi -o main --c-source lib/process_shim.c`
+
+import "vec.loi"
+
+extern flow loi_process_spawn
+    <- command: [u8]
+    => i32
+
+extern flow loi_process_output_len
+    <- handle: i32
+    <- which: i32
+    => i64
+
+extern flow loi_process_read_output
+    <- handle: i32
+    <- which: i32
+    <-> data: [u8]
+    => i64
+
+extern flow loi_process_exit_code
+    <- handle: i32
+    => i32
+
+extern flow loi_process_release
+    <- handle: i32
+
+/// A linear handle to a finished child process and its captured streams.
+/// `handle` is -1 or less when spawning failed; such a value is still safe to
+/// guard and read (the lengths are zero and the exit code is -1).
+open shape Process [
+    handle: i32
+]
+
+/// Release the C-side captured buffers. Called automatically by `guard`.
+open flow process_release
+    <-> process: Process
+{
+    if process.handle > 0 {
+        loi_process_release(process.handle)
+        process.handle = -1
+    }
+}
+
+sealed flow process_append_quoted
+    <-> command: Vec<u8>
+    <- part: [u8]
+{
+    vec_push<u8>(<-> command, 39)
+    for i in 0..part.len {
+        byte <- part[i]
+        if byte == 39 {
+            vec_push<u8>(<-> command, 39)
+            vec_push<u8>(<-> command, 92)
+            vec_push<u8>(<-> command, 39)
+        }
+        vec_push<u8>(<-> command, byte)
+    }
+    vec_push<u8>(<-> command, 39)
+}
+
+/// Spawn `program` with `args` without letting a quoted argument change the
+/// command. Both the program path and every argument are single-quoted, with
+/// embedded `'` written as the shell's `'\''` escape.
+open flow process_spawn_args
+    <- program: [u8]
+    <- args: [[u8]]
+    => Process
+{
+    mut command: Vec<u8>
+    vec_new<u8>(-> command)
+    process_append_quoted(<-> command, program)
+    for i in 0..args.len {
+        vec_push<u8>(<-> command, 32)
+        process_append_quoted(<-> command, args[i])
+    }
+    => process_spawn(vec_view<u8>(<- command, 0, command.len))
+}
+
+/// Spawn a raw shell command. Prefer `process_spawn_args` for untrusted input.
+open flow process_spawn
+    <- command: [u8]
+    => Process
+{
+    => Process[ handle: loi_process_spawn(command) ]
+}
+
+open flow process_ok
+    <- process: Process
+    => bool
+{
+    => process.handle > 0
+}
+
+open flow process_stdout_len
+    <- process: Process
+    => i64
+{
+    if process.handle <= 0 {
+        => 0
+    }
+    => loi_process_output_len(process.handle, 0)
+}
+
+open flow process_stderr_len
+    <- process: Process
+    => i64
+{
+    if process.handle <= 0 {
+        => 0
+    }
+    => loi_process_output_len(process.handle, 1)
+}
+
+/// Copy captured stdout into a caller-owned buffer. Returns the full length,
+/// which may exceed `data.len`; nothing is copied past the buffer's end.
+open flow process_read_stdout
+    <- process: Process
+    <-> data: [u8]
+    => i64
+{
+    if process.handle <= 0 {
+        => 0
+    }
+    => loi_process_read_output(process.handle, 0, <-> data)
+}
+
+/// Copy captured stderr into a caller-owned buffer. Returns the full length.
+open flow process_read_stderr
+    <- process: Process
+    <-> data: [u8]
+    => i64
+{
+    if process.handle <= 0 {
+        => 0
+    }
+    => loi_process_read_output(process.handle, 1, <-> data)
+}
+
+/// Allocate inside the caller's `protect` region and return all of stdout.
+open flow process_stdout
+    <- process: Process
+    => [u8]
+{
+    length <- process_stdout_len(process)
+    if length <= 0 {
+        => ""
+    }
+    mut data: [u8]
+    alloc(-> data, u8, length as u64)
+    got <- process_read_stdout(process, <-> data)
+    if got != length {
+        => ""
+    }
+    => data
+}
+
+/// Allocate inside the caller's `protect` region and return all of stderr.
+open flow process_stderr
+    <- process: Process
+    => [u8]
+{
+    length <- process_stderr_len(process)
+    if length <= 0 {
+        => ""
+    }
+    mut data: [u8]
+    alloc(-> data, u8, length as u64)
+    got <- process_read_stderr(process, <-> data)
+    if got != length {
+        => ""
+    }
+    => data
+}
+
+/// Exit status, 128 + signal for a signalled child, or -1 on spawn failure.
+open flow process_exit_code
+    <- process: Process
+    => i32
+{
+    if process.handle <= 0 {
+        => -1
+    }
+    => loi_process_exit_code(process.handle)
+}

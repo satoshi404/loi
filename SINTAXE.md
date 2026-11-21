@@ -1087,23 +1087,27 @@ open flow serve_one
   and `params` must be a complete JSON value (`"{}"` when empty).
 
 All allocating flows require the caller's `protect`. The complete
-initialize/shutdown/unknown-method server is `examples/lsp_server.loi`; build it
-with `loi build examples/lsp_server.loi -o lsp_server --c-source lib/stdio_shim.c`.
+initialize/shutdown/diagnostics server is `examples/lsp_server.loi`; build it
+with `loi build examples/lsp_server.loi -o lsp_server --c-source lib/stdio_shim.c
+--c-source lib/process_shim.c --c-source lib/os_shim.c`.
 
 ### LSP diagnostics
 
-`lib/lsp.loi` bridges the compiler's structured diagnostics to LSP. Loi has no
-process-spawn API, so the server cannot run `loi check` itself: a client writes
-the JSON from `loi check FILE --error-format json` to a file and names it in the
-`didOpen` / `didSave` notification as `params.diagnosticsPath`. The server reads
-that file with `read_file` and calls:
+`lib/lsp.loi` bridges the compiler's structured diagnostics to LSP. Pair it
+with `lib/process.loi` so the server can run the check itself:
 
 ```loi
 import "lib/lsp.loi"
+import "lib/process.loi"
 
-// Inside `protect`, with `uri` from the document and `json` from read_file:
-lsp_publish_diagnostics(uri, json)
+// Inside `protect`, with `uri` and `path` from the didOpen document:
+guard child <- process_spawn_args(compiler, args) {
+    lsp_publish_diagnostics(uri, process_stderr(child))
+}
 ```
+
+Set `LOI_COMPILER` (default `loi`) to choose the compiler binary. The compiler
+writes its JSON to stderr; a clean check writes zero bytes.
 
 `lsp_publish_diagnostics(<- uri, <- diagnostics_json)` emits
 `textDocument/publishDiagnostics`. Compiler spans are 1-based while LSP uses
@@ -1112,6 +1116,53 @@ lsp_publish_diagnostics(uri, json)
 JSON strings, and empty or malformed input publishes an empty `diagnostics`
 array, clearing previous markers. It allocates, so callers need `protect`.
 
+### Process spawning
+
+`lib/process.loi` runs external programs and captures both output streams. It is
+backed by `lib/process_shim.c`, which uses `fork` and `/bin/sh -c`, redirects the
+child's stdout and stderr to temporary files before `exec`, and reaps the child
+with `waitpid`. Temporary files avoid the classic pipe deadlock on large output.
+A `Process` is a linear resource: put it in a `guard` block and the
+convention-named `process_release` flow frees the captured buffers on every exit
+path.
+
+```loi
+import "lib/process.loi"
+
+open flow run
+    => i32
+{
+    guard child <- process_spawn("printf hello; printf oops >&2; exit 3") {
+        print(process_stdout(child))
+        print(process_stderr(child))
+        print_int(process_exit_code(child))
+    }
+    => 0
+}
+```
+
+- `process_spawn(<- command: [u8]) => Process` runs a raw shell command. Prefer
+  `process_spawn_args(<- program: [u8], <- args: [[u8]]) => Process` when any
+  part comes from user input: it single-quotes the program and every argument,
+  escaping embedded `'` as the shell's `'\''` sequence.
+- `process_ok(<- process) => bool` reports whether a handle is valid. A missing
+  program is not a handle failure: `/bin/sh` starts and reports the usual exit
+  status 127 or 126.
+- `process_stdout_len` / `process_stderr_len` return the captured byte counts.
+  `process_read_stdout(process, <-> data)` and `process_read_stderr` copy into a
+  caller-owned buffer and return the full length; `process_stdout(process)` and
+  `process_stderr(process)` allocate that buffer in the caller's `protect`
+  region and return it.
+- `process_exit_code(<- process) => i32` is the exit status, `128 + signal` for
+  a signalled child, or `-1` when no handle was created.
+- `os_env(<- name: [u8]) => [u8]` in `lib/os.loi` reads a runtime environment
+  variable into a `protect`-owned byte slice; an unset name yields an empty
+  slice. It is useful for locating the program to run.
+
+Build with `loi build main.loi -o main --c-source lib/process_shim.c` (add
+`--c-source lib/os_shim.c` when using `os_env`). A realistic runner is
+`examples/process_run.loi`.
+
 ### Library modules
 
 Every library file is imported explicitly with the canonical `import` form.
@@ -1119,7 +1170,7 @@ Each file is a module (§13); items may be named unqualified or as
 `module::item`. Library names keep their established prefixes (`math_*`,
 `ctype_*`, `vec_*`, `slice_*`, `str_*`, `option_*`, `result_*`, `hash_*`,
 `crc32_*`, `map_*`, `rng_*`, `os_*`, `net_*`, `stdio_*`, `json_*`,
-`jsonrpc_*`, `lsp_*`) so their C symbols stay stable even
+`jsonrpc_*`, `lsp_*`, `process_*`) so their C symbols stay stable even
 when a user module declares the same name; module-qualified mangling applies only
 to names that actually repeat.
 
@@ -1137,12 +1188,13 @@ to names that actually repeat.
 | `lib/crc32.loi` | `CRC32_POLY`, `CRC32_INIT`, `CRC32_XOROUT`, `CRC32_TABLE`, `crc32_update`, `crc32_extend`, `crc32_bytes` | no |
 | `lib/map.loi` | `IntMap<V>`, `StrMap<V>`, `map_int_new<V>`, `map_int_len<V>`, `map_int_capacity<V>`, `map_int_contains<V>`, `map_int_get<V>`, `map_int_get_or<V>`, `map_int_lookup<V>`, `map_int_set<V>`, `map_int_remove<V>`, `map_int_clear<V>`, and the matching `map_str_*` flows | no; mutators need `protect` |
 | `lib/random.loi` | `Rng`, `rng_new`, `rng_state`, `rng_next_u64`, `rng_next_u32`, `rng_below_u64`, `rng_pick<T>`, `rng_shuffle<T>`; a zero seed uses `RNG_FALLBACK_SEED` | no |
-| `lib/os.loi` | `os_pid`, `os_unix_time`, `os_sleep`, `os_has_env`, `os_env_i32`, `os_errno`, `os_exit` | `lib/os_shim.c` |
+| `lib/os.loi` | `os_pid`, `os_unix_time`, `os_sleep`, `os_has_env`, `os_env`, `os_env_i32`, `os_errno`, `os_exit` | `lib/os_shim.c`; `os_env` needs `protect` |
 | `lib/net.loi` | `NetIpv4Result`, `net_ipv4`, `net_ipv4_octet`, `net_port_is_valid`, `net_parse_ipv4`, `net_tcp_connect`, `net_close`, `net_send`, `net_recv` | `lib/net_shim.c` |
 | `lib/stdio.loi` | `stdio_read_exact`, `stdio_write_all`, `stdio_flush` | `lib/stdio_shim.c` |
 | `lib/json.loi` | `JsonKind`, `JsonDoc`, `json_parse`, `json_root`, `json_kind`, `json_bool`, `json_string`, `json_number_text`, `json_number_i64`, `json_array_len`, `json_array_get`, `json_object_get`, `json_stringify` | no; parsing and stringifying need `protect` |
 | `lib/jsonrpc.loi` | `JsonRpcRequest`, `jsonrpc_read_frame`, `jsonrpc_parse_request`, `jsonrpc_send_result`, `jsonrpc_send_error`, `jsonrpc_send_notification` | `lib/stdio_shim.c`; all flows need `protect` |
 | `lib/lsp.loi` | `lsp_publish_diagnostics` | `lib/stdio_shim.c` via `jsonrpc.loi`; needs `protect` |
+| `lib/process.loi` | `Process`, `process_spawn`, `process_spawn_args`, `process_ok`, `process_stdout_len`, `process_stderr_len`, `process_read_stdout`, `process_read_stderr`, `process_stdout`, `process_stderr`, `process_exit_code`, `process_release` | `lib/process_shim.c`; use it with `guard` |
 
 `lib/math.loi` and `lib/ctype.loi` are pure Loi: the math module uses generic
 flows and a `comptime flow` for factorials. Documented library flows and their

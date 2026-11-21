@@ -19,6 +19,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
@@ -66,6 +67,34 @@ int32_t loi_os_env_i32(const char* name, int32_t fallback) {
         return fallback;
     }
     return (int32_t)value;
+}
+
+int64_t loi_os_getenv(LoiSlice name, LoiSlice* data) {
+    if (data == NULL || (name.len > 0 && name.data == NULL)) {
+        return -1;
+    }
+    char* key = (char*)malloc(name.len + 1);
+    if (key == NULL) {
+        return -1;
+    }
+    if (name.len > 0) {
+        memcpy(key, name.data, name.len);
+    }
+    key[name.len] = '\0';
+    const char* value = getenv(key);
+    free(key);
+    if (value == NULL) {
+        return -1;
+    }
+    size_t length = strlen(value);
+    size_t count = length < data->len ? length : data->len;
+    if (count > 0) {
+        if (data->data == NULL) {
+            return -1;
+        }
+        memcpy(data->data, value, count);
+    }
+    return (int64_t)length;
 }
 
 int32_t loi_os_errno(void) {

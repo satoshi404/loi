@@ -1,19 +1,41 @@
-// A tiny LSP-style JSON-RPC server written in Loi (Blocks L3 and L4).
+// A tiny LSP-style JSON-RPC server written in Loi (Blocks L3, L4 and L5).
 // It reads framed requests from stdin and writes framed replies to stdout.
-// Build with: loi build examples/lsp_server.loi -o lsp_server --c-source lib/stdio_shim.c
+// Build with:
+//   loi build examples/lsp_server.loi -o lsp_server \
+//       --c-source lib/stdio_shim.c \
+//       --c-source lib/process_shim.c \
+//       --c-source lib/os_shim.c
 // A zero-length frame or EOF ends the loop.
 //
-// Diagnostics come from the real compiler: the client writes
-// `loi check FILE --error-format json` to `params.diagnosticsPath` and opens
-// the document. Loi has no process-spawn API, so the server reads that file.
+// Diagnostics come from the real compiler: on `didOpen` / `didSave` the server
+// spawns `loi check <file> --error-format json` and publishes its stderr as
+// `textDocument/publishDiagnostics`. Set LOI_COMPILER to choose the compiler
+// binary (default: `loi`). The process is a guarded resource, so its captured
+// output is released on every exit path.
 
 import "../lib/json.loi"
 import "../lib/jsonrpc.loi"
 import "../lib/lsp.loi"
+import "../lib/os.loi"
+import "../lib/process.loi"
 import "../lib/std.loi"
+import "../lib/vec.loi"
 
-/// Read a compiler diagnostics snapshot named by a `didOpen` / `didSave`
-/// notification and publish it for the document's URI.
+/// Strip the `file://` prefix from a document URI.
+open flow document_path
+    <- uri: [u8]
+    => [u8]
+{
+    if uri.len > 7 {
+        prefix <- view(uri, 0, 7)
+        if str_eq(prefix, "file://") {
+            => view(uri, 7, uri.len)
+        }
+    }
+    => uri
+}
+
+/// Run the real compiler and publish its structured diagnostics for `uri`.
 open flow publish_diagnostics_for
     <- request: JsonRpcRequest
 {
@@ -27,14 +49,29 @@ open flow publish_diagnostics_for
         =>
     }
     uri_node <- json_object_get(<- request.doc, document, "uri")
-    path_node <- json_object_get(<- request.doc, params, "diagnosticsPath")
-    if uri_node < 0 or path_node < 0 {
+    if uri_node < 0 {
         =>
     }
     uri <- json_string(<- request.doc, uri_node)
-    path <- json_string(<- request.doc, path_node)
-    diagnostics <- read_file(path)
-    lsp_publish_diagnostics(uri, diagnostics)
+    path <- document_path(uri)
+
+    mut compiler: [u8] <- os_env("LOI_COMPILER")
+    if compiler.len == 0 {
+        compiler = "loi"
+    }
+    mut args: Vec<[u8]>
+    vec_new<[u8]>(-> args)
+    vec_push<[u8]>(<-> args, "check")
+    vec_push<[u8]>(<-> args, path)
+    vec_push<[u8]>(<-> args, "--error-format")
+    vec_push<[u8]>(<-> args, "json")
+    vec_push<[u8]>(<-> args, "--color")
+    vec_push<[u8]>(<-> args, "never")
+
+    guard child <- process_spawn_args(compiler, vec_view<[u8]>(<- args, 0, args.len)) {
+        diagnostics <- process_stderr(child)
+        lsp_publish_diagnostics(uri, diagnostics)
+    }
 }
 
 /// Dispatch one validated request. Returns false only for `exit`.

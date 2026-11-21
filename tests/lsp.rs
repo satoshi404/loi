@@ -53,6 +53,10 @@ fn build_with_shim(dir: &Path, program: &Path) -> PathBuf {
         .arg(&executable)
         .arg("--c-source")
         .arg(repo_root().join("lib").join("stdio_shim.c"))
+        .arg("--c-source")
+        .arg(repo_root().join("lib").join("process_shim.c"))
+        .arg("--c-source")
+        .arg(repo_root().join("lib").join("os_shim.c"))
         .output()
         .expect("loi build should run");
     assert!(
@@ -73,8 +77,9 @@ struct RunResult {
     stderr: Vec<u8>,
 }
 
-fn run_with_input(executable: &Path, input: &[u8]) -> RunResult {
+fn run_with_input(executable: &Path, input: &[u8], compiler: &str) -> RunResult {
     let child = Command::new(executable)
+        .env("LOI_COMPILER", compiler)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -125,7 +130,7 @@ fn run_with_input(executable: &Path, input: &[u8]) -> RunResult {
 
 fn assert_server(dir: &Path, input: &[u8], expected: &[u8]) {
     let executable = build_with_shim(dir, &repo_root().join("examples").join("lsp_server.loi"));
-    let run = run_with_input(&executable, input);
+    let run = run_with_input(&executable, input, loi());
     assert_eq!(run.status.and_then(|status| status.code()), Some(0));
     assert!(
         run.stderr.is_empty(),
@@ -140,8 +145,8 @@ fn assert_server(dir: &Path, input: &[u8], expected: &[u8]) {
     );
 }
 
-/// Ask the real compiler for JSON diagnostics about a broken Loi program and
-/// store them where the server will find them.
+/// Ask the real compiler for JSON diagnostics about a broken Loi program. The
+/// server repeats this check itself; the harness keeps the result as an oracle.
 fn compiler_diagnostics(dir: &Path, source: &str) -> (PathBuf, String) {
     let source_path = dir.join("broken.loi");
     fs::write(&source_path, source).expect("source should be writable");
@@ -154,15 +159,12 @@ fn compiler_diagnostics(dir: &Path, source: &str) -> (PathBuf, String) {
         .arg("never")
         .output()
         .expect("loi check should run");
-    let diagnostics_path = dir.join("diagnostics.json");
-    fs::write(&diagnostics_path, &output.stderr).expect("diagnostics should be writable");
-    (diagnostics_path, String::from_utf8(output.stderr).unwrap())
+    (source_path, String::from_utf8(output.stderr).unwrap())
 }
 
-fn did_open(uri: &str, diagnostics_path: &Path) -> String {
+fn did_open(uri: &str) -> String {
     format!(
-        r#"{{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{{"textDocument":{{"uri":"{uri}","languageId":"loi","version":1,"text":""}},"diagnosticsPath":"{}"}}}}"#,
-        diagnostics_path.to_string_lossy()
+        r#"{{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{{"textDocument":{{"uri":"{uri}","languageId":"loi","version":1,"text":""}}}}}}"#
     )
 }
 
@@ -179,8 +181,7 @@ fn lsp_server_publishes_real_compiler_diagnostics() {
         return;
     }
     let dir = test_dir("publish-real");
-    let (diagnostics_path, json) =
-        compiler_diagnostics(&dir, "flow main => i32 {\n    => missing\n}\n");
+    let (_, json) = compiler_diagnostics(&dir, "flow main => i32 {\n    => missing\n}\n");
     assert!(
         json.contains(r#""severity":"error""#),
         "compiler should report an error: {json}"
@@ -188,7 +189,7 @@ fn lsp_server_publishes_real_compiler_diagnostics() {
     let uri = format!("file://{}", dir.join("broken.loi").to_string_lossy());
 
     let mut input = frame(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#);
-    input.extend(frame(&did_open(&uri, &diagnostics_path)));
+    input.extend(frame(&did_open(&uri)));
 
     // Compiler spans are 1-based; LSP line and character are 0-based.
     let diagnostic = r#"{"range":{"start":{"line":1,"character":7},"end":{"line":1,"character":14}},"severity":1,"message":"unknown variable 'missing'"}"#;
@@ -205,14 +206,14 @@ fn lsp_server_clears_diagnostics_for_a_clean_document() {
         return;
     }
     let dir = test_dir("publish-empty");
-    let (diagnostics_path, json) = compiler_diagnostics(&dir, "flow main => i32 {\n    => 0\n}\n");
+    let (_, json) = compiler_diagnostics(&dir, "flow main => i32 {\n    => 0\n}\n");
     assert!(
         json.is_empty(),
         "clean source should produce no diagnostics: {json}"
     );
     let uri = format!("file://{}", dir.join("broken.loi").to_string_lossy());
 
-    let input = frame(&did_open(&uri, &diagnostics_path));
+    let input = frame(&did_open(&uri));
     let expected = frame(&published(&uri, ""));
     assert_server(&dir, &input, &expected);
 }

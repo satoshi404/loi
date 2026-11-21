@@ -60,6 +60,10 @@ fn build_with_shim(dir: &Path, program: &Path) -> PathBuf {
         .arg(&executable)
         .arg("--c-source")
         .arg(repo_root().join("lib").join("stdio_shim.c"))
+        .arg("--c-source")
+        .arg(repo_root().join("lib").join("process_shim.c"))
+        .arg("--c-source")
+        .arg(repo_root().join("lib").join("os_shim.c"))
         .output()
         .expect("loi build should run");
     assert!(

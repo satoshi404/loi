@@ -1,11 +1,10 @@
 //! LSP diagnostics bridge written in pure Loi.
 //!
-//! The compiler already emits structured diagnostics with
-//! `loi check FILE --error-format json`. Loi has no process-spawn API, so the
-//! server cannot invoke the compiler itself: a client (or a test harness)
-//! writes that JSON to a file and names it in the `didOpen` notification. This
-//! module turns the compiler's JSON into an LSP
-//! `textDocument/publishDiagnostics` notification.
+//! The compiler emits structured diagnostics with
+//! `loi check FILE --error-format json`. A server using this module can spawn
+//! that check itself through `lib/process.loi`, then turn the captured JSON into
+//! an LSP `textDocument/publishDiagnostics` notification. This module only
+//! formats the notification; it does not run the compiler.
 //!
 //! Compiler spans are 1-based; LSP `line` and `character` are 0-based.
 //! Severity strings map as `error` -> 1, `warning` -> 2, `note` -> 3.

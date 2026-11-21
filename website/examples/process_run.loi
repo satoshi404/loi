@@ -1,0 +1,40 @@
+// Run an external program from Loi and report its output and exit status.
+// The program is taken from LOI_PROGRAM so the same binary can drive different
+// tools; it defaults to /bin/echo. Arguments are passed as explicit byte
+// strings, and process_spawn_args quotes them safely for the shell.
+//
+// Build:
+//   loi build examples/process_run.loi -o process_run \
+//       --c-source lib/process_shim.c --c-source lib/os_shim.c
+// Run:
+//   LOI_PROGRAM=/bin/echo ./process_run
+
+import "../lib/os.loi"
+import "../lib/process.loi"
+import "../lib/vec.loi"
+
+open flow main
+    => i32
+{
+    protect {
+        mut program: [u8] <- os_env("LOI_PROGRAM")
+        if program.len == 0 {
+            program = "/bin/echo"
+        }
+
+        mut args: Vec<[u8]>
+        vec_new<[u8]>(-> args)
+        vec_push<[u8]>(<-> args, "hello")
+        vec_push<[u8]>(<-> args, "from Loi")
+
+        guard child <- process_spawn_args(program, vec_view<[u8]>(<- args, 0, args.len)) {
+            if not process_ok(child) {
+                => 1
+            }
+            print(process_stdout(child))
+            print_int(process_exit_code(child))
+            print("\n")
+        }
+    }
+    => 0
+}
