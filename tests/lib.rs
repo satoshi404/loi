@@ -272,6 +272,7 @@ fn every_library_source_checks_cleanly() {
         "stdio.loi",
         "json.loi",
         "jsonrpc.loi",
+        "lsp.loi",
     ] {
         let path = repo_root().join("lib").join(name);
         let output = check(&path);

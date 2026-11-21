@@ -28,6 +28,7 @@ open shape JsonRpcRequest [
     doc: JsonDoc
     id: i64
     method: [u8]
+    has_id: bool
 ]
 
 sealed flow jsonrpc_starts_with
@@ -100,7 +101,8 @@ open flow jsonrpc_read_frame
 }
 
 /// Parse `body` and validate the JSON-RPC envelope. Returns false for
-/// malformed JSON, a non-object root, a wrong version, or a missing method/id.
+/// malformed JSON, a non-object root, a wrong version, or a missing method.
+/// `id` is optional: notifications leave `has_id` false and `id` zero.
 open flow jsonrpc_parse_request
     <- body: [u8]
     -> request: JsonRpcRequest
@@ -126,11 +128,16 @@ open flow jsonrpc_parse_request
         => false
     }
     request.method = json_string(<- request.doc, method)
+    request.has_id = false
+    request.id = 0
     id <- json_object_get(<- request.doc, root, "id")
-    if id < 0 or json_kind(<- request.doc, id) != JsonKind.Number {
-        => false
+    if id >= 0 {
+        if json_kind(<- request.doc, id) != JsonKind.Number {
+            => false
+        }
+        request.id = json_number_i64(<- request.doc, id)
+        request.has_id = true
     }
-    request.id = json_number_i64(<- request.doc, id)
     => true
 }
 
@@ -205,6 +212,23 @@ open flow jsonrpc_send_result
     jsonrpc_append_i64(<-> out, id)
     jsonrpc_append_bytes(<-> out, ",\"result\":")
     jsonrpc_append_bytes(<-> out, result)
+    jsonrpc_append_bytes(<-> out, "}")
+    jsonrpc_send_bytes(vec_view<u8>(<- out, 0, out.len))
+}
+
+/// Send a framed server-to-client notification. There is no `id`, so the
+/// client sends no reply. `method` must not need escaping and `params` must be
+/// a complete JSON value (use `"{}"` when there are no parameters).
+open flow jsonrpc_send_notification
+    <- method: [u8]
+    <- params: [u8]
+{
+    mut out: Vec<u8>
+    vec_new<u8>(-> out)
+    jsonrpc_append_bytes(<-> out, "{\"jsonrpc\":\"2.0\",\"method\":\"")
+    jsonrpc_append_bytes(<-> out, method)
+    jsonrpc_append_bytes(<-> out, "\",\"params\":")
+    jsonrpc_append_bytes(<-> out, params)
     jsonrpc_append_bytes(<-> out, "}")
     jsonrpc_send_bytes(vec_view<u8>(<- out, 0, out.len))
 }

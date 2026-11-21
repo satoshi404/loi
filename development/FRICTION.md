@@ -593,6 +593,47 @@ builds decimal digits with `% 10` / `/ 10`, pushes them in reverse into a small
 `Vec<u8>`, then emits them in order. It also avoids `-(value + 1)` overflow for
 the minimum `i64` by widening through `u64` before negating.
 
+## Block L4 — LSP diagnostics
+
+### A Loi server cannot compile the document it has just opened
+
+Attempted design: handle `textDocument/didOpen` by running
+`loi check <uri> --error-format json` from the server and publishing the
+result. There is no spawn, exec, `system` or `popen` intrinsic — the closed list
+in `src/checker.rs` and every `lib/*_shim.c` were searched — and `lib/os.loi`
+only exposes pid/time/sleep/environment/errno/exit. Language/library
+requirement: a process API with captured stdout/stderr and an exit status.
+Workaround for L4: the client (or test harness) writes the compiler's JSON to a
+file and names it in `params.diagnosticsPath`; the server uses the existing
+`read_file` intrinsic. This keeps the diagnostics genuinely compiler-produced,
+but it is a bridge, not in-process analysis. Recorded as an Open Design
+Question in `PROGRESS.md`.
+
+### A clean check emits no JSON at all
+
+Attempted design: treat the compiler output as an array and call
+`json_array_len` directly. `loi check CLEAN --error-format json` writes zero
+bytes to stderr and exits 0, while a failing check writes an array; there is no
+`[]` sentinel and no documented JSON envelope with a status field. Loi's
+`json_parse` rejects empty input, so a naive implementation would silently
+skip publishing anything and leave stale markers in the editor. Library/CLI
+requirement: always emit a well-formed JSON document (even `[]`) when
+`--error-format json` is requested. Workaround for L4:
+`lsp_publish_diagnostics` treats an empty or malformed snapshot as an empty
+array and still sends the notification, which clears previous markers.
+
+### Escaping a string that was never parsed needs a hand-written encoder
+
+Attempted design: build the notification with `json_stringify`, as the request
+side uses `json_parse`. The JSON library can only serialize a node table that
+came from parsing text; it has no constructor for a new string node, so a URI
+or a message taken from a compiler diagnostic cannot be fed back through it.
+This is the same builder gap recorded in Block L3, now visible on the output
+side. Library requirement: an allocating `json_build_string` / `json_quote`
+flow. Workaround for L4: a private `lsp_json_escape` appends the escapes for
+`"`, `\`, newline, carriage return, tab and control bytes (`\u00XX`) directly
+into a `Vec<u8>`.
+
 ## Opt-in LLVM backend
 
 ### The draft IR was not compilable LLVM IR

@@ -976,7 +976,7 @@ flow exchange
             <code>result_*</code>, <code>hash_*</code>, <code>crc32_*</code>,
             <code>map_*</code>, <code>rng_*</code>, <code>os_*</code>,
             <code>net_*</code>, <code>stdio_*</code>, <code>json_*</code>,
-            <code>jsonrpc_*</code>) so their
+            <code>jsonrpc_*</code>, <code>lsp_*</code>) so their
             generated symbols stay stable even if a user
             module declares the same name. The prefix is a naming convention, not a
             namespace: you can also import under an alias and use
@@ -1163,8 +1163,14 @@ flow exchange
                 <td><code>JsonRpcRequest</code>, <code>jsonrpc_read_frame</code>,
                   <code>jsonrpc_parse_request</code>,
                   <code>jsonrpc_send_result</code>,
-                  <code>jsonrpc_send_error</code></td>
+                  <code>jsonrpc_send_error</code>,
+                  <code>jsonrpc_send_notification</code></td>
                 <td><code>lib/stdio_shim.c</code>; all flows need <code>protect</code></td>
+              </tr>
+              <tr>
+                <td><code>lib/lsp.loi</code></td>
+                <td><code>lsp_publish_diagnostics</code></td>
+                <td><code>lib/stdio_shim.c</code> via <code>jsonrpc.loi</code>; needs <code>protect</code></td>
               </tr>
             </tbody>
           </table>
@@ -1272,15 +1278,31 @@ flow exchange
             <code>Content-Length</code> frame; EOF, a malformed header or a
             zero-length frame ends the exchange.
             <code>jsonrpc_parse_request(&lt;- body, -&gt; request)</code> fills a
-            <code>JsonRpcRequest</code> with <code>doc</code>, <code>id</code> and a
-            borrowed <code>method</code> after checking the <code>2.0</code>
-            version and the field types. Replies use
+            <code>JsonRpcRequest</code> with <code>doc</code>, <code>id</code>, a
+            borrowed <code>method</code> and <code>has_id</code> after checking
+            the <code>2.0</code> version and the field types. <code>id</code> is
+            optional: notifications leave <code>has_id</code> false and
+            <code>id</code> zero. Replies use
             <code>jsonrpc_send_result(id, result)</code> and
             <code>jsonrpc_send_error(id, code, message)</code>, which write framed,
             flushed responses; <code>result</code> is a raw JSON literal copied
-            verbatim and <code>message</code> must not need escaping. All four
-            flows allocate, so call them inside <code>protect</code>. The complete
-            initialize/shutdown/unknown-method server is
+            verbatim and <code>message</code> must not need escaping.
+            <code>jsonrpc_send_notification(method, params)</code> writes a framed
+            message without an <code>id</code>, so the client sends no reply. All
+            allocating flows need <code>protect</code>.
+            <code>lib/lsp.loi</code> bridges the compiler's
+            <code>--error-format json</code> output to
+            <code>textDocument/publishDiagnostics</code>. Loi has no process-spawn
+            API, so a client writes that JSON to a file named in
+            <code>params.diagnosticsPath</code> on a <code>didOpen</code> or
+            <code>didSave</code> notification; the server uses
+            <code>read_file</code> and calls
+            <code>lsp_publish_diagnostics(uri, json)</code>. Compiler spans are
+            1-based while LSP uses 0-based lines and characters, so both endpoints
+            are decremented; severities <code>error</code>, <code>warning</code>
+            and <code>note</code> map to 1, 2 and 3. Empty or malformed input
+            publishes <code>diagnostics: []</code>, clearing stale markers. The
+            complete server is
             <a href="examples/lsp_server.loi">examples/lsp_server.loi</a>.</p>
 
           <div class="doc-code">

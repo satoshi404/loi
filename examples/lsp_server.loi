@@ -1,10 +1,41 @@
-// A tiny LSP-style JSON-RPC server written in Loi (Block L3).
+// A tiny LSP-style JSON-RPC server written in Loi (Blocks L3 and L4).
 // It reads framed requests from stdin and writes framed replies to stdout.
 // Build with: loi build examples/lsp_server.loi -o lsp_server --c-source lib/stdio_shim.c
 // A zero-length frame or EOF ends the loop.
+//
+// Diagnostics come from the real compiler: the client writes
+// `loi check FILE --error-format json` to `params.diagnosticsPath` and opens
+// the document. Loi has no process-spawn API, so the server reads that file.
 
+import "../lib/json.loi"
 import "../lib/jsonrpc.loi"
+import "../lib/lsp.loi"
 import "../lib/std.loi"
+
+/// Read a compiler diagnostics snapshot named by a `didOpen` / `didSave`
+/// notification and publish it for the document's URI.
+open flow publish_diagnostics_for
+    <- request: JsonRpcRequest
+{
+    root <- json_root(<- request.doc)
+    params <- json_object_get(<- request.doc, root, "params")
+    if params < 0 or json_kind(<- request.doc, params) != JsonKind.Object {
+        =>
+    }
+    document <- json_object_get(<- request.doc, params, "textDocument")
+    if document < 0 or json_kind(<- request.doc, document) != JsonKind.Object {
+        =>
+    }
+    uri_node <- json_object_get(<- request.doc, document, "uri")
+    path_node <- json_object_get(<- request.doc, params, "diagnosticsPath")
+    if uri_node < 0 or path_node < 0 {
+        =>
+    }
+    uri <- json_string(<- request.doc, uri_node)
+    path <- json_string(<- request.doc, path_node)
+    diagnostics <- read_file(path)
+    lsp_publish_diagnostics(uri, diagnostics)
+}
 
 /// Dispatch one validated request. Returns false only for `exit`.
 open flow dispatch
@@ -21,6 +52,18 @@ open flow dispatch
     }
     if str_eq(request.method, "exit") {
         => false
+    }
+    if str_eq(request.method, "textDocument/didOpen") {
+        publish_diagnostics_for(request)
+        => true
+    }
+    if str_eq(request.method, "textDocument/didSave") {
+        publish_diagnostics_for(request)
+        => true
+    }
+    // Notifications never get a reply, even when their method is unknown.
+    if not request.has_id {
+        => true
     }
     jsonrpc_send_error(request.id, -32601, "Method not found")
     => true
