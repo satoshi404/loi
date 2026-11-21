@@ -31,6 +31,10 @@ extern flow loi_audio_ready
 
 extern flow loi_audio_cleanup
 
+extern flow loi_init_audio_device
+
+extern flow loi_close_audio_device
+
 SAMPLE_RATE: u32 <- 22050
 TOTAL_SAMPLES: i32 <- 22050
 VIEW_SAMPLES: i32 <- 760
@@ -69,7 +73,7 @@ sealed flow sample_value
 open flow main
     => i32
 {
-    InitAudioDevice()
+    loi_init_audio_device()
     InitWindow(900, 540, "Sintese matematica de som")
     SetTargetFPS(60)
 
@@ -171,6 +175,7 @@ open flow main
         loi_stop_samples()
         loi_audio_cleanup()
     }
+    loi_close_audio_device()
 
     CloseWindow()
     => 0

@@ -53,7 +53,15 @@ before(async () => {
   base = `http://127.0.0.1:${port}`;
   child = spawn(process.execPath, ["website/server.mjs"], {
     cwd: projectDir,
-    env: { ...process.env, HOST: "127.0.0.1", PORT: String(port), LOI_BIN: "target/debug/loi" },
+    env: {
+      ...process.env,
+      HOST: "127.0.0.1",
+      PORT: String(port),
+      LOI_BIN: "target/debug/loi",
+      // Exercise the first-class binary; server.mjs still falls back to a
+      // source build when it is absent.
+      LOI_LSP_BIN: "target/debug/loi-lsp",
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   child.stderr.on("data", (chunk) => process.stderr.write(chunk));
@@ -123,17 +131,36 @@ test("playground has one WebAssembly preview and no duplicated gallery", async (
 
 test("audio visualizer keeps its animation alive before the audio unlock", async () => {
   const source = await readFile(path.join(projectDir, "examples", "audio_visualizer.loi"), "utf8");
-  const generate = source.indexOf("generate_audio(-> samples)");
+  const generate = source.indexOf("generate_audio(<-> samples)");
   const ready = source.indexOf("if loi_audio_ready()");
   assert.ok(
     generate >= 0 && ready >= 0 && generate < ready,
     "generate_audio must run while the AudioContext is still suspended"
   );
+  // A `->` output parameter resets the slice to zero length, so the first
+  // `out[i]` aborts the program before it draws a single frame. The caller
+  // allocates the buffer once; generate_audio must borrow it mutably.
+  assert.match(source, /flow generate_audio\s*\n\s*<-> out: \[f32\]/);
+  assert.match(source, /generate_audio\(<-> samples\)/);
   const mirror = await readFile(
     path.join(projectDir, "website", "examples", "audio_visualizer.loi"),
     "utf8"
   );
   assert.equal(mirror, source);
+});
+
+test("audio examples use the shim instead of raylib's WebAudio device", async () => {
+  const shim = await readFile(path.join(projectDir, "examples", "sound_shim.c"), "utf8");
+  assert.match(shim, /void loi_init_audio_device\(void\)/);
+  assert.match(shim, /void loi_close_audio_device\(void\)/);
+  for (const name of ["audio_visualizer", "sound_synth"]) {
+    const source = await readFile(path.join(projectDir, "examples", `${name}.loi`), "utf8");
+    assert.match(source, /extern flow loi_init_audio_device/);
+    assert.match(source, /extern flow loi_close_audio_device/);
+    assert.match(source, /loi_init_audio_device\(\)/);
+    assert.match(source, /loi_close_audio_device\(\)/);
+    assert.doesNotMatch(source, /^\s*(InitAudioDevice|CloseAudioDevice)\(\)/m);
+  }
 });
 
 test("audio visualizer preview carries the unlock hint", async () => {

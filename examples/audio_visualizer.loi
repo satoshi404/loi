@@ -33,6 +33,10 @@ extern flow loi_samples_playing
 
 extern flow loi_audio_cleanup
 
+extern flow loi_init_audio_device
+
+extern flow loi_close_audio_device
+
 SAMPLE_RATE: u32 <- 44100
 
 STEP_SAMPLES: i32 <- 6014
@@ -86,7 +90,7 @@ flow rand01
 // Gera FRAMES_PER_TICK amostras e atualiza o estado usado pelo desenho.
 // A logica segue de perto o audio_callback do exemplo C3.
 flow generate_audio
-    -> out: [f32]
+    <-> out: [f32]
 {
     for i in 0..FRAMES_PER_TICK {
         bar <- sample_count / (STEP_SAMPLES as i64 * 16) % 8
@@ -175,7 +179,7 @@ open flow main
     => i32
 {
     InitWindow(640, 480, "Audio Visualizer - Loi + raylib")
-    InitAudioDevice()
+    loi_init_audio_device()
     SetTargetFPS(60)
     bg: Color <- Color[ r: 15, g: 23, b: 42, a: 255 ]
     magenta: Color <- Color[ r: 255, g: 20, b: 147, a: 80 ]
@@ -190,7 +194,7 @@ open flow main
             // Always advance the synthesizer so the bars and the wave are alive
             // even before the browser unlocks AudioContext. Only the feed waits
             // for the gesture: browsers start every context suspended.
-            generate_audio(-> samples)
+            generate_audio(<-> samples)
             if loi_audio_ready() {
                 loi_audio_feed(samples, SAMPLE_RATE)
             }
@@ -232,7 +236,7 @@ open flow main
         }
         loi_audio_cleanup()
     }
-    CloseAudioDevice()
+    loi_close_audio_device()
     CloseWindow()
     => 0
 }

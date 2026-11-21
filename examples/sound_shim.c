@@ -33,6 +33,19 @@ typedef struct {
 
 #include <emscripten.h>
 
+/* raylib's miniaudio backend creates a ScriptProcessorNode as soon as
+ * InitAudioDevice() runs. Modern browsers start that callback before
+ * Emscripten publishes HEAPF32 on Module, so it throws on every audio tick.
+ * The examples below play through WebAudio directly; no raylib audio device is
+ * needed (or wanted) in the browser. */
+void loi_init_audio_device(void) {
+    (void)0;
+}
+
+void loi_close_audio_device(void) {
+    (void)0;
+}
+
 void loi_play_samples(LoiSlice samples, uint32_t sample_rate) {
     if (samples.len == 0 || samples.data == NULL) {
         return;
@@ -167,6 +180,14 @@ void loi_audio_cleanup(void) {
 }
 
 #else
+
+void loi_init_audio_device(void) {
+    InitAudioDevice();
+}
+
+void loi_close_audio_device(void) {
+    CloseAudioDevice();
+}
 
 static Sound loi_synth_sound;
 static bool loi_synth_loaded = false;
