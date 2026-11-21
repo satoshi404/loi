@@ -10,6 +10,7 @@
   },
   "scripts": {
     "start": "node server.mjs",
-    "serve": "node server.mjs"
+    "serve": "node server.mjs",
+    "test": "node --test tests/*.test.mjs"
   }
 }

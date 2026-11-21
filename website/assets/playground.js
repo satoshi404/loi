@@ -1,4 +1,4 @@
-/* Loi playground: editor, syntax overlay and compiler API client. */
+/* Loi playground: editor, syntax overlay, compiler API and LSP client. */
 (function () {
   "use strict";
 
@@ -8,14 +8,22 @@
   const output = document.getElementById("output");
   const meta = document.getElementById("output-meta");
   const status = document.getElementById("playground-status");
+  const lspStatus = document.getElementById("lsp-status");
   const preset = document.getElementById("preset");
+  const problemsList = document.getElementById("problems-list");
+  const problemCount = document.getElementById("problem-count");
+  const previewFrame = document.getElementById("preview-frame");
+  const previewCaption = document.getElementById("preview-caption");
+  const previewOpen = document.getElementById("preview-open");
   const runButton = document.querySelector('[data-action="run"]');
   const checkButton = document.querySelector('[data-action="check"]');
   const formatButton = document.querySelector('[data-action="format"]');
+  const lspButton = document.querySelector('[data-action="lsp"]');
   if (!editor || !highlight || !gutter || !output) return;
 
   const STORAGE_KEY = "loi-playground-source";
   const MAX_LENGTH = 200_000;
+  const LSP_DEBOUNCE_MS = 400;
 
   const PRESETS = {
     hello: {
@@ -115,33 +123,31 @@ open flow main
       label: "Tic-tac-toe",
       url: "examples/tictactoe.loi",
     },
+    lsp_server: {
+      label: "LSP server (Loi)",
+      url: "examples/lsp_server.loi",
+      note: "Este é o servidor LSP que alimenta o painel Problems. Use Check/Format; o painel LSP executa o servidor real com os shims de processo, que não são linkados em programas enviados pelo navegador.",
+    },
     raylib_web: {
       label: "Raylib web demo",
       url: "examples/raylib_web.loi",
-      note:
-        "Loaded the raylib web demo. Check and Format work here. " +
-        "Run opens a native window and needs a local raylib build; use the WebAssembly demo below instead.",
+      note: "Raylib detectado: Run abre a janela WebAssembly na aba Preview.",
     },
     text_editor: {
       label: "Simple text editor",
       url: "examples/text_editor.loi",
       note:
-        "Loaded the text editor. Check and Format work here. " +
-        "Run needs a native raylib build and examples/editor_shim.c; see the source header for the command.",
+        "Editor com raylib: Run usa um build WebAssembly quando emcc/RAYLIB_WEB estão disponíveis.",
     },
     sound_synth: {
       label: "Math sound + waveform",
       url: "examples/sound_synth.loi",
-      note:
-        "Loaded the sound synthesis demo. Check and Format work here. " +
-        "Run needs a native raylib build; use the Síntese de som WebAssembly demo below instead.",
+      note: "Síntese de som: Run abre o preview com WebAudio.",
     },
     audio_visualizer: {
       label: "Audio visualizer",
       url: "examples/audio_visualizer.loi",
-      note:
-        "Loaded the C3-inspired audio visualizer. Check and Format work here. " +
-        "Run needs a native raylib build; use the Visualizador WebAssembly demo below instead.",
+      note: "Visualizador: Run abre o preview com áudio e renderização.",
     },
   };
 
@@ -156,9 +162,16 @@ open flow main
     },
     audio_visualizer: {
       caption:
-        "<b>Visualizador:</b> sequenciador de 16 passos inspirado no exemplo C3; a música e as barras/círculos/onda reagem ao áudio, sem teclas.",
+        "<b>Visualizador:</b> sequenciador de 16 passos; a música e as barras/círculos/onda reagem ao áudio.",
     },
   };
+
+  let busy = false;
+  let lspEnabled = true;
+  let lspBusy = false;
+  let lspDirty = false;
+  let lspTimer = null;
+  let diagnostics = [];
 
   function showWebDemo(name) {
     const demo = WEB_DEMOS[name];
@@ -177,8 +190,6 @@ open flow main
     if (caption) caption.innerHTML = demo.caption;
   }
 
-  let busy = false;
-
   function renderEditor() {
     const source = editor.value;
     highlight.innerHTML = window.LoiHighlight
@@ -195,13 +206,11 @@ open flow main
     gutter.scrollTop = editor.scrollTop;
   }
 
-  function setStatus(text, state) {
-    if (!status) return;
-    status.classList.remove("is-online", "is-offline");
-    if (state) status.classList.add(state);
-    const dot = status.querySelector("i");
-    if (dot) dot.setAttribute("aria-hidden", "true");
-    const label = status.querySelector("span");
+  function setStatus(text, state, element = status) {
+    if (!element) return;
+    element.classList.remove("is-online", "is-offline");
+    if (state) element.classList.add(state);
+    const label = element.querySelector("span");
     if (label) label.textContent = text;
   }
 
@@ -236,30 +245,114 @@ open flow main
     badge.textContent = ok ? "success" : "failed";
     meta.appendChild(badge);
     const details = document.createElement("span");
-    details.textContent = [stage, exit, formatDuration(result.durationMs)]
+    details.textContent = [result.mode === "web" ? "webassembly" : stage, exit, formatDuration(result.durationMs)]
       .filter(Boolean)
       .join(" · ");
     meta.appendChild(details);
   }
 
-  async function api(path, source) {
+  function setOutputTab(name) {
+    document.querySelectorAll("[data-output-tab]").forEach((tab) => {
+      const active = tab.getAttribute("data-output-tab") === name;
+      tab.classList.toggle("is-active", active);
+      tab.setAttribute("aria-selected", active ? "true" : "false");
+    });
+    document.querySelectorAll("[data-output-view]").forEach((view) => {
+      view.hidden = view.getAttribute("data-output-view") !== name;
+    });
+  }
+
+  function offsetAt(line, character) {
+    const lines = editor.value.split("\n");
+    let offset = 0;
+    for (let index = 0; index < Math.min(line, lines.length); index += 1) {
+      offset += lines[index].length + 1;
+    }
+    return offset + character;
+  }
+
+  function revealLocation(line) {
+    const offset = offsetAt(line, 0);
+    editor.focus();
+    editor.setSelectionRange(offset, offset);
+    const lineHeight = 22;
+    editor.scrollTop = Math.max(0, line * lineHeight - editor.clientHeight / 2);
+    syncScroll();
+  }
+
+  function renderProblems(items) {
+    diagnostics = items;
+    if (!problemsList) return;
+    problemsList.innerHTML = "";
+    const count = items.length;
+    if (problemCount) {
+      problemCount.hidden = count === 0;
+      problemCount.textContent = String(count);
+    }
+    if (count === 0) {
+      const placeholder = document.createElement("p");
+      placeholder.className = "placeholder";
+      placeholder.textContent = "Nenhum diagnóstico. O servidor Loi está limpo.";
+      problemsList.appendChild(placeholder);
+      return;
+    }
+    items.forEach((item) => {
+      const range = item.range || { start: { line: 0, character: 0 } };
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "problem";
+      if (item.severity === 2) button.classList.add("is-warning");
+      if (item.severity === 3) button.classList.add("is-note");
+      const dot = document.createElement("span");
+      dot.className = "problem-severity";
+      dot.setAttribute("aria-hidden", "true");
+      const body = document.createElement("span");
+      const where = document.createElement("span");
+      where.className = "problem-location";
+      where.textContent = `${range.start.line + 1}:${range.start.character + 1}`;
+      const message = document.createElement("span");
+      message.textContent = ` ${item.message}`;
+      body.append(where, message);
+      button.append(dot, body);
+      button.addEventListener("click", () => revealLocation(range.start.line));
+      problemsList.appendChild(button);
+    });
+  }
+
+  function showWebPreview(result) {
+    const url = result.webUrl;
+    if (!url || !previewFrame) return;
+    previewFrame.src = url;
+    previewFrame.hidden = false;
+    if (previewCaption) {
+      previewCaption.textContent =
+        result.caption || "Programa WebAssembly em execução. Clique no canvas para dar foco/áudio.";
+    }
+    if (previewOpen) {
+      previewOpen.href = url;
+      previewOpen.hidden = false;
+    }
+    setOutputTab("preview");
+  }
+
+  async function api(path, payload) {
     const response = await fetch(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source }),
+      body: JSON.stringify(payload),
     });
 
-    let payload;
+    let result;
     try {
-      payload = await response.json();
+      result = await response.json();
     } catch (_) {
       throw new Error(`The playground server returned HTTP ${response.status} without JSON.`);
     }
 
-    if (!response.ok && payload.error) {
-      throw new Error(payload.error);
+    if (!response.ok && result.error) {
+      throw new Error(result.error);
     }
-    return payload;
+    return result;
   }
 
   async function run(mode) {
@@ -273,28 +366,33 @@ open flow main
       showOutput("Programs are limited to 200 KB in the playground.", "error");
       return;
     }
-    if (mode === "run" && source.includes('import "../vendor/raylib/raylib.loi"')) {
-      showOutput(
-        "This example uses raylib and needs a native build with C shims. Use Check or Format " +
-          "here; to execute it, follow the build command in the source header or use one of " +
-          "the WebAssembly demos below."
-      );
-      if (meta) meta.textContent = "";
-      return;
-    }
 
     setBusy(true);
-    showOutput(mode === "format" ? "Formatting…" : "Compiling…");
+    showOutput(mode === "format" ? "Formatando…" : "Compilando…");
     if (meta) meta.textContent = "";
 
     try {
-      const result = await api(`/api/${mode}`, source);
+      const result = await api(`/api/${mode}`, { source });
 
       if (mode === "format" && result.ok) {
         editor.value = result.formatted;
         localStorage.setItem(STORAGE_KEY, result.formatted);
         renderEditor();
-        showOutput("Formatted with the canonical Flow Syntax formatter.\n");
+        showOutput("Formatado com o formatador canônico Flow Syntax.\n");
+        updateMeta(result, mode);
+        scheduleLsp();
+        return;
+      }
+
+      if (result.mode === "web" && result.webUrl) {
+        showWebPreview(result);
+        showOutput(
+          result.stage === "web-demo"
+            ? "Abrindo o build WebAssembly pré-compilado na aba Preview."
+            : "Programa compilado para WebAssembly. Use a aba Preview.",
+          result.ok ? "ok" : "error"
+        );
+        if (!result.ok && result.stderr) showOutput(result.stderr, "error");
         updateMeta(result, mode);
         return;
       }
@@ -313,6 +411,7 @@ open flow main
       }
       showOutput(parts.join("\n\n"), result.ok ? "ok" : "error");
       updateMeta(result, mode);
+      setOutputTab("console");
     } catch (error) {
       const hint =
         "\n\nIs the playground server running?\n\n" +
@@ -329,6 +428,43 @@ open flow main
       setStatus("Playground server offline", "is-offline");
     } finally {
       setBusy(false);
+    }
+  }
+
+  function scheduleLsp() {
+    if (!lspEnabled) return;
+    if (lspTimer) clearTimeout(lspTimer);
+    lspTimer = setTimeout(() => {
+      lspTimer = null;
+      requestLsp();
+    }, LSP_DEBOUNCE_MS);
+  }
+
+  async function requestLsp() {
+    if (!lspEnabled || lspBusy) {
+      lspDirty = true;
+      return;
+    }
+    lspBusy = true;
+    try {
+      const result = await api("/api/lsp", { source: editor.value });
+      const items = [];
+      (result.messages || []).forEach((message) => {
+        if (message.method !== "textDocument/publishDiagnostics") return;
+        (message.params?.diagnostics || []).forEach((item) => {
+          items.push({ ...item, uri: message.params.uri });
+        });
+      });
+      renderProblems(items);
+      setStatus("LSP online", "is-online", lspStatus);
+    } catch (_) {
+      setStatus("LSP offline", "is-offline", lspStatus);
+    } finally {
+      lspBusy = false;
+      if (lspDirty) {
+        lspDirty = false;
+        scheduleLsp();
+      }
     }
   }
 
@@ -355,11 +491,13 @@ open flow main
     if (WEB_DEMOS[name]) showWebDemo(name);
     showOutput(item.note || "Loaded preset. Press Run to compile and execute it.");
     if (meta) meta.textContent = "";
+    scheduleLsp();
   }
 
   editor.addEventListener("input", () => {
     localStorage.setItem(STORAGE_KEY, editor.value);
     renderEditor();
+    scheduleLsp();
   });
   editor.addEventListener("scroll", syncScroll, { passive: true });
   editor.addEventListener("keydown", (event) => {
@@ -388,6 +526,25 @@ open flow main
     });
   }
 
+  document.querySelectorAll("[data-output-tab]").forEach((tab) => {
+    tab.addEventListener("click", () => setOutputTab(tab.getAttribute("data-output-tab")));
+  });
+
+  if (lspButton) {
+    lspButton.classList.toggle("btn-primary", lspEnabled);
+    lspButton.addEventListener("click", () => {
+      lspEnabled = !lspEnabled;
+      lspButton.setAttribute("aria-pressed", lspEnabled ? "true" : "false");
+      lspButton.classList.toggle("btn-primary", lspEnabled);
+      if (lspEnabled) {
+        scheduleLsp();
+      } else {
+        renderProblems([]);
+        setStatus("LSP off", null, lspStatus);
+      }
+    });
+  }
+
   if (preset) {
     preset.addEventListener("change", () => loadPreset(preset.value));
   }
@@ -401,6 +558,7 @@ open flow main
   const saved = localStorage.getItem(STORAGE_KEY);
   editor.value = saved || PRESETS.hello.code;
   renderEditor();
+  setOutputTab("console");
 
   fetch("/api/health")
     .then((response) => response.json())
@@ -414,4 +572,6 @@ open flow main
     .catch(() => {
       setStatus("Playground server offline", "is-offline");
     });
+
+  scheduleLsp();
 })();

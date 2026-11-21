@@ -44,14 +44,19 @@
             <p class="section-kicker">Playground</p>
             <h1>Write Loi. Run the real compiler.</h1>
             <p>
-              The editor sends your program to a local Node server, which invokes the same
-              <code>loi</code> binary used by the CLI. Nothing is simulated: the compiler checks,
-              formats, emits C and links a native executable.
+              Um editor real para o compilador real. Console, raylib e áudio usam o mesmo botão
+              Run; o servidor escolhe o alvo e abre uma janela WebAssembly quando o programa
+              desenha ou toca som. O LSP publica diagnósticos enquanto você edita.
             </p>
           </div>
-          <span class="playground-status" id="playground-status">
-            <i aria-hidden="true"></i><span>Checking server…</span>
-          </span>
+          <div class="playground-status-group">
+            <span class="playground-status" id="playground-status">
+              <i aria-hidden="true"></i><span>Checking server…</span>
+            </span>
+            <span class="playground-status" id="lsp-status">
+              <i aria-hidden="true"></i><span>LSP off</span>
+            </span>
+          </div>
         </div>
 
         <div class="playground-grid">
@@ -64,6 +69,9 @@
                   <option value="directions">Directions &amp; flows</option>
                   <option value="ownership">Ownership &amp; regions</option>
                   <option value="tictactoe">Tic-tac-toe</option>
+                  <optgroup label="Language tooling">
+                    <option value="lsp_server">LSP server (Loi)</option>
+                  </optgroup>
                   <optgroup label="Raylib examples">
                     <option value="raylib_web">Raylib web demo</option>
                     <option value="text_editor">Simple text editor</option>
@@ -73,6 +81,7 @@
                 </select>
                 <button class="btn btn-small" type="button" data-action="check" title="Check without running (Shift+Ctrl+Enter)">Check</button>
                 <button class="btn btn-small" type="button" data-action="format" title="Format the program">Format</button>
+                <button class="btn btn-small" type="button" data-action="lsp" aria-pressed="true" title="Toggle live LSP diagnostics">LSP</button>
                 <button class="btn btn-primary btn-small" type="button" data-action="run" title="Build and run (Ctrl+Enter)">Run</button>
               </div>
             </div>
@@ -112,8 +121,27 @@ open flow main
               </div>
             </div>
             <div class="output-body">
-              <pre class="output-console" id="output" aria-live="polite"><span class="placeholder">Run a program to see compiler output and program stdout. Press Ctrl+Enter to run, Shift+Ctrl+Enter to check.</span></pre>
-              <div class="output-meta" id="output-meta"></div>
+              <div class="output-tabs" role="tablist" aria-label="Playground panels">
+                <button class="output-tab is-active" type="button" role="tab" aria-selected="true" data-output-tab="console">Console</button>
+                <button class="output-tab" type="button" role="tab" aria-selected="false" data-output-tab="problems">Problems <span class="problem-count" id="problem-count" hidden>0</span></button>
+                <button class="output-tab" type="button" role="tab" aria-selected="false" data-output-tab="preview">Preview</button>
+              </div>
+              <div class="output-view" data-output-view="console">
+                <pre class="output-console" id="output" aria-live="polite"><span class="placeholder">Run a program to see compiler output and program stdout. Press Ctrl+Enter to run, Shift+Ctrl+Enter to check.</span></pre>
+                <div class="output-meta" id="output-meta"></div>
+              </div>
+              <div class="output-view" data-output-view="problems" hidden>
+                <div class="problems-list" id="problems-list" aria-live="polite">
+                  <p class="placeholder">LSP diagnostics appear here as you type.</p>
+                </div>
+              </div>
+              <div class="output-view" data-output-view="preview" hidden>
+                <div class="preview-bar">
+                  <span id="preview-caption">Run a raylib or audio example to see it here.</span>
+                  <a class="btn btn-small" id="preview-open" href="#" target="_blank" rel="noopener noreferrer" hidden>Open in new tab</a>
+                </div>
+                <iframe class="preview-frame" id="preview-frame" title="WebAssembly program preview" hidden></iframe>
+              </div>
             </div>
           </div>
         </div>
@@ -124,9 +152,10 @@ open flow main
               <p class="section-kicker">Emscripten</p>
               <h2 id="web-demo-title">Raylib + WebAssembly, rodando aqui</h2>
               <p>
-                Três exemplos compilados com Emscripten. Clique uma vez no canvas se o navegador
-                pedir um gesto: isso libera o áudio. As demos de som tocam sozinhas, sem exigir
-                teclado. Para recompilar, veja <code>examples/build_web.sh</code>.
+                A galeria usa os mesmos builds WebAssembly que o botão Run abre na aba Preview.
+                Clique uma vez no canvas se o navegador pedir um gesto: isso libera o áudio.
+                Para recompilar com código novo, defina <code>RAYLIB_WEB</code> e rode
+                <code>examples/build_web.sh</code>.
               </p>
             </div>
             <div class="web-demo-actions">
@@ -147,10 +176,10 @@ open flow main
         </section>
 
         <p class="playground-hint">
-          Press <kbd>Ctrl</kbd> + <kbd>Enter</kbd> to run, <kbd>Shift</kbd> + <kbd>Ctrl</kbd> + <kbd>Enter</kbd>
-          to check, and <kbd>Tab</kbd> to indent. Programs are limited to 200 KB and execute on the
-          machine running the server, so run the server locally only. Start it with
-          <code>node website/server.mjs</code> after <code>cargo build</code>.
+          <kbd>Ctrl</kbd>+<kbd>Enter</kbd> roda, <kbd>Shift</kbd>+<kbd>Ctrl</kbd>+<kbd>Enter</kbd> checa,
+          <kbd>Tab</kbd> indenta. O LSP roda o servidor escrito em Loi e publica diagnósticos em
+          Problems. Programas rodam na máquina do servidor: use apenas localmente, com
+          <code>node website/server.mjs</code> após <code>cargo build</code>.
         </p>
       </div>
     </section>

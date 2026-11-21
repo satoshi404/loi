@@ -57,6 +57,8 @@ fn build_with_shim(dir: &Path, program: &Path) -> PathBuf {
         .arg(repo_root().join("lib").join("process_shim.c"))
         .arg("--c-source")
         .arg(repo_root().join("lib").join("os_shim.c"))
+        .arg("--c-source")
+        .arg(repo_root().join("lib").join("lsp_shim.c"))
         .output()
         .expect("loi build should run");
     assert!(
@@ -162,9 +164,24 @@ fn compiler_diagnostics(dir: &Path, source: &str) -> (PathBuf, String) {
     (source_path, String::from_utf8(output.stderr).unwrap())
 }
 
-fn did_open(uri: &str) -> String {
+fn json_string(text: &str) -> String {
+    text.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+}
+
+fn did_open(uri: &str, text: &str) -> String {
     format!(
-        r#"{{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{{"textDocument":{{"uri":"{uri}","languageId":"loi","version":1,"text":""}}}}}}"#
+        r#"{{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{{"textDocument":{{"uri":"{uri}","languageId":"loi","version":1,"text":"{}"}}}}}}"#,
+        json_string(text)
+    )
+}
+
+fn did_change(uri: &str, text: &str) -> String {
+    format!(
+        r#"{{"jsonrpc":"2.0","method":"textDocument/didChange","params":{{"textDocument":{{"uri":"{uri}","version":2}},"contentChanges":[{{"text":"{}"}}]}}}}"#,
+        json_string(text)
     )
 }
 
@@ -189,11 +206,16 @@ fn lsp_server_publishes_real_compiler_diagnostics() {
     let uri = format!("file://{}", dir.join("broken.loi").to_string_lossy());
 
     let mut input = frame(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#);
-    input.extend(frame(&did_open(&uri)));
+    input.extend(frame(&did_open(
+        &uri,
+        "flow main => i32 {\n    => missing\n}\n",
+    )));
 
     // Compiler spans are 1-based; LSP line and character are 0-based.
     let diagnostic = r#"{"range":{"start":{"line":1,"character":7},"end":{"line":1,"character":14}},"severity":1,"message":"unknown variable 'missing'"}"#;
-    let mut expected = frame(r#"{"jsonrpc":"2.0","id":1,"result":{"capabilities":{}}}"#);
+    let mut expected = frame(
+        r#"{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"publishDiagnosticsProvider":true}}}"#,
+    );
     expected.extend(frame(&published(&uri, diagnostic)));
 
     assert_server(&dir, &input, &expected);
@@ -213,8 +235,33 @@ fn lsp_server_clears_diagnostics_for_a_clean_document() {
     );
     let uri = format!("file://{}", dir.join("broken.loi").to_string_lossy());
 
-    let input = frame(&did_open(&uri));
+    let input = frame(&did_open(&uri, "flow main => i32 {\n    => 0\n}\n"));
     let expected = frame(&published(&uri, ""));
+    assert_server(&dir, &input, &expected);
+}
+
+#[test]
+fn lsp_server_uses_did_change_text_instead_of_the_on_disk_file() {
+    if !has_c_compiler() {
+        eprintln!(
+            "skipping lsp_server_uses_did_change_text_instead_of_the_on_disk_file: cc not found"
+        );
+        return;
+    }
+    let dir = test_dir("did-change");
+    let source_path = dir.join("document.loi");
+    fs::write(&source_path, "flow main => i32 {\n    => 0\n}\n")
+        .expect("source should be writable");
+    let uri = format!("file://{}", source_path.to_string_lossy());
+    let broken = "flow main => i32 {\n    => missing\n}\n";
+
+    let mut input = frame(&did_open(&uri, "flow main => i32 {\n    => 0\n}\n"));
+    input.extend(frame(&did_change(&uri, broken)));
+
+    let diagnostic = r#"{"range":{"start":{"line":1,"character":7},"end":{"line":1,"character":14}},"severity":1,"message":"unknown variable 'missing'"}"#;
+    let mut expected = frame(&published(&uri, ""));
+    expected.extend(frame(&published(&uri, diagnostic)));
+
     assert_server(&dir, &input, &expected);
 }
 

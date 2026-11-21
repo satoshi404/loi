@@ -4,14 +4,16 @@
 //   loi build examples/lsp_server.loi -o lsp_server \
 //       --c-source lib/stdio_shim.c \
 //       --c-source lib/process_shim.c \
-//       --c-source lib/os_shim.c
+//       --c-source lib/os_shim.c \
+//       --c-source lib/lsp_shim.c
 // A zero-length frame or EOF ends the loop.
 //
-// Diagnostics come from the real compiler: on `didOpen` / `didSave` the server
-// spawns `loi check <file> --error-format json` and publishes its stderr as
+// Diagnostics come from the real compiler: on `didOpen`, `didChange` and
+// `didSave` the server writes the client's text and spawns
+// `loi check <file> --error-format json`, publishing its stderr as
 // `textDocument/publishDiagnostics`. Set LOI_COMPILER to choose the compiler
 // binary (default: `loi`). The process is a guarded resource, so its captured
-// output is released on every exit path.
+// output is released on every exit path. Build with `lib/lsp_shim.c` as well.
 
 import "../lib/json.loi"
 import "../lib/jsonrpc.loi"
@@ -35,6 +37,41 @@ open flow document_path
     => uri
 }
 
+/// Return the document text carried by a `didOpen` / `didChange` notification.
+/// `didChange` uses the last element of `contentChanges`; the server advertises
+/// full-document synchronization, so that element holds the whole buffer.
+open flow document_text
+    <- doc: JsonDoc
+    <- params: i64
+    -> found: bool
+    => [u8]
+{
+    found = false
+    document <- json_object_get(<- doc, params, "textDocument")
+    if document >= 0 and json_kind(<- doc, document) == JsonKind.Object {
+        text <- json_object_get(<- doc, document, "text")
+        if text >= 0 and json_kind(<- doc, text) == JsonKind.String {
+            found = true
+            => json_string(<- doc, text)
+        }
+    }
+    changes <- json_object_get(<- doc, params, "contentChanges")
+    if changes >= 0 and json_kind(<- doc, changes) == JsonKind.Array {
+        count <- json_array_len(<- doc, changes)
+        if count > 0 {
+            change <- json_array_get(<- doc, changes, count - 1)
+            if json_kind(<- doc, change) == JsonKind.Object {
+                text <- json_object_get(<- doc, change, "text")
+                if text >= 0 and json_kind(<- doc, text) == JsonKind.String {
+                    found = true
+                    => json_string(<- doc, text)
+                }
+            }
+        }
+    }
+    => ""
+}
+
 /// Run the real compiler and publish its structured diagnostics for `uri`.
 open flow publish_diagnostics_for
     <- request: JsonRpcRequest
@@ -54,6 +91,12 @@ open flow publish_diagnostics_for
     }
     uri <- json_string(<- request.doc, uri_node)
     path <- document_path(uri)
+
+    mut has_text: bool
+    text <- document_text(<- request.doc, params, -> has_text)
+    if has_text {
+        lsp_write_document(path, text)
+    }
 
     mut compiler: [u8] <- os_env("LOI_COMPILER")
     if compiler.len == 0 {
@@ -80,7 +123,10 @@ open flow dispatch
     => bool
 {
     if str_eq(request.method, "initialize") {
-        jsonrpc_send_result(request.id, "{\"capabilities\":{}}")
+        jsonrpc_send_result(
+            request.id,
+            "{\"capabilities\":{\"textDocumentSync\":1,\"publishDiagnosticsProvider\":true}}"
+        )
         => true
     }
     if str_eq(request.method, "shutdown") {
@@ -91,6 +137,10 @@ open flow dispatch
         => false
     }
     if str_eq(request.method, "textDocument/didOpen") {
+        publish_diagnostics_for(request)
+        => true
+    }
+    if str_eq(request.method, "textDocument/didChange") {
         publish_diagnostics_for(request)
         => true
     }

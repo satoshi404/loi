@@ -53,8 +53,8 @@
           </div>
           <div class="hero-meta">
             <span><i></i> C11 backend</span>
-            <span><i></i> 163 automated tests</span>
-            <span><i></i> MIT OR Apache-2.0</span>
+            <span><i></i> 500+ automated tests</span>
+            <span><i></i> LSP + WebAssembly playground</span>
           </div>
         </div>
 
@@ -333,6 +333,59 @@ open flow main
     <section class="section">
       <div class="container">
         <div class="section-head reveal">
+          <p class="section-kicker">Playground</p>
+          <h2>Do código à janela, sem mudar de ferramenta.</h2>
+          <p class="section-sub">
+            O mesmo botão Run compila programas de console, abre renderização raylib e toca áudio.
+            Enquanto você edita, o servidor LSP escrito em Loi publica diagnósticos reais.
+          </p>
+        </div>
+
+        <div class="steps">
+          <article class="step">
+            <span class="n">01</span>
+            <h3>Escreva</h3>
+            <p>Escolha um exemplo ou comece do zero. O editor usa a sintaxe canônica Flow Syntax.</p>
+            <code>loi check main.loi</code>
+          </article>
+          <article class="step">
+            <span class="n">02</span>
+            <h3>Execute</h3>
+            <p>O servidor detecta o alvo: binário nativo no console ou WebAssembly no canvas.</p>
+            <code>loi build main.loi</code>
+          </article>
+          <article class="step">
+            <span class="n">03</span>
+            <h3>Diagnostique</h3>
+            <p>O LSP em Loi roda <code>loi check</code> e envia erros para o painel Problems.</p>
+            <code>textDocument/publishDiagnostics</code>
+          </article>
+        </div>
+
+        <div class="cmp-wrap">
+          <table class="cmp">
+            <thead><tr><th>Programa</th><th>No playground</th><th>Alvo</th></tr></thead>
+            <tbody>
+              <tr><td>Console / lib</td><td>Stdout no painel Console</td><td>C11 nativo</td></tr>
+              <tr><td>raylib / áudio</td><td>Janela WebAssembly na aba Preview</td><td>Emscripten + WebGL/WebAudio</td></tr>
+              <tr><td>Qualquer edição</td><td>Diagnósticos em Problems</td><td>LSP sobre stdio</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="fine">Sem emcc instalado, os exemplos WebAssembly pré-compilados são usados automaticamente.</p>
+
+        <div class="gallery">
+          <a class="g-card" href="playground.html"><b>Bolas com raylib</b><span>Clique para criar, setas para trocar a cor.</span><code>raylib_web.loi</code></a>
+          <a class="g-card" href="playground.html"><b>Síntese de som</b><span>Waveforms gerados por matemática em Loi.</span><code>sound_synth.loi</code></a>
+          <a class="g-card" href="playground.html"><b>Visualizador de áudio</b><span>Sequenciador inspirado no C3.</span><code>audio_visualizer.loi</code></a>
+          <a class="g-card" href="docs.html#stdlib"><b>LSP em Loi</b><span>JSON-RPC, diagnósticos e spawn de processos.</span><code>lsp_server.loi</code></a>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container">
+        <div class="section-head reveal">
           <p class="section-kicker">Explore</p>
           <h2>Documentation, examples and a real playground.</h2>
           <p class="section-sub">
@@ -382,7 +435,7 @@ open flow main
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 7-5 5 5 5M15 7l5 5-5 5"/></svg>
             </div>
             <h3>Playground</h3>
-            <p>Edit, check, format and execute Loi without leaving the browser.</p>
+            <p>Compile, execute e diagnostique Loi no navegador, incluindo raylib e áudio.</p>
           </a>
         </div>
       </div>

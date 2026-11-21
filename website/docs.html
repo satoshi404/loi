@@ -1179,8 +1179,8 @@ flow exchange
               </tr>
               <tr>
                 <td><code>lib/lsp.loi</code></td>
-                <td><code>lsp_publish_diagnostics</code></td>
-                <td><code>lib/stdio_shim.c</code> via <code>jsonrpc.loi</code>; needs <code>protect</code></td>
+                <td><code>lsp_publish_diagnostics</code>, <code>lsp_write_document</code></td>
+                <td><code>lib/stdio_shim.c</code> via <code>jsonrpc.loi</code>, plus <code>lib/lsp_shim.c</code>; needs <code>protect</code></td>
               </tr>
               <tr>
                 <td><code>lib/process.loi</code></td>
@@ -1818,23 +1818,38 @@ node website/server.mjs
 # open http://localhost:4173/playground.html</code></pre>
           </div>
           <p>
-            The server serves the static site and exposes <code>POST /api/run</code>,
-            <code>/api/check</code> and <code>/api/format</code>. Each request writes the program to a
-            temporary directory, copies <code>lib/std.loi</code> and
-            <code>vendor/raylib/raylib.loi</code> there so imports resolve, and runs the real
-            <code>loi</code> binary. Set <code>LOI_BIN</code> to use a specific compiler, and
-            <code>PORT</code>/<code>HOST</code> to change the listen address. It binds to
-            <code>127.0.0.1</code> by default; it is a development tool, not a public sandbox.
+            The server serves the static site and exposes <code>GET /api/health</code> plus
+            <code>POST /api/check</code>, <code>/api/format</code>, <code>/api/run</code>,
+            <code>/api/run-web</code> and <code>/api/lsp</code>. Every request writes the program
+            to a temporary directory, copies all <code>lib/*.loi</code> modules and the
+            browser-safe shims there, copies <code>vendor/raylib/raylib.loi</code> so imports
+            resolve, and runs the real <code>loi</code> binary. <code>process_shim.c</code> and
+            <code>lsp_shim.c</code> are reserved for the trusted server-side LSP session, so a
+            program typed in the browser cannot spawn processes or write arbitrary paths. Set
+            <code>LOI_BIN</code> to use a specific compiler, and <code>PORT</code>/<code>HOST</code>
+            to change the listen address. It binds to <code>127.0.0.1</code> by default; it is a
+            development tool, not a public sandbox.
           </p>
           <p>
-            The playground preset menu includes the raylib examples. Use <b>Check</b> or
-            <b>Format</b> on them in the browser; executing them needs a native raylib build and the
-            shims described above. Three of them also run below the editor as prebuilt WebAssembly
-            frames: bouncing balls, the math sound synth and the C3-inspired audio visualizer.
-            Select a tab or a preset to switch frames. Click or tap once inside a frame if the
-            browser asks for a gesture to unlock WebAudio; both audio demos then play on their own.
-            The frames are generated with <code>examples/build_web.sh</code> into
-            <code>website/web/</code>; reload a frame after rebuilding to pick up changes.
+            <b>Run</b> chooses the target from the program. Console programs keep using the
+            native C11 path and print to the Console panel. A program that imports raylib or uses
+            the audio shims opens a WebAssembly preview: with <code>RAYLIB_WEB</code> and
+            <code>emcc</code> available, the current source is compiled with
+            <code>examples/build_web.sh</code> into a temporary <code>website/web-runs/</code>
+            directory; otherwise the prebuilt frames in <code>website/web/</code> are shown and
+            the panel says which one is running. Click or tap once inside a frame if the browser
+            asks for a gesture to unlock WebAudio; both audio demos then play on their own.
+          </p>
+          <p>
+            The <b>LSP</b> panel drives <code>examples/lsp_server.loi</code> through real framed
+            stdio in short-lived batches: <code>initialize</code>, <code>didOpen</code>, optional
+            <code>didChange</code> notifications for each edit and <code>shutdown</code>. The
+            server writes the editor buffer to its document path, spawns
+            <code>loi check --error-format json</code> and answers with
+            <code>textDocument/publishDiagnostics</code>; those messages become the clickable
+            Problems list. The preset menu includes the LSP server itself for <b>Check</b> and
+            <b>Format</b>; its privileged shims are deliberately not linked into browser-submitted
+            programs.
           </p>
         </section>
 

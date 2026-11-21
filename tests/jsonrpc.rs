@@ -64,6 +64,8 @@ fn build_with_shim(dir: &Path, program: &Path) -> PathBuf {
         .arg(repo_root().join("lib").join("process_shim.c"))
         .arg("--c-source")
         .arg(repo_root().join("lib").join("os_shim.c"))
+        .arg("--c-source")
+        .arg(repo_root().join("lib").join("lsp_shim.c"))
         .output()
         .expect("loi build should run");
     assert!(
@@ -164,7 +166,9 @@ fn lsp_server_answers_initialize_and_shutdown() {
     input.extend(frame(
         r#"{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}"#,
     ));
-    let mut expected = frame(r#"{"jsonrpc":"2.0","id":1,"result":{"capabilities":{}}}"#);
+    let mut expected = frame(
+        r#"{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"publishDiagnosticsProvider":true}}}"#,
+    );
     expected.extend(frame(r#"{"jsonrpc":"2.0","id":2,"result":null}"#));
     assert_server(&test_dir("initialize-shutdown"), &input, &expected);
 }

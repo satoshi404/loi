@@ -766,3 +766,25 @@ diagnostic for an out-of-bounds index. Callbacks, `comptime`, shapes, marks,
 choices, opaque handles, globals and composites with slice elements still have
 no agreed ABI and remain rejected with an `LLVM backend does not support ...`
 diagnostic. C11 is still the production path and the semantic oracle.
+
+## Block L7 — playground and LSP integration
+
+### A document path received from JSON is not a `cstr`
+
+Attempted design: `didOpen` / `didChange` extract the document URI, strip
+`file://`, and pass the resulting `[u8]` directly to
+`file_open_write(path)` in `lib/os.loi`. A temporary probe with a `path: [u8]`
+parameter failed at check time with:
+
+```text
+probe.loi:6:34: argument 'path' has type [u8], expected cstr
+```
+
+`cstr` is an FFI-only, NUL-terminated type that a string literal may initialize,
+but Loi has no checked way to promise that a runtime slice is terminated. A
+pure-Loi conversion would need either a language rule for `slice as cstr` with
+proof of termination or an owned C-string type. Workaround for L7: add
+`lib/lsp_shim.c` with `loi_lsp_write_document(path, text)`, whose C implementation
+copies both slices into NUL-terminated buffers; `lib/lsp.loi` exposes the narrow
+`lsp_write_document` flow. The shim is linked only into the trusted server-side
+LSP build, not into browser-submitted playground programs.

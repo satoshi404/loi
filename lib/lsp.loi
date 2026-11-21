@@ -8,11 +8,30 @@
 //!
 //! Compiler spans are 1-based; LSP `line` and `character` are 0-based.
 //! Severity strings map as `error` -> 1, `warning` -> 2, `note` -> 3.
+//!
+//! `lsp_write_document` stores the text supplied by `didOpen` / `didChange`
+//! before the server checks it. Link `lib/lsp_shim.c` when using that flow.
 
 import "json.loi"
 import "jsonrpc.loi"
 import "std.loi"
 import "vec.loi"
+
+extern flow loi_lsp_write_document
+    <- path: [u8]
+    <- text: [u8]
+    => i64
+
+/// Write the current text of a document to `path`, so the compiler checks the
+/// client's buffer instead of whatever happens to be on disk. Returns false
+/// when the file cannot be created or written.
+open flow lsp_write_document
+    <- path: [u8]
+    <- text: [u8]
+    => bool
+{
+    => loi_lsp_write_document(path, text) >= 0
+}
 
 sealed flow lsp_zero_based
     <- value: i64
