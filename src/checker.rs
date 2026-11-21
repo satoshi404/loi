@@ -61,6 +61,30 @@ pub fn check(program: &Program) -> Vec<Diagnostic> {
     diagnostics
 }
 
+/// Check a program and also attach source-level warnings from that program.
+pub fn check_with_warnings(program: &Program) -> Vec<Diagnostic> {
+    check_with_warnings_from(program, program)
+}
+
+/// Check `program` and attach warnings from `warning_program`.
+///
+/// Warnings are computed from the unflattened AST of one source file, so their
+/// spans and names match the text the user wrote and imported modules cannot
+/// report warnings against the wrong file. They are intended for the CLI and
+/// editor tooling; `check` keeps returning errors only for embedders that rely
+/// on that shape.
+pub fn check_with_warnings_from(program: &Program, warning_program: &Program) -> Vec<Diagnostic> {
+    let errors = check(program);
+    // Do not pile style warnings on top of a program that already has errors:
+    // unused bindings in broken code are usually a consequence of the error.
+    if errors.iter().any(|diagnostic| diagnostic.is_error()) {
+        return errors;
+    }
+    let mut diagnostics = crate::lint::warnings(warning_program);
+    diagnostics.extend(errors);
+    diagnostics
+}
+
 /// Replace monomorphized identifiers in diagnostics with the spelling the user
 /// wrote. Generated C symbols stay mangled; only messages are rewritten.
 fn show_source_names(

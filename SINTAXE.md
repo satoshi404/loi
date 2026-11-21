@@ -1174,6 +1174,12 @@ with the JSON builder, so messages and the URI are escaped by `json_stringify`;
 empty or malformed input publishes an empty `diagnostics`
 array, clearing previous markers. It allocates, so callers need `protect`.
 
+A clean check can still print `warning` diagnostics for bindings that are never
+read. Their canonical messages are `unused variable 'name'`, `unused loop
+variable 'name'` and `unused guard binding 'name'`; `_` and parameters are
+quiet. Warnings do not change the exit status, so JSON output may contain a
+warning while `check` still exits 0.
+
 ### Process spawning
 
 `lib/process.loi` runs external programs and captures both output streams. It is

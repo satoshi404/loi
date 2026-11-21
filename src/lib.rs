@@ -9,6 +9,7 @@ pub mod diagnostic;
 pub mod format;
 pub mod ir;
 pub mod lexer;
+pub mod lint;
 pub mod llvm;
 pub mod modules;
 pub mod monomorphize;
@@ -19,7 +20,7 @@ pub mod types;
 
 pub use asm::{generate_asm, generate_asm_from_program};
 pub use ast::*;
-pub use checker::check;
+pub use checker::{check, check_with_warnings, check_with_warnings_from};
 pub use codegen::{
     CodegenError, generate_c, generate_c_subset, generate_header, generate_header_named,
     generate_ir,

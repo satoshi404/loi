@@ -815,8 +815,19 @@ server advertises full-document synchronization and the diagnostics provider in
 `initialize`. `os_env` reads the `LOI_COMPILER` setting used to locate the
 compiler. The server is shipped as a separate `loi-lsp` executable (like
 `clangd` beside `clang`); `cargo build` creates it next to `loi`, and its
-launcher caches the compiled Loi server on first use. Verification and examples
-live in `PROGRESS.md`.
+launcher caches the compiled Loi server on first use.
+
+The compiler also reports source-level warnings for bindings that are never
+read: local `<-` bindings, `for` variables and `guard` bindings. A `_` binding and
+parameters are deliberate and stay quiet. Warnings are computed from the
+original AST of the checked file, never from an imported module, so their spans
+and names are the ones the user wrote. They carry severity `warning` in
+`--error-format json` but do not make a program invalid: `check` and `build` exit
+non-zero for errors only. Warnings are suppressed when errors are present, so a
+broken program does not collect style notes about bindings left unused by the
+error. Embedders that want errors only can call `check`; the CLI and the LSP
+diagnostics path call `check_with_warnings_from`. Verification and examples live
+in `PROGRESS.md`.
 
 ### 5.7 Scalar and composite copy — confirmed (question 7), revised by Block A2
 

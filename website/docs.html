@@ -1341,7 +1341,9 @@ flow exchange
             <code>didSave</code>, only reads the file on disk. Compiler spans are
             1-based while LSP uses 0-based lines and characters, so both endpoints
             are decremented; severities <code>error</code>, <code>warning</code>
-            and <code>note</code> map to 1, 2 and 3. The notification is built
+            and <code>note</code> map to 1, 2 and 3. The server therefore also shows
+            warnings for unused bindings in the edited file; warnings from imported
+            modules are not attributed to the editor's document. The notification is built
             with the JSON builder, so the serializer escapes messages and URIs.
             Empty or malformed input publishes <code>diagnostics: []</code>,
             clearing stale markers. The
@@ -1804,12 +1806,17 @@ loi build main.loi helpers.loi -o app</code></pre>
           </p>
           <p>
             Diagnostics are printed to standard error. By default they use a human-readable
-            layout with the source line, labelled underlines and a final error count.
+            layout with the source line, labelled underlines and a final count.
             <code>--error-format=short</code> keeps the original
             <code>path:line:column: message</code> form, and <code>--error-format=json</code>
-            emits machine-readable objects. <code>check</code> and <code>build</code> exit
-            non-zero when any diagnostic is reported. The playground server requests
-            <code>short</code> output so browser logs stay free of ANSI escapes.
+            emits machine-readable objects with a <code>severity</code> field.
+            <code>check</code> and <code>build</code> exit non-zero for <em>errors</em> only:
+            warnings such as <code>unused variable 'mass'</code> are still printed but leave
+            the exit status at 0, and they are omitted when the program already has errors.
+            For example, <a href="examples/flow_syntax.loi">examples/flow_syntax.loi</a>
+            reports <code>unused variable 'mass'</code> because its result is written but
+            never read. The playground server requests <code>short</code> output so browser
+            logs stay free of ANSI escapes.
           </p>
 
           <h3>Diagnostic options</h3>

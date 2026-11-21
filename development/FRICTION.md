@@ -827,3 +827,29 @@ FNV fingerprint of those sources, and execs it with `LOI_COMPILER` pointing at
 the sibling compiler. The protocol, capabilities and shadow-file safety are
 unchanged; the playground prefers the binary when available and still falls
 back to compiling the example for compiler-only checkouts.
+
+## Block L8 — source-level warnings
+
+### Imported bindings were reported against the checked file
+
+Attempted design: run the unused-binding lint on the flattened `Program` passed
+to the checker, as `check_with_warnings` first did. Checking an empty main file
+that imports `lib/hash.loi`, `lib/json.loi`, `lib/jsonrpc.loi` and `lib/lsp.loi`
+produced, with the main file's path and line numbers:
+
+```text
+warning: unused loop variable 'i'
+  --> main.loi:53:5
+   |
+53 |
+   | ^^^
+```
+
+Those bindings belong to library flows; the single-file diagnostic renderer has
+no source text or path for them, so the warning pointed at unrelated lines of
+the file the user opened. The requirement is to lint the unflattened AST of the
+checked file only: imports are dependencies and their warnings need their own
+source and path to be actionable. `check_with_warnings_from` now checks the
+merged program for errors but takes warnings from the primary file's own AST,
+and tests assert that an unused loop variable in an import stays quiet while a
+warning in the checked file is still published with that file's path.

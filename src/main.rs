@@ -660,8 +660,13 @@ fn format_source(source: &str, path: &Path, diagnostics: DiagnosticOptions) {
 }
 
 fn check_source(source: &str, path: &Path, diagnostics: DiagnosticOptions) {
-    let program = load_program_with_imports(source, path, diagnostics);
-    report_diagnostics(path, source, &loi::check(&program), diagnostics);
+    let (program, primary) = load_program_with_imports(source, path, diagnostics);
+    report_diagnostics(
+        path,
+        source,
+        &loi::check_with_warnings_from(&program, &primary),
+        diagnostics,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -675,8 +680,9 @@ fn gen_source(
     emit_llvm_ir: Option<&Path>,
     diagnostics: DiagnosticOptions,
 ) {
-    let program = load_program_with_imports(source, path, diagnostics);
-    let c_source = generate_checked_program(&program, path, source, source_map, diagnostics);
+    let (program, primary) = load_program_with_imports(source, path, diagnostics);
+    let c_source =
+        generate_checked_program(&program, &primary, path, source, source_map, diagnostics);
     match output {
         Some(output) => {
             ensure_distinct_output(path, output);
@@ -851,8 +857,13 @@ fn build_llvm_source(
         reject("does not support '--c-source'");
     }
 
-    let program = load_program_with_imports(source, input_path, diagnostics);
-    report_diagnostics(input_path, source, &loi::check(&program), diagnostics);
+    let (program, primary) = load_program_with_imports(source, input_path, diagnostics);
+    report_diagnostics(
+        input_path,
+        source,
+        &loi::check_with_warnings_from(&program, &primary),
+        diagnostics,
+    );
     let ir = match loi::generate_llvm_ir(&program) {
         Ok(ir) => ir,
         Err(error) => {
@@ -934,9 +945,15 @@ fn build_source(
             }
         };
 
-        let program = load_program_with_imports(&source, input_path, diagnostics);
-        let c_source =
-            generate_checked_program(&program, input_path, &source, source_map, diagnostics);
+        let (program, primary) = load_program_with_imports(&source, input_path, diagnostics);
+        let c_source = generate_checked_program(
+            &program,
+            &primary,
+            input_path,
+            &source,
+            source_map,
+            diagnostics,
+        );
         let output_path = output
             .map(Path::to_path_buf)
             .unwrap_or_else(|| kind.default_output(input_path));
@@ -1137,10 +1154,18 @@ fn build_source(
         .find(|(input, _, _)| input == primary_path)
         .map(|(_, _, source)| source.as_str())
         .unwrap_or("");
+    let primary_id = registry
+        .by_path
+        .get(&canonical_key(primary_path))
+        .copied()
+        .unwrap_or(0);
+    let primary = loi::Program {
+        items: registry.modules[primary_id].items.clone(),
+    };
     report_diagnostics(
         primary_path,
         primary_source,
-        &loi::check(&merged),
+        &loi::check_with_warnings_from(&merged, &primary),
         diagnostics,
     );
 
@@ -1986,26 +2011,37 @@ fn resolve_and_flatten(
     (items, names)
 }
 
-/// Load a source file together with everything it imports.
+/// Load a source file together with everything it imports. The first program
+/// is the flattened unit the checker and backend consume; the second is the
+/// primary file's own AST, which is the only source lint warnings may quote.
 fn load_program_with_imports(
     source: &str,
     path: &Path,
     diagnostics: DiagnosticOptions,
-) -> loi::Program {
+) -> (loi::Program, loi::Program) {
     let mut registry = ModuleRegistry::default();
-    load_module(source, path, diagnostics, &mut registry, &mut Vec::new());
+    let primary_id = load_module(source, path, diagnostics, &mut registry, &mut Vec::new());
     let (items, _) = resolve_and_flatten(&registry, diagnostics);
-    loi::Program { items }
+    let primary = loi::Program {
+        items: registry.modules[primary_id].items.clone(),
+    };
+    (loi::Program { items }, primary)
 }
 
 fn generate_checked_program(
     program: &loi::Program,
+    primary: &loi::Program,
     path: &Path,
     source: &str,
     source_map_path: Option<&Path>,
     diagnostics: DiagnosticOptions,
 ) -> String {
-    report_diagnostics(path, source, &loi::check(program), diagnostics);
+    report_diagnostics(
+        path,
+        source,
+        &loi::check_with_warnings_from(program, primary),
+        diagnostics,
+    );
 
     match loi::generate_c(program, source_map_path) {
         Ok(c_source) => c_source,
@@ -2062,6 +2098,9 @@ fn report_diagnostics(
         return;
     }
 
+    // Warnings are still printed (the LSP reads stderr for structured
+    // diagnostics), but only errors make the compiler exit unsuccessfully.
+    let has_errors = diagnostics.iter().any(|diagnostic| diagnostic.is_error());
     let color = options.color.resolve();
     let rendered = loi::diagnostic::render_all(
         diagnostics,
@@ -2071,7 +2110,9 @@ fn report_diagnostics(
         color,
     );
     eprint!("{rendered}");
-    process::exit(1);
+    if has_errors {
+        process::exit(1);
+    }
 }
 
 fn temporary_c_path() -> PathBuf {

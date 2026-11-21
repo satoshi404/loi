@@ -1898,9 +1898,16 @@ fn lexer_errors_use_the_diagnostic_renderer() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-fn json_end_column(stderr: &str) -> usize {
+/// Read `end_column` from the JSON object whose start location matches
+/// `line`/`column`. Warnings may precede an error in the same output.
+fn json_end_column(stderr: &str, line: usize, column: usize) -> usize {
+    let wanted = format!("\"line\":{line},\"column\":{column}");
+    let entry = stderr
+        .lines()
+        .find(|entry| entry.contains(&wanted))
+        .unwrap_or_else(|| panic!("JSON should carry {wanted}: {stderr}"));
     let marker = "\"end_column\":";
-    let rest = stderr
+    let rest = entry
         .split(marker)
         .nth(1)
         .unwrap_or_else(|| panic!("JSON should carry end_column: {stderr}"));
@@ -1962,7 +1969,7 @@ fn json_ranges_match_human_underlines() {
             "{name}: unexpected JSON location: {json_stderr}"
         );
         assert_eq!(
-            json_end_column(&json_stderr),
+            json_end_column(&json_stderr, line, column),
             end_column,
             "{name}: JSON range should be exclusive: {json_stderr}"
         );

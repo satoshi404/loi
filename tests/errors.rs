@@ -147,7 +147,7 @@ fn every_example_checks_cleanly() {
         let output = Command::new(loi())
             .arg("check")
             .arg("--error-format")
-            .arg("short")
+            .arg("json")
             .arg("--color")
             .arg("never")
             .arg(relative)
@@ -161,11 +161,11 @@ fn every_example_checks_cleanly() {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+        let diagnostics = String::from_utf8_lossy(&output.stderr);
         assert!(
-            output.stderr.is_empty(),
-            "{} should not emit diagnostics:\n{}",
-            relative.display(),
-            String::from_utf8_lossy(&output.stderr)
+            !diagnostics.contains("\"severity\":\"error\""),
+            "{} should not emit errors:\n{diagnostics}",
+            relative.display()
         );
     }
 }
