@@ -4,8 +4,12 @@
 
 - **Phase:** 4 — the C11 backend is the production path. `loi gen` writes C,
   `loi build` compiles and links executables, objects and static libraries.
-- **Current task (2026-11-21, opt-in LLVM backend):** `loi gen FILE --emit-llvm-ir FILE.ll` emits real LLVM textual IR for the scalar subset and `loi build FILE --backend llvm -o program` compiles it with `clang`; C11 remains the default production backend. The emitter lives in a new `src/llvm.rs`, works from the checked/monomorphized AST and does not touch the `src/ir.rs` draft or `--emit-ir`. It uses opaque pointers, `ptr` GEPs, the same `loi_fn_*` C symbols, `printf("%s")`/`printf("%lld")` and a `snprintf`/`strtod`/`fputs` helper that matches C11 `print_float`. Supported: integer/float/bool scalars, calls and recursion, scalar `extern flow`, `if`/`while`/`for`, `break`/`continue`, compound assignment, short-circuit logic, print intrinsics and the math intrinsics. Other constructs fail with an `LLVM backend does not support ...` diagnostic. `build --backend llvm` is single-file, executable-only, rejects C-only options with exit 2, and `--emit-llvm-ir` is gen-only while `--backend` is build-only. Rules are in `LOI_SPEC.md` §6.2, canonical CLI/spelling in `SINTAXE.md` §14, rationale in `DECISIONS.md`, resolved friction in `FRICTION.md`, public docs in `website/docs.html`. `examples/llvm_scalars.loi` is the realistic program that builds with both backends.
-- **Verification for LLVM:** the seven tests in `tests/llvm.rs` failed 7/7 before the implementation with `unknown option '--emit-llvm-ir'` / `unknown option '--backend'`; an eighth parity test was added for the example. All eight pass now: textual IR validity through `clang -c`, C11/LLVM runtime parity (`10 55 2`), all five required rejection diagnostics, the CLI mode restrictions, and `factorial=120 squares=55 mean=2` from both backends for the example. A richer probe (recursion, `for`, compound assignment, floats, casts, short-circuit logic and scalar `extern flow` with a C shim) also printed identical output in C11 and LLVM. Final gate command:
+- **Current task (2026-11-21, LLVM slices and regions):** the opt-in LLVM backend now covers scalar-slice programs in addition to scalars. Slices lower to `%LoiSlice = type { ptr, i64 }`, matching C's `LoiSlice` ABI, with IR helpers for a bump arena, `loi_alloc_slice`, checked `loi_index`, byte-wise `loi_slice_eq`, `loi_view` and C-style runtime diagnostics. Supported slice forms: literals, `<- [T]` parameters, `len(x)` / `x.len`, indexing and index assignment, `alloc(-> x, T, n)`, `protect`, byte-slice `print` / `eprint` / `panic`, `view` and `==` / `!=`. Element types are restricted to statically sized scalars; composites, nested slices, callbacks, `guard` and `comptime` remain explicitly rejected. `print` now uses `fwrite` with the slice length instead of `printf("%s")`, and `stdout`/`stderr` are loaded from their C globals before use. `examples/llvm_slices.loi` builds with both backends and prints identical output. Rules are in `LOI_SPEC.md` §6.2, canonical CLI/spelling in `SINTAXE.md` §14, rationale in `DECISIONS.md`, resolved friction in `FRICTION.md`, public docs in `website/docs.html`.
+- **Verification for LLVM slices:** the two old rejection tests (`llvm_backend_rejects_protect_blocks`, `llvm_backend_rejects_slice_parameters`) were replaced with parity tests and failed before the implementation with `LLVM backend does not support slice types`; a new negative test still rejects shape slice elements. All nine tests in `tests/llvm.rs` pass now: `clang -c` validates the IR, C11 and LLVM agree on `sum=10 len=4 / arena=60 / Hi`, the runtime helpers are present, shape elements are rejected, and all CLI restrictions still hold. Outside the suite, probes confirmed equality, `view`, `eprint` and `panic` parity, including the exact `loi: slice index out of bounds at 5:15` diagnostic and exit status 1 from both backends. Final gate command:
+  `export PATH="/root/.cargo/bin:$PATH"; export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets && python3 tools/sync_examples.py --check && git diff --check`.
+  All five checks exited 0; `cargo test --all-targets` reported **496 passed, 0 failed** across 23 suites (was 495; the two old rejection tests became three tests, a net gain of one). The C11 backend and its ABI are unchanged. ASan was used only during debugging of the `FILE*` global load, not as a claimed gate.
+- **Previous task (2026-11-21, scalar LLVM backend):** `loi gen FILE --emit-llvm-ir FILE.ll` emits real LLVM textual IR for the scalar subset and `loi build FILE --backend llvm -o program` compiles it with `clang`; C11 remains the default production backend. The emitter lives in a new `src/llvm.rs`, works from the checked/monomorphized AST and does not touch the `src/ir.rs` draft or `--emit-ir`. It uses opaque pointers, `ptr` GEPs, the same `loi_fn_*` C symbols, `printf("%s")`/`printf("%lld")` and a `snprintf`/`strtod`/`fputs` helper that matches C11 `print_float`. Supported: integer/float/bool scalars, calls and recursion, scalar `extern flow`, `if`/`while`/`for`, `break`/`continue`, compound assignment, short-circuit logic, print intrinsics and the math intrinsics. Other constructs fail with an `LLVM backend does not support ...` diagnostic. `build --backend llvm` is single-file, executable-only, rejects C-only options with exit 2, and `--emit-llvm-ir` is gen-only while `--backend` is build-only. Rules are in `LOI_SPEC.md` §6.2, canonical CLI/spelling in `SINTAXE.md` §14, rationale in `DECISIONS.md`, resolved friction in `FRICTION.md`, public docs in `website/docs.html`. `examples/llvm_scalars.loi` is the realistic program that builds with both backends.
+- **Verification for the scalar LLVM backend:** the seven tests in `tests/llvm.rs` failed 7/7 before the implementation with `unknown option '--emit-llvm-ir'` / `unknown option '--backend'`; an eighth parity test was added for the example. All eight pass now: textual IR validity through `clang -c`, C11/LLVM runtime parity (`10 55 2`), all five required rejection diagnostics, the CLI mode restrictions, and `factorial=120 squares=55 mean=2` from both backends for the example. A richer probe (recursion, `for`, compound assignment, floats, casts, short-circuit logic and scalar `extern flow` with a C shim) also printed identical output in C11 and LLVM. Final gate command:
   `export PATH="/root/.cargo/bin:$PATH"; export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets && python3 tools/sync_examples.py --check && git diff --check`.
   All five checks exited 0; `cargo test --all-targets` reported **495 passed, 0 failed** across 23 suites (was 487; eight new LLVM tests). The C11 backend, its ABI and `--emit-ir` are unchanged, so `benchmark/run.py` remains not applicable. ASan execution is still not claimed in this PRoot container.
 - **Previous task (2026-11-20, typed C callbacks):** a callback type now carries
@@ -1132,9 +1136,10 @@ Remaining implementation or secondary choices:
   read-only use.
 - Finish or remove the IR/ASM drafts. Until then `--emit-ir` stays diagnostic
   and `--emit-asm` stays rejected.
-- Define an LLVM ABI for `protect` regions, slice headers and flow symbols
-  before extending the opt-in backend beyond scalars. C11 remains the
-  permanent semantic oracle; no language syntax is involved.
+- Define an LLVM ABI for composite and nested-slice elements, callback values
+  and `comptime` before extending the opt-in backend further. Scalar slices
+  and `protect` regions now have a C-compatible ABI; C11 remains the permanent
+  semantic oracle and no language syntax is involved.
 
 ## Next Steps
 
@@ -1164,10 +1169,10 @@ Remaining implementation or secondary choices:
     C symbols; unique names keep their ABI.
 12. Typed callbacks: done — `callback(T, ...) => R` infers a signature from an
     all-`<-` Loi flow and passes the symbol directly to C.
-13. Opt-in LLVM backend: done for the scalar subset, with `clang`-compiled IR
-    and C11 output parity. Next: the IR/ASM drafts and a defined LLVM ABI for
-    memory regions and composites; keep the C11 backend as the production
-    oracle.
+13. Opt-in LLVM backend: done for scalars and scalar slices with `clang`
+    compiled IR, C11 output/diagnostic parity and a C-compatible region ABI.
+    Next: the IR/ASM drafts and LLVM ABIs for composites, callbacks and
+    `comptime`; keep the C11 backend as the production oracle.
 14. Keep the docs in sync: `SINTAXE.md` is canonical, `website/docs.html`
     mirrors it, and `python3 tools/sync_examples.py --check` guards the example
     mirror.

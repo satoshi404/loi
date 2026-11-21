@@ -1045,8 +1045,8 @@ one or more generated headers without duplicate type definitions.
 
 ### LLVM IR (opt-in)
 
-The C11 backend remains the default and the production path. A scalar subset
-can additionally be emitted as real LLVM textual IR:
+The C11 backend remains the default and the production path. A scalar and
+slice subset can additionally be emitted as real LLVM textual IR:
 
 ```sh
 loi gen FILE --emit-llvm-ir FILE.ll
@@ -1056,20 +1056,25 @@ loi build FILE --backend llvm -o program
 `--backend` is build-only and accepts `c` (the default) or `llvm`. The LLVM
 path supports integer, floating-point and boolean scalars, flow calls,
 `if` / `while` / `for ... in ...`, compound assignment, short-circuit `and` /
-`or`, string literals in `print`, `print_int`, `print_float`, and the `sqrt`,
-`floor`, `ceil`, `fabs` and `pow` intrinsics. It emits opaque-pointer IR with
-the same C symbols as the C11 backend and links it with `clang`; a different
-compiler can be selected with `CC`.
+`or`, `print_int`, `print_float`, and the `sqrt`, `floor`, `ceil`, `fabs` and
+`pow` intrinsics. Slices use the C ABI layout `{ ptr, i64 }` (`void* data`,
+`size_t len`) and support slice literals, `<- [T]` parameters, `len`, `xs.len`,
+checked indexing and index assignment, `alloc(-> xs, T, n)` inside `protect`,
+byte-slice `print` / `eprint` / `panic`, `view`, and `==` / `!=` via byte-wise
+comparison. `protect` saves and restores the bump-arena top exactly as in C11.
+It emits opaque-pointer IR with the same C symbols as the C11 backend and links
+it with `clang`; a different compiler can be selected with `CC`.
 
 Everything outside that subset is rejected with an `LLVM backend does not
-support ...` diagnostic instead of being lowered incorrectly: `protect`,
-`guard`, slices, shapes, marks, choices, opaque handles, globals, callback
-values, `cstr`, `alloc`, `comptime`, `foreach`, indirect calls and the remaining
-intrinsics. `build --backend llvm` is limited to a single source file and an
-executable; it rejects `--emit obj|lib`, `--c-source`, `--emit-c`, `--emit-h`,
-`--emit-ir`, `--emit-llvm-ir`, `--arena-size` and `--source-map` with exit 2.
-`examples/llvm_scalars.loi` is a complete program that builds with both
-backends and prints the same output.
+support ...` diagnostic instead of being lowered incorrectly: `guard`, shapes,
+marks, choices, opaque handles, globals, callback values, `cstr`, `comptime`,
+`foreach`, indirect calls, field access other than `len`, and slices whose
+element is itself a slice or a user-defined composite. `build --backend llvm`
+is limited to a single source file and an executable; it rejects
+`--emit obj|lib`, `--c-source`, `--emit-c`, `--emit-h`, `--emit-ir`,
+`--emit-llvm-ir`, `--arena-size` and `--source-map` with exit 2.
+`examples/llvm_scalars.loi` and `examples/llvm_slices.loi` are complete programs
+that build with both backends and print the same output.
 
 ---
 

@@ -238,55 +238,137 @@ fn llvm_example_matches_the_c11_backend() {
 }
 
 #[test]
-fn llvm_backend_rejects_protect_blocks() {
-    let dir = test_dir("reject-protect");
-    let input = write_program(
-        &dir,
-        r#"open flow main
-    => i32
-{
-    protect {
-        print("inside\n")
-    }
-    => 0
-}
-"#,
-    );
+fn llvm_backend_emits_slice_runtime_helpers() {
+    let dir = test_dir("slice-ir");
+    let input = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .join("llvm_slices.loi");
+    let ir_path = dir.join("program.ll");
 
     let output = Command::new(loi())
         .arg("gen")
         .arg(&input)
         .arg("--emit-llvm-ir")
-        .arg(dir.join("program.ll"))
+        .arg(&ir_path)
         .output()
         .expect("loi should run");
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        output.status.success(),
+        "loi gen --emit-llvm-ir failed: {stderr}"
+    );
+
+    let ir = fs::read_to_string(&ir_path).expect("LLVM IR file should be written");
+    for expected in [
+        "%LoiSlice = type { ptr, i64 }",
+        "define %LoiSlice @loi_alloc_slice",
+        "define ptr @loi_index",
+        "define void @loi_runtime_fail",
+        "call i32 @fwrite",
+    ] {
+        assert!(ir.contains(expected), "missing '{expected}':\n{ir}");
+    }
+
+    // The emitted text must be real LLVM IR, not the draft pseudo-IR.
+    if has_tool("clang") {
+        let check = Command::new("clang")
+            .arg("-c")
+            .arg("-Wno-override-module")
+            .arg("-x")
+            .arg("ir")
+            .arg(&ir_path)
+            .arg("-o")
+            .arg(dir.join("probe.o"))
+            .output()
+            .expect("clang should run");
+        assert!(
+            check.status.success(),
+            "clang rejected the emitted IR: {}",
+            String::from_utf8_lossy(&check.stderr)
+        );
+    }
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn llvm_backend_matches_c11_for_slices_protect_and_alloc() {
+    if !has_tool("cc") || !has_tool("clang") {
+        eprintln!("skipping llvm_backend_matches_c11_for_slices_protect_and_alloc");
+        return;
+    }
+    let dir = test_dir("slice-parity");
+    let input = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .join("llvm_slices.loi");
+    let c_exe = dir.join("example_c");
+    let llvm_exe = dir.join("example_llvm");
+
+    let c_build = Command::new(loi())
+        .arg("build")
+        .arg(&input)
+        .arg("-o")
+        .arg(&c_exe)
+        .output()
+        .expect("loi should run");
+    assert!(
+        c_build.status.success(),
+        "C11 build failed: {}",
+        String::from_utf8_lossy(&c_build.stderr)
+    );
+    let llvm_build = Command::new(loi())
+        .arg("build")
+        .arg(&input)
+        .arg("--backend")
+        .arg("llvm")
+        .arg("-o")
+        .arg(&llvm_exe)
+        .output()
+        .expect("loi should run");
+    assert!(
+        llvm_build.status.success(),
+        "LLVM build failed: {}",
+        String::from_utf8_lossy(&llvm_build.stderr)
+    );
+
+    let c_run = Command::new(&c_exe)
+        .output()
+        .expect("C11 binary should run");
+    let llvm_run = Command::new(&llvm_exe)
+        .output()
+        .expect("LLVM binary should run");
     let _ = fs::remove_dir_all(&dir);
 
-    assert!(!output.status.success(), "protect must be rejected");
-    assert!(
-        stderr.contains("LLVM backend does not support 'protect'"),
-        "unexpected diagnostic: {stderr}"
+    assert_eq!(c_run.status.code(), Some(0));
+    assert_eq!(llvm_run.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&c_run.stdout),
+        "sum=10 len=4\narena=60\nHi\n"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&llvm_run.stdout),
+        String::from_utf8_lossy(&c_run.stdout),
+        "LLVM and C11 backends must agree on slices, protect and alloc"
     );
 }
 
 #[test]
-fn llvm_backend_rejects_slice_parameters() {
-    let dir = test_dir("reject-slice");
+fn llvm_backend_rejects_unsupported_slice_elements() {
+    let dir = test_dir("reject-slice-element");
     let input = write_program(
         &dir,
-        r#"flow first
-    <- xs: [i32]
+        r#"shape Point [ x: i32 ]
+
+flow first
+    <- xs: [Point]
     => i32
 {
-    => xs[0]
+    => 0
 }
 
 open flow main
     => i32
 {
-    xs: [i32] <- [i32: 7]
-    print_int(first(xs) as i64)
     => 0
 }
 "#,
@@ -302,9 +384,9 @@ open flow main
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     let _ = fs::remove_dir_all(&dir);
 
-    assert!(!output.status.success(), "slices must be rejected");
+    assert!(!output.status.success(), "shape slices must be rejected");
     assert!(
-        stderr.contains("LLVM backend does not support slice"),
+        stderr.contains("LLVM backend does not support shape types"),
         "unexpected diagnostic: {stderr}"
     );
 }

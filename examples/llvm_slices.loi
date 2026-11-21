@@ -1,0 +1,35 @@
+flow sum
+    <- xs: [i32]
+    => i32
+{
+    mut total: i32 <- 0
+    for i in 0..xs.len {
+        total += xs[i]
+    }
+    => total
+}
+
+open flow main
+    => i32
+{
+    xs: [i32] <- [i32: 1, 2, 3, 4]
+    print("sum=")
+    print_int(sum(xs) as i64)
+    print(" len=")
+    print_int(len(xs) as i64)
+    print("\n")
+    protect {
+        mut ys: [i32]
+        alloc(-> ys, i32, 3)
+        ys[0] = 10
+        ys[1] = 20
+        ys[2] = 30
+        print("arena=")
+        print_int(sum(ys) as i64)
+        print("\n")
+    }
+    bytes: [u8] <- [u8: 72, 105]
+    print(bytes)
+    print("\n")
+    => 0
+}

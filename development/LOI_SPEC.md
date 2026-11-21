@@ -990,7 +990,7 @@ The full Flow Syntax was chosen because it makes the three distinctive ideas —
 
 - [x] Code generation to C11 (first target), including a growable `protect` bump arena, checked arithmetic, runtime bounds checks, headers, source maps and multi-file builds
 - [x] Foreign C interop (`opaque`, `cstr`, `callback`, `extern flow`, shims) and the binding generator
-- [x] Opt-in LLVM backend for the scalar subset (§6.2); C11 stays the default production backend.
+- [x] Opt-in LLVM backend for the scalar and scalar-slice subset (§6.2); C11 stays the default production backend.
 - [ ] Later: x86-64. `src/ir.rs` and `src/asm.rs` are drafts; `--emit-ir` emits draft IR text, while `--emit-asm` is disabled with a clear CLI error until the assembly backend can generate runnable code.
 
 ### 6.1 Generated headers
@@ -1008,8 +1008,9 @@ inline` and are never declared in a header.
 ### 6.2 Opt-in LLVM backend
 
 The C11 backend is the production target. LLVM is an additional, opt-in target
-for the scalar subset; it does not replace or change C11 semantics. A program
-that builds with both must print the same values and return the same status.
+for the scalar and slice subset; it does not replace or change C11 semantics. A
+program that builds with both must print the same values, diagnostics and
+status.
 
 The LLVM emitter works from the checked, monomorphized AST in a module separate
 from `src/ir.rs`: that module is an unfinished draft whose text is not valid
@@ -1018,23 +1019,38 @@ C11 backend, so scalar `extern flow` declarations link against ordinary C
 objects. `clang` is used to assemble and link it; the target triple is left to
 the toolchain and the module is compiled with `-Wno-override-module`.
 
-Supported: signed and unsigned integers, `f32`/`f64`, `bool`, string literals
-passed directly to `print`, `print_int`, `print_float`, the math intrinsics
-`sqrt`/`floor`/`ceil`/`fabs`/`pow`, flow calls (including recursion and scalar
-`extern flow`), `if`/`else`, `while`, `for i in a..b`, `break`, `continue`,
-compound assignment and short-circuit `and`/`or`. Locals are lowered to
-`alloca`/`load`/`store`; control flow uses explicit `br` blocks.
+Supported: signed and unsigned integers, `f32`/`f64`, `bool`, string literals,
+`print_int`, `print_float`, the math intrinsics `sqrt`/`floor`/`ceil`/`fabs`/
+`pow`, flow calls (including recursion and scalar `extern flow`),
+`if`/`else`, `while`, `for i in a..b`, `break`, `continue`, compound assignment
+and short-circuit `and`/`or`. Locals are lowered to `alloca`/`load`/`store`;
+control flow uses explicit `br` blocks.
+
+Slices lower to the same C ABI as `LoiSlice`: the named LLVM type
+`%LoiSlice = type { ptr, i64 }` holds `void* data` and `size_t len`, so
+`extern flow` declarations and slice parameters keep C-compatible calling
+conventions. The emitter supplies IR helpers that mirror the C runtime:
+`loi_alloc` is a bump allocator, `loi_alloc_slice` checks the byte-count
+product, `loi_index` checks the upper bound, `loi_slice_eq` compares bytes and
+`loi_view` checks the view range. `protect` saves and restores the arena top.
+The supported slice expressions are slice literals, `<- [T]` parameters,
+`len(x)` / `x.len`, indexing and index assignment, `alloc(-> x, T, n)`,
+`view(x, a, b)`, byte-wise `print` / `eprint` / `panic` and `==` / `!=`.
+Element types are restricted to scalars with a static byte size; nested slices
+and composite elements are rejected.
 
 Every other construct is rejected before emission with an `LLVM backend does
-not support ...` diagnostic rather than lowered approximately: `protect`,
-`guard`, slices, shapes, marks, choices, opaque handles, globals, callback
-values, `cstr`, `alloc`, `comptime`, `foreach`, field access, indexing and the
+not support ...` diagnostic rather than lowered approximately: `guard`,
+shapes, marks, choices, opaque handles, globals, callback values, `cstr`,
+`comptime`, `foreach`, indirect calls, field access other than `len` and the
 remaining intrinsics. `build --backend llvm` is restricted to a single source
 file and an executable; C-only build options are rejected with exit 2. The
 canonical CLI spelling and the full rejection list are in `SINTAXE.md` §14;
-`examples/llvm_scalars.loi` is the reference program for both backends.
+`examples/llvm_scalars.loi` and `examples/llvm_slices.loi` are reference
+programs for both backends.
 
-**Status:** implemented for the scalar subset; C11 remains the default.
+**Status:** implemented for the scalar and scalar-slice subset; C11 remains the
+default and the semantic oracle.
 
 ---
 

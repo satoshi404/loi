@@ -493,14 +493,16 @@ code used by existing tooling. **Resolved:** a separate `src/llvm.rs` lowers the
 checked, monomorphized AST directly to textual IR with opaque pointers and the
 same C symbols; the C11 backend and `--emit-ir` are untouched.
 
-### Ownership features have no LLVM lowering yet
+### Ownership features need an agreed LLVM ABI
 
 A first attempt to route the whole language through the new emitter reached
-`protect`, borrowed slice views, callbacks and `comptime` values, none of which
-has an agreed LLVM representation. Approximately lowering them would silently
-change memory-safety semantics, so the emitter rejects those constructs before
-emission with an `LLVM backend does not support ...` diagnostic. The language
-requirement for broader LLVM support is a defined ABI for arena allocation,
-slice headers and flow symbols in that backend; C11 already provides one. Until
-then the opt-in target covers only the scalar subset and C11 remains production
-(`examples/llvm_scalars.loi` builds with both).
+`protect`, borrowed slice views, callbacks and `comptime` values without an
+agreed LLVM representation. **Resolved for regions and scalar slices:** the
+LLVM backend now uses `%LoiSlice = type { ptr, i64 }` to match C's `LoiSlice`
+ABI, supplies its own bump-arena and checked-index helpers, and lowers
+`protect` by saving and restoring the arena top. `examples/llvm_slices.loi`
+builds with both backends and prints identical output, including the runtime
+diagnostic for an out-of-bounds index. Callbacks, `comptime`, shapes, marks,
+choices, opaque handles, globals and composites with slice elements still have
+no agreed ABI and remain rejected with an `LLVM backend does not support ...`
+diagnostic. C11 is still the production path and the semantic oracle.
