@@ -903,6 +903,8 @@ Compiler intrinsics (always available, cannot be redeclared):
   trailing `\r`).
 - `read_file`, `read_stdin` and `read_line` allocate. Call them inside a
   `protect` block, and do not let their result escape that block.
+- `read_stdin()` reads until EOF. Framed protocols need `lib/stdio.loi`
+  instead, below.
 - `print_int` writes only the digits: no newline and no padding. It accepts any
   integer width and prints unsigned widths unsigned.
 - `print_float` writes the shortest decimal that round-trips to the same
@@ -944,13 +946,59 @@ print_float(0.1)
 print("\n")
 ```
 
+### Deterministic stdio byte I/O
+
+`lib/stdio.loi` is an explicit library for byte-oriented protocols. Import it
+and link `lib/stdio_shim.c`:
+
+```loi
+import "lib/stdio.loi"
+
+open flow echo_one_frame
+    => i32
+{
+    protect {
+        mut body: [u8]
+        alloc(-> body, u8, 5)
+        got <- stdio_read_exact(<-> body)
+        if got != 5 {
+            => 1
+        }
+        written <- stdio_write_all(body)
+        if written != got {
+            => 1
+        }
+        stdio_flush()
+    }
+    => 0
+}
+```
+
+```sh
+loi build main.loi -o main --c-source lib/stdio_shim.c
+```
+
+- `stdio_read_exact(<-> data) => i64` fills `data`, stopping when it is full, at
+  EOF, or on error. It returns the byte count, or `-1` on error. A short
+  non-negative result means EOF arrived before the buffer was full.
+- `stdio_write_all(<- data) => i64` writes all bytes to standard output and
+  returns the byte count, or `-1` on error.
+- `stdio_flush()` flushes standard output. Call it before waiting for the next
+  request, because C stdio buffers output when stdout is a pipe.
+
+All three flows use the same C `FILE*` streams as `print`, `printf` and
+`read_line`; do not mix them with the raw descriptors from `lib/os.loi` or
+`lib/net.loi` on the same stream. A realistic LSP-style frame echo is
+`examples/stdio_frames.loi`; `Content-Length: 0` is that demo's shutdown
+sentinel.
+
 ### Library modules
 
 Every library file is imported explicitly with the canonical `import` form.
 Each file is a module (§13); items may be named unqualified or as
 `module::item`. Library names keep their established prefixes (`math_*`,
 `ctype_*`, `vec_*`, `slice_*`, `str_*`, `option_*`, `result_*`, `hash_*`,
-`crc32_*`, `map_*`, `rng_*`, `os_*`, `net_*`) so their C symbols stay stable even
+`crc32_*`, `map_*`, `rng_*`, `os_*`, `net_*`, `stdio_*`) so their C symbols stay stable even
 when a user module declares the same name; module-qualified mangling applies only
 to names that actually repeat.
 
@@ -970,6 +1018,7 @@ to names that actually repeat.
 | `lib/random.loi` | `Rng`, `rng_new`, `rng_state`, `rng_next_u64`, `rng_next_u32`, `rng_below_u64`, `rng_pick<T>`, `rng_shuffle<T>`; a zero seed uses `RNG_FALLBACK_SEED` | no |
 | `lib/os.loi` | `os_pid`, `os_unix_time`, `os_sleep`, `os_has_env`, `os_env_i32`, `os_errno`, `os_exit` | `lib/os_shim.c` |
 | `lib/net.loi` | `NetIpv4Result`, `net_ipv4`, `net_ipv4_octet`, `net_port_is_valid`, `net_parse_ipv4`, `net_tcp_connect`, `net_close`, `net_send`, `net_recv` | `lib/net_shim.c` |
+| `lib/stdio.loi` | `stdio_read_exact`, `stdio_write_all`, `stdio_flush` | `lib/stdio_shim.c` |
 
 `lib/math.loi` and `lib/ctype.loi` are pure Loi: the math module uses generic
 flows and a `comptime flow` for factorials. Documented library flows and their

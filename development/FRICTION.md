@@ -480,6 +480,36 @@ that it matches. The backend emits one guarded typedef per signature and still
 passes the flow symbol directly. `examples/callback_signatures.loi` and
 `examples/callback_signatures_shim.c` show the complete pattern.
 
+## Block L1 — deterministic stdio byte I/O
+
+### `read_stdin()` waits for EOF
+
+The first LSP transport probe used `read_stdin()` for a `Content-Length` body.
+It blocked until the client closed stdin, so a request/response loop could never
+make progress with a live connection. `read_line()` reads headers incrementally,
+but there was no way to request exactly N body bytes. **Resolved by Block L1:**
+`lib/stdio.loi` exposes `stdio_read_exact(<-> data) => i64`, backed by repeated
+`fread` in `lib/stdio_shim.c`. It returns when the buffer is full, at EOF, or on
+error; a short non-negative count is an EOF signal the caller must handle.
+
+### stdout needed an explicit flush
+
+`printf` and `print` write through C stdio. When stdout is a pipe, output stays
+buffered, so a server can wait for the next request while its response is still
+in userspace. **Resolved by Block L1:** `stdio_write_all(<- data) => i64` writes
+all bytes and `stdio_flush()` calls `fflush(stdout)` before the next read. The
+frame-echo test keeps stdin open and uses a 10-second timeout to prove the loop
+does not depend on EOF.
+
+### Mixing raw descriptors with stdio would reorder output
+
+`lib/os.loi` and `lib/net.loi` use file descriptors and `read`/`write`, while the
+print intrinsics and the new stdio flows use `FILE*`. Buffering makes their order
+unpredictable on the same stream. The contract is therefore explicit: use the
+stdio flows for stdin/stdout, keep raw descriptors for files and sockets, and
+never mix the two APIs on one stream. `examples/stdio_frames.loi` shows the
+complete framing pattern; a zero-length frame is its shutdown sentinel.
+
 ## Opt-in LLVM backend
 
 ### The draft IR was not compilable LLVM IR

@@ -1,0 +1,89 @@
+// A single LSP-style frame echo written in Loi.
+// Build with: loi build examples/stdio_frames.loi -o stdio_frames --c-source lib/stdio_shim.c
+
+import "../lib/stdio.loi"
+
+open flow starts_with
+    <- text: [u8]
+    <- prefix: [u8]
+    => bool
+{
+    if text.len < prefix.len {
+        => false
+    }
+    for i in 0..prefix.len {
+        if text[i] != prefix[i] {
+            => false
+        }
+    }
+    => true
+}
+
+/// Parse the decimal value after `Content-Length: `. The real prefix is 16
+/// bytes: 7 + 1 + 6 + 1 + 1.
+open flow parse_length
+    <- line: [u8]
+    => u64
+{
+    mut value: u64 <- 0
+    mut index: u64 <- 16
+    while index < line.len {
+        byte <- line[index]
+        if byte < 48 or byte > 57 {
+            break
+        }
+        value = value * 10 + (byte - 48) as u64
+        index += 1
+    }
+    => value
+}
+
+/// Read one framed message and write the same frame back. Returns false at
+/// EOF, after a malformed header, or for a zero-length frame used as this
+/// demo's shutdown sentinel.
+open flow handle_one
+    => bool
+{
+    mut length: u64 <- 0
+    mut found: bool <- false
+    while true {
+        line <- read_line()
+        if line.len == 0 {
+            break
+        }
+        if starts_with(line, "Content-Length: ") {
+            length = parse_length(line)
+            found = true
+        }
+    }
+    if not found or length == 0 {
+        => false
+    }
+
+    mut body: [u8]
+    alloc(-> body, u8, length)
+    got <- stdio_read_exact(<-> body)
+    if got != length as i64 {
+        => false
+    }
+
+    printf("Content-Length: %llu\r\n\r\n", length)
+    written <- stdio_write_all(body)
+    if written != got {
+        => false
+    }
+    stdio_flush()
+    => true
+}
+
+open flow main
+    => i32
+{
+    mut running: bool <- true
+    while running {
+        protect {
+            running = handle_one()
+        }
+    }
+    => 0
+}

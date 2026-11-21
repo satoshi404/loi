@@ -67,7 +67,7 @@ fn build_and_run(name: &str, imports: &[&str], body: &str) -> Option<Output> {
     let executable = dir.join("program");
     let mut build = Command::new(loi());
     build.arg("build").arg(&program).arg("-o").arg(&executable);
-    for shim in ["os_shim.c", "net_shim.c"] {
+    for shim in ["os_shim.c", "net_shim.c", "stdio_shim.c"] {
         build
             .arg("--c-source")
             .arg(repo_root().join("lib").join(shim));
@@ -269,6 +269,7 @@ fn every_library_source_checks_cleanly() {
         "result.loi",
         "os.loi",
         "net.loi",
+        "stdio.loi",
     ] {
         let path = repo_root().join("lib").join(name);
         let output = check(&path);
@@ -286,7 +287,7 @@ fn library_shims_compile_as_strict_c11() {
         eprintln!("skipping library_shims_compile_as_strict_c11: cc not found");
         return;
     }
-    for name in ["os_shim.c", "net_shim.c"] {
+    for name in ["os_shim.c", "net_shim.c", "stdio_shim.c"] {
         let output = Command::new("cc")
             .args(["-std=c11", "-Wall", "-Wextra", "-fsyntax-only"])
             .arg(repo_root().join("lib").join(name))

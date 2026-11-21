@@ -897,9 +897,11 @@ flow exchange
             Whole-file and whole-stdin I/O is available through the <code>read_file</code>,
             <code>write_file</code>, <code>read_stdin</code> and <code>read_line</code>
             intrinsics. Long-lived resources use <code>guard</code> with a
-            convention-named <code>&lt;Shape&gt;_release</code> flow, but there is
-            no standard-library file/socket handle API yet. There is no network,
-            directory, seek, environment or process API.
+            convention-named <code>&lt;Shape&gt;_release</code> flow. The standard
+            library also provides linear <code>File</code> and <code>TcpStream</code>
+            handles, process/environment helpers, and <code>lib/stdio.loi</code>
+            for incremental byte I/O on framed protocols. There is still no
+            directory, seek or process-spawn API.
           </p>
         </section>
 
@@ -952,6 +954,8 @@ flow exchange
             rejected. Each value is cast to the C type its conversion reads.
             <code>read_file</code>, <code>read_stdin</code> and <code>read_line</code> allocate,
             so call them inside a <code>protect</code> block and do not let their result escape it.
+            <code>read_stdin</code> waits for EOF; use <code>lib/stdio.loi</code> when a
+            protocol needs exactly N bytes from a live pipe.
           </p>
 
           <div class="doc-code">
@@ -1135,6 +1139,12 @@ flow exchange
                   <code>tcp_stream_release</code></td>
                 <td><code>lib/net_shim.c</code></td>
               </tr>
+              <tr>
+                <td><code>lib/stdio.loi</code></td>
+                <td><code>stdio_read_exact</code>, <code>stdio_write_all</code>,
+                  <code>stdio_flush</code></td>
+                <td><code>lib/stdio_shim.c</code></td>
+              </tr>
             </tbody>
           </table>
 
@@ -1170,8 +1180,9 @@ flow exchange
             input, so a <code>protect</code> region is required when <code>T</code>
             or <code>E</code> contains slices. See
             <a href="examples/options_results.loi">examples/options_results.loi</a>.
-            Ordering flows still accept numeric <code>T</code> only because Loi has no
-            <code>Ord</code> bound. The arena
+            <code>vec_sort&lt;T&gt;</code> and <code>vec_binary_search&lt;T&gt;</code>
+            now declare <code>T: Clone + Ord</code>, so whole-shape and slice
+            ordering works. The arena
             keeps older growth blocks until <code>protect</code> ends, so
             pre-size with <code>vec_reserve&lt;T&gt;</code> when the final
             length is known to avoid repeated growth and its peak memory.
@@ -1210,7 +1221,16 @@ flow exchange
             their <code>open</code> release flows close the descriptors on every
             exit path. Read buffers passed with <code>&lt;-&gt;</code> must be
             owned by an active <code>protect</code> region. See
-            <code>examples/handles.loi</code>.</p>
+            <code>examples/handles.loi</code>. <code>lib/stdio.loi</code> is the
+            byte-I/O foundation for framed protocols such as LSP:
+            <code>stdio_read_exact(&lt;-&gt; data)</code> fills a caller-owned buffer
+            without waiting for EOF and returns the byte count (or <code>-1</code>
+            on error), <code>stdio_write_all(&lt;- data)</code> writes all bytes to
+            stdout, and <code>stdio_flush()</code> flushes before the next read.
+            These flows share C stdio with <code>print</code> and
+            <code>printf</code>; do not mix them with raw descriptors from the os
+            or net shims on the same stream. See
+            <a href="examples/stdio_frames.loi">examples/stdio_frames.loi</a>.</p>
 
           <div class="doc-code">
             <div class="doc-code-bar"><span>shims.loi</span><button type="button" data-copy>copy</button></div>
@@ -1234,6 +1254,11 @@ open flow main
           <div class="doc-code">
             <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
             <pre><code class="language-sh">loi build main.loi -o main --c-source lib/os_shim.c --c-source lib/net_shim.c</code></pre>
+          </div>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-sh">loi build examples/stdio_frames.loi -o stdio_frames --c-source lib/stdio_shim.c</code></pre>
           </div>
 
           <div class="doc-code">

@@ -1,0 +1,53 @@
+//! Deterministic byte I/O on the process's standard streams.
+//!
+//! Unlike `read_stdin()`, which waits for EOF, these helpers stop as soon as
+//! the requested number of bytes has been read. That makes them suitable for
+//! length-prefixed protocols such as LSP. All calls use the C stdio streams,
+//! so the same buffer backs `print`, `printf` and these flows.
+//!
+//! Import explicitly and compile the matching shim:
+//!
+//! ```loi
+//! import "lib/stdio.loi"
+//! ```
+//!
+//! ```sh
+//! loi build main.loi -o main --c-source lib/stdio_shim.c
+//! ```
+
+extern flow loi_stdio_read_exact
+    <-> data: [u8]
+    => i64
+
+extern flow loi_stdio_write_all
+    <- data: [u8]
+    => i64
+
+extern flow loi_stdio_flush
+
+/// Read into `data` until it is full, stdin reaches EOF, or an error occurs.
+/// Returns the number of bytes actually read, or -1 on error. A short non-
+/// negative result means EOF was reached before the buffer was full.
+open flow stdio_read_exact
+    <-> data: [u8]
+    => i64
+{
+    => loi_stdio_read_exact(<-> data)
+}
+
+/// Write every byte of `data` to stdout. Returns the byte count, or -1 on
+/// error. Keep the result and check it when partial output would corrupt a
+/// protocol stream.
+open flow stdio_write_all
+    <- data: [u8]
+    => i64
+{
+    => loi_stdio_write_all(data)
+}
+
+/// Flush stdout. Framed protocols need this before waiting for the next
+/// request: C stdio buffers output when stdout is a pipe.
+open flow stdio_flush
+{
+    loi_stdio_flush()
+}
