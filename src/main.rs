@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use loi::modules::{ModuleExport, ModuleView, ResolutionContext};
 use loi::{ColorChoice, ErrorFormat};
 
-const USAGE: &str = "usage:\n  loi <lex|parse|fmt|check> <file.loi>\n  loi gen <file.loi> [-o output.c] [--emit-h header.h] [--source-map map.json]\n  loi build <file.loi> [-o output] [--emit exe|obj|lib]\n                    [--debug|--release] [--rebuild] [--emit-c file.c] [--emit-h header.h]\n                    [--arena-size BYTES] [--source-map map.json] [--cc-flag FLAG]...\n                    [--c-source FILE]...\n  loi clean <file.loi> [-o output]\n\n'gen', 'build' and 'clean' accept -o/--output.\n'--emit', '--debug', '--release', '--rebuild', '--emit-c', '--emit-h', '--arena-size', '--source-map', '--cc-flag' and '--c-source'\nare only supported by 'build'. '--c-source' compiles an extra C file (a vendored\nFFI shim) and links it into an executable or library; it is rejected with '--emit obj'.\n'--emit-h' and '--source-map' are also supported by 'gen'.\nWith '--emit obj' the default output is '<input stem>.o'; with '--emit lib'\nit is 'lib<input stem>.a'; otherwise it is './a.out'.\n'build' invokes 'cc' and 'ar'; set 'CC'/'AR' to override them. Those values\nmay contain arguments, split like a POSIX shell command line ('...' quotes,\n\"...\" quotes and backslash escapes).\nWithout -o, 'clean' removes ./a.out, <input stem>.o and lib<input stem>.a\nwhen their .loi-stamp files exist; with -o it removes exactly that output\nand its stamp. Both forms also remove generated C retained for that output\nthrough 'build --emit-c'. It does not read or check the source.\n\noptions:\n  -h, --help     show this help\n  -V, --version  show the compiler version\n  -g, --debug    compile with debug info (-g)\n      --release  compile with optimizations (-O2)\n      --rebuild  force recompilation, ignoring the incremental stamp\n      --arena-size BYTES  set the protect arena size (default 67108864 = 64 MiB)\n      --source-map FILE  write source map JSON Lines to FILE\n      --error-format FMT  diagnostic format: human, short or json (default human)\n      --color WHEN   colorize diagnostics: auto, always or never (default auto)";
+const USAGE: &str = "usage:\n  loi <lex|parse|fmt|check> <file.loi>\n  loi gen <file.loi> [-o output.c] [--emit-h header.h] [--source-map map.json]\n                    [--emit-llvm-ir file.ll]\n  loi build <file.loi> [-o output] [--emit exe|obj|lib]\n                    [--debug|--release] [--rebuild] [--emit-c file.c] [--emit-h header.h]\n                    [--arena-size BYTES] [--source-map map.json] [--cc-flag FLAG]...\n                    [--c-source FILE]... [--backend c|llvm]\n  loi clean <file.loi> [-o output]\n\n'gen', 'build' and 'clean' accept -o/--output.\n'--emit', '--debug', '--release', '--rebuild', '--emit-c', '--emit-h', '--arena-size', '--source-map', '--cc-flag' and '--c-source'\nare only supported by 'build'. '--c-source' compiles an extra C file (a vendored\nFFI shim) and links it into an executable or library; it is rejected with '--emit obj'.\n'--emit-h', '--source-map' and '--emit-llvm-ir' are also supported by 'gen'.\n'--backend' selects the LLVM opt-in backend (C11 is the default); it supports\nonly single-file executables and rejects C-only build options.\nWith '--emit obj' the default output is '<input stem>.o'; with '--emit lib'\nit is 'lib<input stem>.a'; otherwise it is './a.out'.\n'build' invokes 'cc' and 'ar'; set 'CC'/'AR' to override them. Those values\nmay contain arguments, split like a POSIX shell command line ('...' quotes,\n\"...\" quotes and backslash escapes).\nWithout -o, 'clean' removes ./a.out, <input stem>.o and lib<input stem>.a\nwhen their .loi-stamp files exist; with -o it removes exactly that output\nand its stamp. Both forms also remove generated C retained for that output\nthrough 'build --emit-c'. It does not read or check the source.\n\noptions:\n  -h, --help     show this help\n  -V, --version  show the compiler version\n  -g, --debug    compile with debug info (-g)\n      --release  compile with optimizations (-O2)\n      --rebuild  force recompilation, ignoring the incremental stamp\n      --arena-size BYTES  set the protect arena size (default 67108864 = 64 MiB)\n      --source-map FILE  write source map JSON Lines to FILE\n      --error-format FMT  diagnostic format: human, short or json (default human)\n      --color WHEN   colorize diagnostics: auto, always or never (default auto)";
 
 fn main() {
     let options = Options::parse();
@@ -33,6 +33,11 @@ fn main() {
         color: options.color,
     };
 
+    if options.mode == "build" && options.backend.as_deref() == Some("llvm") {
+        build_llvm_source(&options, primary_path, &source, diagnostics);
+        return;
+    }
+
     match options.mode.as_str() {
         "lex" => lex(&source, primary_path, diagnostics),
         "parse" => parse_source(&source, primary_path, diagnostics),
@@ -45,6 +50,7 @@ fn main() {
             options.emit_h.as_deref(),
             options.source_map.as_deref(),
             options.emit_ir.as_deref(),
+            options.emit_llvm_ir.as_deref(),
             diagnostics,
         ),
         "build" => build_source(
@@ -240,6 +246,8 @@ struct Options {
     arena_size: Option<u64>,
     source_map: Option<PathBuf>,
     emit_ir: Option<PathBuf>,
+    emit_llvm_ir: Option<PathBuf>,
+    backend: Option<String>,
     cc_flags: Vec<String>,
     c_sources: Vec<PathBuf>,
     error_format: ErrorFormat,
@@ -278,6 +286,8 @@ impl Options {
         let mut arena_size = None;
         let mut source_map = None;
         let mut emit_ir = None;
+        let mut emit_llvm_ir = None;
+        let mut backend = None;
         let mut cc_flags = Vec::new();
         let mut c_sources = Vec::new();
         let mut error_format = ErrorFormat::Human;
@@ -386,6 +396,32 @@ impl Options {
                     };
                     if emit_ir.replace(PathBuf::from(value)).is_some() {
                         eprintln!("loi: IR output path specified more than once");
+                        process::exit(2);
+                    }
+                }
+                "--emit-llvm-ir" => {
+                    index += 1;
+                    let Some(value) = args.get(index) else {
+                        eprintln!("loi: '--emit-llvm-ir' requires a path");
+                        process::exit(2);
+                    };
+                    if emit_llvm_ir.replace(PathBuf::from(value)).is_some() {
+                        eprintln!("loi: LLVM IR output path specified more than once");
+                        process::exit(2);
+                    }
+                }
+                "--backend" => {
+                    index += 1;
+                    let Some(value) = args.get(index) else {
+                        eprintln!("loi: '--backend' requires 'c' or 'llvm'");
+                        process::exit(2);
+                    };
+                    if value != "c" && value != "llvm" {
+                        eprintln!("loi: unknown backend '{value}' (expected 'c' or 'llvm')");
+                        process::exit(2);
+                    }
+                    if backend.replace(value.clone()).is_some() {
+                        eprintln!("loi: backend specified more than once");
                         process::exit(2);
                     }
                 }
@@ -513,6 +549,14 @@ impl Options {
             eprintln!("loi: '--emit-ir' is only supported by 'gen' and 'build'");
             process::exit(2);
         }
+        if emit_llvm_ir.is_some() && mode != "gen" {
+            eprintln!("loi: '--emit-llvm-ir' is only supported by 'gen'");
+            process::exit(2);
+        }
+        if backend.is_some() && mode != "build" {
+            eprintln!("loi: '--backend' is only supported by 'build'");
+            process::exit(2);
+        }
         if source_map.is_some() && !matches!(mode.as_str(), "gen" | "build") {
             eprintln!("loi: '--source-map' is only supported by 'gen' and 'build'");
             process::exit(2);
@@ -545,6 +589,8 @@ impl Options {
             arena_size,
             source_map,
             emit_ir,
+            emit_llvm_ir,
+            backend,
             cc_flags,
             c_sources,
             error_format,
@@ -618,6 +664,7 @@ fn check_source(source: &str, path: &Path, diagnostics: DiagnosticOptions) {
     report_diagnostics(path, source, &loi::check(&program), diagnostics);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn gen_source(
     source: &str,
     path: &Path,
@@ -625,6 +672,7 @@ fn gen_source(
     emit_h: Option<&Path>,
     source_map: Option<&Path>,
     emit_ir: Option<&Path>,
+    emit_llvm_ir: Option<&Path>,
     diagnostics: DiagnosticOptions,
 ) {
     let program = load_program_with_imports(source, path, diagnostics);
@@ -656,6 +704,21 @@ fn gen_source(
     }
     if let Some(ir_path) = emit_ir {
         match loi::generate_ir(&program) {
+            Ok(ir) => {
+                if let Err(error) = fs::write(ir_path, ir) {
+                    eprintln!("loi: {}: {error}", ir_path.display());
+                    process::exit(1);
+                }
+            }
+            Err(error) => {
+                eprintln!("loi: {}: {error}", path.display());
+                process::exit(1);
+            }
+        }
+    }
+    if let Some(ir_path) = emit_llvm_ir {
+        ensure_distinct_output(path, ir_path);
+        match loi::generate_llvm_ir(&program) {
             Ok(ir) => {
                 if let Err(error) = fs::write(ir_path, ir) {
                     eprintln!("loi: {}: {error}", ir_path.display());
@@ -743,6 +806,89 @@ fn remove_build_artifact(path: &Path) {
             eprintln!("loi: {}: {error}", path.display());
             process::exit(1);
         }
+    }
+}
+
+/// Compile the scalar subset through textual LLVM IR. This path is opt-in:
+/// `build --backend llvm` stays separate from the C11 production pipeline and
+/// deliberately shares neither its incremental stamp nor its C-only options.
+fn build_llvm_source(
+    options: &Options,
+    input_path: &Path,
+    source: &str,
+    diagnostics: DiagnosticOptions,
+) {
+    let reject = |message: &str| -> ! {
+        eprintln!("loi: LLVM backend {message}");
+        process::exit(2);
+    };
+
+    if options.paths.len() != 1 {
+        reject("supports only a single input file");
+    }
+    if options.build_kind != BuildKind::Exe {
+        reject("supports only executable builds");
+    }
+    if options.emit_c.is_some() {
+        reject("does not support '--emit-c'");
+    }
+    if options.emit_h.is_some() {
+        reject("does not support '--emit-h'");
+    }
+    if options.emit_ir.is_some() {
+        reject("does not support '--emit-ir'");
+    }
+    if options.emit_llvm_ir.is_some() {
+        reject("does not support '--emit-llvm-ir'");
+    }
+    if options.arena_size.is_some() {
+        reject("does not support '--arena-size'");
+    }
+    if options.source_map.is_some() {
+        reject("does not support '--source-map'");
+    }
+    if !options.c_sources.is_empty() {
+        reject("does not support '--c-source'");
+    }
+
+    let program = load_program_with_imports(source, input_path, diagnostics);
+    report_diagnostics(input_path, source, &loi::check(&program), diagnostics);
+    let ir = match loi::generate_llvm_ir(&program) {
+        Ok(ir) => ir,
+        Err(error) => {
+            eprintln!("loi: {}: {error}", input_path.display());
+            process::exit(1);
+        }
+    };
+
+    let output_path = options
+        .output
+        .clone()
+        .unwrap_or_else(|| BuildKind::Exe.default_output(input_path));
+    ensure_distinct_output(input_path, &output_path);
+
+    let ir_path = temporary_path("ll");
+    if let Err(error) = fs::write(&ir_path, ir) {
+        eprintln!("loi: {}: {error}", ir_path.display());
+        process::exit(1);
+    }
+
+    let compiler = Tool::from_env("CC", "clang");
+    let mut command = compiler.command();
+    command.arg("-Wno-override-module");
+    if let Some(profile) = options.profile {
+        command.arg(profile.cc_flag());
+    }
+    command.arg("-x").arg("ir").arg(&ir_path);
+    command.arg("-o").arg(&output_path);
+    for flag in &options.cc_flags {
+        command.arg(flag);
+    }
+    command.arg("-lm");
+    let success = run_tool(&compiler, "LLVM compiler", &mut command);
+    let _ = fs::remove_file(&ir_path);
+    if !success {
+        process::exit(1);
     }
 }
 

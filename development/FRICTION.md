@@ -479,3 +479,28 @@ infers the signature from a non-extern, all-`<-` flow and the use site checks
 that it matches. The backend emits one guarded typedef per signature and still
 passes the flow symbol directly. `examples/callback_signatures.loi` and
 `examples/callback_signatures_shim.c` show the complete pattern.
+
+## Opt-in LLVM backend
+
+### The draft IR was not compilable LLVM IR
+
+`src/ir.rs` emits a textual draft with pseudo-instructions such as `ptr<T>`,
+`slice<T>`, `type{bits}`, `jump`, `condjump`, `imm`, `allocslice`, `indexslice`
+and `bitnot`. Feeding its output to `clang -x ir` fails at the first type, and
+`--emit-ir` has always been a debugging view rather than a second production
+backend. Turning it into real LLVM IR would have meant rewriting working draft
+code used by existing tooling. **Resolved:** a separate `src/llvm.rs` lowers the
+checked, monomorphized AST directly to textual IR with opaque pointers and the
+same C symbols; the C11 backend and `--emit-ir` are untouched.
+
+### Ownership features have no LLVM lowering yet
+
+A first attempt to route the whole language through the new emitter reached
+`protect`, borrowed slice views, callbacks and `comptime` values, none of which
+has an agreed LLVM representation. Approximately lowering them would silently
+change memory-safety semantics, so the emitter rejects those constructs before
+emission with an `LLVM backend does not support ...` diagnostic. The language
+requirement for broader LLVM support is a defined ABI for arena allocation,
+slice headers and flow symbols in that backend; C11 already provides one. Until
+then the opt-in target covers only the scalar subset and C11 remains production
+(`examples/llvm_scalars.loi` builds with both).

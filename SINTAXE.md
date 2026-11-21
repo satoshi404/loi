@@ -1043,6 +1043,34 @@ in the generated `.c` have external linkage; sealed flows stay internal and do
 not appear in headers. A generated `.c` can be linked with C code that includes
 one or more generated headers without duplicate type definitions.
 
+### LLVM IR (opt-in)
+
+The C11 backend remains the default and the production path. A scalar subset
+can additionally be emitted as real LLVM textual IR:
+
+```sh
+loi gen FILE --emit-llvm-ir FILE.ll
+loi build FILE --backend llvm -o program
+```
+
+`--backend` is build-only and accepts `c` (the default) or `llvm`. The LLVM
+path supports integer, floating-point and boolean scalars, flow calls,
+`if` / `while` / `for ... in ...`, compound assignment, short-circuit `and` /
+`or`, string literals in `print`, `print_int`, `print_float`, and the `sqrt`,
+`floor`, `ceil`, `fabs` and `pow` intrinsics. It emits opaque-pointer IR with
+the same C symbols as the C11 backend and links it with `clang`; a different
+compiler can be selected with `CC`.
+
+Everything outside that subset is rejected with an `LLVM backend does not
+support ...` diagnostic instead of being lowered incorrectly: `protect`,
+`guard`, slices, shapes, marks, choices, opaque handles, globals, callback
+values, `cstr`, `alloc`, `comptime`, `foreach`, indirect calls and the remaining
+intrinsics. `build --backend llvm` is limited to a single source file and an
+executable; it rejects `--emit obj|lib`, `--c-source`, `--emit-c`, `--emit-h`,
+`--emit-ir`, `--emit-llvm-ir`, `--arena-size` and `--source-map` with exit 2.
+`examples/llvm_scalars.loi` is a complete program that builds with both
+backends and prints the same output.
+
 ---
 
 ## 15. Foreign C interop (`opaque`, `cstr`, `extern flow`)

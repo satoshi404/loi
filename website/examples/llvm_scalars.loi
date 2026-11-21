@@ -1,0 +1,61 @@
+// The opt-in LLVM backend compiles the scalar subset of Loi: integer and
+// floating-point arithmetic, comparisons, calls, loops and the print
+// intrinsics. This example uses no slices, shapes, callbacks or protect
+// regions, so the same source builds with either backend:
+//
+//   loi build examples/llvm_scalars.loi -o llvm_scalars_c
+//   loi build examples/llvm_scalars.loi --backend llvm -o llvm_scalars_llvm
+//
+// The emitted IR can also be inspected directly:
+//
+//   loi gen examples/llvm_scalars.loi --emit-llvm-ir llvm_scalars.ll
+
+sealed flow factorial
+    <- n: i32
+    => i32
+{
+    if n <= 1 {
+        => 1
+    }
+    => n * factorial(n - 1)
+}
+
+sealed flow square
+    <- value: i32
+    => i32
+{
+    => value * value
+}
+
+sealed flow mean
+    <- left: f64
+    <- right: f64
+    => f64
+{
+    => (left + right) / 2
+}
+
+open flow main
+    => i32
+{
+    mut squares: i32 <- 0
+    for i in 1..6 {
+        squares += square(i)
+    }
+
+    mut fact: i32 <- factorial(5)
+    if fact == 120 and squares == 55 {
+        fact += 0
+    } else {
+        fact = -1
+    }
+
+    print("factorial=")
+    print_int(fact as i64)
+    print(" squares=")
+    print_int(squares as i64)
+    print(" mean=")
+    print_float(mean(1, 3))
+    print("\n")
+    => 0
+}

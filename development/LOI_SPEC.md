@@ -990,7 +990,8 @@ The full Flow Syntax was chosen because it makes the three distinctive ideas —
 
 - [x] Code generation to C11 (first target), including a growable `protect` bump arena, checked arithmetic, runtime bounds checks, headers, source maps and multi-file builds
 - [x] Foreign C interop (`opaque`, `cstr`, `callback`, `extern flow`, shims) and the binding generator
-- [ ] Later: x86-64 or LLVM. `src/ir.rs` and `src/asm.rs` are drafts; `--emit-ir` emits IR text, while `--emit-asm` is disabled with a clear CLI error until the assembly backend can generate runnable code.
+- [x] Opt-in LLVM backend for the scalar subset (§6.2); C11 stays the default production backend.
+- [ ] Later: x86-64. `src/ir.rs` and `src/asm.rs` are drafts; `--emit-ir` emits draft IR text, while `--emit-asm` is disabled with a clear CLI error until the assembly backend can generate runnable code.
 
 ### 6.1 Generated headers
 
@@ -1003,6 +1004,37 @@ output file name, and prototypes are wrapped in `extern "C"` for C++ callers.
 Generated C uses the same guarded type definitions. Flows whose prototypes are
 exported have external definitions in the `.c`; sealed flows remain `static
 inline` and are never declared in a header.
+
+### 6.2 Opt-in LLVM backend
+
+The C11 backend is the production target. LLVM is an additional, opt-in target
+for the scalar subset; it does not replace or change C11 semantics. A program
+that builds with both must print the same values and return the same status.
+
+The LLVM emitter works from the checked, monomorphized AST in a module separate
+from `src/ir.rs`: that module is an unfinished draft whose text is not valid
+LLVM IR. Generated IR uses opaque pointers and the same C symbol names as the
+C11 backend, so scalar `extern flow` declarations link against ordinary C
+objects. `clang` is used to assemble and link it; the target triple is left to
+the toolchain and the module is compiled with `-Wno-override-module`.
+
+Supported: signed and unsigned integers, `f32`/`f64`, `bool`, string literals
+passed directly to `print`, `print_int`, `print_float`, the math intrinsics
+`sqrt`/`floor`/`ceil`/`fabs`/`pow`, flow calls (including recursion and scalar
+`extern flow`), `if`/`else`, `while`, `for i in a..b`, `break`, `continue`,
+compound assignment and short-circuit `and`/`or`. Locals are lowered to
+`alloca`/`load`/`store`; control flow uses explicit `br` blocks.
+
+Every other construct is rejected before emission with an `LLVM backend does
+not support ...` diagnostic rather than lowered approximately: `protect`,
+`guard`, slices, shapes, marks, choices, opaque handles, globals, callback
+values, `cstr`, `alloc`, `comptime`, `foreach`, field access, indexing and the
+remaining intrinsics. `build --backend llvm` is restricted to a single source
+file and an executable; C-only build options are rejected with exit 2. The
+canonical CLI spelling and the full rejection list are in `SINTAXE.md` §14;
+`examples/llvm_scalars.loi` is the reference program for both backends.
+
+**Status:** implemented for the scalar subset; C11 remains the default.
 
 ---
 
