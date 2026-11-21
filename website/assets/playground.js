@@ -151,44 +151,12 @@ open flow main
     },
   };
 
-  const WEB_DEMOS = {
-    raylib_web: {
-      caption:
-        "<b>Bolas:</b> clique cria uma bola, ESPAÇO pausa, R reinicia, setas trocam a cor.",
-    },
-    sound_synth: {
-      caption:
-        "<b>Som:</b> toca automaticamente; 1 a 4 trocam a onda, cima/baixo mudam a frequência, ESC sai.",
-    },
-    audio_visualizer: {
-      caption:
-        "<b>Visualizador:</b> sequenciador de 16 passos; a música e as barras/círculos/onda reagem ao áudio.",
-    },
-  };
-
   let busy = false;
   let lspEnabled = true;
   let lspBusy = false;
   let lspDirty = false;
   let lspTimer = null;
   let diagnostics = [];
-
-  function showWebDemo(name) {
-    const demo = WEB_DEMOS[name];
-    if (!demo) return;
-    const open = document.getElementById("web-demo-open");
-    const caption = document.getElementById("web-demo-caption");
-    document.querySelectorAll("[data-web-frame]").forEach((frame) => {
-      frame.hidden = frame.getAttribute("data-web-frame") !== name;
-    });
-    document.querySelectorAll("[data-web-demo]").forEach((tab) => {
-      const active = tab.getAttribute("data-web-demo") === name;
-      tab.classList.toggle("is-active", active);
-      tab.setAttribute("aria-selected", active ? "true" : "false");
-    });
-    if (open) open.href = `web/${name}.html`;
-    if (caption) caption.innerHTML = demo.caption;
-  }
 
   function renderEditor() {
     const source = editor.value;
@@ -488,7 +456,6 @@ open flow main
     }
     localStorage.setItem(STORAGE_KEY, editor.value);
     renderEditor();
-    if (WEB_DEMOS[name]) showWebDemo(name);
     showOutput(item.note || "Loaded preset. Press Run to compile and execute it.");
     if (meta) meta.textContent = "";
     scheduleLsp();
@@ -548,9 +515,6 @@ open flow main
   if (preset) {
     preset.addEventListener("change", () => loadPreset(preset.value));
   }
-  document.querySelectorAll("[data-web-demo]").forEach((tab) => {
-    tab.addEventListener("click", () => showWebDemo(tab.getAttribute("data-web-demo")));
-  });
   if (runButton) runButton.addEventListener("click", () => run("run"));
   if (checkButton) checkButton.addEventListener("click", () => run("check"));
   if (formatButton) formatButton.addEventListener("click", () => run("format"));

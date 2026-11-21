@@ -187,8 +187,11 @@ open flow main
         mut samples: [f32]
         alloc(-> samples, f32, FRAMES_PER_TICK)
         while not WindowShouldClose() {
+            // Always advance the synthesizer so the bars and the wave are alive
+            // even before the browser unlocks AudioContext. Only the feed waits
+            // for the gesture: browsers start every context suspended.
+            generate_audio(-> samples)
             if loi_audio_ready() {
-                generate_audio(-> samples)
                 loi_audio_feed(samples, SAMPLE_RATE)
             }
             sw <- GetRenderWidth()

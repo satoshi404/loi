@@ -2,6 +2,7 @@
 // the real LSP server; no browser or npm dependencies are required.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -111,6 +112,36 @@ test("browser-submitted programs cannot link the process shim", async () => {
   });
   assert.equal(result.ok, false);
   assert.doesNotMatch(result.stderr, /should-not-run/);
+});
+
+test("playground has one WebAssembly preview and no duplicated gallery", async () => {
+  const response = await fetch(`${base}/playground.html`);
+  const html = await response.text();
+  assert.doesNotMatch(html, /web-demo|Emscripten|galeria/i);
+  assert.match(html, /id="preview-frame"[^>]*allow="autoplay"/);
+});
+
+test("audio visualizer keeps its animation alive before the audio unlock", async () => {
+  const source = await readFile(path.join(projectDir, "examples", "audio_visualizer.loi"), "utf8");
+  const generate = source.indexOf("generate_audio(-> samples)");
+  const ready = source.indexOf("if loi_audio_ready()");
+  assert.ok(
+    generate >= 0 && ready >= 0 && generate < ready,
+    "generate_audio must run while the AudioContext is still suspended"
+  );
+  const mirror = await readFile(
+    path.join(projectDir, "website", "examples", "audio_visualizer.loi"),
+    "utf8"
+  );
+  assert.equal(mirror, source);
+});
+
+test("audio visualizer preview carries the unlock hint", async () => {
+  const response = await fetch(`${base}/web/audio_visualizer.html`);
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /audio_visualizer\.loader\.js/);
+  assert.match(html, /liberar o audio/);
 });
 
 test("LSP endpoint publishes diagnostics from the real compiler", async () => {

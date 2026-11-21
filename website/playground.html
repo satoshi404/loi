@@ -140,40 +140,11 @@ open flow main
                   <span id="preview-caption">Run a raylib or audio example to see it here.</span>
                   <a class="btn btn-small" id="preview-open" href="#" target="_blank" rel="noopener noreferrer" hidden>Open in new tab</a>
                 </div>
-                <iframe class="preview-frame" id="preview-frame" title="WebAssembly program preview" hidden></iframe>
+                <iframe class="preview-frame" id="preview-frame" title="WebAssembly program preview" allow="autoplay" hidden></iframe>
               </div>
             </div>
           </div>
         </div>
-
-        <section class="web-demo" aria-labelledby="web-demo-title">
-          <div class="web-demo-head">
-            <div>
-              <p class="section-kicker">Emscripten</p>
-              <h2 id="web-demo-title">Raylib + WebAssembly, rodando aqui</h2>
-              <p>
-                A galeria usa os mesmos builds WebAssembly que o botão Run abre na aba Preview.
-                Clique uma vez no canvas se o navegador pedir um gesto: isso libera o áudio.
-                Para recompilar com código novo, defina <code>RAYLIB_WEB</code> e rode
-                <code>examples/build_web.sh</code>.
-              </p>
-            </div>
-            <div class="web-demo-actions">
-              <div class="web-demo-tabs" role="tablist" aria-label="WebAssembly demo">
-                <button type="button" class="web-demo-tab is-active" role="tab" aria-selected="true" data-web-demo="raylib_web">Bolas</button>
-                <button type="button" class="web-demo-tab" role="tab" aria-selected="false" data-web-demo="sound_synth">Síntese de som</button>
-                <button type="button" class="web-demo-tab" role="tab" aria-selected="false" data-web-demo="audio_visualizer">Visualizador</button>
-              </div>
-              <a class="btn btn-small" id="web-demo-open" href="web/raylib_web.html" target="_blank" rel="noopener noreferrer">Open in new tab</a>
-            </div>
-          </div>
-          <iframe class="web-demo-frame" data-web-frame="raylib_web" src="web/raylib_web.html" title="Raylib bouncing balls WebAssembly demo" loading="lazy"></iframe>
-          <iframe class="web-demo-frame" data-web-frame="sound_synth" src="web/sound_synth.html" title="Loi math sound synthesis WebAssembly demo" loading="lazy" hidden></iframe>
-          <iframe class="web-demo-frame" data-web-frame="audio_visualizer" src="web/audio_visualizer.html" title="Loi C3-inspired audio visualizer WebAssembly demo" loading="lazy" hidden></iframe>
-          <p class="web-demo-caption" id="web-demo-caption">
-            <b>Bolas:</b> clique cria uma bola, ESPAÇO pausa, R reinicia, setas trocam a cor.
-          </p>
-        </section>
 
         <p class="playground-hint">
           <kbd>Ctrl</kbd>+<kbd>Enter</kbd> roda, <kbd>Shift</kbd>+<kbd>Ctrl</kbd>+<kbd>Enter</kbd> checa,
