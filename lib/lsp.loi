@@ -1,4 +1,4 @@
-//! LSP diagnostics bridge written in pure Loi.
+//! LSP diagnostics formatter written in pure Loi.
 //!
 //! The compiler emits structured diagnostics with
 //! `loi check FILE --error-format json`. A server using this module can spawn
@@ -14,83 +14,6 @@ import "jsonrpc.loi"
 import "std.loi"
 import "vec.loi"
 
-sealed flow lsp_append_bytes
-    <-> out: Vec<u8>
-    <- bytes: [u8]
-{
-    for i in 0..bytes.len {
-        vec_push<u8>(<-> out, bytes[i])
-    }
-}
-
-sealed flow lsp_hex_digit
-    <- value: u8
-    => u8
-{
-    if value < 10 {
-        => value + 48
-    }
-    => value - 10 + 97
-}
-
-/// Append `text` as a JSON string body, without the surrounding quotes.
-sealed flow lsp_json_escape
-    <- text: [u8]
-    -> out: Vec<u8>
-{
-    vec_new<u8>(-> out)
-    for i in 0..text.len {
-        byte <- text[i]
-        if byte == 34 {
-            vec_push<u8>(<-> out, 92)
-            vec_push<u8>(<-> out, 34)
-        } else if byte == 92 {
-            vec_push<u8>(<-> out, 92)
-            vec_push<u8>(<-> out, 92)
-        } else if byte == 10 {
-            vec_push<u8>(<-> out, 92)
-            vec_push<u8>(<-> out, 110)
-        } else if byte == 13 {
-            vec_push<u8>(<-> out, 92)
-            vec_push<u8>(<-> out, 114)
-        } else if byte == 9 {
-            vec_push<u8>(<-> out, 92)
-            vec_push<u8>(<-> out, 116)
-        } else if byte < 32 {
-            vec_push<u8>(<-> out, 92)
-            vec_push<u8>(<-> out, 117)
-            vec_push<u8>(<-> out, 48)
-            vec_push<u8>(<-> out, 48)
-            vec_push<u8>(<-> out, lsp_hex_digit(byte / 16))
-            vec_push<u8>(<-> out, lsp_hex_digit(byte % 16))
-        } else {
-            vec_push<u8>(<-> out, byte)
-        }
-    }
-}
-
-sealed flow lsp_append_u64
-    <-> out: Vec<u8>
-    <- value: u64
-{
-    if value == 0 {
-        vec_push<u8>(<-> out, 48)
-        =>
-    }
-    mut digits: Vec<u8>
-    vec_new<u8>(-> digits)
-    mut rest: u64 <- value
-    while rest > 0 {
-        vec_push<u8>(<-> digits, (rest % 10) as u8 + 48)
-        rest = rest / 10
-    }
-    mut index: u64 <- digits.len
-    while index > 0 {
-        index -= 1
-        vec_push<u8>(<-> out, vec_get<u8>(<- digits, index))
-    }
-}
-
 sealed flow lsp_zero_based
     <- value: i64
     => u64
@@ -102,9 +25,15 @@ sealed flow lsp_zero_based
 }
 
 sealed flow lsp_severity
-    <- text: [u8]
+    <- doc: JsonDoc
+    <- item: i64
     => u64
 {
+    node <- json_object_get(<- doc, item, "severity")
+    if node < 0 or json_kind(<- doc, node) != JsonKind.String {
+        => 1
+    }
+    text <- json_string(<- doc, node)
     if str_eq(text, "warning") {
         => 2
     }
@@ -125,18 +54,6 @@ sealed flow lsp_number
     => json_number_i64(<- doc, node)
 }
 
-sealed flow lsp_string
-    <- doc: JsonDoc
-    <- node: i64
-    -> out: Vec<u8>
-{
-    vec_new<u8>(-> out)
-    if node < 0 or json_kind(<- doc, node) != JsonKind.String {
-        =>
-    }
-    lsp_json_escape(json_string(<- doc, node), -> out)
-}
-
 /// Publish one compiler JSON document as an LSP notification. Empty or
 /// malformed input publishes an empty diagnostics array, which clears any
 /// previous markers for the URI. Requires the caller's `protect` region.
@@ -144,52 +61,51 @@ open flow lsp_publish_diagnostics
     <- uri: [u8]
     <- diagnostics_json: [u8]
 {
-    mut escaped_uri: Vec<u8>
-    lsp_json_escape(uri, -> escaped_uri)
-
-    mut params: Vec<u8>
-    vec_new<u8>(-> params)
-    lsp_append_bytes(<-> params, "{\"uri\":\"")
-    lsp_append_bytes(<-> params, vec_view<u8>(<- escaped_uri, 0, escaped_uri.len))
-    lsp_append_bytes(<-> params, "\",\"diagnostics\":[")
+    mut out: JsonDoc
+    json_new(-> out)
+    params <- json_new_object(<-> out)
+    uri_node <- json_new_string(<-> out, uri)
+    json_object_set(<-> out, params, "uri", uri_node)
+    array <- json_new_array(<-> out)
+    json_object_set(<-> out, params, "diagnostics", array)
 
     mut doc: JsonDoc
     ok <- json_parse(diagnostics_json, -> doc)
     if ok {
         root <- json_root(<- doc)
         count <- json_array_len(<- doc, root)
-        if count > 0 {
-            for i in 0..count {
-                if i > 0 {
-                    vec_push<u8>(<-> params, 44)
-                }
-                item <- json_array_get(<- doc, root, i)
+        for i in 0..count {
+            item <- json_array_get(<- doc, root, i)
 
-                lsp_append_bytes(<-> params, "{\"range\":{\"start\":{\"line\":")
-                lsp_append_u64(<-> params, lsp_zero_based(lsp_number(<- doc, json_object_get(<- doc, item, "line"))))
-                lsp_append_bytes(<-> params, ",\"character\":")
-                lsp_append_u64(<-> params, lsp_zero_based(lsp_number(<- doc, json_object_get(<- doc, item, "column"))))
-                lsp_append_bytes(<-> params, "},\"end\":{\"line\":")
-                lsp_append_u64(<-> params, lsp_zero_based(lsp_number(<- doc, json_object_get(<- doc, item, "end_line"))))
-                lsp_append_bytes(<-> params, ",\"character\":")
-                lsp_append_u64(<-> params, lsp_zero_based(lsp_number(<- doc, json_object_get(<- doc, item, "end_column"))))
-                lsp_append_bytes(<-> params, "}},\"severity\":")
+            range <- json_new_object(<-> out)
+            start <- json_new_object(<-> out)
+            end <- json_new_object(<-> out)
+            start_line <- json_new_u64(<-> out, lsp_zero_based(lsp_number(<- doc, json_object_get(<- doc, item, "line"))))
+            start_character <- json_new_u64(<-> out, lsp_zero_based(lsp_number(<- doc, json_object_get(<- doc, item, "column"))))
+            end_line <- json_new_u64(<-> out, lsp_zero_based(lsp_number(<- doc, json_object_get(<- doc, item, "end_line"))))
+            end_character <- json_new_u64(<-> out, lsp_zero_based(lsp_number(<- doc, json_object_get(<- doc, item, "end_column"))))
+            json_object_set(<-> out, start, "line", start_line)
+            json_object_set(<-> out, start, "character", start_character)
+            json_object_set(<-> out, end, "line", end_line)
+            json_object_set(<-> out, end, "character", end_character)
+            json_object_set(<-> out, range, "start", start)
+            json_object_set(<-> out, range, "end", end)
 
-                mut severity: Vec<u8>
-                lsp_string(<- doc, json_object_get(<- doc, item, "severity"), -> severity)
-                lsp_append_u64(<-> params, lsp_severity(vec_view<u8>(<- severity, 0, severity.len)))
-                lsp_append_bytes(<-> params, ",\"message\":\"")
+            entry <- json_new_object(<-> out)
+            json_object_set(<-> out, entry, "range", range)
+            severity <- json_new_u64(<-> out, lsp_severity(<- doc, item))
+            json_object_set(<-> out, entry, "severity", severity)
 
-                mut message: Vec<u8>
-                lsp_string(<- doc, json_object_get(<- doc, item, "message"), -> message)
-                lsp_append_bytes(<-> params, vec_view<u8>(<- message, 0, message.len))
-                lsp_append_bytes(<-> params, "\"}")
-            }
+            message_node <- json_object_get(<- doc, item, "message")
+            message <- json_string(<- doc, message_node)
+            message_value <- json_new_string(<-> out, message)
+            json_object_set(<-> out, entry, "message", message_value)
+            json_array_push(<-> out, array, entry)
         }
     }
-    lsp_append_bytes(<-> params, "]}")
+    json_set_root(<-> out, params)
     jsonrpc_send_notification(
         "textDocument/publishDiagnostics",
-        vec_view<u8>(<- params, 0, params.len)
+        json_stringify(<- out)
     )
 }

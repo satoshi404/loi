@@ -16,6 +16,7 @@
 //! strings.
 
 import "ctype.loi"
+import "std.loi"
 import "vec.loi"
 
 /// The six JSON value kinds returned by `json_kind`.
@@ -29,7 +30,8 @@ open mark JsonKind [
 ]
 
 /// One entry in a document's node table. Offsets are relative to the raw input
-/// for numbers and to the decoded string arena for strings and object keys.
+/// for parsed numbers and to the decoded string arena for strings, object keys
+/// and builder-created numbers (`from_strings`).
 open shape JsonNode [
     kind: u8
     start: u64
@@ -38,6 +40,7 @@ open shape JsonNode [
     child_count: u64
     key_start: u64
     key_len: u64
+    from_strings: bool
 ]
 
 /// A parsed JSON document. Use the `json_*` flows to inspect it.
@@ -68,6 +71,7 @@ sealed flow json_make_node
     <- child_count: u64
     <- key_start: u64
     <- key_len: u64
+    <- from_strings: bool
     => JsonNode
 {
     mut node: JsonNode
@@ -78,6 +82,7 @@ sealed flow json_make_node
     node.child_count = child_count
     node.key_start = key_start
     node.key_len = key_len
+    node.from_strings = from_strings
     => node
 }
 
@@ -185,7 +190,7 @@ sealed flow json_parse_string
                 key_len = len
                 => 0
             }
-            node <- json_make_node(3, start, len, 0, 0, 0, 0)
+            node <- json_make_node(3, start, len, 0, 0, 0, 0, false)
             => json_push(<-> parser, node)
         }
         if byte == 92 {
@@ -315,7 +320,7 @@ sealed flow json_parse_number
             parser.pos += 1
         }
     }
-    node <- json_make_node(2, start, parser.pos - start, 0, 0, 0, 0)
+    node <- json_make_node(2, start, parser.pos - start, 0, 0, 0, 0, false)
     => json_push(<-> parser, node)
 }
 
@@ -341,7 +346,7 @@ sealed flow json_parse_array
     => i64
 {
     at <- parser.nodes.len as i64
-    placeholder <- json_make_node(4, 0, 0, 0, 0, 0, 0)
+    placeholder <- json_make_node(4, 0, 0, 0, 0, 0, 0, false)
     pushed <- json_push(<-> parser, placeholder)
     if pushed != at {
         parser.error = true
@@ -387,7 +392,7 @@ sealed flow json_parse_object
     => i64
 {
     at <- parser.nodes.len as i64
-    placeholder <- json_make_node(5, 0, 0, 0, 0, 0, 0)
+    placeholder <- json_make_node(5, 0, 0, 0, 0, 0, 0, false)
     pushed <- json_push(<-> parser, placeholder)
     if pushed != at {
         parser.error = true
@@ -455,7 +460,7 @@ sealed flow json_parse_literal
 {
     if json_match_literal(parser.text, parser.pos, word) {
         parser.pos += word.len
-        node <- json_make_node(kind, truth, 0, 0, 0, 0, 0)
+        node <- json_make_node(kind, truth, 0, 0, 0, 0, 0, false)
         => json_push(<-> parser, node)
     }
     parser.error = true
@@ -599,6 +604,19 @@ open flow json_string
     => vec_view<u8>(<- doc.strings, entry.start, entry.start + entry.len)
 }
 
+/// Backing bytes of a number lexeme. Parsed numbers point into `doc.text`;
+/// builder-created numbers point into `doc.strings`.
+sealed flow json_number_bytes
+    <- doc: JsonDoc
+    <- entry: JsonNode
+    => [u8]
+{
+    if entry.from_strings {
+        => vec_view<u8>(<- doc.strings, entry.start, entry.start + entry.len)
+    }
+    => view(doc.text, entry.start, entry.start + entry.len)
+}
+
 /// Raw lexeme of a `JsonKind.Number` node, including exponent and sign.
 open flow json_number_text
     <- doc: JsonDoc
@@ -612,7 +630,7 @@ open flow json_number_text
     if entry.kind != 2 {
         => [u8:]
     }
-    => view(doc.text, entry.start, entry.start + entry.len)
+    => json_number_bytes(<- doc, entry)
 }
 
 /// Integral approximation of a number node: the integer part, truncated.
@@ -628,15 +646,16 @@ open flow json_number_i64
     if entry.kind != 2 {
         => 0
     }
-    mut index: u64 <- entry.start
+    lexeme <- json_number_bytes(<- doc, entry)
+    mut index: u64 <- 0
     mut negative: bool <- false
-    if index < entry.start + entry.len and doc.text[index] == 45 {
+    if index < lexeme.len and lexeme[index] == 45 {
         negative = true
         index += 1
     }
     mut value: i64 <- 0
-    while index < entry.start + entry.len {
-        byte <- doc.text[index]
+    while index < lexeme.len {
+        byte <- lexeme[index]
         if not ctype_is_digit(byte) {
             break
         }
@@ -756,14 +775,25 @@ sealed flow json_write_word
     json_write_bytes(<-> out, word)
 }
 
-sealed flow json_write_string
-    <- doc: JsonDoc
+sealed flow json_hex_digit
+    <- value: u8
+    => u8
+{
+    if value < 10 {
+        => value + 48
+    }
+    => value - 10 + 97
+}
+
+/// Write a JSON string body, including the surrounding quotes. Every control
+/// byte is escaped, so the result is valid JSON for any byte string.
+sealed flow json_write_escaped
     <-> out: Vec<u8>
-    <- entry: JsonNode
+    <- bytes: [u8]
 {
     json_write_byte(<-> out, 34)
-    for i in 0..entry.len {
-        byte <- vec_get<u8>(<- doc.strings, entry.start + i)
+    for i in 0..bytes.len {
+        byte <- bytes[i]
         if byte == 34 {
             json_write_bytes(<-> out, "\\\"")
         } else if byte == 92 {
@@ -778,6 +808,10 @@ sealed flow json_write_string
             json_write_bytes(<-> out, "\\b")
         } else if byte == 12 {
             json_write_bytes(<-> out, "\\f")
+        } else if byte < 32 {
+            json_write_bytes(<-> out, "\\u00")
+            json_write_byte(<-> out, json_hex_digit(byte / 16))
+            json_write_byte(<-> out, json_hex_digit(byte % 16))
         } else {
             json_write_byte(<-> out, byte)
         }
@@ -785,23 +819,20 @@ sealed flow json_write_string
     json_write_byte(<-> out, 34)
 }
 
+sealed flow json_write_string
+    <- doc: JsonDoc
+    <-> out: Vec<u8>
+    <- entry: JsonNode
+{
+    json_write_escaped(<-> out, vec_view<u8>(<- doc.strings, entry.start, entry.start + entry.len))
+}
+
 sealed flow json_write_key
     <- doc: JsonDoc
     <-> out: Vec<u8>
     <- entry: JsonNode
 {
-    json_write_byte(<-> out, 34)
-    for i in 0..entry.key_len {
-        byte <- vec_get<u8>(<- doc.strings, entry.key_start + i)
-        if byte == 34 {
-            json_write_bytes(<-> out, "\\\"")
-        } else if byte == 92 {
-            json_write_bytes(<-> out, "\\\\")
-        } else {
-            json_write_byte(<-> out, byte)
-        }
-    }
-    json_write_byte(<-> out, 34)
+    json_write_escaped(<-> out, vec_view<u8>(<- doc.strings, entry.key_start, entry.key_start + entry.key_len))
 }
 
 sealed flow json_write_node
@@ -823,7 +854,7 @@ sealed flow json_write_node
             json_write_word(<-> out, "false")
         }
     } else if entry.kind == 2 {
-        json_write_bytes(<-> out, view(doc.text, entry.start, entry.start + entry.len))
+        json_write_bytes(<-> out, json_number_bytes(<- doc, entry))
     } else if entry.kind == 3 {
         json_write_string(<- doc, <-> out, entry)
     } else if entry.kind == 4 {
@@ -864,4 +895,196 @@ open flow json_stringify
     vec_new<u8>(-> out)
     json_write_node(<- doc, <-> out, doc.root)
     => vec_view<u8>(<- out, 0, out.len)
+}
+
+// ---------------------------------------------------------------------------
+// Builder
+// ---------------------------------------------------------------------------
+//
+// A builder document uses the same node table as a parsed one. Strings, object
+// keys and number lexemes live in `doc.strings`; `from_strings` tells the
+// accessors and the serializer which arena holds a number. Container children
+// are copied to the end of `doc.children` on every append, so containers can be
+// filled in any order without requiring contiguous inserts.
+
+/// Start an empty document for `json_new_*` values. Call inside `protect`.
+open flow json_new
+    -> doc: JsonDoc
+{
+    vec_new<JsonNode>(-> doc.nodes)
+    vec_new<u8>(-> doc.strings)
+    vec_new<i64>(-> doc.children)
+    doc.text = ""
+    doc.root = -1
+}
+
+sealed flow json_builder_push_node
+    <-> doc: JsonDoc
+    <- node: JsonNode
+    => i64
+{
+    at <- doc.nodes.len as i64
+    vec_push<JsonNode>(<-> doc.nodes, node)
+    => at
+}
+
+/// Append `child` to an array or object, relocating the container's child
+/// window to the end of the shared arena.
+sealed flow json_builder_append
+    <-> doc: JsonDoc
+    <- container: i64
+    <- child: i64
+{
+    if container < 0 or container as u64 >= doc.nodes.len {
+        =>
+    }
+    if child < 0 or child as u64 >= doc.nodes.len {
+        =>
+    }
+    mut entry: JsonNode <- vec_get<JsonNode>(<- doc.nodes, container as u64)
+    if entry.kind != 4 and entry.kind != 5 {
+        =>
+    }
+    mut kids: Vec<i64>
+    vec_new<i64>(-> kids)
+    for i in 0..entry.child_count {
+        if entry.child_start + i < doc.children.len {
+            vec_push<i64>(<-> kids, vec_get<i64>(<- doc.children, entry.child_start + i))
+        }
+    }
+    vec_push<i64>(<-> kids, child)
+    entry.child_start = doc.children.len
+    entry.child_count = kids.len
+    vec_set<JsonNode>(<-> doc.nodes, container as u64, entry)
+    for i in 0..kids.len {
+        vec_push<i64>(<-> doc.children, vec_get<i64>(<- kids, i))
+    }
+}
+
+open flow json_new_null
+    <-> doc: JsonDoc
+    => i64
+{
+    node <- json_make_node(0, 0, 0, 0, 0, 0, 0, false)
+    => json_builder_push_node(<-> doc, node)
+}
+
+open flow json_new_bool
+    <-> doc: JsonDoc
+    <- value: bool
+    => i64
+{
+    mut truth: u64 <- 0
+    if value {
+        truth = 1
+    }
+    node <- json_make_node(1, truth, 0, 0, 0, 0, 0, false)
+    => json_builder_push_node(<-> doc, node)
+}
+
+/// Build a number from a raw JSON lexeme, for example `"1.25e2"`.
+open flow json_new_number
+    <-> doc: JsonDoc
+    <- text: [u8]
+    => i64
+{
+    start <- doc.strings.len
+    for i in 0..text.len {
+        vec_push<u8>(<-> doc.strings, text[i])
+    }
+    node <- json_make_node(2, start, text.len, 0, 0, 0, 0, true)
+    => json_builder_push_node(<-> doc, node)
+}
+
+/// Build the shortest decimal representation of an `i64`.
+open flow json_new_i64
+    <-> doc: JsonDoc
+    <- value: i64
+    => i64
+{
+    digits <- i64_to_bytes(value)
+    => json_new_number(<-> doc, digits)
+}
+
+/// Build the shortest decimal representation of a `u64`.
+open flow json_new_u64
+    <-> doc: JsonDoc
+    <- value: u64
+    => i64
+{
+    digits <- u64_to_bytes(value)
+    => json_new_number(<-> doc, digits)
+}
+
+/// Build a string node. The bytes are copied into the document's string arena.
+open flow json_new_string
+    <-> doc: JsonDoc
+    <- text: [u8]
+    => i64
+{
+    start <- doc.strings.len
+    for i in 0..text.len {
+        vec_push<u8>(<-> doc.strings, text[i])
+    }
+    node <- json_make_node(3, start, text.len, 0, 0, 0, 0, false)
+    => json_builder_push_node(<-> doc, node)
+}
+
+open flow json_new_array
+    <-> doc: JsonDoc
+    => i64
+{
+    node <- json_make_node(4, 0, 0, 0, 0, 0, 0, false)
+    => json_builder_push_node(<-> doc, node)
+}
+
+open flow json_new_object
+    <-> doc: JsonDoc
+    => i64
+{
+    node <- json_make_node(5, 0, 0, 0, 0, 0, 0, false)
+    => json_builder_push_node(<-> doc, node)
+}
+
+/// Append a value to a builder array.
+open flow json_array_push
+    <-> doc: JsonDoc
+    <- array: i64
+    <- value: i64
+{
+    json_builder_append(<-> doc, array, value)
+}
+
+/// Add or replace a field in a builder object. Existing values are kept as
+/// nodes, but a later `json_object_get` with the same key returns the newest
+/// one, matching the serializer's insertion order.
+open flow json_object_set
+    <-> doc: JsonDoc
+    <- object: i64
+    <- key: [u8]
+    <- value: i64
+{
+    if object < 0 or object as u64 >= doc.nodes.len {
+        =>
+    }
+    if value < 0 or value as u64 >= doc.nodes.len {
+        =>
+    }
+    start <- doc.strings.len
+    for i in 0..key.len {
+        vec_push<u8>(<-> doc.strings, key[i])
+    }
+    mut node: JsonNode <- vec_get<JsonNode>(<- doc.nodes, value as u64)
+    node.key_start = start
+    node.key_len = key.len
+    vec_set<JsonNode>(<-> doc.nodes, value as u64, node)
+    json_builder_append(<-> doc, object, value)
+}
+
+/// Choose the node serialized by `json_stringify`.
+open flow json_set_root
+    <-> doc: JsonDoc
+    <- node: i64
+{
+    doc.root = node
 }

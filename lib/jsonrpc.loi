@@ -150,39 +150,6 @@ sealed flow jsonrpc_append_bytes
     }
 }
 
-sealed flow jsonrpc_append_i64
-    <-> out: Vec<u8>
-    <- value: i64
-{
-    mut negative: bool <- false
-    mut magnitude: u64 <- 0
-    if value < 0 {
-        negative = true
-        magnitude = (-(value + 1)) as u64 + 1
-    } else {
-        magnitude = value as u64
-    }
-    if negative {
-        vec_push<u8>(<-> out, 45)
-    }
-    if magnitude == 0 {
-        vec_push<u8>(<-> out, 48)
-        =>
-    }
-    mut digits: Vec<u8>
-    vec_new<u8>(-> digits)
-    while magnitude > 0 {
-        digit <- magnitude % 10
-        vec_push<u8>(<-> digits, (digit as u8) + 48)
-        magnitude = magnitude / 10
-    }
-    mut index: u64 <- digits.len
-    while index > 0 {
-        index -= 1
-        vec_push<u8>(<-> out, vec_get<u8>(<- digits, index))
-    }
-}
-
 sealed flow jsonrpc_send_bytes
     <- body: [u8]
 {
@@ -209,7 +176,7 @@ open flow jsonrpc_send_result
 {
     mut out: Vec<u8>
     jsonrpc_begin_response(-> out)
-    jsonrpc_append_i64(<-> out, id)
+    jsonrpc_append_bytes(<-> out, i64_to_bytes(id))
     jsonrpc_append_bytes(<-> out, ",\"result\":")
     jsonrpc_append_bytes(<-> out, result)
     jsonrpc_append_bytes(<-> out, "}")
@@ -241,9 +208,9 @@ open flow jsonrpc_send_error
 {
     mut out: Vec<u8>
     jsonrpc_begin_response(-> out)
-    jsonrpc_append_i64(<-> out, id)
+    jsonrpc_append_bytes(<-> out, i64_to_bytes(id))
     jsonrpc_append_bytes(<-> out, ",\"error\":{\"code\":")
-    jsonrpc_append_i64(<-> out, code)
+    jsonrpc_append_bytes(<-> out, i64_to_bytes(code))
     jsonrpc_append_bytes(<-> out, ",\"message\":\"")
     jsonrpc_append_bytes(<-> out, message)
     jsonrpc_append_bytes(<-> out, "\"}}")

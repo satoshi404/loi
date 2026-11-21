@@ -682,6 +682,64 @@ it copies the value into a caller-owned byte buffer and returns its full length
 (or -1 when unset) — and expose `os_env(name: [u8]) => [u8]` in `lib/os.loi`,
 which allocates the result in the caller's `protect` region.
 
+## Block L6 — JSON builder and integer conversion
+
+### Responses are assembled by concatenating raw JSON fragments
+
+Attempted design: keep extending `jsonrpc_send_result` and
+`lsp_publish_diagnostics` with string fragments such as
+`",\"message\":\""`. The existing parser has a full node/arena model, but no
+way to create a node from a Loi value, so protocol code duplicated escaping,
+comma placement and key order in two modules. Language/library requirement: a
+builder over the same `JsonDoc`, so parsed and generated documents share one
+serializer. Workaround for L6: `json_new` plus `json_new_*` constructors and
+`json_array_push` / `json_object_set` / `json_set_root` build a node table in
+pure Loi. `jsonrpc_send_result` still takes a raw JSON literal for its
+`result`, but the LSP notification is now built from values, and
+`lsp_json_escape`, `lsp_append_u64` and `jsonrpc_append_i64` are gone.
+
+### Numbers have no decimal representation in Loi
+
+Attempted design: reuse the digit loops from `jsonrpc_append_i64` and
+`lsp_append_u64` in each new call site, appending bytes to a `Vec<u8>`. That
+works only for code that already has a byte buffer and cannot produce a `[u8]`
+value for a number. Language/library requirement: a standard conversion from
+integers to byte strings, including the full `u64` range and `i64::MIN`.
+Workaround for L6: `i64_to_bytes` and `u64_to_bytes` in `lib/std.loi` count the
+digits, allocate exactly that many bytes in `protect`, and fill them from the
+least significant digit; `i64::MIN` uses `(-(value + 1)) as u64 + 1` so no
+signed overflow occurs. `json_new_i64` / `json_new_u64` use them directly.
+
+### A raw number node cannot point into the input text
+
+Attempted design: give a builder-created number node `kind = 2` with offsets
+into `doc.strings` and let `json_stringify` read `doc.text` as usual. That
+would read uninitialized bytes because a builder document has no input text.
+Language/library requirement: either a separate number arena in `JsonDoc` or an
+explicit marker for the backing arena. Workaround for L6: add
+`JsonNode.from_strings: bool` and a `json_number_bytes` accessor; parsed
+numbers keep pointing into `doc.text`, while built numbers point into
+`doc.strings`. No existing accessor signature changed.
+
+### Arbitrary byte strings were not always serialized as valid JSON
+
+Attempted design: escape only `"` and `\` in object keys, and leave control
+bytes other than `\b`, `\f`, `\n`, `\r` and `\t` unescaped in strings. A built
+string containing byte `0x01` produced invalid JSON, so a builder could not
+promise round-tripping arbitrary `[u8]` values. Workaround for L6: one shared
+`json_write_escaped` helper escapes every byte below `0x20`, using `\u00XX`
+for the ones without a short escape, and is used for both strings and keys.
+
+### Large negative literals are narrowed before conversion
+
+Attempted design: test `i64_to_bytes(-9223372036854775808)` by writing that
+literal directly. The generated C called `loi_neg_i32` with the 64-bit literal
+and truncated it, so the value reached the flow as `0` or `-1`. This is a
+checker/codegen literal-typing limitation, not a conversion bug; it is recorded
+as an Open Design Question in `PROGRESS.md`. Workaround for L6: derive
+`i64::MIN` as `9223372036854775808 as i64` from a `u64` literal in the test.
+The conversion itself handles the full range.
+
 ## Opt-in LLVM backend
 
 ### The draft IR was not compilable LLVM IR

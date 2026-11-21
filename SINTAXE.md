@@ -1033,9 +1033,50 @@ open flow request_method
   member by decoded key. Both accessors return `-1` on a miss; object order is
   preserved.
 - `json_stringify(<- doc) => [u8]` emits compact JSON with decoded strings and
-  raw numbers. It allocates, so call it inside `protect`.
+  raw numbers. Every control byte in a string or key is escaped, including
+  bytes below `0x20` as `\u00XX`. It allocates, so call it inside `protect`.
 
 A realistic `initialize` request decoder is `examples/json_rpc.loi`.
+
+#### Building JSON
+
+The same `JsonDoc` can be built value by value instead of parsed:
+
+```loi
+import "lib/json.loi"
+
+open flow reply
+    => i32
+{
+    protect {
+        mut doc: JsonDoc
+        json_new(-> doc)
+        root <- json_new_object(<-> doc)
+        items <- json_new_array(<-> doc)
+        value <- json_new_i64(<-> doc, -7)
+        json_array_push(<-> doc, items, value)
+        json_object_set(<-> doc, root, "items", items)
+        json_set_root(<-> doc, root)
+        print(json_stringify(<- doc))
+    }
+    => 0
+}
+```
+
+- `json_new(-> doc)` starts an empty document. `json_set_root(<-> doc, <- node)`
+  chooses the node serialized by `json_stringify`.
+- Constructors return node handles: `json_new_null`, `json_new_bool`,
+  `json_new_i64`, `json_new_u64`, `json_new_number` (a raw lexeme such as
+  `"1.25e2"`), `json_new_string`, `json_new_array` and `json_new_object`.
+- `json_array_push(<-> doc, <- array, <- value)` appends to an array;
+  `json_object_set(<-> doc, <- object, <- key, <- value)` adds or replaces a
+  field. Keys and strings are copied into the document's string arena.
+- Builder numbers are stored in that arena too, so `json_number_text` and
+  `json_number_i64` work on built nodes exactly as on parsed ones.
+- `json_new_i64` / `json_new_u64` call `i64_to_bytes` / `u64_to_bytes`, so any
+  flow that creates a number needs `protect`.
+
+`examples/json_builder.loi` builds a diagnostics summary with every constructor.
 
 ### JSON-RPC over stdio
 
@@ -1112,8 +1153,9 @@ writes its JSON to stderr; a clean check writes zero bytes.
 `lsp_publish_diagnostics(<- uri, <- diagnostics_json)` emits
 `textDocument/publishDiagnostics`. Compiler spans are 1-based while LSP uses
 0-based lines and characters, so both are decremented; severity strings map
-`error` -> 1, `warning` -> 2 and `note` -> 3. Messages and the URI are escaped as
-JSON strings, and empty or malformed input publishes an empty `diagnostics`
+`error` -> 1, `warning` -> 2 and `note` -> 3. The notification is assembled
+with the JSON builder, so messages and the URI are escaped by `json_stringify`;
+empty or malformed input publishes an empty `diagnostics`
 array, clearing previous markers. It allocates, so callers need `protect`.
 
 ### Process spawning
@@ -1176,7 +1218,7 @@ to names that actually repeat.
 
 | File | Helpers | Needs a shim? |
 |---|---|---|
-| `lib/std.loi` | `min_i32`, `max_i32`, `abs_i32`, `clamp_i32`, `min_f64`, `max_f64`, `abs_f64`, `clamp_f64`, `str_len`, `str_eq`, `str_starts_with`, `str_find` | no |
+| `lib/std.loi` | `min_i32`, `max_i32`, `abs_i32`, `clamp_i32`, `min_f64`, `max_f64`, `abs_f64`, `clamp_f64`, `i64_to_bytes`, `u64_to_bytes`, `str_len`, `str_eq`, `str_starts_with`, `str_find` | no; conversions need `protect` |
 | `lib/math.loi` | `MATH_PI`, `MATH_E`, `MATH_TAU`, `math_factorial`, generic `math_min<T>` / `math_max<T>` / `math_clamp<T>` / `math_sum<T>`, `math_lerp`, `math_smoothstep`, `math_deg_to_rad`, `math_rad_to_deg`, `math_hypot`, `math_near`, `math_sign_i32`, `math_gcd_u64`, `math_pow_u64`, `math_dot_f64` | no |
 | `lib/ctype.loi` | `ctype_is_digit`, `ctype_is_upper`, `ctype_is_lower`, `ctype_is_alpha`, `ctype_is_alnum`, `ctype_is_hex_digit`, `ctype_is_space`, `ctype_is_ascii`, `ctype_to_lower`, `ctype_to_upper`, `ctype_hex_value`, `ctype_parse_u64`, `ctype_count_digits`, `ctype_equals_ignore_case` | no |
 | `lib/option.loi` | `Option<T>`, `option_none<T>`, `option_some<T>`, `option_is_some<T>`, `option_is_none<T>`, `option_get_or<T>`, `option_unwrap<T>` | no; cloning slice payloads needs `protect` |
@@ -1191,7 +1233,7 @@ to names that actually repeat.
 | `lib/os.loi` | `os_pid`, `os_unix_time`, `os_sleep`, `os_has_env`, `os_env`, `os_env_i32`, `os_errno`, `os_exit` | `lib/os_shim.c`; `os_env` needs `protect` |
 | `lib/net.loi` | `NetIpv4Result`, `net_ipv4`, `net_ipv4_octet`, `net_port_is_valid`, `net_parse_ipv4`, `net_tcp_connect`, `net_close`, `net_send`, `net_recv` | `lib/net_shim.c` |
 | `lib/stdio.loi` | `stdio_read_exact`, `stdio_write_all`, `stdio_flush` | `lib/stdio_shim.c` |
-| `lib/json.loi` | `JsonKind`, `JsonDoc`, `json_parse`, `json_root`, `json_kind`, `json_bool`, `json_string`, `json_number_text`, `json_number_i64`, `json_array_len`, `json_array_get`, `json_object_get`, `json_stringify` | no; parsing and stringifying need `protect` |
+| `lib/json.loi` | `JsonKind`, `JsonDoc`, `json_parse`, `json_root`, `json_kind`, `json_bool`, `json_string`, `json_number_text`, `json_number_i64`, `json_array_len`, `json_array_get`, `json_object_get`, `json_stringify`, `json_new`, `json_new_null`, `json_new_bool`, `json_new_i64`, `json_new_u64`, `json_new_number`, `json_new_string`, `json_new_array`, `json_new_object`, `json_array_push`, `json_object_set`, `json_set_root` | no; parsing, building and stringifying need `protect` |
 | `lib/jsonrpc.loi` | `JsonRpcRequest`, `jsonrpc_read_frame`, `jsonrpc_parse_request`, `jsonrpc_send_result`, `jsonrpc_send_error`, `jsonrpc_send_notification` | `lib/stdio_shim.c`; all flows need `protect` |
 | `lib/lsp.loi` | `lsp_publish_diagnostics` | `lib/stdio_shim.c` via `jsonrpc.loi`; needs `protect` |
 | `lib/process.loi` | `Process`, `process_spawn`, `process_spawn_args`, `process_ok`, `process_stdout_len`, `process_stderr_len`, `process_read_stdout`, `process_read_stderr`, `process_stdout`, `process_stderr`, `process_exit_code`, `process_release` | `lib/process_shim.c`; use it with `guard` |

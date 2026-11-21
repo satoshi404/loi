@@ -419,7 +419,7 @@ These rules were added to unblock real programs and are implemented and tested. 
 
 - Intrinsics: `print(<- [u8])`, `eprint(<- [u8])`, `panic(<- [u8])`, `print_int(<- integer)`, `print_float(<- f64)`, `printf(<- [u8], ...)` (literal format string plus typed varargs), `sqrt/floor/ceil/fabs(<- f64) => f64`, `pow/fmod(<- f64, <- f64) => f64`, `len([T]) => u64` and
 `callback(<- flow) => callback`.
-- The library is a set of explicitly imported files: `lib/std.loi` (integer/float and byte-string helpers), `lib/math.loi` (generic and `comptime` math), `lib/ctype.loi` (ASCII byte helpers), `lib/option.loi` and `lib/result.loi` (optional and error-carrying values), `lib/json.loi` (JSON documents), `lib/jsonrpc.loi` (JSON-RPC 2.0 transport), `lib/lsp.loi` (LSP diagnostics bridge), `lib/process.loi` (process spawning with captured output), `lib/os.loi` and `lib/net.loi` (thin POSIX bindings with C shims), and `lib/stdio.loi` (deterministic byte I/O on the standard streams, also via a C shim). The pure files use only the features above; the four shim-backed files (`os`, `net`, `stdio`, `process`) use `extern flow` declarations and must be linked with their shims.
+- The library is a set of explicitly imported files: `lib/std.loi` (integer/float and byte-string helpers, including integer-to-decimal conversion), `lib/math.loi` (generic and `comptime` math), `lib/ctype.loi` (ASCII byte helpers), `lib/option.loi` and `lib/result.loi` (optional and error-carrying values), `lib/json.loi` (JSON documents), `lib/jsonrpc.loi` (JSON-RPC 2.0 transport), `lib/lsp.loi` (LSP diagnostics bridge), `lib/process.loi` (process spawning with captured output), `lib/os.loi` and `lib/net.loi` (thin POSIX bindings with C shims), and `lib/stdio.loi` (deterministic byte I/O on the standard streams, also via a C shim). The pure files use only the features above; the four shim-backed files (`os`, `net`, `stdio`, `process`) use `extern flow` declarations and must be linked with their shims.
 
 **Optional and error values (Block A6).**
 
@@ -776,7 +776,15 @@ arena and a separate child-handle arena, `json_*` accessors, and compact
 `json_stringify` output. Strings decode the standard escapes (including
 `\uXXXX` surrogate pairs), numbers keep their raw lexeme, object order is
 preserved, and malformed input or trailing bytes make `json_parse` return
-`false`. Parsing and stringifying allocate, so callers need a `protect` region.
+`false`. The same document type can be assembled with `json_new`, the
+`json_new_*` node constructors, `json_array_push`, `json_object_set` and
+`json_set_root`; builder numbers keep their lexeme in the string arena, marked
+by `JsonNode.from_strings`, so the read accessors work on parsed and built nodes
+alike. `json_stringify` escapes every control byte in strings and keys.
+`lib/std.loi` provides `i64_to_bytes` and `u64_to_bytes` for the shortest
+decimal representation, including `i64::MIN` without signed overflow. Parsing,
+building, stringifying and integer conversion allocate, so callers need a
+`protect` region.
 `lib/jsonrpc.loi` composes the framing of `lib/stdio.loi` with the validation of
 `lib/json.loi`: `jsonrpc_read_frame` reads one `Content-Length` body,
 `jsonrpc_parse_request` fills a `JsonRpcRequest` (`doc`, `id`, `method`,
@@ -794,8 +802,9 @@ bridges the compiler's `--error-format json` diagnostics to
 `textDocument/publishDiagnostics`: an LSP server spawns
 `loi check FILE --error-format json` with `process_spawn_args`, reads the
 compiler's stderr and calls `lsp_publish_diagnostics`, which maps 1-based
-compiler spans to 0-based LSP ranges, severity strings to 1/2/3 and escapes
-messages and URIs. Empty or malformed input clears previous markers. `os_env`
+compiler spans to 0-based LSP ranges, severity strings to 1/2/3, and assembles
+the notification with the JSON builder so messages and URIs are escaped by the
+serializer. Empty or malformed input clears previous markers. `os_env`
 reads the `LOI_COMPILER` setting used to locate the compiler. Verification and
 examples live in `PROGRESS.md`.
 

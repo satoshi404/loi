@@ -994,9 +994,10 @@ flow exchange
                 <td><code>lib/std.loi</code></td>
                 <td><code>min_i32</code>, <code>max_i32</code>, <code>abs_i32</code>,
                   <code>clamp_i32</code> and the <code>f64</code> variants;
+                  <code>i64_to_bytes</code>, <code>u64_to_bytes</code>;
                   <code>str_len</code>, <code>str_eq</code>,
                   <code>str_starts_with</code>, <code>str_find</code></td>
-                <td>no</td>
+                <td>no; integer conversion needs <code>protect</code></td>
               </tr>
               <tr>
                 <td><code>lib/math.loi</code></td>
@@ -1158,8 +1159,14 @@ flow exchange
                   <code>json_string</code>, <code>json_number_text</code>,
                   <code>json_number_i64</code>, <code>json_array_len</code>,
                   <code>json_array_get</code>, <code>json_object_get</code>,
-                  <code>json_stringify</code></td>
-                <td>no; parsing and stringifying need <code>protect</code></td>
+                  <code>json_stringify</code>, <code>json_new</code>,
+                  <code>json_new_null</code>, <code>json_new_bool</code>,
+                  <code>json_new_i64</code>, <code>json_new_u64</code>,
+                  <code>json_new_number</code>, <code>json_new_string</code>,
+                  <code>json_new_array</code>, <code>json_new_object</code>,
+                  <code>json_array_push</code>, <code>json_object_set</code>,
+                  <code>json_set_root</code></td>
+                <td>no; parsing, building and stringifying need <code>protect</code></td>
               </tr>
               <tr>
                 <td><code>lib/jsonrpc.loi</code></td>
@@ -1286,8 +1293,21 @@ flow exchange
             <code>-1</code>. Strings are decoded from the standard escapes
             (including <code>\uXXXX</code> surrogate pairs) to UTF-8, numbers keep
             their raw lexeme and object order is preserved.
-            <code>json_stringify(&lt;- doc) =&gt; [u8]</code> emits compact JSON.
-            See <a href="examples/json_rpc.loi">examples/json_rpc.loi</a>.
+            <code>json_stringify(&lt;- doc) =&gt; [u8]</code> emits compact JSON,
+            escaping every control byte in strings and keys. The same document
+            can be built instead of parsed: <code>json_new</code> starts it,
+            <code>json_new_null</code> / <code>json_new_bool</code> /
+            <code>json_new_i64</code> / <code>json_new_u64</code> /
+            <code>json_new_number</code> / <code>json_new_string</code> /
+            <code>json_new_array</code> / <code>json_new_object</code> return
+            node handles, and <code>json_array_push</code>,
+            <code>json_object_set</code> and <code>json_set_root</code> assemble
+            them. Built numbers live in the string arena, so the read accessors
+            work unchanged; <code>i64_to_bytes</code> and
+            <code>u64_to_bytes</code> in <code>lib/std.loi</code> produce the
+            decimal lexemes. See
+            <a href="examples/json_rpc.loi">examples/json_rpc.loi</a> and
+            <a href="examples/json_builder.loi">examples/json_builder.loi</a>.
             <code>lib/jsonrpc.loi</code> composes both blocks into a JSON-RPC 2.0
             transport. <code>jsonrpc_read_frame(-&gt; body)</code> reads one
             <code>Content-Length</code> frame; EOF, a malformed header or a
@@ -1314,8 +1334,10 @@ flow exchange
             and calls <code>lsp_publish_diagnostics(uri, json)</code>. Compiler spans are
             1-based while LSP uses 0-based lines and characters, so both endpoints
             are decremented; severities <code>error</code>, <code>warning</code>
-            and <code>note</code> map to 1, 2 and 3. Empty or malformed input
-            publishes <code>diagnostics: []</code>, clearing stale markers. The
+            and <code>note</code> map to 1, 2 and 3. The notification is built
+            with the JSON builder, so the serializer escapes messages and URIs.
+            Empty or malformed input publishes <code>diagnostics: []</code>,
+            clearing stale markers. The
             complete server is
             <a href="examples/lsp_server.loi">examples/lsp_server.loi</a>.</p>
 
@@ -1371,6 +1393,11 @@ open flow main
           <div class="doc-code">
             <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
             <pre><code class="language-sh">loi build examples/process_run.loi -o process_run --c-source lib/process_shim.c --c-source lib/os_shim.c</code></pre>
+          </div>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-sh">loi build examples/json_builder.loi -o json_builder</code></pre>
           </div>
 
           <div class="doc-code">

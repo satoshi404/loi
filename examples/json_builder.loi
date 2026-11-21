@@ -1,0 +1,50 @@
+// Build a JSON document from Loi values without writing escapes or decimal
+// digits by hand. This example assembles a diagnostics summary like an editor
+// tool would emit, then prints compact JSON.
+//
+// Build: loi build examples/json_builder.loi -o json_builder
+
+import "../lib/json.loi"
+
+open flow main
+    => i32
+{
+    protect {
+        mut doc: JsonDoc
+        json_new(-> doc)
+        root <- json_new_object(<-> doc)
+
+        uri <- json_new_string(<-> doc, "file:///src/main.loi")
+        json_object_set(<-> doc, root, "uri", uri)
+        errors <- json_new_i64(<-> doc, 2)
+        json_object_set(<-> doc, root, "errors", errors)
+        warnings <- json_new_u64(<-> doc, 0)
+        json_object_set(<-> doc, root, "warnings", warnings)
+
+        messages <- json_new_array(<-> doc)
+        first <- json_new_object(<-> doc)
+        line <- json_new_i64(<-> doc, 12)
+        json_object_set(<-> doc, first, "line", line)
+        text <- json_new_string(<-> doc, "unknown variable 'missing'")
+        json_object_set(<-> doc, first, "text", text)
+        json_array_push(<-> doc, messages, first)
+
+        second <- json_new_object(<-> doc)
+        column <- json_new_u64(<-> doc, 8)
+        json_object_set(<-> doc, second, "column", column)
+        ratio <- json_new_number(<-> doc, "1.25e2")
+        json_object_set(<-> doc, second, "ratio", ratio)
+        json_array_push(<-> doc, messages, second)
+        json_object_set(<-> doc, root, "messages", messages)
+
+        clean <- json_new_bool(<-> doc, false)
+        json_object_set(<-> doc, root, "clean", clean)
+        extra <- json_new_null(<-> doc)
+        json_object_set(<-> doc, root, "extra", extra)
+        json_set_root(<-> doc, root)
+
+        print(json_stringify(<- doc))
+        print("\n")
+    }
+    => 0
+}
