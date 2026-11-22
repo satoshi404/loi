@@ -118,18 +118,18 @@ shape Particle {
 ### 3.2 Marks — finite tag sets
 
 ```loi
-mark Color [ Red, Green, Blue ]
+mark Color { Red, Green, Blue }
 
-open mark Flag [
+open mark Flag {
     On
     Off
-]
+}
 
 c <- Color.Green
 if c != Color.Red { ... }
 ```
 
-- `mark Name [ ... ]` declares a payload-free finite tag set. It is Loi's
+- `mark Name { ... }` declares a payload-free finite tag set. It is Loi's
   enum-like sum type; there is no C-style `enum` keyword.
 - Variants are `Name.Variant` values, separated by commas or newlines; the
   trailing comma is optional. A bare variant name is not a value.
@@ -144,7 +144,7 @@ if c != Color.Red { ... }
 ### 3.3 Choices — tagged payloads
 
 ```loi
-choice Result [ Ok: i32, Err: i64 ]
+choice Result { Ok: i32, Err: i64 }
 
 r <- Result.Ok(42)
 if r is Result.Ok {
@@ -152,7 +152,7 @@ if r is Result.Ok {
 }
 ```
 
-- `choice Name [ Variant: Type, ... ]` declares a tagged union. It is Loi's
+- `choice Name { Variant: Type, ... }` declares a tagged union. It is Loi's
   union-like sum type; there is no C-style `union` keyword.
 - Each variant declares exactly one payload type, separated by commas or
   newlines; the trailing comma is optional. Visibility is `open` or `sealed`
@@ -1655,8 +1655,8 @@ examples, docs or generated bindings:
 |---|---|
 | `fun f(...)` | `flow f ...` |
 | `interface Name { ... }` | `shape Name { ... }` |
-| `enum Name { ... }` | `mark Name [ ... ]` |
-| `union Name { ... }` | `choice Name [ Variant: T, ... ]` |
+| `enum Name { ... }` | `mark Name { ... }` |
+| `union Name { ... }` | `choice Name { Variant: T, ... }` |
 | `let x = v` | `x <- v` |
 | `var x = v` | `mut x <- v` |
 | `in x: T` | `<- x: T` |

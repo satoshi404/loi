@@ -189,17 +189,17 @@ open flow main
 ### 4.1 Declarations and literals
 
 - `shape Name { field: Type, ... }` declares a data type. Fields may have a default value (`alive: bool = true`). No methods.
-- A literal always carries the type name and uses brackets: `Vec2 { x: 1, y: 2 }`.
+- A literal always carries the type name and uses braces: `Vec2 { x: 1, y: 2 }`.
 - `name <- value` creates an immutable binding; `mut name <- value` creates a mutable one. A declaration without a value (`mut w: World`) is uninitialized and can only be passed as `->`.
 - Control flow: `if` / `else`, `while`, `for i in a..b`, `for <- p in xs` (read), `for <-> p in xs` (mutate), `continue`, `break`, and `=> value` for returns.
 
 ### 4.1a Sum types: `mark` and `choice`
 
-- `mark Name [ A, B, ... ]` declares a payload-free finite tag set. A value is
+- `mark Name { A, B, ... }` declares a payload-free finite tag set. A value is
   written `Name.A`. Marks are scalar-like: they copy implicitly and `==` / `!=`
   are defined only between two values of the same mark. Ordering and arithmetic
   are not defined.
-- `choice Name [ A: T, B: U, ... ]` declares a tagged union with one payload per
+- `choice Name { A: T, B: U, ... }` declares a tagged union with one payload per
   variant. `Name.A(value)` constructs a value; the constructor requires exactly
   one `<-` argument whose type matches the declared payload. Bare
   `Name.A` is only valid as the right operand of `is`, never as a value.
@@ -919,13 +919,13 @@ The semantics are Loi's. The early surface borrowed Rust vocabulary (`fun`, `int
 - `examples/particles.loi`, `examples/flow_syntax.loi`, `lib/std.loi` and the test sources all use canonical Flow Syntax;
 - the legacy keywords and forms have been removed, not merely deprecated.
 
-**Principle:** *braces are scopes, brackets are data, arrows are movement.*
+**Principle:** *braces are scopes and type bodies, brackets are data, arrows are movement.*
 
 The table below records the historical migration mapping. The left column is no longer valid Loi.
 
 | Historical (removed) | Canonical Flow Syntax | Why |
 |---|---|---|
-| `interface Vec2 { ... }` | `shape Vec2 { ... }` | data-only types; brackets mark data |
+| `interface Vec2 { ... }` | `shape Vec2 { ... }` | data-only types; braces delimit type bodies |
 | `fun f(...)` | `flow f ...` | functions are data flow through directions |
 | `in x: T` | `<- x: T` | direction glyph, not a keyword |
 | `out x: T` | `-> x: T` | same |
@@ -937,8 +937,8 @@ The table below records the historical migration mapping. The left column is no 
 | `move(x)` | `give(x)` | explicit ownership transfer |
 | `copy(x)` | `clone(x)` | explicit duplication |
 | `visible` / `hidden` | `open` / `sealed` | module boundary; default `sealed` |
-| `[]T` | `[T]` | bracket = data |
-| `Vec2{ x: 1 }` | `Vec2 { x: 1 }` | brace = scope; bracket = value |
+| `[]T` | `[T]` | bracket = slice type |
+| `Vec2{ x: 1 }` | `Vec2 { x: 1 }` | brace = value body |
 | `for in p in xs` | `for <- p in xs` | same direction glyphs |
 | `for inout p in xs` | `for <-> p in xs` | same |
 | call `f(out w)` | `f(-> w)` | same |
@@ -947,8 +947,9 @@ The table below records the historical migration mapping. The left column is no 
 
 **Implemented details**
 
-- **Shapes** use brackets: `shape Vec2 { x: f64, y: f64 }`; the closing `]` may be on its own line. `shape Name {}` is an empty shape.
-- **Shape literals** use brackets: `Vec2 { x: 1, y: 2 }` and `Vec2 {}`. Bracket literals are unambiguous in `if`/`while`/`for` headers, so the formatter no longer inserts parentheses there.
+- **Shapes** use braces: `shape Vec2 { x: f64, y: f64 }`; the closing `}` may be on its own line. `shape Name {}` is an empty shape.
+- **Shape literals** use braces: `Vec2 { x: 1, y: 2 }` and `Vec2 {}`. They are unambiguous in `if`/`while`/`for` headers, so the formatter no longer inserts parentheses there.
+- **Marks and choices** use braces too: `mark Color { Red, Green }` and `choice Result { Ok: i32, Err: i64 }`. Legacy `[]` bodies still parse for migration, but `loi fmt` emits `{}`.
 - **Functions** may be written inline (`flow f(<- x: i32) => i32 { ... }`) or vertically:
 
   ```loi

@@ -324,15 +324,22 @@ impl Parser {
         })
     }
 
-    /// `mark Name [ A, B ]` declares a payload-free tag set.
+    /// `mark Name { A, B }` declares a payload-free tag set.
     fn parse_mark(&mut self, visibility: Visibility, span: Span) -> ParseResult<MarkDecl> {
         self.expect(TokenKind::Mark, "'mark'")?;
         let name = self.parse_identifier("mark name")?;
-        self.expect(TokenKind::LBracket, "'[' to open a mark body")?;
+        // Mark bodies use braces in Flow Syntax. Brackets accepted for migration.
+        let close = if self.matches(TokenKind::LBrace) {
+            TokenKind::RBrace
+        } else if self.matches(TokenKind::LBracket) {
+            TokenKind::RBracket
+        } else {
+            return Err(self.error_current("expected '{' to open a mark body"));
+        };
         self.skip_newlines();
 
         let mut variants = Vec::new();
-        while !self.at(TokenKind::RBracket) {
+        while !self.at(close) {
             if self.at(TokenKind::Eof) {
                 return Err(self.error_current("unterminated mark body"));
             }
@@ -348,7 +355,12 @@ impl Parser {
             }
         }
 
-        let close_token = self.expect(TokenKind::RBracket, "']' to close a mark body")?;
+        let close_msg = if close == TokenKind::RBrace {
+            "'}' to close a mark body"
+        } else {
+            "']' to close a mark body"
+        };
+        let close_token = self.expect(close, close_msg)?;
         Ok(MarkDecl {
             span,
             close_line: close_token.line,
@@ -358,16 +370,23 @@ impl Parser {
         })
     }
 
-    /// `choice Name [ A: T, B: U ]` declares a tagged union with one payload
+    /// `choice Name { A: T, B: U }` declares a tagged union with one payload
     /// per variant.
     fn parse_choice(&mut self, visibility: Visibility, span: Span) -> ParseResult<ChoiceDecl> {
         self.expect(TokenKind::Choice, "'choice'")?;
         let name = self.parse_identifier("choice name")?;
-        self.expect(TokenKind::LBracket, "'[' to open a choice body")?;
+        // Choice bodies use braces in Flow Syntax. Brackets accepted for migration.
+        let close = if self.matches(TokenKind::LBrace) {
+            TokenKind::RBrace
+        } else if self.matches(TokenKind::LBracket) {
+            TokenKind::RBracket
+        } else {
+            return Err(self.error_current("expected '{' to open a choice body"));
+        };
         self.skip_newlines();
 
         let mut variants = Vec::new();
-        while !self.at(TokenKind::RBracket) {
+        while !self.at(close) {
             if self.at(TokenKind::Eof) {
                 return Err(self.error_current("unterminated choice body"));
             }
@@ -386,7 +405,12 @@ impl Parser {
             }
         }
 
-        let close_token = self.expect(TokenKind::RBracket, "']' to close a choice body")?;
+        let close_msg = if close == TokenKind::RBrace {
+            "'}' to close a choice body"
+        } else {
+            "']' to close a choice body"
+        };
+        let close_token = self.expect(close, close_msg)?;
         Ok(ChoiceDecl {
             span,
             close_line: close_token.line,

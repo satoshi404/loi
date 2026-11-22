@@ -1108,17 +1108,17 @@ class Bindgen:
 
         for record in self.used_shapes:
             fields = record.shape_fields or []
-            lines.append(f"open shape {record.loi_name} [")
+            lines.append(f"open shape {record.loi_name} {{")
             for field_name, mapped in fields:
                 lines.append(f"    {field_name}: {mapped.loi}")
-            lines.append("]")
+            lines.append("}")
             lines.append("")
 
         for enum in self.used_marks:
-            lines.append(f"open mark {enum.loi_name} [")
+            lines.append(f"open mark {enum.loi_name} {{")
             for variant in enum.mark_variants or []:
                 lines.append(f"    {variant}")
-            lines.append("]")
+            lines.append("}")
             lines.append("")
 
         if self.constants:

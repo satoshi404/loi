@@ -39,25 +39,25 @@
     "prefix": "shape",
     "description": "A Loi shape declaration",
     "body": [
-      "shape ${1:Name} [",
+      "shape ${1:Name} {",
       "    ${2:field}: ${3:i32}",
-      "]"
+      "}"
     ]
   },
   "Mark": {
     "prefix": "mark",
     "description": "A Loi finite tag set",
     "body": [
-      "mark ${1:Name} [ ${2:Variant}, $0 ]"
+      "mark ${1:Name} { ${2:Variant}, $0 }"
     ]
   },
   "Choice": {
     "prefix": "choice",
     "description": "A Loi tagged union",
     "body": [
-      "choice ${1:Name} [",
+      "choice ${1:Name} {",
       "    ${2:Variant}: ${3:i32}",
-      "]"
+      "}"
     ]
   },
   "If": {

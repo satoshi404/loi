@@ -896,3 +896,27 @@ which LSP clients never display. Rather than invent an extension the editors do
 not understand, `lib/lsp.loi` appends it to the human-readable message with a
 colon: `unknown variable 'missng': did you mean 'missing'?`. The end-to-end test
 pins the exact string.
+
+### The LSP repeated `[]` after declarations moved to `{}`
+
+A user changed `shape` declarations to braces and the editor kept suggesting
+`[]` again. The underlying cause was not a stale LSP cache: `parse_shape`
+accepted braces but `parse_mark` and `parse_choice` still required brackets,
+so both the compiler and the server reported `expected '[' to open a mark body`.
+The failing-first tests were `parses_brace_mark_and_choice_declarations`,
+`formats_mark_choice_and_is_stably`, and
+`mark_and_choice_brace_declarations_type_check`, all failing with that exact
+message. The parsers now accept `{}` canonically and still accept `[]` for
+migration, while `pretty` and `loi fmt` emit only `{}`. The project now has one
+body delimiter for `shape`, `mark` and `choice`; the old LSP hint disappears
+because the compiler no longer asks for brackets.
+
+### Stale test expectations after the earlier shape-brace commit
+
+The full gate inherited several expectation files that still described the
+pre-`1e3351c` sources: error corpus lines/columns, the reference program token
+count, the LSP `initialize` capability payload, and `lib/os.loi:20` for a linker
+diagnostic whose declaration had moved to line 19. Each failure was a test-only
+drift, not a compiler regression; the exact command output named the mismatched
+file and expected/actual value. The expectations were refreshed to the current
+canonical sources before this change could be committed.

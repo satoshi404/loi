@@ -3,9 +3,9 @@
 // runtime. Build and run with:
 //     loi build examples/choices.loi -o choices
 //     ./choices
-open mark Priority [ Low, High ]
+open mark Priority { Low, High }
 
-open choice JobResult [ Done: i32, Retry: i32, Failed: Priority ]
+open choice JobResult { Done: i32, Retry: i32, Failed: Priority }
 
 shape Job {
     id: i32

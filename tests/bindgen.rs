@@ -137,7 +137,7 @@ fn bindgen_generates_buildable_bindings() {
         "incomplete record should become an open opaque handle:\n{bindings}"
     );
     assert!(
-        bindings.contains("open shape Rect ["),
+        bindings.contains("open shape Rect {"),
         "complete record should become an open shape:\n{bindings}"
     );
     assert!(
@@ -153,7 +153,7 @@ fn bindgen_generates_buildable_bindings() {
         "struct pointer conversion should use the shim symbol:\n{bindings}"
     );
     assert!(
-        bindings.contains("open mark Mode [\n    MODE_A\n    MODE_B\n]"),
+        bindings.contains("open mark Mode {\n    MODE_A\n    MODE_B\n}"),
         "a zero-based contiguous C enum should become an open mark:\n{bindings}"
     );
     assert!(

@@ -2135,6 +2135,13 @@ fn mark_and_choice_program_type_checks() {
 }
 
 #[test]
+fn mark_and_choice_brace_declarations_type_check() {
+    assert_clean(
+        "mark Color { Red, Green }\nchoice Result { Ok: i32, Err: i64 }\nflow main {\n    c <- Color.Green\n    r <- Result.Ok(42)\n    if c == Color.Green and r is Result.Ok {\n        print_int(r.Ok)\n    }\n}\n",
+    );
+}
+
+#[test]
 fn mark_variant_names_are_checked() {
     assert_message(
         "mark Color [ Red ]\nflow main {\n    c <- Color.Blue\n}\n",

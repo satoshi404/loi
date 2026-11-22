@@ -958,6 +958,34 @@ fn parses_mark_and_choice_declarations() {
 }
 
 #[test]
+fn parses_brace_mark_and_choice_declarations() {
+    let program =
+        parse_source("mark Color { Red, Green, Blue }\nchoice Result { Ok: i32, Err: i64 }\n");
+
+    let Item::Mark(mark) = &program.items[0] else {
+        panic!("expected a mark declaration");
+    };
+    assert_eq!(mark.name, "Color");
+    assert_eq!(
+        mark.variants
+            .iter()
+            .map(|v| v.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Red", "Green", "Blue"]
+    );
+
+    let Item::Choice(choice) = &program.items[1] else {
+        panic!("expected a choice declaration");
+    };
+    assert_eq!(choice.name, "Result");
+    assert_eq!(choice.variants.len(), 2);
+    assert_eq!(choice.variants[0].name, "Ok");
+    assert_eq!(choice.variants[0].ty, Type::named("i32"));
+    assert_eq!(choice.variants[1].name, "Err");
+    assert_eq!(choice.variants[1].ty, Type::named("i64"));
+}
+
+#[test]
 fn parses_mark_and_choice_with_newlines_and_visibility() {
     let program = parse_source(
         "open mark Flag [\n    On\n    Off\n]\nsealed choice Maybe [\n    Some: i32,\n    None: bool,\n]\n",

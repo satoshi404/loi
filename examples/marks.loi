@@ -2,7 +2,7 @@
 // set of named tags. Build and run with:
 //     loi build examples/marks.loi -o marks
 //     ./marks
-open mark Signal [ Red, Green, Amber ]
+open mark Signal { Red, Green, Amber }
 
 shape Crossing {
     light: Signal

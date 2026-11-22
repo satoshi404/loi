@@ -272,24 +272,24 @@ impl PrettyPrinter {
             .collect::<Vec<_>>()
             .join(", ");
         let header = if mark.variants.is_empty() {
-            format!("{prefix}mark {} []", mark.name)
+            format!("{prefix}mark {} {{}}", mark.name)
         } else {
-            format!("{prefix}mark {} [ {inner} ]", mark.name)
+            format!("{prefix}mark {} {{ {inner} }}", mark.name)
         };
 
         if header.len() <= 100 {
             self.line_at(mark.span.line, header);
-            // A trailing comment after `]` belongs to this single output line
-            // even when the closing bracket was on another source line.
+            // A trailing comment after `}` belongs to this single output line
+            // even when the closing brace was on another source line.
             self.anchor(mark.close_line);
         } else {
-            self.line_at(mark.span.line, format!("{prefix}mark {} [", mark.name));
+            self.line_at(mark.span.line, format!("{prefix}mark {} {{", mark.name));
             self.indent += 1;
             for variant in &mark.variants {
                 self.line_at(variant.span.line, &variant.name);
             }
             self.indent -= 1;
-            self.line_at(mark.close_line, "]");
+            self.line_at(mark.close_line, "}");
         }
     }
 
@@ -302,9 +302,9 @@ impl PrettyPrinter {
             .collect::<Vec<_>>()
             .join(", ");
         let header = if choice.variants.is_empty() {
-            format!("{prefix}choice {} []", choice.name)
+            format!("{prefix}choice {} {{}}", choice.name)
         } else {
-            format!("{prefix}choice {} [ {inner} ]", choice.name)
+            format!("{prefix}choice {} {{ {inner} }}", choice.name)
         };
 
         if header.len() <= 100 {
@@ -313,7 +313,7 @@ impl PrettyPrinter {
         } else {
             self.line_at(
                 choice.span.line,
-                format!("{prefix}choice {} [", choice.name),
+                format!("{prefix}choice {} {{", choice.name),
             );
             self.indent += 1;
             for variant in &choice.variants {
@@ -323,7 +323,7 @@ impl PrettyPrinter {
                 );
             }
             self.indent -= 1;
-            self.line_at(choice.close_line, "]");
+            self.line_at(choice.close_line, "}");
         }
     }
 

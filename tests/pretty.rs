@@ -32,12 +32,12 @@ fn formats_import_aliases_and_qualified_names_stably() {
 
 #[test]
 fn formats_mark_choice_and_is_stably() {
-    let source = "mark Color [ Red, Green, Blue ]\nchoice Result [ Ok: i32, Err: i64 ]\nflow main {\n    c <- Color.Green\n    r <- Result.Ok(42)\n    if r is Result.Ok {\n        print_int(r.Ok)\n    }\n}\n";
+    let source = "mark Color { Red, Green, Blue }\nchoice Result { Ok: i32, Err: i64 }\nflow main {\n    c <- Color.Green\n    r <- Result.Ok(42)\n    if r is Result.Ok {\n        print_int(r.Ok)\n    }\n}\n";
     let formatted = assert_format_stable(source);
     let lines: Vec<&str> = formatted.lines().filter(|line| !line.is_empty()).collect();
 
-    assert_eq!(lines[0], "mark Color [ Red, Green, Blue ]");
-    assert_eq!(lines[1], "choice Result [ Ok: i32, Err: i64 ]");
+    assert_eq!(lines[0], "mark Color { Red, Green, Blue }");
+    assert_eq!(lines[1], "choice Result { Ok: i32, Err: i64 }");
     assert!(formatted.contains("if r is Result.Ok {"));
     assert!(formatted.contains("print_int(r.Ok)"));
 }
@@ -45,18 +45,28 @@ fn formats_mark_choice_and_is_stably() {
 #[test]
 fn formats_mark_and_choice_declarations_stably() {
     // Short declarations collapse to one line; `sealed` prints no prefix.
-    let source = "open mark Flag [\n    On\n    Off\n]\nsealed choice Maybe [\n    Some: i32,\n    None: bool,\n]\n";
+    let source = "open mark Flag {\n    On\n    Off\n}\nsealed choice Maybe {\n    Some: i32,\n    None: bool,\n}\n";
     let formatted = assert_format_stable(source);
-    assert!(formatted.contains("open mark Flag [ On, Off ]"));
-    assert!(formatted.contains("choice Maybe [ Some: i32, None: bool ]"));
+    assert!(formatted.contains("open mark Flag { On, Off }"));
+    assert!(formatted.contains("choice Maybe { Some: i32, None: bool }"));
 
     // Long declarations use one line per variant.
-    let long = "mark Long [ Alpha, Beta, Gamma, Delta, Epsilon, Zeta, Eta, Theta, Iota, Kappa, Lambda, Mu, Nu, Xi, Omicron, Pi, Rho, Sigma, Tau, Upsilon ]\n";
+    let long = "mark Long { Alpha, Beta, Gamma, Delta, Epsilon, Zeta, Eta, Theta, Iota, Kappa, Lambda, Mu, Nu, Xi, Omicron, Pi, Rho, Sigma, Tau, Upsilon }\n";
     let formatted = assert_format_stable(long);
-    assert!(formatted.contains("mark Long ["));
+    assert!(formatted.contains("mark Long {"));
     assert!(formatted.contains("    Alpha"));
     assert!(formatted.contains("    Mu"));
-    assert!(formatted.trim_end().ends_with(']'));
+    assert!(formatted.trim_end().ends_with('}'));
+}
+
+#[test]
+fn canonicalizes_legacy_mark_and_choice_brackets() {
+    let source = "mark Color [ Red, Green ]\nchoice Result [ Ok: i32 ]\n";
+    let formatted = assert_format_stable(source);
+    assert_eq!(
+        formatted,
+        "mark Color { Red, Green }\n\nchoice Result { Ok: i32 }\n"
+    );
 }
 
 #[test]

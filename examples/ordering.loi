@@ -6,9 +6,9 @@
 //     ./ordering
 import "../lib/vec.loi"
 
-open mark Priority [ Low, Normal, High ]
+open mark Priority { Low, Normal, High }
 
-open choice Status [ Queued: u64, Running: u64 ]
+open choice Status { Queued: u64, Running: u64 }
 
 shape Task {
     priority: Priority

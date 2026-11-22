@@ -1,4 +1,4 @@
-open choice Result [ Ok: i32, Err: i32 ]
+open choice Result { Ok: i32, Err: i32 }
 
 Bad: Result <- Result.Ok(runtime_value())
 

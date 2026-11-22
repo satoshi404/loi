@@ -213,9 +213,9 @@ mut p: Particle &lt;- Particle {
 
           <div class="doc-code">
             <div class="doc-code-bar"><span>sum-types.loi</span><button type="button" data-copy>copy</button></div>
-            <pre><code class="language-loi">mark Color [ Red, Green, Blue ]
+            <pre><code class="language-loi">mark Color { Red, Green, Blue }
 
-choice Result [ Ok: i32, Err: i64 ]
+choice Result { Ok: i32, Err: i64 }
 
 c &lt;- Color.Green
 r &lt;- Result.Ok(42)
@@ -2205,8 +2205,8 @@ sealed flow winning_line
             </thead>
             <tbody>
               <tr><td>Shape</td><td><code>shape Vec2 { x: f64, y: f64 }</code></td></tr>
-              <tr><td>Mark</td><td><code>mark Color [ Red, Green, Blue ]</code></td></tr>
-              <tr><td>Choice</td><td><code>choice Result [ Ok: i32, Err: i64 ]</code></td></tr>
+              <tr><td>Mark</td><td><code>mark Color { Red, Green, Blue }</code></td></tr>
+              <tr><td>Choice</td><td><code>choice Result { Ok: i32, Err: i64 }</code></td></tr>
               <tr><td>Choice constructor</td><td><code>Result.Ok(42)</code></td></tr>
               <tr><td>Variant test</td><td><code>result is Result.Ok</code></td></tr>
               <tr><td>Generic shape</td><td><code>shape Vec&lt;T&gt; [ data: [T], len: u64 ]</code>, bounded as <code>shape Slot&lt;T: Copy&gt; [ value: T ]</code></td></tr>

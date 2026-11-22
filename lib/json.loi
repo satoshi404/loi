@@ -21,7 +21,7 @@ import "std.loi"
 import "vec.loi"
 
 /// The six JSON value kinds returned by `json_kind`.
-open mark JsonKind [ Null, Bool, Number, String, Array, Object ]
+open mark JsonKind { Null, Bool, Number, String, Array, Object }
 
 /// One entry in a document's node table. Offsets are relative to the raw input
 /// for parsed numbers and to the decoded string arena for strings, object keys
