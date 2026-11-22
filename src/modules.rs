@@ -19,7 +19,12 @@ use crate::types::release_flow_name_for;
 /// Where a declaration was declared, for sealed-reference diagnostics.
 #[derive(Debug, Clone)]
 pub struct ModuleExport {
+    /// Module whose export namespace contains this entry. A package root gets
+    /// entries for every `open` declaration it re-exports with `open import`.
     pub module: usize,
+    /// Module that actually declares the item. Re-exports do not create a new
+    /// declaration, so mangling and C symbols stay tied to the owner.
+    pub owner: usize,
     pub name: String,
     pub visibility: Visibility,
     pub span: Span,
@@ -65,7 +70,7 @@ impl Resolver<'_> {
         let shared = self.context.exports.get(name).is_some_and(|entries| {
             entries
                 .iter()
-                .map(|entry| entry.module)
+                .map(|entry| entry.owner)
                 .collect::<HashSet<_>>()
                 .len()
                 > 1
@@ -78,7 +83,7 @@ impl Resolver<'_> {
     }
 
     fn check_sealed(&mut self, declaration: &ModuleExport, alias: Option<&str>, span: Span) {
-        if declaration.visibility == Visibility::Hidden && declaration.module != self.module {
+        if declaration.visibility == Visibility::Hidden && declaration.owner != self.module {
             let message = match alias {
                 Some(alias) => format!(
                     "item '{}' is sealed in module '{alias}' and cannot be used here",
@@ -87,7 +92,7 @@ impl Resolver<'_> {
                 None => format!(
                     "'{}' is sealed in module '{}' and cannot be used from module '{}'",
                     declaration.name,
-                    self.views[declaration.module].name,
+                    self.views[declaration.owner].name,
                     self.views[self.module].name
                 ),
             };
@@ -123,41 +128,57 @@ impl Resolver<'_> {
                 );
                 return item.to_string();
             };
-            let declaration = self
+            let candidates = self
                 .context
                 .exports
                 .get(item)
-                .and_then(|entries| entries.iter().find(|entry| entry.module == target))
-                .cloned();
-            let Some(declaration) = declaration else {
+                .into_iter()
+                .flatten()
+                .filter(|entry| entry.module == target)
+                .cloned()
+                .collect::<Vec<_>>();
+            let Some(declaration) = candidates.first() else {
                 self.diagnostics.push(
                     Diagnostic::from_error(format!("module '{alias}' has no item '{item}'"), span)
                         .with_label("unknown item in this module"),
                 );
                 return item.to_string();
             };
-            self.check_sealed(&declaration, Some(alias), span);
-            return self.declared_name(item, target);
+            let owners = candidates
+                .iter()
+                .map(|entry| entry.owner)
+                .collect::<HashSet<_>>();
+            if owners.len() > 1 {
+                self.diagnostics.push(
+                    Diagnostic::from_error(
+                        format!("module '{alias}' has ambiguous item '{item}'"),
+                        span,
+                    )
+                    .with_label("several declarations are re-exported under this name"),
+                );
+            }
+            self.check_sealed(declaration, Some(alias), span);
+            return self.declared_name(item, declaration.owner);
         }
 
         let Some(entries) = self.context.exports.get(name) else {
             return name.to_string();
         };
-        if entries.iter().any(|entry| entry.module == self.module) {
+        if entries.iter().any(|entry| entry.owner == self.module) {
             return self.declared_name(name, self.module);
         }
-        let modules = entries
+        let owners = entries
             .iter()
-            .map(|entry| entry.module)
+            .map(|entry| entry.owner)
             .collect::<HashSet<_>>();
-        if modules.len() == 1 {
+        if owners.len() == 1 {
             let declaration = entries[0].clone();
             self.check_sealed(&declaration, None, span);
-            return self.declared_name(name, declaration.module);
+            return self.declared_name(name, declaration.owner);
         }
         let candidates = entries
             .iter()
-            .map(|entry| format!("{}::{}", self.views[entry.module].name, name))
+            .map(|entry| format!("{}::{}", self.views[entry.owner].name, name))
             .collect::<Vec<_>>()
             .join(", ");
         self.diagnostics.push(
@@ -168,7 +189,7 @@ impl Resolver<'_> {
             .with_label("name declared in several modules")
             .with_help("write module::item to choose a declaration"),
         );
-        self.declared_name(name, entries[0].module)
+        self.declared_name(name, entries[0].owner)
     }
 
     fn ty(&mut self, ty: &mut Type) {

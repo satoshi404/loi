@@ -259,11 +259,15 @@ impl Item {
 
 /// `import "path.loi" [as name]` loads another source file into the
 /// compilation unit and binds it under `alias`, or its file stem when absent.
+/// `open import "path.loi"` additionally re-exports that module's `open`
+/// declarations through this module, so `package::item` works without copying
+/// declarations into the package root.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportDecl {
     pub span: Span,
     pub path: String,
     pub alias: Option<String>,
+    pub public: bool,
 }
 
 /// A top-level `let`/`var` declaration. Globals are initialized once, before

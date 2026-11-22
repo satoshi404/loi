@@ -168,10 +168,19 @@ impl Parser {
         let span = self.span_here();
 
         if self.at(TokenKind::Import) {
-            return self.parse_import(span);
+            return self.parse_import(span, false);
         }
 
         let visibility = self.parse_visibility();
+
+        if self.at(TokenKind::Import) {
+            if visibility != Visibility::Visible {
+                return Err(self.error_current(
+                    "only 'open import' is valid; write 'import' for a private dependency",
+                ));
+            }
+            return self.parse_import(span, true);
+        }
 
         if self.at(TokenKind::Comptime) {
             self.advance();
@@ -202,13 +211,13 @@ impl Parser {
             Ok(Item::Global(self.parse_flow_global(visibility, span)?))
         } else {
             Err(self.error_current(format!(
-                "expected 'import', 'shape', 'mark', 'choice', 'opaque', 'extern flow', 'flow' or a global binding, found {}",
+                "expected 'import', 'open import', 'shape', 'mark', 'choice', 'opaque', 'extern flow', 'flow' or a global binding, found {}",
                 self.describe_current()
             )))
         }
     }
 
-    fn parse_import(&mut self, span: Span) -> ParseResult<Item> {
+    fn parse_import(&mut self, span: Span, public: bool) -> ParseResult<Item> {
         self.expect(TokenKind::Import, "'import'")?;
         let path = self.expect(TokenKind::String, "an import path string")?;
         let alias = if self.matches(TokenKind::As) {
@@ -220,6 +229,7 @@ impl Parser {
             span,
             path: path.lexeme,
             alias,
+            public,
         }))
     }
 

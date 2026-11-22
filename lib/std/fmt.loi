@@ -1,0 +1,33 @@
+//! Small text-formatting helpers built from the byte-string primitives.
+//!
+//! Re-exported by `lib/std.loi`. Every helper that concatenates allocates in
+//! the caller's `protect` region; formatting never hides that ownership.
+
+import "str.loi"
+
+/// `label: value` as a new byte string.
+open flow fmt_label
+    <- label: [u8]
+    <- value: [u8]
+    => [u8]
+{
+    prefix <- str_concat(label, ": ")
+    => str_concat(prefix, value)
+}
+
+/// Append a single newline.
+open flow fmt_line
+    <- value: [u8]
+    => [u8]
+{
+    => str_concat(value, "\n")
+}
+
+/// Parenthesise a value for diagnostics.
+open flow fmt_parens
+    <- value: [u8]
+    => [u8]
+{
+    left <- str_concat("(", value)
+    => str_concat(left, ")")
+}

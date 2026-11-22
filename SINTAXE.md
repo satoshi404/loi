@@ -910,6 +910,15 @@ p   <- m::Point { x: 1, y: 2 }
   §4.8 for the full rule.
 - Imports must appear as top-level items. The standard library is explicit;
   there is no implicit prelude. Common import: `import "lib/std.loi"`.
+- `open import "path.loi"` is the re-export form. It brings the imported
+  module's `open` declarations into the importer's public surface, transitively,
+  without creating a new declaration or changing the original C symbol.
+  `sealed` declarations are never re-exported. `sealed import` is invalid, and
+  cycles are errors exactly as for ordinary imports.
+- Paths are always explicit and relative to the importing file (or absolute).
+  There is no global search path. Package roots live at `lib/<package>.loi` and
+  their internal files at `lib/<package>/*.loi`, so both broad and narrow imports
+  use the same resolver that already handles `module::item`.
 
 ---
 
@@ -1325,7 +1334,31 @@ Build with `loi build main.loi -o main --c-source lib/process_shim.c` (add
 
 Every library file is imported explicitly with the canonical `import` form.
 Each file is a module (§13); items may be named unqualified or as
-`module::item`. Library names keep their established prefixes (`math_*`,
+`module::item`.
+
+The official libraries are packages, not a flat pile of files. A package root
+re-exports the public declarations of its internal files with `open import`;
+importing the root is a convenience, and importing an internal file is the
+narrow dependency. Old flat paths remain as compatibility facades and resolve
+to the same declarations and C symbols.
+
+| Package root | Internal files | C shim |
+|---|---|---|
+| `lib/core.loi` | `core/option.loi`, `core/result.loi`, `core/cmp.loi`, `core/mem.loi`, `core/ops.loi` | none |
+| `lib/std.loi` | `std/num.loi`, `std/convert.loi`, `std/str.loi`, `std/vec.loi`, `std/slice.loi`, `std/map.loi`, `std/hash.loi`, `std/crc32.loi`, `std/random.loi`, `std/ctype.loi`, `std/fmt.loi`, `std/debug.loi`, `std/iter.loi` | none |
+| `lib/runtime.loi` | `runtime/arena.loi`, `runtime/panic.loi`, `runtime/hooks.loi` | none today |
+| `lib/math.loi` | `math/const.loi`, `math/generic.loi`, `math/float.loi`, `math/integer.loi` | none |
+| `lib/os.loi` | `os/env.loi`, `os/time.loi`, `os/file.loi`, `os/path.loi` | `lib/os_shim.c` |
+| `lib/net.loi` | `net/address.loi`, `net/socket.loi`, `net/tcp.loi`, `net/udp.loi` | `lib/net_shim.c` |
+| `lib/encoding.loi` | `encoding/json.loi`, `encoding/jsonrpc.loi` | `lib/stdio_shim.c` only for JSON-RPC I/O |
+| `lib/lsp.loi` | `lsp/protocol.loi`, `lsp/shim.loi` | `lib/lsp_shim.c`, plus stdio via JSON-RPC |
+
+Dependency direction: `core` imports nothing from the other packages; `std`
+may depend on `core`; `runtime` is independent; `os` may use `core`/`runtime`;
+`net` may use `core`/`os`; `encoding` uses `std`/`os/stdio`; `lsp` uses
+`encoding`/`std`. Bindings under `vendor/` are separate packages, not stdlib.
+
+Library names keep their established prefixes (`math_*`,
 `ctype_*`, `vec_*`, `slice_*`, `str_*`, `option_*`, `result_*`, `hash_*`,
 `crc32_*`, `map_*`, `rng_*`, `os_*`, `net_*`, `stdio_*`, `json_*`,
 `jsonrpc_*`, `lsp_*`, `process_*`) so their C symbols stay stable even
@@ -1337,17 +1370,20 @@ to names that actually repeat.
 | `lib/std.loi` | `min_i32`, `max_i32`, `abs_i32`, `clamp_i32`, `min_f64`, `max_f64`, `abs_f64`, `clamp_f64`, `i64_to_bytes`, `u64_to_bytes`, `str_len`, `str_eq`, `str_starts_with`, `str_find` | no; conversions need `protect` |
 | `lib/math.loi` | `MATH_PI`, `MATH_E`, `MATH_TAU`, `math_factorial`, generic `math_min<T>` / `math_max<T>` / `math_clamp<T>` / `math_sum<T>`, `math_lerp`, `math_smoothstep`, `math_deg_to_rad`, `math_rad_to_deg`, `math_hypot`, `math_near`, `math_sign_i32`, `math_gcd_u64`, `math_pow_u64`, `math_dot_f64` | no |
 | `lib/ctype.loi` | `ctype_is_digit`, `ctype_is_upper`, `ctype_is_lower`, `ctype_is_alpha`, `ctype_is_alnum`, `ctype_is_hex_digit`, `ctype_is_space`, `ctype_is_ascii`, `ctype_to_lower`, `ctype_to_upper`, `ctype_hex_value`, `ctype_parse_u64`, `ctype_count_digits`, `ctype_equals_ignore_case` | no |
+| `lib/core.loi` | `Option<T>`, `Result<T, E>`, `cmp_eq<T>`, `cmp_lt<T>`, `cmp_clamp_u64`, `cmp_max_u64`, `mem_zeroed_bytes`, `mem_fill_u8`, `mem_copy_u8`, `ops_is_power_of_two_u64`, `ops_next_power_of_two_u64`, `ops_saturating_sub_u64` | no; `mem_zeroed_bytes` needs `protect` |
+| `lib/runtime.loi` | `arena_bytes`, `arena_filled_bytes`, `runtime_panic`, `runtime_assert`, `runtime_assert_i64_eq`, `RuntimePhase`, `RuntimeHooks`, `hooks_none`, `hooks_with_shutdown`, `hooks_wants_setup`, `hooks_wants_shutdown` | no; arena flows need `protect` |
 | `lib/option.loi` | `Option<T>`, `option_none<T>`, `option_some<T>`, `option_is_some<T>`, `option_is_none<T>`, `option_get_or<T>`, `option_unwrap<T>` | no; cloning slice payloads needs `protect` |
 | `lib/result.loi` | `Result<T, E>`, `result_ok<T, E>`, `result_err<T, E>`, `result_is_ok<T, E>`, `result_is_err<T, E>`, `result_unwrap_or<T, E>`, `result_unwrap<T, E>`, `result_unwrap_err<T, E>` | no; cloning slice payloads needs `protect` |
 | `lib/vec.loi` | `Vec<T>`, `vec_new<T>`, `vec_len<T>`, `vec_capacity<T>`, `vec_is_empty<T>`, `vec_get<T>`, `vec_set<T>`, `vec_push<T>`, `vec_pop<T>`, `vec_find<T>`, `vec_from_slice<T>`, `vec_view<T>`, `vec_as_slice<T>`, `vec_reserve<T>`, `vec_clear<T>`, `vec_reverse<T>`, `vec_sort<T>`, `vec_binary_search<T>` | no; `vec_new<T>` needs no `protect`, growing flows do |
 | `lib/slice.loi` | `slice_view<T>`, `slice_len<T>`, `slice_is_empty<T>`, `slice_get<T>`, `slice_first<T>`, `slice_last<T>`, `slice_find<T>`, `slice_equals_u8`, `slice_clone<T>`, `slice_copy<T>`, `slice_reverse<T>` | no; allocators need `protect` |
-| `lib/string.loi` | `STRING_MAX_LEN`, `str_is_ascii_space`, `str_trim`, `str_concat`, `str_reverse`, `str_repeat`, `str_count`, `str_index_of`, `str_contains` | no; owned results need `protect` |
+| `lib/string.loi` | `STRING_MAX_LEN`, `str_is_ascii_space`, `str_trim`, `str_concat`, `str_reverse`, `str_repeat`, `str_count`, `str_index_of`, `str_contains`, `str_len`, `str_eq`, `str_starts_with`, `str_find` | no; owned results need `protect` |
+| `lib/std.loi` (fmt/debug/iter) | `fmt_label`, `fmt_line`, `fmt_parens`, `debug_assert`, `debug_expect_i64_eq`, `debug_expect_u64_lt`, `iter_len<T>`, `iter_sum_u64`, `iter_any_i64`, `iter_all_positive_i64` | no; `fmt_*` results need `protect` |
 | `lib/hash.loi` | `HASH_OFFSET`, `HASH_PRIME`, `hash_bytes_seeded`, `hash_bytes`, `hash_str`, `hash_u64_seeded`, `hash_u64`, `hash_pair_u64` | no |
 | `lib/crc32.loi` | `CRC32_POLY`, `CRC32_INIT`, `CRC32_XOROUT`, `CRC32_TABLE`, `crc32_update`, `crc32_extend`, `crc32_bytes` | no |
 | `lib/map.loi` | `IntMap<V>`, `StrMap<V>`, `map_int_new<V>`, `map_int_len<V>`, `map_int_capacity<V>`, `map_int_contains<V>`, `map_int_get<V>`, `map_int_get_or<V>`, `map_int_lookup<V>`, `map_int_set<V>`, `map_int_remove<V>`, `map_int_clear<V>`, and the matching `map_str_*` flows | no; mutators need `protect` |
 | `lib/random.loi` | `Rng`, `rng_new`, `rng_state`, `rng_next_u64`, `rng_next_u32`, `rng_below_u64`, `rng_pick<T>`, `rng_shuffle<T>`; a zero seed uses `RNG_FALLBACK_SEED` | no |
-| `lib/os.loi` | `os_pid`, `os_unix_time`, `os_sleep`, `os_has_env`, `os_env`, `os_env_i32`, `os_errno`, `os_exit` | `lib/os_shim.c`; `os_env` needs `protect` |
-| `lib/net.loi` | `NetIpv4Result`, `net_ipv4`, `net_ipv4_octet`, `net_port_is_valid`, `net_parse_ipv4`, `net_tcp_connect`, `net_close`, `net_send`, `net_recv` | `lib/net_shim.c` |
+| `lib/os.loi` | `os_pid`, `os_unix_time`, `os_sleep`, `os_has_env`, `os_env`, `os_env_i32`, `os_errno`, `os_exit`, `File`, `file_open_read`, `file_open_write`, `file_read`, `file_write`, `file_release`, `path_is_absolute`, `path_file_name`, `path_parent`, `path_extension` | `lib/os_shim.c` for env/time/file; paths are pure; `os_env` needs `protect` |
+| `lib/net.loi` | `NetIpv4Result`, `net_ipv4`, `net_ipv4_octet`, `net_port_is_valid`, `net_parse_ipv4`, `net_tcp_connect`, `net_close`, `net_send`, `net_recv`, `TcpStream`, `tcp_stream_connect`, `tcp_stream_send`, `tcp_stream_recv`, `tcp_stream_release`, `UdpEndpoint`, `udp_endpoint`, `udp_endpoint_port`, `udp_endpoint_is_broadcast`, `udp_endpoint_is_loopback` | `lib/net_shim.c` for TCP; address/UDP helpers are pure |
 | `lib/stdio.loi` | `stdio_read_exact`, `stdio_write_all`, `stdio_flush` | `lib/stdio_shim.c` |
 | `lib/json.loi` | `JsonKind`, `JsonDoc`, `json_parse`, `json_root`, `json_kind`, `json_bool`, `json_string`, `json_number_text`, `json_number_i64`, `json_array_len`, `json_array_get`, `json_object_get`, `json_stringify`, `json_new`, `json_new_null`, `json_new_bool`, `json_new_i64`, `json_new_u64`, `json_new_number`, `json_new_string`, `json_new_array`, `json_new_object`, `json_array_push`, `json_object_set`, `json_set_root` | no; parsing, building and stringifying need `protect` |
 | `lib/jsonrpc.loi` | `JsonRpcRequest`, `jsonrpc_read_frame`, `jsonrpc_parse_request`, `jsonrpc_send_result`, `jsonrpc_send_error`, `jsonrpc_send_notification` | `lib/stdio_shim.c`; all flows need `protect` |

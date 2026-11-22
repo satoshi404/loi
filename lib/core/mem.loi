@@ -1,0 +1,48 @@
+//! Tiny memory helpers that keep the arena explicit.
+//!
+//! Re-exported by `lib/core.loi`. These flows never hide `alloc` or `protect`:
+//! the caller still owns the region that pays for any returned slice.
+
+/// Allocate `count` zero bytes in the caller's active `protect` region.
+open flow mem_zeroed_bytes
+    -> out: [u8]
+    <- count: u64
+{
+    if count == 0 {
+        out = [u8:]
+        =>
+    }
+    alloc(-> out, u8, count)
+    for i in 0..count {
+        out[i] = 0
+    }
+}
+
+/// Overwrite the front of a byte slice. The slice itself is borrowed mutably;
+/// its storage is unchanged, so no `protect` is required here.
+open flow mem_fill_u8
+    <-> data: [u8]
+    <- byte: u8
+{
+    for i in 0..data.len {
+        data[i] = byte
+    }
+}
+
+/// Copy up to `count` bytes between two caller-owned slices.
+open flow mem_copy_u8
+    <- source: [u8]
+    <-> target: [u8]
+    <- count: u64
+{
+    mut limit: u64 <- count
+    if limit > source.len {
+        limit = source.len
+    }
+    if limit > target.len {
+        limit = target.len
+    }
+    for i in 0..limit {
+        target[i] = source[i]
+    }
+}

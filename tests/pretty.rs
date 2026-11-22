@@ -31,6 +31,12 @@ fn formats_import_aliases_and_qualified_names_stably() {
 }
 
 #[test]
+fn formats_open_imports_stably() {
+    let formatted = assert_format_stable("open import \"lib/core/option.loi\" as core\n");
+    assert_eq!(formatted, "open import \"lib/core/option.loi\" as core\n");
+}
+
+#[test]
 fn formats_mark_choice_and_is_stably() {
     let source = "mark Color { Red, Green, Blue }\nchoice Result { Ok: i32, Err: i64 }\nflow main {\n    c <- Color.Green\n    r <- Result.Ok(42)\n    if r is Result.Ok {\n        print_int(r.Ok)\n    }\n}\n";
     let formatted = assert_format_stable(source);

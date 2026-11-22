@@ -69,7 +69,7 @@ The goal is that any new model can open `development/PROGRESS.md` and immediatel
 | Strings              | Double-quoted literals with decoded escapes; runtime type `[u8]`         |
 | Slice literals       | `[a, b]` (inferred) or `[T: a, b]` (explicit)                           |
 | Length               | `len(xs)` and `xs.len`, both `u64`                                       |
-| Imports              | `import "path.loi"` loads a module (file); `as` aliases it, `module::item` qualifies references (§4.8) |
+| Imports              | `import "path.loi"` loads a module (file); `open import "path.loi"` re-exports its `open` items; `as` aliases it, `module::item` qualifies references (§4.8) |
 | Operators            | `and`, `or`, `not`, `is`, `as`, bitwise `&` `\|` `^` `~`, shifts `<<` `>>`, compound `+=` and friends |
 
 ---
@@ -387,8 +387,16 @@ These rules were added to unblock real programs and are implemented and tested. 
   qualified or unqualified. The resolver reports a sealed cross-module reference
   with both module names and the item's declaration span. A module may refer to
   itself by its own name, so self-qualified access to a sealed item is legal.
+- `open import "path.loi"` (optionally `as name`) is a re-export: it brings the
+  imported module's `open` declarations into the importer's public surface,
+  transitively through further `open import`s. It does **not** create a new
+  declaration, change the owning module, or change the generated C symbol.
+  `sealed` declarations are never re-exported, `sealed import` is rejected, and
+  both import forms participate in the same cycle check.
 - Qualified names support one level (`module::item`) in this version. There are
-  no nested modules, re-exports, module-wide visibility or search paths.
+  no nested module paths, module-wide visibility or global search paths: paths
+  are relative to the importing file (or absolute), and a re-export is a
+  declaration-level view, not a namespace.
 - **Same names in several modules:** a declaration name may repeat in different
   modules. All contributions with that source name receive the internal name
   `<module>::<name>`; the C backend sanitizes `::` to `__`, so `a::helper`
@@ -915,7 +923,17 @@ slices, so their helpers stay bit-wise.
    that flow's C symbol; it likewise cannot use one fixed AST-level signature.
    `read_file`, `read_stdin` and `read_line` allocate in the current `protect`
    region and follow the same escape rules as `alloc`.
-2. **The library** is ordinary Loi in `lib/std.loi`, `lib/math.loi`, `lib/ctype.loi`, `lib/json.loi` and `lib/jsonrpc.loi`, plus thin `extern flow` bindings in `lib/os.loi`, `lib/net.loi`, `lib/stdio.loi`, `lib/process.loi` and `lib/lsp.loi` with matching C shims. Files are explicitly imported; there is no implicit prelude. Each file is a module with a `module::item` qualified form (§4.8); library names keep their established prefixes (`min_i32`, `math_sum`, `ctype_is_digit`, ...) so their C symbols stay stable even when a user module declares the same name.
+ 2. **The library** is ordinary Loi organized as packages: a root such as
+    `lib/std.loi` re-exports its internal files under `lib/std/*.loi` with
+    `open import`. The packages are `core`, `std`, `runtime`, `math`, `os`,
+    `net`, `encoding` and `lsp`; flat paths from earlier releases remain as
+    compatibility facades. Thin `extern flow` bindings stay at package edges
+    with matching C shims (`os_shim.c`, `net_shim.c`, `stdio_shim.c`,
+    `process_shim.c`, `lsp_shim.c`). Files are explicitly imported; there is no
+    implicit prelude. Each file is a module with a `module::item` qualified form
+    (§4.8); library names keep their established prefixes (`min_i32`,
+    `math_sum`, `ctype_is_digit`, ...) so their C symbols stay stable even when
+    a user module declares the same name.
 
 New functionality goes into the library by default; an intrinsic is added only when the operation must be implemented by the backend or the OS.
 

@@ -1,0 +1,106 @@
+//! Integer and floating-point min/max/abs/clamp helpers.
+//!
+//! Re-exported by `lib/std.loi`; import this file directly for a narrow build.
+//! See `lib/math.loi` for interpolation, integer GCD and compile-time helpers.
+// ---------------------------------------------------------------------------
+// Integers
+// ---------------------------------------------------------------------------
+open flow min_i32
+    <- a: i32
+    <- b: i32
+    => i32
+{
+    if a < b {
+        => a
+    }
+    => b
+}
+
+open flow max_i32
+    <- a: i32
+    <- b: i32
+    => i32
+{
+    if a > b {
+        => a
+    }
+    => b
+}
+
+open flow abs_i32
+    <- value: i32
+    => i32
+{
+    if value < 0 {
+        => -value
+    }
+    => value
+}
+
+open flow clamp_i32
+    <- value: i32
+    <- low: i32
+    <- high: i32
+    => i32
+{
+    if value < low {
+        => low
+    }
+    if value > high {
+        => high
+    }
+    => value
+}
+
+// ---------------------------------------------------------------------------
+// Floats
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Floats
+// ---------------------------------------------------------------------------
+open flow min_f64
+    <- a: f64
+    <- b: f64
+    => f64
+{
+    if a < b {
+        => a
+    }
+    => b
+}
+
+open flow max_f64
+    <- a: f64
+    <- b: f64
+    => f64
+{
+    if a > b {
+        => a
+    }
+    => b
+}
+
+open flow abs_f64
+    <- value: f64
+    => f64
+{
+    if value < 0.0 {
+        => -value
+    }
+    => value
+}
+
+open flow clamp_f64
+    <- value: f64
+    <- low: f64
+    <- high: f64
+    => f64
+{
+    if value < low {
+        => low
+    }
+    if value > high {
+        => high
+    }
+    => value
+}

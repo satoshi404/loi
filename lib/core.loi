@@ -1,0 +1,18 @@
+//! Foundation package: types and operations every Loi program can rely on.
+//!
+//! ```loi
+//! import "lib/core.loi"           // broad package import
+//! import "lib/core/option.loi"    // narrow import
+//!
+//! maybe <- core::option_some<i32>(42)
+//! ```
+//!
+//! `open import` re-exports only `open` declarations from the internal files.
+//! It creates no new declaration and does not change the original C symbol.
+//! `core` never imports `os`, `net`, `runtime` or `std`.
+
+open import "core/option.loi"
+open import "core/result.loi"
+open import "core/cmp.loi"
+open import "core/mem.loi"
+open import "core/ops.loi"

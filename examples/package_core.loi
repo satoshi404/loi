@@ -1,0 +1,73 @@
+//! `core` package example: parse a setting into Option/Result and use the
+//! comparison, memory and integer helpers without any OS dependency.
+//!
+//! ```sh
+//! loi build examples/package_core.loi -o package_core && ./package_core
+//! ```
+
+import "../lib/core.loi"
+
+/// Parse a small unsigned decimal count, returning a byte-string error.
+open flow parse_count
+    <- text: [u8]
+    => Result<u64, [u8]>
+{
+    if text.len == 0 {
+        mut bad: Result<u64, [u8]>
+        core::result_err<u64, [u8]>("empty", -> bad)
+        => bad
+    }
+    mut value: u64 <- 0
+    for i in 0..text.len {
+        byte <- text[i]
+        if byte < 48 or byte > 57 {
+            mut bad: Result<u64, [u8]>
+            core::result_err<u64, [u8]>("not a number", -> bad)
+            => bad
+        }
+        value = value * 10 + (byte - 48) as u64
+    }
+    mut ok: Result<u64, [u8]>
+    core::result_ok<u64, [u8]>(value, -> ok)
+    => ok
+}
+
+open flow main
+    => i32
+{
+    protect {
+        parsed <- parse_count("64")
+        if not core::result_is_ok<u64, [u8]>(parsed) {
+            print("parse failed\n")
+            => 1
+        }
+        count <- core::result_unwrap<u64, [u8]>(parsed)
+        if not core::ops_is_power_of_two_u64(count) {
+            print("count should be a power of two\n")
+            => 2
+        }
+        if core::ops_next_power_of_two_u64(count) != count {
+            print("rounding changed a power of two\n")
+            => 3
+        }
+        if core::cmp_clamp_u64(count, 1, 32) != 32 {
+            print("clamp failed\n")
+            => 4
+        }
+
+        mut buffer: [u8]
+        core::mem_zeroed_bytes(-> buffer, 4)
+        core::mem_fill_u8(<-> buffer, 7)
+        if buffer[0] != 7 or buffer[3] != 7 {
+            print("memory helpers failed\n")
+            => 5
+        }
+
+        mut maybe: Option<u64>
+        core::option_some<u64>(core::result_unwrap<u64, [u8]>(parsed), -> maybe)
+        print("workers=")
+        print_int(core::option_get_or<u64>(maybe, 1))
+        print("\n")
+    }
+    => 0
+}

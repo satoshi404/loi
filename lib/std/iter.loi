@@ -1,0 +1,47 @@
+//! Ownership-friendly iteration patterns over slices.
+//!
+//! Re-exported by `lib/std.loi`. Views and slices stay explicit: these helpers
+//! borrow `<-` and never clone or give the collection behind the caller's back.
+
+open flow iter_len<T>
+    <- values: [T]
+    => u64
+{
+    => values.len
+}
+
+open flow iter_sum_u64
+    <- values: [u64]
+    => u64
+{
+    mut total: u64 <- 0
+    for i in 0..values.len {
+        total += values[i]
+    }
+    => total
+}
+
+open flow iter_any_i64
+    <- values: [i64]
+    <- target: i64
+    => bool
+{
+    for i in 0..values.len {
+        if values[i] == target {
+            => true
+        }
+    }
+    => false
+}
+
+open flow iter_all_positive_i64
+    <- values: [i64]
+    => bool
+{
+    for i in 0..values.len {
+        if values[i] <= 0 {
+            => false
+        }
+    }
+    => true
+}

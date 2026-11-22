@@ -2100,7 +2100,16 @@ fn linker_error_dir(name: &str, include_shim: bool) -> PathBuf {
     let lib = dir.join("lib");
     fs::create_dir_all(&lib).expect("lib directory should be creatable");
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let os = lib.join("os");
+    fs::create_dir_all(&os).expect("lib/os directory should be creatable");
     fs::copy(manifest.join("lib/os.loi"), lib.join("os.loi")).expect("lib/os.loi should be copied");
+    for entry in fs::read_dir(manifest.join("lib/os")).expect("lib/os should be readable") {
+        let entry = entry.expect("lib/os entry should be readable");
+        let name = entry.file_name();
+        if name.to_string_lossy().ends_with(".loi") {
+            fs::copy(entry.path(), os.join(name)).expect("lib/os/*.loi should be copied");
+        }
+    }
     if include_shim {
         fs::copy(manifest.join("lib/os_shim.c"), lib.join("os_shim.c"))
             .expect("lib/os_shim.c should be copied");
@@ -2148,7 +2157,7 @@ fn link_error_points_at_the_extern_flow_and_suggests_its_shim() {
     let human_stderr = String::from_utf8_lossy(&human.stderr);
     assert!(
         human_stderr.contains(&format!("error: {message}"))
-            && human_stderr.contains("--> lib/os.loi:19:1")
+            && human_stderr.contains("--> lib/os/time.loi:19:1")
             && human_stderr.contains(&format!("= help: {help}")),
         "unexpected human output: {human_stderr}"
     );
@@ -2165,7 +2174,7 @@ fn link_error_points_at_the_extern_flow_and_suggests_its_shim() {
     assert_eq!(short.status.code(), Some(1));
     let short_stderr = String::from_utf8_lossy(&short.stderr);
     assert!(
-        short_stderr.contains(&format!("lib/os.loi:19:1: {message}\n"))
+        short_stderr.contains(&format!("lib/os/time.loi:19:1: {message}\n"))
             && short_stderr.contains(&format!("  = help: {help}\n")),
         "short output should carry the help line: {short_stderr}"
     );
@@ -2176,7 +2185,7 @@ fn link_error_points_at_the_extern_flow_and_suggests_its_shim() {
     assert!(
         json_stderr.starts_with('[')
             && json_stderr.contains(&format!("\"message\":\"{message}\""))
-            && json_stderr.contains("\"file\":\"lib/os.loi\"")
+            && json_stderr.contains("\"file\":\"lib/os/time.loi\"")
             && json_stderr.contains("\"line\":19")
             && json_stderr.contains("\"column\":1")
             && json_stderr.contains(&format!("\"help\":\"{help}\"")),

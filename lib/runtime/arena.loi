@@ -1,0 +1,29 @@
+//! Arena-facing helpers for the generated Loi runtime.
+//!
+//! Re-exported by `lib/runtime.loi`. A caller must still write `protect { ... }`
+//! around any flow that allocates; this module only names common patterns and
+//! never hides the arena or the `alloc` intrinsic.
+
+/// Allocate a byte slice in the active `protect` region.
+open flow arena_bytes
+    -> out: [u8]
+    <- count: u64
+{
+    alloc(-> out, u8, count)
+}
+
+/// Allocate and fill a byte slice in the active `protect` region.
+open flow arena_filled_bytes
+    -> out: [u8]
+    <- count: u64
+    <- byte: u8
+{
+    if count == 0 {
+        out = [u8:]
+        =>
+    }
+    alloc(-> out, u8, count)
+    for i in 0..count {
+        out[i] = byte
+    }
+}

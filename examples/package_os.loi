@@ -1,0 +1,40 @@
+//! `os` package example: classify and split POSIX paths without linking a C
+//! shim. The package's foreign helpers stay in env/time/file.
+//!
+//! ```sh
+//! loi build examples/package_os.loi -o package_os && ./package_os
+//! ```
+
+import "../lib/os.loi"
+
+open flow expect
+    <- ok: bool
+    <- message: [u8]
+{
+    if not ok {
+        panic(message)
+    }
+}
+
+open flow main
+    => i32
+{
+    path: [u8] <- "/var/log/loi/server.log"
+    expect(os::path_is_absolute(path), "expected an absolute path")
+
+    name <- os::path_file_name(path)
+    expect(name == "server.log", "wrong file name")
+
+    parent <- os::path_parent(path)
+    expect(parent == "/var/log/loi", "wrong parent")
+
+    extension <- os::path_extension(path)
+    if extension != ".log" {
+        print(extension)
+        print("\n")
+        => 1
+    }
+
+    print("path ok\n")
+    => 0
+}

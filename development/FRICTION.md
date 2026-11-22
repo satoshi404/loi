@@ -971,3 +971,34 @@ source rather than at a generated call. Moving expansion after checking would
 allow more introspection but would require the checker and linter to understand
 `Code` nodes and would duplicate the ownership rules. The current order keeps
 one path for all later phases.
+
+## Block P — package layout and re-exports
+
+### Compatibility facades needed distinct aliases
+
+A program importing both `lib/json.loi` and the new broad `lib/encoding.loi`
+reached `open import "encoding/json.loi"` through two paths and reported
+`duplicate module alias 'json'`. The resolver binds one name per import, so
+each facade now gives its re-export an explicit alias (`json_api`,
+`jsonrpc_api`, `option_api`, ...). The alias is local to the facade; the
+re-exported declarations keep their original owner and C symbol. Packages
+themselves still use plain `open import` because their internal file names are
+distinct.
+
+### Sealed FFI helpers are not part of a package surface
+
+`lib/net/tcp.loi` first called `loi_net_close`, `loi_net_tcp_connect`,
+`loi_net_send` and `loi_net_recv` directly from `net/socket.loi` and failed with
+`is sealed in module 'socket'`. That was intentional: those raw bindings are
+the FFI edge. The higher-level file now calls the open wrappers
+(`net_close`, `net_tcp_connect`, `net_send`, `net_recv`), so the shim stays at
+one boundary and ordinary code never needs the foreign names.
+
+### Broad imports pull in every shim
+
+Importing the broad `lib/net.loi` also loads its TCP re-exports, so a program
+that only parses addresses must link `lib/net_shim.c` even when it never calls
+a socket. The fix is a narrow import such as
+`import "lib/net/address.loi"` and `import "lib/net/udp.loi"`; both live in the
+pure layer. This is a property of textual imports, not a hidden search path,
+and is documented in `SINTAXE.md` alongside the package table.

@@ -1,0 +1,37 @@
+//! `encoding` package example: build a JSON settings document, serialise it,
+//! parse it back and read one field. The document model is pure Loi.
+//!
+//! ```sh
+//! loi build examples/package_encoding.loi -o package_encoding && ./package_encoding
+//! ```
+
+import "../lib/encoding.loi"
+
+open flow main
+    => i32
+{
+    protect {
+        mut doc: JsonDoc
+        encoding::json_new(-> doc)
+        root <- encoding::json_new_object(<-> doc)
+        workers <- encoding::json_new_u64(<-> doc, 8)
+        encoding::json_object_set(<-> doc, root, "workers", workers)
+        name <- encoding::json_new_string(<-> doc, "worker pool")
+        encoding::json_object_set(<-> doc, root, "name", name)
+        encoding::json_set_root(<-> doc, root)
+
+        text <- encoding::json_stringify(doc)
+        mut parsed: JsonDoc
+        if not encoding::json_parse(text, -> parsed) {
+            print("could not parse generated JSON\n")
+            => 1
+        }
+        node <- encoding::json_object_get(parsed, encoding::json_root(parsed), "workers")
+        if encoding::json_number_i64(parsed, node) != 8 {
+            print("wrong worker count\n")
+            => 2
+        }
+        print("encoding ok\n")
+    }
+    => 0
+}

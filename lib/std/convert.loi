@@ -1,0 +1,59 @@
+//! Decimal byte conversions that allocate in the caller's `protect` region.
+//!
+//! Re-exported by `lib/std.loi`; import this file directly for a narrow build.
+//! `u64_to_bytes` and `i64_to_bytes` never hide `alloc` from the caller.
+
+// ---------------------------------------------------------------------------
+// Integers as byte strings
+// ---------------------------------------------------------------------------
+/// Decimal bytes for `value`, without leading zeros or a sign. Allocates in
+/// the caller's `protect` region.
+open flow u64_to_bytes
+    <- value: u64
+    => [u8]
+{
+    mut count: u64 <- 1
+    mut probe: u64 <- value
+    while probe >= 10 {
+        probe = probe / 10
+        count += 1
+    }
+    mut out: [u8]
+    alloc(-> out, u8, count)
+    out[0] = 48
+    mut at: u64 <- count
+    mut rest: u64 <- value
+    while rest > 0 {
+        at -= 1
+        out[at] = (rest % 10) as u8 + 48
+        rest = rest / 10
+    }
+    => give(out)
+}
+
+/// Decimal bytes for `value`, including `-` for negatives. `-9223372036854775808`
+/// is handled without overflowing. Allocates in the caller's `protect` region.
+open flow i64_to_bytes
+    <- value: i64
+    => [u8]
+{
+    mut negative: bool <- false
+    mut magnitude: u64
+    if value < 0 {
+        negative = true
+        magnitude = -(value + 1) as u64 + 1
+    } else {
+        magnitude = value as u64
+    }
+    mut digits: [u8] <- u64_to_bytes(magnitude)
+    if not negative {
+        => give(digits)
+    }
+    mut out: [u8]
+    alloc(-> out, u8, digits.len + 1)
+    out[0] = 45
+    for i in 0..digits.len {
+        out[i + 1] = digits[i]
+    }
+    => give(out)
+}

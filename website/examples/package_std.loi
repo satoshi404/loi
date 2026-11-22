@@ -1,0 +1,44 @@
+//! `std` package example: build a small report with slices, vectors and text
+//! helpers. Every allocation stays inside the caller's `protect` region.
+//!
+//! ```sh
+//! loi build examples/package_std.loi -o package_std && ./package_std
+//! ```
+
+import "../lib/std.loi"
+
+open flow main
+    => i32
+{
+    protect {
+        values: [u64] <- [u64: 3, 5, 8]
+        total <- std::iter_sum_u64(values)
+        if total != 16 {
+            print("bad sum\n")
+            => 1
+        }
+        if not std::iter_all_positive_i64([i64: 1, 2, 3]) {
+            print("expected positive values\n")
+            => 2
+        }
+
+        mut rows: Vec<[u8]>
+        std::vec_new<[u8]>(-> rows)
+        label <- std::fmt_label("total", "16")
+        line <- std::fmt_line(label)
+        std::vec_push<[u8]>(<-> rows, line)
+        if std::vec_len<[u8]>(rows) != 1 {
+            print("expected one row\n")
+            => 3
+        }
+
+        first <- std::vec_get<[u8]>(rows, 0)
+        if not std::str_eq(first, "total: 16\n") {
+            print("unexpected report line\n")
+            => 4
+        }
+        print(first)
+        std::debug_assert(true, "unreachable")
+    }
+    => 0
+}

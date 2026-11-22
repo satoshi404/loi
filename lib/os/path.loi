@@ -1,0 +1,64 @@
+//! Pure path-string helpers for POSIX-style paths.
+//!
+//! Re-exported by `lib/os.loi`. Every result is a borrowed `view` into the
+//! caller's slice, so no arena and no `extern flow` is involved.
+
+/// True for an absolute POSIX path.
+open flow path_is_absolute
+    <- path: [u8]
+    => bool
+{
+    if path.len == 0 {
+        => false
+    }
+    => path[0] == 47
+}
+
+/// Borrow the substring after the final `/`, or the whole path.
+open flow path_file_name
+    <- path: [u8]
+    => [u8]
+{
+    mut start: u64 <- 0
+    for i in 0..path.len {
+        if path[i] == 47 {
+            start = i + 1
+        }
+    }
+    => view(path, start, path.len)
+}
+
+/// Borrow the parent directory, not including the final `/`.
+open flow path_parent
+    <- path: [u8]
+    => [u8]
+{
+    mut end: u64 <- 0
+    for i in 0..path.len {
+        if path[i] == 47 {
+            end = i
+        }
+    }
+    if end == 0 {
+        => view(path, 0, 0)
+    }
+    => view(path, 0, end)
+}
+
+/// Borrow the final extension including `.`, or an empty slice.
+open flow path_extension
+    <- path: [u8]
+    => [u8]
+{
+    name <- path_file_name(path)
+    mut dot: u64 <- name.len
+    for i in 0..name.len {
+        if name[i] == 46 {
+            dot = i
+        }
+    }
+    if dot == name.len {
+        => view(name, 0, 0)
+    }
+    => view(name, dot, name.len)
+}

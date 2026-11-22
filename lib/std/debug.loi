@@ -1,0 +1,32 @@
+//! Assertions and diagnostic helpers, kept separate from formatting.
+//!
+//! Re-exported by `lib/std.loi`. These flows are pure Loi and do not allocate.
+
+open flow debug_assert
+    <- condition: bool
+    <- message: [u8]
+{
+    if not condition {
+        panic(message)
+    }
+}
+
+open flow debug_expect_i64_eq
+    <- actual: i64
+    <- expected: i64
+    <- message: [u8]
+{
+    if actual != expected {
+        panic(message)
+    }
+}
+
+open flow debug_expect_u64_lt
+    <- left: u64
+    <- right: u64
+    <- message: [u8]
+{
+    if left >= right {
+        panic(message)
+    }
+}

@@ -1,0 +1,44 @@
+//! Declarative runtime lifecycle descriptors.
+//!
+//! Re-exported by `lib/runtime.loi`. Loi has no automatic init/fini registry:
+//! these values describe which phases a host wants to run. The host calls the
+//! matching flows explicitly, so there is no hidden startup magic.
+
+open mark RuntimePhase {
+    Setup,
+    Running,
+    Shutdown
+}
+
+open shape RuntimeHooks {
+    on_setup: bool
+    on_shutdown: bool
+}
+
+open flow hooks_none
+    -> hooks: RuntimeHooks
+{
+    hooks.on_setup = false
+    hooks.on_shutdown = false
+}
+
+open flow hooks_with_shutdown
+    -> hooks: RuntimeHooks
+{
+    hooks.on_setup = false
+    hooks.on_shutdown = true
+}
+
+open flow hooks_wants_setup
+    <- hooks: RuntimeHooks
+    => bool
+{
+    => hooks.on_setup
+}
+
+open flow hooks_wants_shutdown
+    <- hooks: RuntimeHooks
+    => bool
+{
+    => hooks.on_shutdown
+}

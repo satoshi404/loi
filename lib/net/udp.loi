@@ -1,0 +1,46 @@
+//! Minimal UDP endpoint helpers.
+//!
+//! Re-exported by `lib/net.loi`. UDP datagram I/O is not in the first milestone;
+//! this file owns endpoint values and address classification in pure Loi, so
+//! higher packages can reason about peers before a shim is added.
+
+import "address.loi"
+
+open shape UdpEndpoint {
+    addr: u32
+    port: u16
+}
+
+/// Build an endpoint, rejecting ports outside the IPv4 UDP range with `0`.
+open flow udp_endpoint
+    <- addr: u32
+    <- port: u32
+    => UdpEndpoint
+{
+    if not net_port_is_valid(port) {
+        => UdpEndpoint { addr: addr, port: 0 }
+    }
+    => UdpEndpoint { addr: addr, port: port as u16 }
+}
+
+open flow udp_endpoint_port
+    <- endpoint: UdpEndpoint
+    => u32
+{
+    => endpoint.port as u32
+}
+
+open flow udp_endpoint_is_broadcast
+    <- endpoint: UdpEndpoint
+    => bool
+{
+    => endpoint.addr == 0xffffffff
+}
+
+open flow udp_endpoint_is_loopback
+    <- endpoint: UdpEndpoint
+    => bool
+{
+    first <- net_ipv4_octet(endpoint.addr, 0)
+    => first == 127
+}

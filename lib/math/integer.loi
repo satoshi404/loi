@@ -1,0 +1,50 @@
+//! Integer sign, GCD and exponentiation helpers.
+//!
+//! Re-exported by `lib/math.loi`; import this file directly for a narrow build.
+open flow math_sign_i32
+    <- value: i32
+    => i32
+{
+    if value < 0 {
+        => -1
+    }
+    if value > 0 {
+        => 1
+    }
+    => 0
+}
+
+/// Greatest common divisor. Both zero arguments produce zero.
+open flow math_gcd_u64
+    <- a: u64
+    <- b: u64
+    => u64
+{
+    mut x: u64 <- a
+    mut y: u64 <- b
+    while y != 0 {
+        remainder <- x % y
+        x = y
+        y = remainder
+    }
+    => x
+}
+
+/// Exponentiation by squaring. Unsigned overflow wraps, as in Loi arithmetic.
+open flow math_pow_u64
+    <- base: u64
+    <- exponent: u32
+    => u64
+{
+    mut result: u64 <- 1
+    mut factor: u64 <- base
+    mut power: u32 <- exponent
+    while power > 0 {
+        if power & 1 != 0 {
+            result *= factor
+        }
+        factor *= factor
+        power >>= 1
+    }
+    => result
+}

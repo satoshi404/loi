@@ -1,0 +1,32 @@
+//! `runtime` package example: arena-backed bytes, a named assertion and
+//! declarative lifecycle hooks. `protect` and `alloc` remain explicit.
+//!
+//! ```sh
+//! loi build examples/package_runtime.loi -o package_runtime && ./package_runtime
+//! ```
+
+import "../lib/runtime.loi"
+
+open flow main
+    => i32
+{
+    protect {
+        mut bytes: [u8]
+        runtime::arena_filled_bytes(-> bytes, 8, 65)
+        runtime::runtime_assert_i64_eq(bytes.len as i64, 8, "bad length")
+        runtime::runtime_assert(bytes[7] == 65, "bad fill")
+
+        mut hooks: RuntimeHooks
+        runtime::hooks_with_shutdown(-> hooks)
+        if runtime::hooks_wants_setup(hooks) {
+            print("unexpected setup hook\n")
+            => 1
+        }
+        if not runtime::hooks_wants_shutdown(hooks) {
+            print("missing shutdown hook\n")
+            => 2
+        }
+        print("runtime ok\n")
+    }
+    => 0
+}

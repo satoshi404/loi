@@ -1,0 +1,46 @@
+//! `net` package example: parse an IPv4 address and describe a UDP peer using
+//! only the pure address layer. Narrow imports keep the TCP shim out of this
+//! build; the broad `lib/net.loi` root is for programs that need sockets.
+//!
+//! ```sh
+//! loi build examples/package_net.loi -o package_net && ./package_net
+//! ```
+
+import "../lib/net/address.loi"
+import "../lib/net/udp.loi"
+
+open flow main
+    => i32
+{
+    parsed <- address::net_parse_ipv4("127.0.0.1")
+    if not parsed.ok {
+        print("bad address\n")
+        => 1
+    }
+    if address::net_ipv4_octet(parsed.addr, 0) != 127 {
+        print("wrong first octet\n")
+        => 2
+    }
+
+    peer <- udp::udp_endpoint(parsed.addr, 5353)
+    if udp::udp_endpoint_port(peer) != 5353 {
+        print("wrong UDP port\n")
+        => 3
+    }
+    if not udp::udp_endpoint_is_loopback(peer) {
+        print("expected loopback peer\n")
+        => 4
+    }
+    if udp::udp_endpoint_is_broadcast(peer) {
+        print("unexpected broadcast peer\n")
+        => 5
+    }
+    broadcast <- udp::udp_endpoint(address::net_ipv4(255, 255, 255, 255), 5353)
+    if not udp::udp_endpoint_is_broadcast(broadcast) {
+        print("broadcast was not recognised\n")
+        => 6
+    }
+
+    print("net ok\n")
+    => 0
+}

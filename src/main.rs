@@ -1547,31 +1547,68 @@ fn collect_extern_flows_from(
             .strip_prefix("loi_")
             .unwrap_or(&decl.name)
             .to_string();
+        let help = shim_help(path, &c_symbol)
+            .unwrap_or_else(|| "pass the C file that defines it with --c-source FILE".to_string());
         found.push(ExternFlow {
             c_symbol,
             display_name,
             file: path.display().to_string(),
             source: source.to_string(),
             span: decl.span,
-            help: shim_help(path).unwrap_or_else(|| {
-                "pass the C file that defines it with --c-source FILE".to_string()
-            }),
+            help,
         });
     }
 }
 
-/// A library keeps its C shim beside its Loi source, named `<stem>_shim.c`.
-/// Point at it when it is present; otherwise suggest a generic `--c-source`.
-fn shim_help(path: &Path) -> Option<String> {
-    let mut name = path.file_stem()?.to_os_string();
-    name.push("_shim.c");
-    let shim = path.with_file_name(name);
-    shim.is_file().then(|| {
-        format!(
-            "this library ships a C shim: build with --c-source {}",
-            shim.display()
-        )
-    })
+/// Find the C shim that defines an `extern flow`'s symbol.
+///
+/// A flat library keeps `<stem>_shim.c` beside its Loi source. A package keeps
+/// its shim at the package root, which may be an ancestor of the file that
+/// declares the extern. Both are explicit filesystem conventions: there is no
+/// global search path, and a candidate must actually define the C symbol.
+fn shim_help(path: &Path, c_symbol: &str) -> Option<String> {
+    let mut adjacent = path.file_stem()?.to_os_string();
+    adjacent.push("_shim.c");
+    let adjacent = path.with_file_name(adjacent);
+    let mut fallback = None;
+    if adjacent.is_file() {
+        if shim_defines(&adjacent, c_symbol) {
+            return Some(shim_hint(&adjacent));
+        }
+        fallback = Some(adjacent);
+    }
+    for dir in path.ancestors().skip(1) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
+        let mut candidates = entries
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|candidate| {
+                candidate
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.ends_with("_shim.c"))
+            })
+            .collect::<Vec<_>>();
+        candidates.sort();
+        for candidate in candidates {
+            if shim_defines(&candidate, c_symbol) {
+                return Some(shim_hint(&candidate));
+            }
+        }
+    }
+    fallback.map(|shim| shim_hint(&shim))
+}
+
+fn shim_defines(path: &Path, c_symbol: &str) -> bool {
+    fs::read_to_string(path).is_ok_and(|source| source.contains(c_symbol))
+}
+
+fn shim_hint(path: &Path) -> String {
+    format!(
+        "this library ships a C shim: build with --c-source {}",
+        path.display()
+    )
 }
 
 /// The symbol named by a linker "undefined reference"/"undefined symbol" line.
@@ -2013,7 +2050,8 @@ struct LoadedModule {
     path: PathBuf,
     source: String,
     items: Vec<loi::Item>,
-    imports: Vec<(String, usize)>,
+    /// `(alias, module id, re-exports its public items)` for each import.
+    imports: Vec<(String, usize, bool)>,
 }
 
 #[derive(Default)]
@@ -2058,13 +2096,13 @@ fn load_module(
         .items
         .iter()
         .filter_map(|item| match item {
-            loi::Item::Import(decl) => Some(decl.clone()),
+            loi::Item::Import(decl) => Some((decl.clone(), decl.public)),
             _ => None,
         })
         .collect::<Vec<_>>();
     let mut aliases = HashMap::new();
     aliases.insert(module_name(path), id);
-    for import in imports {
+    for (import, public) in imports {
         let child = resolve_import_path(&import.path, path);
         let child_key = canonical_key(&child);
         if stack.contains(&child_key) {
@@ -2079,7 +2117,7 @@ fn load_module(
                 diagnostics,
             );
         }
-        let alias = import.alias.unwrap_or_else(|| module_name(&child));
+        let alias = import.alias.clone().unwrap_or_else(|| module_name(&child));
         let child_source = match fs::read_to_string(&child) {
             Ok(source) => source,
             Err(error) => {
@@ -2107,7 +2145,7 @@ fn load_module(
             );
         }
         aliases.insert(alias.clone(), target);
-        registry.modules[id].imports.push((alias, target));
+        registry.modules[id].imports.push((alias, target, public));
     }
     id
 }
@@ -2126,34 +2164,87 @@ fn build_resolution_context(registry: &ModuleRegistry) -> (Vec<ModuleView>, Reso
         .collect::<Vec<_>>();
     for (id, module) in registry.modules.iter().enumerate() {
         views[id].aliases.insert(module.name.clone(), id);
-        for (alias, target) in &module.imports {
+        for (alias, target, _) in &module.imports {
             views[id].aliases.insert(alias.clone(), *target);
         }
     }
 
-    let mut context = ResolutionContext::default();
+    // Direct declarations are the only definitions. Re-exports add lookup
+    // entries to the importing module without creating a second declaration or
+    // changing the C symbol owned by the defining module.
+    let mut direct: Vec<Vec<ModuleExport>> = vec![Vec::new(); registry.modules.len()];
     for (id, module) in registry.modules.iter().enumerate() {
         for item in &module.items {
             if let Some(name) = item.declared_name() {
-                context
-                    .exports
-                    .entry(name.to_string())
-                    .or_default()
-                    .push(ModuleExport {
-                        module: id,
-                        name: name.to_string(),
-                        visibility: item.visibility(),
-                        span: item.span(),
-                        return_type: match item {
-                            loi::Item::Function(decl) => match decl.return_type.as_ref() {
-                                Some(loi::ast::Type::Named(name, _)) => {
-                                    Some(name.rsplit("::").next().unwrap_or(name).to_string())
-                                }
-                                _ => None,
-                            },
+                direct[id].push(ModuleExport {
+                    module: id,
+                    owner: id,
+                    name: name.to_string(),
+                    visibility: item.visibility(),
+                    span: item.span(),
+                    return_type: match item {
+                        loi::Item::Function(decl) => match decl.return_type.as_ref() {
+                            Some(loi::ast::Type::Named(name, _)) => {
+                                Some(name.rsplit("::").next().unwrap_or(name).to_string())
+                            }
                             _ => None,
                         },
-                    });
+                        _ => None,
+                    },
+                });
+            }
+        }
+    }
+
+    // Follow `open import` transitively so a package root can re-export another
+    // package root while keeping the defining file as the single owner.
+    let mut reexports: Vec<HashSet<usize>> = vec![HashSet::new(); registry.modules.len()];
+    for (id, module) in registry.modules.iter().enumerate() {
+        let mut reachable = HashSet::new();
+        let mut work = module
+            .imports
+            .iter()
+            .filter(|(_, _, public)| *public)
+            .map(|(_, target, _)| *target)
+            .collect::<Vec<_>>();
+        while let Some(target) = work.pop() {
+            if target == id || !reachable.insert(target) {
+                continue;
+            }
+            for (_, nested, public) in &registry.modules[target].imports {
+                if *public {
+                    work.push(*nested);
+                }
+            }
+        }
+        reexports[id] = reachable;
+    }
+
+    let mut context = ResolutionContext::default();
+    for (id, entries) in direct.iter().enumerate() {
+        for export in entries {
+            context
+                .exports
+                .entry(export.name.clone())
+                .or_default()
+                .push(export.clone());
+        }
+        for owner in &reexports[id] {
+            for export in &direct[*owner] {
+                if export.visibility == loi::ast::Visibility::Visible {
+                    context
+                        .exports
+                        .entry(export.name.clone())
+                        .or_default()
+                        .push(ModuleExport {
+                            module: id,
+                            owner: *owner,
+                            name: export.name.clone(),
+                            visibility: export.visibility,
+                            span: export.span,
+                            return_type: export.return_type.clone(),
+                        });
+                }
             }
         }
     }

@@ -1,0 +1,76 @@
+//! Linear TCP stream handles built on the raw socket bridge.
+//!
+//! Import through the package root or directly:
+//!
+//! ```loi
+//! import "lib/net.loi"        // net::tcp_stream_connect
+//! import "lib/net/tcp.loi"    // fine-grained import
+//! ```
+//!
+//! ```sh
+//! loi build main.loi -o main --c-source lib/net_shim.c
+//! ```
+//!
+//! A `TcpStream` is a linear non-memory resource; `guard` calls
+//! `tcp_stream_release` on every exit path.
+import "address.loi"
+import "socket.loi"
+
+// ---------------------------------------------------------------------------
+// Linear socket handles
+// ---------------------------------------------------------------------------
+//! A `TcpStream` is a linear non-memory resource. Use it with `guard`; the
+//! convention-named `tcp_stream_release` flow closes the socket on every exit
+//! path. The raw descriptor helpers above remain available for FFI bindings.
+/// An owned connected socket descriptor. `fd` is -1 after failure or release.
+open shape TcpStream {
+    fd: i32
+}
+
+/// Close the descriptor. `guard` calls this automatically.
+open flow tcp_stream_release
+    <-> stream: TcpStream
+{
+    if stream.fd >= 0 {
+        net_close(stream.fd)
+        stream.fd = -1
+    }
+}
+
+/// Connect to a numeric IPv4 host. Invalid ports and connection failures
+/// produce a handle with `fd` -1, which is still safe to guard.
+open flow tcp_stream_connect
+    <- host: cstr
+    <- port: u32
+    => TcpStream
+{
+    if not net_port_is_valid(port) {
+        => TcpStream { fd: -1 }
+    }
+    => TcpStream { fd: net_tcp_connect(host, port) }
+}
+
+/// Send every byte of `data`; returns false on a short write or error.
+open flow tcp_stream_send
+    <- stream: TcpStream
+    <- data: [u8]
+    => bool
+{
+    if stream.fd < 0 {
+        => false
+    }
+    => net_send(stream.fd, data)
+}
+
+/// Read into the caller's buffer. A negative descriptor yields 0 without
+/// calling C; the buffer must be owned by an active `protect` region.
+open flow tcp_stream_recv
+    <- stream: TcpStream
+    <-> data: [u8]
+    => i64
+{
+    if stream.fd < 0 {
+        => 0
+    }
+    => net_recv(stream.fd, <-> data)
+}

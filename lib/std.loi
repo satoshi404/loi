@@ -1,227 +1,26 @@
-//! Minimal Loi standard library.
-//!
-//! Import it explicitly:
+//! Everyday utilities for Loi tools and applications.
 //!
 //! ```loi
-//! import "lib/std.loi"
+//! import "lib/std.loi"           // broad package import
+//! import "lib/std/fmt.loi"       // narrow import
+//!
+//! text <- std::str_concat("a", "b")
 //! ```
 //!
-//! Imports are textual, so every helper below lives in the program namespace.
-//! Names are prefixed by kind (`min_i32`, `str_find`, ...) to avoid clashes
-//! with user code. See also `lib/math.loi`, `lib/ctype.loi`, `lib/os.loi` and
-//! `lib/net.loi`.
-// ---------------------------------------------------------------------------
-// Integers
-// ---------------------------------------------------------------------------
-open flow min_i32
-    <- a: i32
-    <- b: i32
-    => i32
-{
-    if a < b {
-        => a
-    }
-    => b
-}
+//! This root re-exports the package's public surface with `open import`.
+//! Internal files are grouped by theme; there is no single `std` monolith.
+//! `std` depends on `core` by convention and never imports `os` or `net`.
 
-open flow max_i32
-    <- a: i32
-    <- b: i32
-    => i32
-{
-    if a > b {
-        => a
-    }
-    => b
-}
-
-open flow abs_i32
-    <- value: i32
-    => i32
-{
-    if value < 0 {
-        => -value
-    }
-    => value
-}
-
-open flow clamp_i32
-    <- value: i32
-    <- low: i32
-    <- high: i32
-    => i32
-{
-    if value < low {
-        => low
-    }
-    if value > high {
-        => high
-    }
-    => value
-}
-
-// ---------------------------------------------------------------------------
-// Integers as byte strings
-// ---------------------------------------------------------------------------
-/// Decimal bytes for `value`, without leading zeros or a sign. Allocates in
-/// the caller's `protect` region.
-open flow u64_to_bytes
-    <- value: u64
-    => [u8]
-{
-    mut count: u64 <- 1
-    mut probe: u64 <- value
-    while probe >= 10 {
-        probe = probe / 10
-        count += 1
-    }
-    mut out: [u8]
-    alloc(-> out, u8, count)
-    out[0] = 48
-    mut at: u64 <- count
-    mut rest: u64 <- value
-    while rest > 0 {
-        at -= 1
-        out[at] = (rest % 10) as u8 + 48
-        rest = rest / 10
-    }
-    => give(out)
-}
-
-/// Decimal bytes for `value`, including `-` for negatives. `-9223372036854775808`
-/// is handled without overflowing. Allocates in the caller's `protect` region.
-open flow i64_to_bytes
-    <- value: i64
-    => [u8]
-{
-    mut negative: bool <- false
-    mut magnitude: u64
-    if value < 0 {
-        negative = true
-        magnitude = -(value + 1) as u64 + 1
-    } else {
-        magnitude = value as u64
-    }
-    mut digits: [u8] <- u64_to_bytes(magnitude)
-    if not negative {
-        => give(digits)
-    }
-    mut out: [u8]
-    alloc(-> out, u8, digits.len + 1)
-    out[0] = 45
-    for i in 0..digits.len {
-        out[i + 1] = digits[i]
-    }
-    => give(out)
-}
-
-// ---------------------------------------------------------------------------
-// Floats
-// ---------------------------------------------------------------------------
-open flow min_f64
-    <- a: f64
-    <- b: f64
-    => f64
-{
-    if a < b {
-        => a
-    }
-    => b
-}
-
-open flow max_f64
-    <- a: f64
-    <- b: f64
-    => f64
-{
-    if a > b {
-        => a
-    }
-    => b
-}
-
-open flow abs_f64
-    <- value: f64
-    => f64
-{
-    if value < 0.0 {
-        => -value
-    }
-    => value
-}
-
-open flow clamp_f64
-    <- value: f64
-    <- low: f64
-    <- high: f64
-    => f64
-{
-    if value < low {
-        => low
-    }
-    if value > high {
-        => high
-    }
-    => value
-}
-
-// ---------------------------------------------------------------------------
-// Byte strings (`[u8]`)
-// ---------------------------------------------------------------------------
-open flow str_len
-    <- text: [u8]
-    => u64
-{
-    => text.len
-}
-
-open flow str_eq
-    <- left: [u8]
-    <- right: [u8]
-    => bool
-{
-    => left == right
-}
-
-open flow str_starts_with
-    <- text: [u8]
-    <- prefix: [u8]
-    => bool
-{
-    if prefix.len > text.len {
-        => false
-    }
-    for i in 0..prefix.len {
-        if text[i] != prefix[i] {
-            => false
-        }
-    }
-    => true
-}
-
-/// Return the byte offset of `needle` in `text`, or -1 when it is absent.
-open flow str_find
-    <- text: [u8]
-    <- needle: [u8]
-    => i64
-{
-    if needle.len > text.len {
-        => -1
-    }
-    if needle.len == 0 {
-        => 0
-    }
-    for i in 0..text.len - needle.len + 1 {
-        mut matches: bool <- true
-        for j in 0..needle.len {
-            if text[i + j] != needle[j] {
-                matches = false
-                break
-            }
-        }
-        if matches {
-            => i as i64
-        }
-    }
-    => -1
-}
+open import "std/num.loi"
+open import "std/convert.loi"
+open import "std/str.loi"
+open import "std/vec.loi"
+open import "std/slice.loi"
+open import "std/map.loi"
+open import "std/hash.loi"
+open import "std/crc32.loi"
+open import "std/random.loi"
+open import "std/ctype.loi"
+open import "std/fmt.loi"
+open import "std/debug.loi"
+open import "std/iter.loi"

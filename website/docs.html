@@ -661,6 +661,14 @@ open flow main
             directory. Each canonical file is loaded once per compilation unit, so diamond
             imports do not duplicate declarations; import cycles are errors.
           </p>
+          <p>
+            <code>open import "path.loi"</code> is the re-export form. It makes the
+            imported file's <code>open</code> declarations public through the importer,
+            transitively, without creating a new declaration or changing the generated
+            C symbol. <code>sealed</code> declarations are never re-exported, and
+            <code>sealed import</code> is invalid. This is how a package root exposes
+            its internal files; it is not a nested module namespace.
+          </p>
 
           <div class="doc-code">
             <div class="doc-code-bar"><span>main.loi</span><button type="button" data-copy>copy</button></div>
@@ -1026,6 +1034,82 @@ flow exchange
             namespace: you can also import under an alias and use
             <code>m::math_sum</code>. Two files may now declare the same name; only
             those repeated names receive a module-qualified C symbol.</p>
+          <p>The library is organized as packages. A root re-exports its internal files;
+            import the root for convenience or an internal file for a narrow dependency:
+            <code>import "lib/std/fmt.loi"</code>. Dependency direction is one-way:
+            <code>core</code> depends on no other package, <code>std</code> may use
+            <code>core</code>, <code>os</code> may use <code>core</code>/<code>runtime</code>,
+            and <code>net</code> may use <code>core</code>/<code>os</code>. Old flat paths
+            remain compatibility facades with the same declarations and C symbols.</p>
+
+          <table class="doc-table">
+            <thead>
+              <tr><th>Package root</th><th>Internal files</th><th>Shim</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>lib/core.loi</code></td>
+                <td><code>core/option.loi</code>, <code>core/result.loi</code>,
+                  <code>core/cmp.loi</code>, <code>core/mem.loi</code>, <code>core/ops.loi</code></td>
+                <td>none</td>
+              </tr>
+              <tr>
+                <td><code>lib/std.loi</code></td>
+                <td><code>std/num.loi</code>, <code>std/convert.loi</code>,
+                  <code>std/str.loi</code>, <code>std/vec.loi</code>,
+                  <code>std/slice.loi</code>, <code>std/map.loi</code>,
+                  <code>std/hash.loi</code>, <code>std/crc32.loi</code>,
+                  <code>std/random.loi</code>, <code>std/ctype.loi</code>,
+                  <code>std/fmt.loi</code>, <code>std/debug.loi</code>,
+                  <code>std/iter.loi</code></td>
+                <td>none</td>
+              </tr>
+              <tr>
+                <td><code>lib/runtime.loi</code></td>
+                <td><code>runtime/arena.loi</code>, <code>runtime/panic.loi</code>,
+                  <code>runtime/hooks.loi</code></td>
+                <td>none today</td>
+              </tr>
+              <tr>
+                <td><code>lib/math.loi</code></td>
+                <td><code>math/const.loi</code>, <code>math/generic.loi</code>,
+                  <code>math/float.loi</code>, <code>math/integer.loi</code></td>
+                <td>none</td>
+              </tr>
+              <tr>
+                <td><code>lib/os.loi</code></td>
+                <td><code>os/env.loi</code>, <code>os/time.loi</code>,
+                  <code>os/file.loi</code>, <code>os/path.loi</code></td>
+                <td><code>lib/os_shim.c</code></td>
+              </tr>
+              <tr>
+                <td><code>lib/net.loi</code></td>
+                <td><code>net/address.loi</code>, <code>net/socket.loi</code>,
+                  <code>net/tcp.loi</code>, <code>net/udp.loi</code></td>
+                <td><code>lib/net_shim.c</code></td>
+              </tr>
+              <tr>
+                <td><code>lib/encoding.loi</code></td>
+                <td><code>encoding/json.loi</code>, <code>encoding/jsonrpc.loi</code></td>
+                <td><code>lib/stdio_shim.c</code> only for JSON-RPC I/O</td>
+              </tr>
+              <tr>
+                <td><code>lib/lsp.loi</code></td>
+                <td><code>lsp/protocol.loi</code>, <code>lsp/shim.loi</code></td>
+                <td><code>lib/lsp_shim.c</code>, plus stdio via JSON-RPC</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <p>Complete programs for every package are
+            <a href="examples/package_core.loi">core</a>,
+            <a href="examples/package_std.loi">std</a>,
+            <a href="examples/package_runtime.loi">runtime</a>,
+            <a href="examples/package_math.loi">math</a>,
+            <a href="examples/package_os.loi">os</a>,
+            <a href="examples/package_net.loi">net</a> and
+            <a href="examples/package_encoding.loi">encoding</a>.
+            Individual helpers are listed below under their historical flat path.</p>
 
           <table class="doc-table">
             <thead>
@@ -1063,6 +1147,36 @@ flow exchange
                   <code>ctype_count_digits</code>,
                   <code>ctype_equals_ignore_case</code></td>
                 <td>no</td>
+              </tr>
+              <tr>
+                <td><code>lib/core.loi</code></td>
+                <td><code>Option&lt;T&gt;</code>, <code>Result&lt;T, E&gt;</code>,
+                  <code>cmp_eq&lt;T&gt;</code>, <code>cmp_lt&lt;T&gt;</code>,
+                  <code>cmp_clamp_u64</code>, <code>cmp_max_u64</code>,
+                  <code>mem_zeroed_bytes</code>, <code>mem_fill_u8</code>,
+                  <code>mem_copy_u8</code>, <code>ops_is_power_of_two_u64</code>,
+                  <code>ops_next_power_of_two_u64</code>,
+                  <code>ops_saturating_sub_u64</code></td>
+                <td>no; <code>mem_zeroed_bytes</code> needs <code>protect</code></td>
+              </tr>
+              <tr>
+                <td><code>lib/runtime.loi</code></td>
+                <td><code>arena_bytes</code>, <code>arena_filled_bytes</code>,
+                  <code>runtime_panic</code>, <code>runtime_assert</code>,
+                  <code>runtime_assert_i64_eq</code>, <code>RuntimePhase</code>,
+                  <code>RuntimeHooks</code>, <code>hooks_none</code>,
+                  <code>hooks_with_shutdown</code>, <code>hooks_wants_setup</code>,
+                  <code>hooks_wants_shutdown</code></td>
+                <td>no; arena flows need <code>protect</code></td>
+              </tr>
+              <tr>
+                <td><code>lib/std.loi</code> (fmt/debug/iter)</td>
+                <td><code>fmt_label</code>, <code>fmt_line</code>,
+                  <code>fmt_parens</code>, <code>debug_assert</code>,
+                  <code>debug_expect_i64_eq</code>, <code>debug_expect_u64_lt</code>,
+                  <code>iter_len&lt;T&gt;</code>, <code>iter_sum_u64</code>,
+                  <code>iter_any_i64</code>, <code>iter_all_positive_i64</code></td>
+                <td>no; <code>fmt_*</code> results need <code>protect</code></td>
               </tr>
               <tr>
                 <td><code>lib/option.loi</code></td>
@@ -1125,7 +1239,9 @@ flow exchange
                   <code>str_is_ascii_space</code>, <code>str_trim</code>,
                   <code>str_concat</code>, <code>str_reverse</code>,
                   <code>str_repeat</code>, <code>str_count</code>,
-                  <code>str_index_of</code>, <code>str_contains</code></td>
+                  <code>str_index_of</code>, <code>str_contains</code>,
+                  <code>str_len</code>, <code>str_eq</code>,
+                  <code>str_starts_with</code>, <code>str_find</code></td>
                 <td>no; owned results need <code>protect</code></td>
               </tr>
               <tr>
@@ -1173,8 +1289,10 @@ flow exchange
                   <code>os_exit</code>; linear <code>File</code> with
                   <code>file_open_read</code>, <code>file_open_write</code>,
                   <code>file_read</code>, <code>file_write</code>,
-                  <code>file_release</code></td>
-                <td><code>lib/os_shim.c</code></td>
+                  <code>file_release</code>; pure path helpers
+                  <code>path_is_absolute</code>, <code>path_file_name</code>,
+                  <code>path_parent</code>, <code>path_extension</code></td>
+                <td><code>lib/os_shim.c</code> for env/time/file; paths are pure</td>
               </tr>
               <tr>
                 <td><code>lib/net.loi</code></td>
@@ -1184,8 +1302,11 @@ flow exchange
                   <code>net_send</code>, <code>net_recv</code>; linear
                   <code>TcpStream</code> with <code>tcp_stream_connect</code>,
                   <code>tcp_stream_send</code>, <code>tcp_stream_recv</code>,
-                  <code>tcp_stream_release</code></td>
-                <td><code>lib/net_shim.c</code></td>
+                  <code>tcp_stream_release</code>; pure <code>UdpEndpoint</code> helpers
+                  <code>udp_endpoint</code>, <code>udp_endpoint_port</code>,
+                  <code>udp_endpoint_is_broadcast</code>,
+                  <code>udp_endpoint_is_loopback</code></td>
+                <td><code>lib/net_shim.c</code> for TCP; address/UDP helpers are pure</td>
               </tr>
               <tr>
                 <td><code>lib/stdio.loi</code></td>
@@ -1917,8 +2038,9 @@ node website/server.mjs
             The server serves the static site and exposes <code>GET /api/health</code> plus
             <code>POST /api/check</code>, <code>/api/format</code>, <code>/api/run</code>,
             <code>/api/run-web</code> and <code>/api/lsp</code>. Every request writes the program
-            to a temporary directory, copies all <code>lib/*.loi</code> modules and the
-            browser-safe shims there, copies <code>vendor/raylib/raylib.loi</code> so imports
+            to a temporary directory, copies the whole <code>lib/**</code> tree (including
+            package subdirectories) and the browser-safe shims there, copies
+            <code>vendor/raylib/raylib.loi</code> so imports
             resolve, and runs the real <code>loi</code> binary. <code>process_shim.c</code> and
             <code>lsp_shim.c</code> are reserved for the trusted server-side LSP session, so a
             program typed in the browser cannot spawn processes or write arbitrary paths. Set

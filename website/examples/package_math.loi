@@ -1,0 +1,40 @@
+//! `math` package example: a tiny smoothing calculation using constants,
+//! interpolation, integer helpers and compile-time factorial.
+//!
+//! ```sh
+//! loi build examples/package_math.loi -o package_math && ./package_math
+//! ```
+
+import "../lib/math.loi"
+
+open flow main
+    => i32
+{
+    start: f64 <- 10.0
+    end: f64 <- 20.0
+    smoothed <- math::math_smoothstep(start, end, 15.0)
+    if not (smoothed > 0.49 and smoothed < 0.51) {
+        print("smoothstep failed\n")
+        => 1
+    }
+
+    if math::math_gcd_u64(48, 18) != 6 {
+        print("gcd failed\n")
+        => 2
+    }
+    if math::math_pow_u64(2, 10) != 1024 {
+        print("pow failed\n")
+        => 3
+    }
+    if math::math_factorial(5) != 120 {
+        print("factorial failed\n")
+        => 4
+    }
+    if not math::math_near(math::math_deg_to_rad(180.0), math::MATH_PI, 0.000001) {
+        print("angle conversion failed\n")
+        => 5
+    }
+
+    print("math ok\n")
+    => 0
+}

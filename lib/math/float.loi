@@ -1,0 +1,84 @@
+//! Floating-point interpolation, trigonometry helpers and dot products.
+//!
+//! Re-exported by `lib/math.loi`; import this file directly for a narrow build.
+import "const.loi"
+import "generic.loi"
+
+open flow math_clamp_f64
+    <- value: f64
+    <- low: f64
+    <- high: f64
+    => f64
+{
+    if value < low {
+        => low
+    }
+    if value > high {
+        => high
+    }
+    => value
+}
+
+open flow math_lerp
+    <- a: f64
+    <- b: f64
+    <- t: f64
+    => f64
+{
+    => a + (b - a) * t
+}
+
+open flow math_smoothstep
+    <- edge0: f64
+    <- edge1: f64
+    <- x: f64
+    => f64
+{
+    t <- math_clamp_f64((x - edge0) / (edge1 - edge0), 0.0, 1.0)
+    => t * t * (3.0 - 2.0 * t)
+}
+
+open flow math_deg_to_rad
+    <- degrees: f64
+    => f64
+{
+    => degrees * MATH_PI / 180.0
+}
+
+open flow math_rad_to_deg
+    <- radians: f64
+    => f64
+{
+    => radians * 180.0 / MATH_PI
+}
+
+open flow math_hypot
+    <- x: f64
+    <- y: f64
+    => f64
+{
+    => sqrt(x * x + y * y)
+}
+
+open flow math_near
+    <- a: f64
+    <- b: f64
+    <- epsilon: f64
+    => bool
+{
+    => fabs(a - b) <= epsilon
+}
+
+/// Dot product over the shorter of the two slices.
+open flow math_dot_f64
+    <- a: [f64]
+    <- b: [f64]
+    => f64
+{
+    count <- math_min<u64>(a.len, b.len)
+    mut total: f64 <- 0
+    for i in 0..count {
+        total += a[i] * b[i]
+    }
+    => total
+}

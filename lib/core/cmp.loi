@@ -1,0 +1,49 @@
+//! Equality and ordering helpers over the language's `Eq`/`Ord` constraints.
+//!
+//! Re-exported by `lib/core.loi`. Import this file directly for a narrow
+//! dependency. No I/O and no allocation live in `core`.
+
+/// Structural equality. `T: Eq` comes from the language, not from this module.
+open flow cmp_eq<T: Eq>
+    <- left: T
+    <- right: T
+    => bool
+{
+    => left == right
+}
+
+/// Strict ordering. `T: Ord` is the language's ordering constraint.
+open flow cmp_lt<T: Ord>
+    <- left: T
+    <- right: T
+    => bool
+{
+    => left < right
+}
+
+/// Clamp an unsigned value without wrapping at the bounds.
+open flow cmp_clamp_u64
+    <- value: u64
+    <- low: u64
+    <- high: u64
+    => u64
+{
+    if value < low {
+        => low
+    }
+    if value > high {
+        => high
+    }
+    => value
+}
+
+open flow cmp_max_u64
+    <- left: u64
+    <- right: u64
+    => u64
+{
+    if left > right {
+        => left
+    }
+    => right
+}

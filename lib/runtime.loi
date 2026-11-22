@@ -1,0 +1,17 @@
+//! Loi runtime concepts: arena, panic and lifecycle descriptors.
+//!
+//! ```loi
+//! import "lib/runtime.loi"
+//!
+//! protect {
+//!     mut bytes: [u8]
+//!     runtime::arena_filled_bytes(-> bytes, 4, 7)
+//! }
+//! ```
+//!
+//! Runtime code is not a generic OS API. Foreign POSIX bindings belong to
+//! `os`, and C shims here would only cover generated-runtime companions.
+
+open import "runtime/arena.loi"
+open import "runtime/panic.loi"
+open import "runtime/hooks.loi"

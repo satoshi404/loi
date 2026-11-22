@@ -1,0 +1,86 @@
+//! Pure IPv4 address and port helpers.
+//!
+//! Import through the package root or directly:
+//!
+//! ```loi
+//! import "lib/net.loi"           // net::net_parse_ipv4
+//! import "lib/net/address.loi"   // fine-grained import
+//! ```
+//!
+//! No `extern flow` lives here: dotted-decimal parsing is entirely in Loi.
+
+/// Result of `net_parse_ipv4`: `ok` is false for malformed addresses.
+open shape NetIpv4Result {
+    ok: bool
+    addr: u32
+}
+
+/// Build a big-endian IPv4 address from four octets.
+open flow net_ipv4
+    <- a: u8
+    <- b: u8
+    <- c: u8
+    <- d: u8
+    => u32
+{
+    => a as u32 << 24 | b as u32 << 16 | c as u32 << 8 | d as u32
+}
+
+/// Read octet 0 (most significant) through 3; out-of-range indices return 0.
+open flow net_ipv4_octet
+    <- addr: u32
+    <- index: u32
+    => u8
+{
+    if index > 3 {
+        => 0
+    }
+    shift <- (3 - index) * 8
+    => (addr >> shift) as u8
+}
+
+open flow net_port_is_valid
+    <- port: u32
+    => bool
+{
+    => port > 0 and port < 65536
+}
+
+/// Parse dotted decimal notation. Leading zeroes are accepted.
+open flow net_parse_ipv4
+    <- text: [u8]
+    => NetIpv4Result
+{
+    mut addr: u32 <- 0
+    mut value: u32 <- 0
+    mut digits: u32 <- 0
+    mut parts: u32 <- 0
+    mut i: u64 <- 0
+    while i < text.len {
+        byte <- text[i]
+        if byte == 46 {
+            if digits == 0 or value > 255 {
+                => NetIpv4Result { ok: false, addr: 0 }
+            }
+            addr = addr << 8 | value
+            parts += 1
+            value = 0
+            digits = 0
+        } else {
+            if not (byte >= 48 and byte <= 57) {
+                => NetIpv4Result { ok: false, addr: 0 }
+            }
+            value = value * 10 + (byte - 48) as u32
+            digits += 1
+            if value > 255 {
+                => NetIpv4Result { ok: false, addr: 0 }
+            }
+        }
+        i += 1
+    }
+    if digits == 0 or value > 255 or parts != 3 {
+        => NetIpv4Result { ok: false, addr: 0 }
+    }
+    addr = addr << 8 | value
+    => NetIpv4Result { ok: true, addr: addr }
+}

@@ -1,0 +1,95 @@
+//! Linear file handles backed by `lib/os_shim.c`.
+//!
+//! Import through the package root or directly:
+//!
+//! ```loi
+//! import "lib/os.loi"        // os::file_open_read
+//! import "lib/os/file.loi"   // fine-grained import
+//! ```
+//!
+//! ```sh
+//! loi build main.loi -o main --c-source lib/os_shim.c
+//! ```
+//!
+//! The handle is an integer descriptor; the shim owns the POSIX file details.
+
+// ---------------------------------------------------------------------------
+// Linear file handles
+// ---------------------------------------------------------------------------
+//! A `File` is a linear non-memory resource: put it in a `guard` block and the
+//! matching `file_release` flow closes the descriptor on every exit path. The
+//! handle is an integer descriptor; the shim owns the POSIX file details.
+extern flow loi_io_open
+    <- path: cstr
+    <- write: i32
+    => i32
+
+extern flow loi_io_close
+    <- fd: i32
+
+extern flow loi_io_read
+    <- fd: i32
+    <-> data: [u8]
+    => i64
+
+extern flow loi_io_write
+    <- fd: i32
+    <- data: [u8]
+    => i64
+
+/// An owned file descriptor. `fd` is -1 after a failed open or a release.
+open shape File {
+    fd: i32
+}
+
+/// Close the descriptor. `guard` calls this automatically; do not call it
+/// directly on a guarded handle.
+open flow file_release
+    <-> file: File
+{
+    if file.fd >= 0 {
+        loi_io_close(file.fd)
+        file.fd = -1
+    }
+}
+
+/// Open a file for reading. Returns a handle with `fd` -1 on failure.
+open flow file_open_read
+    <- path: cstr
+    => File
+{
+    => File { fd: loi_io_open(path, 0) }
+}
+
+/// Open (or create and truncate) a file for writing.
+open flow file_open_write
+    <- path: cstr
+    => File
+{
+    => File { fd: loi_io_open(path, 1) }
+}
+
+/// Read into the caller's buffer. Returns the byte count, or -1 on error or
+/// after a failed open. The buffer must be owned by an active `protect` region.
+open flow file_read
+    <- file: File
+    <-> data: [u8]
+    => i64
+{
+    if file.fd < 0 {
+        => -1
+    }
+    => loi_io_read(file.fd, <-> data)
+}
+
+/// Write every byte of `data`; returns the byte count, or -1 on error.
+open flow file_write
+    <- file: File
+    <- data: [u8]
+    => i64
+{
+    if file.fd < 0 {
+        => -1
+    }
+    => loi_io_write(file.fd, data)
+}

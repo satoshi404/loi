@@ -1041,6 +1041,17 @@ fn parses_variant_reference_constructor_and_is() {
 }
 
 #[test]
+fn parses_open_import_reexports() {
+    let program = parse_source("open import \"lib/core/option.loi\" as core\n");
+    let Item::Import(import) = &program.items[0] else {
+        panic!("expected an import");
+    };
+    assert!(import.public);
+    assert_eq!(import.path, "lib/core/option.loi");
+    assert_eq!(import.alias.as_deref(), Some("core"));
+}
+
+#[test]
 fn parses_import_aliases_and_qualified_names() {
     let program = parse_source(
         r#"import "lib/math.loi" as m

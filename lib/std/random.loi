@@ -1,0 +1,107 @@
+//! Seeded, deterministic pseudo-random numbers written in Loi.
+//!
+//! Import it explicitly:
+//!
+//! ```loi
+//! import "lib/random.loi"
+//! ```
+//!
+//! `Rng` is a single `u64` state; no arena allocation or `protect` block is
+//! needed. The generator is xorshift64* with the standard multiplier. It is
+//! suitable for tests, simulations and reproducible shuffles, not for
+//! cryptography. All flows take the generator inout so the new state is always
+//! written back to the caller. A zero seed is replaced by `RNG_FALLBACK_SEED`
+//! because xorshift64* would otherwise stay at zero forever.
+/// Nonzero replacement for `rng_new(0)`. The golden-ratio constant gives a
+/// deterministic, well-distributed state.
+open RNG_FALLBACK_SEED: u64 <- 0x9e3779b97f4a7c15
+
+open shape Rng {
+    state: u64
+}
+
+open flow rng_new
+    <- seed: u64
+    => Rng
+{
+    if seed == 0 {
+        => Rng { state: RNG_FALLBACK_SEED }
+    }
+    => Rng { state: seed }
+}
+
+open flow rng_state
+    <- rng: Rng
+    => u64
+{
+    => rng.state
+}
+
+open flow rng_next_u64
+    <-> rng: Rng
+    => u64
+{
+    mut x: u64 <- rng.state
+    x ^= x >> 12
+    x ^= x << 25
+    x ^= x >> 27
+    rng.state = x
+    => x * 2685821657736338717
+}
+
+open flow rng_next_u32
+    <-> rng: Rng
+    => u32
+{
+    value <- rng_next_u64(<-> rng)
+    => (value >> 32) as u32
+}
+
+open flow rng_below_u64
+    <-> rng: Rng
+    <- bound: u64
+    => u64
+{
+    if bound == 0 {
+        panic("rng_below_u64: bound is zero\n")
+    }
+    value <- rng_next_u64(<-> rng)
+    => value % bound
+}
+
+open flow rng_pick<T: Clone>
+    <-> rng: Rng
+    <- values: [T]
+    => T
+{
+    if values.len == 0 {
+        panic("rng_pick: slice is empty\n")
+    }
+    at <- rng_below_u64(<-> rng, values.len)
+    => clone(values[at])
+}
+
+flow rng_swap<T: Clone>
+    <-> values: [T]
+    <- i: u64
+    <- j: u64
+{
+    saved: T <- clone(values[i])
+    values[i] = clone(values[j])
+    values[j] = clone(saved)
+}
+
+open flow rng_shuffle<T: Clone>
+    <-> rng: Rng
+    <-> values: [T]
+{
+    if values.len < 2 {
+        =>
+    }
+    mut i: u64 <- values.len - 1
+    while i > 0 {
+        j <- rng_below_u64(<-> rng, i + 1)
+        rng_swap<T>(<-> values, i, j)
+        i -= 1
+    }
+}

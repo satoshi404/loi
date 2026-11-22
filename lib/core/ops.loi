@@ -1,0 +1,40 @@
+//! Minimal integer and marker utilities shared by higher packages.
+//!
+//! Re-exported by `lib/core.loi`. Pure Loi, no allocation and no foreign calls.
+
+open flow ops_is_power_of_two_u64
+    <- value: u64
+    => bool
+{
+    if value == 0 {
+        => false
+    }
+    => value & (value - 1) == 0
+}
+
+/// Round up to a power of two. Zero maps to one so callers can reserve safely.
+open flow ops_next_power_of_two_u64
+    <- value: u64
+    => u64
+{
+    if value <= 1 {
+        => 1
+    }
+    mut result: u64 <- 1
+    while result < value {
+        result <<= 1
+    }
+    => result
+}
+
+/// Saturating subtraction: zero instead of an unsigned wrap.
+open flow ops_saturating_sub_u64
+    <- left: u64
+    <- right: u64
+    => u64
+{
+    if right > left {
+        => 0
+    }
+    => left - right
+}

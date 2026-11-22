@@ -1,0 +1,42 @@
+//! Clock helpers backed by `lib/os_shim.c`.
+//!
+//! Import through the package root or directly:
+//!
+//! ```loi
+//! import "lib/os.loi"        // os::os_unix_time
+//! import "lib/os/time.loi"   // fine-grained import
+//! ```
+//!
+//! ```sh
+//! loi build main.loi -o main --c-source lib/os_shim.c
+//! ```
+//!
+//! The shim owns the POSIX clock; no foreign values enter Loi.
+//! -------------------------------------------------------------------------
+//! Foreign clock and sleep
+//! -------------------------------------------------------------------------
+
+extern flow loi_os_unix_time
+    => i64
+
+extern flow loi_os_sleep_ms
+    <- millis: i32
+
+/// Seconds since the Unix epoch, or -1 when the platform cannot provide it.
+open flow os_unix_time
+    => i64
+{
+    => loi_os_unix_time()
+}
+
+/// Sleep for whole milliseconds. Returns false for a negative duration.
+open flow os_sleep
+    <- millis: i32
+    => bool
+{
+    if millis < 0 {
+        => false
+    }
+    loi_os_sleep_ms(millis)
+    => true
+}

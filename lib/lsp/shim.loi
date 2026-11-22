@@ -1,0 +1,65 @@
+//! Document-cache bridge backed by `lib/lsp_shim.c`.
+//!
+//! Re-exported by `lib/lsp.loi`. The shadow-file path is chosen by the host;
+//! the shim only performs byte-safe writes and reads.
+//!
+//! ```sh
+//! loi build main.loi -o main --c-source lib/lsp_shim.c
+//! ```
+
+extern flow loi_lsp_write_document
+    <- path: [u8]
+    <- text: [u8]
+    => i64
+
+extern flow loi_lsp_remove_document
+    <- path: [u8]
+    => i64
+
+extern flow loi_lsp_document_len
+    <- path: [u8]
+    => i64
+
+extern flow loi_lsp_read_document
+    <- path: [u8]
+    <-> data: [u8]
+    => i64
+
+/// Write the current text of a document to `path`, so the compiler checks the
+/// client's buffer instead of whatever happens to be on disk. Returns false
+/// when the file cannot be created or written.
+open flow lsp_write_document
+    <- path: [u8]
+    <- text: [u8]
+    => bool
+{
+    => loi_lsp_write_document(path, text) >= 0
+}
+
+/// Delete a shadow written by `lsp_write_document`. Returns false when the
+/// file does not exist or cannot be removed.
+open flow lsp_remove_document
+    <- path: [u8]
+    => bool
+{
+    => loi_lsp_remove_document(path) == 0
+}
+
+/// Read a document cache written by `lsp_write_document`. The caller's active
+/// `protect` region owns the returned buffer; a missing file returns `""`.
+open flow lsp_read_document
+    <- path: [u8]
+    => [u8]
+{
+    length <- loi_lsp_document_len(path)
+    if length <= 0 {
+        => ""
+    }
+    mut data: [u8]
+    alloc(-> data, u8, length as u64)
+    got <- loi_lsp_read_document(path, <-> data)
+    if got != length {
+        => ""
+    }
+    => data
+}

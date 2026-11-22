@@ -1,0 +1,29 @@
+//! Named panic entry points for runtime and library diagnostics.
+//!
+//! Re-exported by `lib/runtime.loi`. The intrinsic `panic` stays visible; these
+//! are thin wrappers with assert-style names, not a replacement for `guard`.
+
+open flow runtime_panic
+    <- message: [u8]
+{
+    panic(message)
+}
+
+open flow runtime_assert
+    <- condition: bool
+    <- message: [u8]
+{
+    if not condition {
+        panic(message)
+    }
+}
+
+open flow runtime_assert_i64_eq
+    <- actual: i64
+    <- expected: i64
+    <- message: [u8]
+{
+    if actual != expected {
+        panic(message)
+    }
+}

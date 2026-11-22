@@ -1,0 +1,12 @@
+//! Encoding package: JSON document model and JSON-RPC framing.
+//!
+//! ```loi
+//! import "lib/encoding.loi"       // broad package import
+//! import "lib/encoding/json.loi"  // fine-grained import
+//! ```
+//!
+//! Both files are pure Loi; the JSON-RPC transport uses `os/stdio.loi`, which
+//! keeps its C shim at the OS boundary.
+
+open import "encoding/json.loi"
+open import "encoding/jsonrpc.loi"

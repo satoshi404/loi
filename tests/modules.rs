@@ -328,3 +328,117 @@ fn a_sealed_release_flow_is_rejected_for_a_shape_literal_guard() {
         "unexpected diagnostics: {text}"
     );
 }
+
+const OPTION_MODULE: &str = "open flow option_answer\n    => i32\n{\n    => 42\n}\n\nsealed flow option_secret\n    => i32\n{\n    => 7\n}\n";
+
+fn package_dir(name: &str, package: &str) -> PathBuf {
+    let dir = test_dir(name);
+    fs::create_dir_all(dir.join(package)).expect("package directory should be creatable");
+    dir
+}
+
+#[test]
+fn open_import_reexports_open_items_through_a_package_root() {
+    let dir = package_dir("package-reexport", "core");
+    write(&dir, "core/option.loi", OPTION_MODULE);
+    write(&dir, "core.loi", "open import \"core/option.loi\"\n");
+    let _main = write(
+        &dir,
+        "main.loi",
+        "import \"core.loi\" as core\nopen flow main\n    => i32\n{\n    => core::option_answer()\n}\n",
+    );
+
+    let build = Command::new(loi())
+        .args(["build", "main.loi", "-o", "app"])
+        .current_dir(&dir)
+        .output()
+        .expect("loi should build");
+    assert!(build.status.success(), "build failed: {}", stderr(&build));
+    let run = Command::new(dir.join("app"))
+        .output()
+        .expect("program should run");
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(run.status.code(), Some(42));
+}
+
+#[test]
+fn open_import_does_not_reexport_sealed_items() {
+    let dir = package_dir("package-reexport-sealed", "core");
+    write(&dir, "core/option.loi", OPTION_MODULE);
+    write(&dir, "core.loi", "open import \"core/option.loi\"\n");
+    let main = write(
+        &dir,
+        "main.loi",
+        "import \"core.loi\" as core\nopen flow main\n    => i32\n{\n    => core::option_secret()\n}\n",
+    );
+
+    let output = run(&[Path::new("check"), &main]);
+    let text = stderr(&output);
+    let _ = fs::remove_dir_all(&dir);
+    assert!(!output.status.success(), "sealed item was re-exported");
+    assert!(text.contains("sealed"), "unexpected diagnostics: {text}");
+    assert!(
+        text.contains("option_secret"),
+        "unexpected diagnostics: {text}"
+    );
+}
+
+#[test]
+fn reexports_keep_the_original_c_symbol() {
+    let dir = package_dir("package-reexport-abi", "core");
+    write(&dir, "core/option.loi", OPTION_MODULE);
+    write(&dir, "core.loi", "open import \"core/option.loi\"\n");
+    let _main = write(
+        &dir,
+        "main.loi",
+        "import \"core.loi\" as core\nopen flow main\n    => i32\n{\n    => core::option_answer()\n}\n",
+    );
+    let c = dir.join("main.c");
+
+    let output = Command::new(loi())
+        .args(["gen", "main.loi", "-o"])
+        .arg(&c)
+        .current_dir(&dir)
+        .output()
+        .expect("loi should generate C");
+    let text = if output.status.success() {
+        fs::read_to_string(&c).expect("generated C should be readable")
+    } else {
+        stderr(&output)
+    };
+    let _ = fs::remove_dir_all(&dir);
+    assert!(output.status.success(), "gen failed: {text}");
+    assert!(
+        text.contains("loi_fn_option_answer("),
+        "unexpected C: {text}"
+    );
+    assert!(
+        !text.contains("loi_fn_core__option_answer"),
+        "re-export changed the C symbol: {text}"
+    );
+}
+
+#[test]
+fn open_import_cycles_are_rejected() {
+    let dir = package_dir("package-reexport-cycle", "core");
+    write(
+        &dir,
+        "core/option.loi",
+        "open import \"../core.loi\"\nopen flow option_answer\n    => i32\n{\n    => 42\n}\n",
+    );
+    write(&dir, "core.loi", "open import \"core/option.loi\"\n");
+    let main = write(
+        &dir,
+        "main.loi",
+        "import \"core.loi\" as core\nopen flow main\n    => i32\n{\n    => core::option_answer()\n}\n",
+    );
+
+    let output = run(&[Path::new("check"), &main]);
+    let text = stderr(&output);
+    let _ = fs::remove_dir_all(&dir);
+    assert!(!output.status.success(), "re-export cycle was accepted");
+    assert!(
+        text.contains("import cycle detected"),
+        "unexpected diagnostics: {text}"
+    );
+}

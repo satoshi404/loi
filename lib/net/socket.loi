@@ -1,0 +1,79 @@
+//! Thin socket bridge backed by `lib/net_shim.c`.
+//!
+//! Import through the package root or directly:
+//!
+//! ```loi
+//! import "lib/net.loi"          // net::net_tcp_connect
+//! import "lib/net/socket.loi"   // fine-grained import
+//! ```
+//!
+//! ```sh
+//! loi build main.loi -o main --c-source lib/net_shim.c
+//! ```
+//!
+//! Prefer `net/tcp.loi` for application code; these flows are the FFI edge.
+import "address.loi"
+
+extern flow loi_net_tcp_connect
+    <- host: cstr
+    <- port: u32
+    => i32
+
+extern flow loi_net_close
+    <- fd: i32
+
+extern flow loi_net_send
+    <- fd: i32
+    <- data: [u8]
+    => i64
+
+open extern flow loi_net_recv
+    <- fd: i32
+    <-> data: [u8]
+    => i64
+
+/// Connect to a numeric IPv4 host. Returns -1 on failure.
+open flow net_tcp_connect
+    <- host: cstr
+    <- port: u32
+    => i32
+{
+    if not net_port_is_valid(port) {
+        => -1
+    }
+    => loi_net_tcp_connect(host, port)
+}
+
+open flow net_close
+    <- fd: i32
+{
+    if fd >= 0 {
+        loi_net_close(fd)
+    }
+}
+
+/// Send every byte of `data`; returns false on a short write or error.
+open flow net_send
+    <- fd: i32
+    <- data: [u8]
+    => bool
+{
+    if fd < 0 {
+        => false
+    }
+    written <- loi_net_send(fd, data)
+    => written == data.len as i64
+}
+
+/// Read up to `data.len` bytes into the caller's buffer; a negative descriptor
+/// yields 0 without calling C.
+open flow net_recv
+    <- fd: i32
+    <-> data: [u8]
+    => i64
+{
+    if fd < 0 {
+        => 0
+    }
+    => loi_net_recv(fd, <-> data)
+}

@@ -1,0 +1,51 @@
+//! Generic selection and slice helpers over `T: Copy`.
+//!
+//! Re-exported by `lib/math.loi`; import this file directly for a narrow build.
+open flow math_min<T: Copy>
+    <- a: T
+    <- b: T
+    => T
+{
+    if a < b {
+        => a
+    }
+    => b
+}
+
+open flow math_max<T: Copy>
+    <- a: T
+    <- b: T
+    => T
+{
+    if a > b {
+        => a
+    }
+    => b
+}
+
+open flow math_clamp<T: Copy>
+    <- value: T
+    <- low: T
+    <- high: T
+    => T
+{
+    if value < low {
+        => low
+    }
+    if value > high {
+        => high
+    }
+    => value
+}
+
+/// Sum every element of a slice; the element type is supplied explicitly.
+open flow math_sum<T: Copy>
+    <- xs: [T]
+    => T
+{
+    mut total: T <- 0
+    for i in 0..xs.len {
+        total += xs[i]
+    }
+    => total
+}

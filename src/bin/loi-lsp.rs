@@ -11,34 +11,9 @@ use std::process::{Command, Stdio};
 
 const SERVER_SOURCE: &str = include_str!("../../examples/lsp_server.loi");
 
-const LIB_FILES: &[(&str, &str)] = &[
-    ("crc32.loi", include_str!("../../lib/crc32.loi")),
-    ("ctype.loi", include_str!("../../lib/ctype.loi")),
-    ("hash.loi", include_str!("../../lib/hash.loi")),
-    ("json.loi", include_str!("../../lib/json.loi")),
-    ("jsonrpc.loi", include_str!("../../lib/jsonrpc.loi")),
-    ("lsp.loi", include_str!("../../lib/lsp.loi")),
-    ("map.loi", include_str!("../../lib/map.loi")),
-    ("math.loi", include_str!("../../lib/math.loi")),
-    ("net.loi", include_str!("../../lib/net.loi")),
-    ("option.loi", include_str!("../../lib/option.loi")),
-    ("os.loi", include_str!("../../lib/os.loi")),
-    ("process.loi", include_str!("../../lib/process.loi")),
-    ("random.loi", include_str!("../../lib/random.loi")),
-    ("result.loi", include_str!("../../lib/result.loi")),
-    ("slice.loi", include_str!("../../lib/slice.loi")),
-    ("std.loi", include_str!("../../lib/std.loi")),
-    ("stdio.loi", include_str!("../../lib/stdio.loi")),
-    ("string.loi", include_str!("../../lib/string.loi")),
-    ("vec.loi", include_str!("../../lib/vec.loi")),
-];
-
-const SHIM_FILES: &[(&str, &str)] = &[
-    ("lsp_shim.c", include_str!("../../lib/lsp_shim.c")),
-    ("os_shim.c", include_str!("../../lib/os_shim.c")),
-    ("process_shim.c", include_str!("../../lib/process_shim.c")),
-    ("stdio_shim.c", include_str!("../../lib/stdio_shim.c")),
-];
+// `build.rs` discovers every `.loi` and `_shim.c` under `lib/`, including
+// package subdirectories, and emits the two asset tables with `include_str!`.
+include!(concat!(env!("OUT_DIR"), "/lib_assets.rs"));
 
 fn main() {
     if let Err(error) = run() {
@@ -149,13 +124,13 @@ fn build_server(
     fs::create_dir_all(&lib).map_err(|error| format!("{}: {error}", lib.display()))?;
     fs::write(examples.join("loi-lsp.loi"), SERVER_SOURCE)
         .map_err(|error| format!("could not write the server source: {error}"))?;
-    for (name, source) in LIB_FILES {
-        fs::write(lib.join(name), source)
-            .map_err(|error| format!("could not write lib/{name}: {error}"))?;
-    }
-    for (name, source) in SHIM_FILES {
-        fs::write(lib.join(name), source)
-            .map_err(|error| format!("could not write lib/{name}: {error}"))?;
+    for (name, source) in LIB_FILES.iter().chain(SHIM_FILES) {
+        let target = lib.join(name);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
+        }
+        fs::write(&target, source)
+            .map_err(|error| format!("could not write {}: {error}", target.display()))?;
     }
 
     let pending = cache.join(format!("loi-lsp-{fingerprint}.{}", std::process::id()));

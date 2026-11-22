@@ -47,9 +47,6 @@ const libDir = path.join(projectDir, "lib");
 // hard-coded allow-list. The trusted shims are used only by the server-side LSP
 // session: browser-submitted programs still cannot spawn processes or write
 // arbitrary paths through the LSP document sink.
-const libraryModules = readdirSync(libDir)
-  .filter((name) => name.endsWith(".loi"))
-  .sort();
 const libraryShims = readdirSync(libDir)
   .filter((name) => name.endsWith("_shim.c"))
   .sort();
@@ -147,9 +144,7 @@ async function prepareLspSession() {
     const examplesTarget = path.join(dir, "examples");
     await mkdir(libTarget, { recursive: true });
     await mkdir(examplesTarget, { recursive: true });
-    for (const name of [...libraryModules, ...libraryShims]) {
-      await copyFile(path.join(libDir, name), path.join(libTarget, name));
-    }
+    await cp(libDir, libTarget, { recursive: true });
     await copyFile(lspExamplePath, path.join(examplesTarget, "lsp_server.loi"));
 
     // Prefer the first-class `loi-lsp` executable produced by `cargo build`.
@@ -346,9 +341,7 @@ async function runWebDemo(source, demo) {
       await mkdir(libTarget, { recursive: true });
       await mkdir(examplesTarget, { recursive: true });
       await mkdir(path.join(workspace, "vendor"), { recursive: true });
-      for (const name of libraryModules) {
-        await copyFile(path.join(libDir, name), path.join(libTarget, name));
-      }
+      await cp(libDir, libTarget, { recursive: true });
       await cp(path.join(projectDir, "vendor", "raylib"), path.join(workspace, "vendor", "raylib"), {
         recursive: true,
       });
@@ -514,11 +507,8 @@ async function prepareWorkspace(source) {
   await mkdir(nestedLibDir, { recursive: true });
   await mkdir(raylibDir, { recursive: true });
 
-  for (const name of [...libraryModules, ...libraryShims]) {
-    const source = path.join(libDir, name);
-    await copyFile(source, path.join(workspaceLibDir, name));
-    await copyFile(source, path.join(nestedLibDir, name));
-  }
+  await cp(libDir, workspaceLibDir, { recursive: true });
+  await cp(libDir, nestedLibDir, { recursive: true });
   await copyFile(raylibPath, path.join(raylibDir, "raylib.loi"));
 
   const sourcePath = path.join(examplesDir, "main.loi");

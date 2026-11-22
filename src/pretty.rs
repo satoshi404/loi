@@ -229,9 +229,10 @@ impl PrettyPrinter {
                     .as_ref()
                     .map(|name| format!(" as {name}"))
                     .unwrap_or_default();
+                let prefix = if import.public { "open " } else { "" };
                 self.line_at(
                     import.span.line,
-                    format!("import \"{}\"{alias}", escape_string(&import.path)),
+                    format!("{prefix}import \"{}\"{alias}", escape_string(&import.path)),
                 )
             }
             Item::Interface(interface) => self.interface(interface),
