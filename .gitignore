@@ -1,4 +1,6 @@
 /target/
 /website/web-runs/
+editors/vscode-loi/node_modules/
+editors/vscode-loi/*.vsix
 __pycache__/
 *.py[cod]

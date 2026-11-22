@@ -1900,8 +1900,9 @@ node website/server.mjs
             <code>loi-lsp</code> executable, like <code>clangd</code> beside <code>clang</code>.
             <code>cargo build</code> creates it next to <code>loi</code>; the launcher compiles
             and caches the server written in Loi on first use, then speaks LSP over stdio. It
-            advertises full-document synchronization and publishes compiler diagnostics after
-            every <code>didOpen</code> and <code>didChange</code>. It never
+            advertises full-document synchronization, publishes compiler diagnostics after
+            every <code>didOpen</code> and <code>didChange</code>, and answers
+            <code>textDocument/completion</code> from a cached copy of the editor buffer. It never
             writes over the file you are editing; it checks a hidden shadow file in the same
             directory and deletes it after each check. Relative imports therefore resolve exactly
             as they do for the real file.
@@ -1941,7 +1942,19 @@ export LOI_COMPILER=/absolute/path/to/loi/target/debug/loi
             to launch an Extension Development Host. Set <code>loi.lsp.command</code> to the
             absolute path of <code>loi-lsp</code> and <code>loi.compiler</code> to your
             <code>loi</code> binary. The extension registers the <code>.loi</code> language and
-            starts the server in stdio mode.
+            starts the server in stdio mode. Errors and warnings appear in the Problems panel;
+            <code>Ctrl+Space</code> requests completion and <code>.</code> triggers it as you type.
+          </p>
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>VS Code settings</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-json">{
+  "loi.lsp.command": "/absolute/path/to/loi/target/debug/loi-lsp",
+  "loi.compiler": "/absolute/path/to/loi/target/debug/loi"
+}</code></pre>
+          </div>
+          <p>
+            <code>loi.compiler</code> is passed to the server as <code>LOI_COMPILER</code>;
+            set it explicitly when <code>loi</code> is not on the editor's <code>PATH</code>.
           </p>
           <div class="doc-code">
             <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
