@@ -47,6 +47,23 @@ impl fmt::Display for CodegenError {
 
 impl std::error::Error for CodegenError {}
 
+fn expand_for_codegen(program: &Program) -> Result<Program, CodegenError> {
+    let mut program = crate::expand::expand_program(program).map_err(|errors| {
+        let error = &errors[0];
+        CodegenError::new(format!(
+            "{}:{}: {}",
+            error.span.line, error.span.column, error.message
+        ))
+    })?;
+    // Code templates exist only to feed `splice`; after expansion they have
+    // no runtime representation and must not reach the backend. Other comptime
+    // flows may still be called at runtime or from a constant expression.
+    program.items.retain(|item| {
+        !matches!(item, Item::Function(decl) if decl.comptime && crate::expand::is_code_template(decl))
+    });
+    Ok(program)
+}
+
 /// Lower a checked program to a C translation unit.
 ///
 /// If `source_map_path` is `Some`, a JSON Lines source map file is written
@@ -57,7 +74,8 @@ pub fn generate_c(
     program: &Program,
     source_map_path: Option<&Path>,
 ) -> Result<String, CodegenError> {
-    let (program, mono_errors) = crate::monomorphize::monomorphize(program);
+    let expanded = expand_for_codegen(program)?;
+    let (program, mono_errors) = crate::monomorphize::monomorphize(&expanded);
     if let Some(error) = mono_errors.first() {
         return Err(CodegenError::new(format!(
             "{}:{}: {}",
@@ -77,7 +95,8 @@ pub fn generate_c_subset(
     source_map_path: Option<&Path>,
     defined: &std::collections::HashSet<String>,
 ) -> Result<String, CodegenError> {
-    let (program, mono_errors) = crate::monomorphize::monomorphize(program);
+    let expanded = expand_for_codegen(program)?;
+    let (program, mono_errors) = crate::monomorphize::monomorphize(&expanded);
     if let Some(error) = mono_errors.first() {
         return Err(CodegenError::new(format!(
             "{}:{}: {}",
@@ -104,7 +123,8 @@ pub fn generate_header_named(
     source_map_path: Option<&Path>,
     header_path: Option<&Path>,
 ) -> Result<String, CodegenError> {
-    let (program, mono_errors) = crate::monomorphize::monomorphize(program);
+    let expanded = expand_for_codegen(program)?;
+    let (program, mono_errors) = crate::monomorphize::monomorphize(&expanded);
     if let Some(error) = mono_errors.first() {
         return Err(CodegenError::new(format!(
             "{}:{}: {}",
@@ -1268,6 +1288,9 @@ impl<'a> Generator<'a> {
             ExprKind::InterfaceLiteral { fields, .. } => fields
                 .iter()
                 .any(|field| self.expr_has_side_effect(&field.value)),
+            ExprKind::Quote(_) | ExprKind::Unquote(_) => {
+                unreachable!("quote/unquote must be expanded before codegen")
+            }
         }
     }
 
@@ -1612,6 +1635,7 @@ impl<'a> Generator<'a> {
             Ty::FloatLiteral => "double".to_string(),
             Ty::Void => "void".to_string(),
             Ty::Error => "void".to_string(),
+            Ty::Code => unreachable!("Code has no C representation"),
         }
     }
 
@@ -2414,6 +2438,7 @@ impl<'a> Generator<'a> {
                     self.c_choice_payload(variant)
                 )
             }
+            ConstValue::Code(_) => unreachable!("Code cannot be emitted as a C constant"),
         }
         .trim()
         .to_string()
@@ -2483,6 +2508,7 @@ impl<'a> Generator<'a> {
                     self.c_choice_payload(variant)
                 )
             }
+            ConstValue::Code(_) => unreachable!("Code cannot be emitted as a C constant"),
         }
         .trim()
         .to_string()
@@ -3101,6 +3127,7 @@ impl<'a> Generator<'a> {
                 self.restore_protects(base);
                 self.emit("break;");
             }
+            StmtKind::Splice(_) => unreachable!("splice must be expanded before codegen"),
         }
     }
 
@@ -3293,6 +3320,8 @@ impl<'a> Generator<'a> {
                 _ => Ty::Error,
             },
             ExprKind::Comptime(inner) => self.ty_of(inner),
+            ExprKind::Quote(_) => Ty::Code,
+            ExprKind::Unquote(_) => Ty::Error,
         }
     }
 
@@ -3577,6 +3606,9 @@ impl<'a> Generator<'a> {
                 Some(value) => self.const_value_code(&value),
                 None => self.gen_expr(inner),
             },
+            ExprKind::Quote(_) | ExprKind::Unquote(_) => {
+                unreachable!("quote/unquote must be expanded before codegen")
+            }
         }
     }
 
@@ -4083,6 +4115,7 @@ fn collect_callback_stmt<'a>(
             }
         }
         StmtKind::Continue | StmtKind::Break => {}
+        StmtKind::Splice(expr) => collect_callback_expr(expr, types, flows),
     }
 }
 
@@ -4158,6 +4191,8 @@ fn collect_callback_expr<'a>(expr: &'a Expr, types: &mut Vec<&'a Type>, flows: &
             collect_callback_expr(index, types, flows);
         }
         ExprKind::Comptime(inner) => collect_callback_expr(inner, types, flows),
+        ExprKind::Quote(_) => {}
+        ExprKind::Unquote(inner) => collect_callback_expr(inner, types, flows),
     }
 }
 
@@ -4249,6 +4284,7 @@ fn collect_stmt_strings(
             }
         }
         StmtKind::Continue | StmtKind::Break => {}
+        StmtKind::Splice(expr) => collect_expr_strings(expr, indices, order),
     }
 }
 
@@ -4299,6 +4335,8 @@ fn collect_expr_strings(
         }
         ExprKind::Comptime(inner) => collect_expr_strings(inner, indices, order),
         ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Ident(_) => {}
+        ExprKind::Quote(_) => {}
+        ExprKind::Unquote(inner) => collect_expr_strings(inner, indices, order),
     }
 }
 
@@ -4386,7 +4424,8 @@ fn c_float_literal(text: &str) -> String {
 
 /// Lower a checked program to an IR module text.
 pub fn generate_ir(program: &Program) -> Result<String, CodegenError> {
-    let (owned, mono_errors) = crate::monomorphize::monomorphize(program);
+    let expanded = expand_for_codegen(program)?;
+    let (owned, mono_errors) = crate::monomorphize::monomorphize(&expanded);
     if let Some(error) = mono_errors.first() {
         return Err(CodegenError::new(format!(
             "{}:{}: {}",
@@ -4618,6 +4657,11 @@ fn gen_stmt(builder: &mut IrBuilder, stmt: &Stmt) -> Result<(), CodegenError> {
         }
         StmtKind::Continue => {}
         StmtKind::Break => {}
+        StmtKind::Splice(_) => {
+            return Err(CodegenError::new(
+                "splice must be expanded before IR generation".to_string(),
+            ));
+        }
     }
     Ok(())
 }
@@ -4765,5 +4809,8 @@ fn gen_expr(builder: &mut IrBuilder, expr: &Expr) -> Result<Reg, CodegenError> {
             Ok(result)
         }
         ExprKind::Comptime(inner) => gen_expr(builder, inner),
+        ExprKind::Quote(_) | ExprKind::Unquote(_) => Err(CodegenError::new(
+            "quote/unquote must be expanded before IR generation".to_string(),
+        )),
     }
 }

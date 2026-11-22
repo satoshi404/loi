@@ -318,7 +318,7 @@ impl Options {
         let mut cc_flags = Vec::new();
         let mut c_sources = Vec::new();
         let mut error_format = ErrorFormat::Human;
-        let mut color = ColorChoice::Auto;
+        let mut color = ColorChoice::default();
         let mut line = None;
         let mut column = None;
         let mut kind = None;

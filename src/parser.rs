@@ -856,6 +856,11 @@ impl Parser {
                 Ok(Stmt::new(StmtKind::Protect(self.parse_block()?), span))
             }
             TokenKind::Guard => self.parse_guard(span),
+            TokenKind::Splice => {
+                self.advance();
+                let value = self.parse_expression()?;
+                Ok(Stmt::new(StmtKind::Splice(value), span))
+            }
             TokenKind::If => self.parse_if(span),
             TokenKind::While => self.parse_while(span),
             TokenKind::For => self.parse_for(span),
@@ -1396,6 +1401,21 @@ impl Parser {
             TokenKind::True => {
                 self.advance();
                 Ok(Expr::new(ExprKind::Bool(true), span))
+            }
+            TokenKind::Quote => {
+                self.advance();
+                let block = self.parse_block()?;
+                Ok(Expr::new(ExprKind::Quote(block), self.through_last(span)))
+            }
+            TokenKind::Unquote => {
+                self.advance();
+                self.expect(TokenKind::LParen, "'('")?;
+                let value = self.parse_expression()?;
+                self.expect(TokenKind::RParen, "')'")?;
+                Ok(Expr::new(
+                    ExprKind::Unquote(Box::new(value)),
+                    self.through_last(span),
+                ))
             }
             TokenKind::False => {
                 self.advance();

@@ -25,7 +25,12 @@ fn is_callback_void(ty: &Type) -> bool {
 
 /// Check a complete program, returning every diagnostic found.
 pub fn check(program: &Program) -> Vec<Diagnostic> {
-    let (program, mono_errors, source_names) = crate::monomorphize::monomorphize_for_check(program);
+    let program = match crate::expand::expand_program(program) {
+        Ok(program) => program,
+        Err(errors) => return errors,
+    };
+    let (program, mono_errors, source_names) =
+        crate::monomorphize::monomorphize_for_check(&program);
     let has_mono_errors = !mono_errors.is_empty();
     let mut diagnostics = mono_errors
         .into_iter()
@@ -80,7 +85,10 @@ pub fn check_with_warnings_from(program: &Program, warning_program: &Program) ->
     if errors.iter().any(|diagnostic| diagnostic.is_error()) {
         return errors;
     }
-    let mut diagnostics = crate::lint::warnings(warning_program);
+    // Lint the expanded form so spliced statements count as uses and bindings.
+    let lint_program =
+        crate::expand::expand_program(warning_program).unwrap_or_else(|_| warning_program.clone());
+    let mut diagnostics = crate::lint::warnings(&lint_program);
     diagnostics.extend(errors);
     diagnostics
 }
@@ -2177,6 +2185,12 @@ impl Checker {
                 }
                 self.reachable = false;
             }
+            StmtKind::Splice(_) => {
+                self.error(
+                    statement.span,
+                    "'splice' expects a comptime expression of type 'Code'",
+                );
+            }
         }
     }
 
@@ -2616,6 +2630,10 @@ impl Checker {
                 self.check_place_state(expr, expr.span);
                 ty
             }
+            // Placement was validated during expansion. The nodes remain in
+            // comptime flow bodies as data, so the checker only needs types.
+            ExprKind::Quote(_) => Ty::Code,
+            ExprKind::Unquote(inner) => self.check_expr(inner),
         }
     }
 
@@ -3976,6 +3994,8 @@ impl Checker {
             | ExprKind::Copy(inner)
             | ExprKind::Comptime(inner)
             | ExprKind::Alloc { target: inner, .. } => self.scan_expr_ty(inner, locals),
+            ExprKind::Quote(_) => Ty::Code,
+            ExprKind::Unquote(_) => Ty::Error,
         }
     }
 
@@ -4510,6 +4530,7 @@ impl Checker {
                 }
             }
             ExprKind::Comptime(inner) => self.collect_value_regions(inner, regions),
+            ExprKind::Quote(_) | ExprKind::Unquote(_) => {}
         }
     }
 
@@ -4638,6 +4659,7 @@ impl Checker {
             | ExprKind::Bool(_)
             | ExprKind::String(_)
             | ExprKind::Alloc { .. } => {}
+            ExprKind::Quote(_) | ExprKind::Unquote(_) => {}
         }
     }
 
@@ -5080,6 +5102,7 @@ impl ViewScanCtx<'_> {
             | ExprKind::Bool(_)
             | ExprKind::String(_)
             | ExprKind::Alloc { .. } => HashSet::new(),
+            ExprKind::Quote(_) | ExprKind::Unquote(_) => HashSet::new(),
         }
     }
 }
@@ -5170,6 +5193,7 @@ fn scan_view_statement(
         }
         StmtKind::Return(Some(value)) => ctx.expr(value, state),
         StmtKind::Return(None) | StmtKind::Continue | StmtKind::Break => HashSet::new(),
+        StmtKind::Splice(expr) => ctx.expr(expr, state),
     }
 }
 
@@ -5347,6 +5371,7 @@ fn scan_statement_effects(
         }
         StmtKind::Continue => {}
         StmtKind::Break => {}
+        StmtKind::Splice(expr) => scan_expr_effects(checker, expr, depth, scan, locals),
     }
 }
 
@@ -5437,6 +5462,7 @@ fn scan_expr_effects(
             scan_expr_effects(checker, index, depth, scan, locals);
         }
         ExprKind::Comptime(inner) => scan_expr_effects(checker, inner, depth, scan, locals),
+        ExprKind::Quote(_) | ExprKind::Unquote(_) => {}
     }
 }
 
@@ -5800,6 +5826,7 @@ fn collect_accesses(expr: &Expr, accesses: &mut Vec<(String, String)>) {
         }
         ExprKind::Comptime(inner) => collect_accesses(inner, accesses),
         ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::String(_) => {}
+        ExprKind::Quote(_) | ExprKind::Unquote(_) => {}
     }
 }
 
@@ -5872,6 +5899,7 @@ fn collect_direct_reads(
         }
         ExprKind::Comptime(inner) => collect_direct_reads(inner, read_params, reads),
         ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::String(_) => {}
+        ExprKind::Quote(_) | ExprKind::Unquote(_) => {}
     }
 }
 

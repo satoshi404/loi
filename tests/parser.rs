@@ -1111,3 +1111,27 @@ fn collect_binary_ops(expr: &Expr, ops: &mut Vec<BinaryOp>) {
         collect_binary_ops(right, ops);
     }
 }
+
+#[test]
+fn parses_quote_unquote_and_splice() {
+    let program = parse_source(
+        "comptime flow require_range\n    <- min: i32\n    => Code\n{\n    => quote {\n        if value < unquote(min) {\n            print_int(1)\n        }\n    }\n}\n\nflow main {\n    value <- 2\n    splice require_range(0)\n}\n",
+    );
+
+    let Item::Function(builder) = &program.items[0] else {
+        panic!("expected a comptime flow");
+    };
+    assert!(builder.comptime);
+    let StmtKind::Return(Some(quoted)) = &builder.body.statements[0].kind else {
+        panic!("expected a quoted code value");
+    };
+    let ExprKind::Quote(block) = &quoted.kind else {
+        panic!("expected quote to produce a code block");
+    };
+    assert!(matches!(block.statements[0].kind, StmtKind::If { .. }));
+
+    let Item::Function(main) = &program.items[1] else {
+        panic!("expected main flow");
+    };
+    assert!(matches!(main.body.statements[1].kind, StmtKind::Splice(_)));
+}

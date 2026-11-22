@@ -399,3 +399,12 @@ fn formatting_repository_sources_preserves_comment_count() {
         "expected to check the repository .loi sources, found {checked}"
     );
 }
+
+#[test]
+fn formats_quote_unquote_and_splice_stably() {
+    let source = "comptime flow require_min\n    <- min: i32\n    => Code\n{\n    => quote {\n        if value < unquote(min) {\n            print_int(1)\n        }\n    }\n}\n\nflow main {\n    value <- 2\n    splice require_min(0)\n}\n";
+    let formatted = assert_format_stable(source);
+    assert!(formatted.contains("=> quote {"));
+    assert!(formatted.contains("if value < unquote(min) {"));
+    assert!(formatted.contains("splice require_min(0)"));
+}

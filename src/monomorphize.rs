@@ -304,6 +304,7 @@ impl<'a> Monomorphizer<'a> {
                 }
             }
             StmtKind::Continue | StmtKind::Break => {}
+            StmtKind::Splice(expr) => self.rewrite_expr(expr, mapping),
         }
     }
 
@@ -427,6 +428,12 @@ impl<'a> Monomorphizer<'a> {
                 self.rewrite_expr(base, mapping);
                 self.rewrite_expr(index, mapping);
             }
+            ExprKind::Quote(block) => {
+                for statement in &mut block.statements {
+                    self.rewrite_statement(statement, mapping);
+                }
+            }
+            ExprKind::Unquote(inner) => self.rewrite_expr(inner, mapping),
         }
     }
 

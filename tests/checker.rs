@@ -29,6 +29,17 @@ fn assert_message(source: &str, expected: &str) {
     );
 }
 
+fn assert_help(source: &str, expected: &str) {
+    let helps = diagnostics(source)
+        .into_iter()
+        .filter_map(|diagnostic| diagnostic.help)
+        .collect::<Vec<_>>();
+    assert!(
+        helps.iter().any(|help| help.contains(expected)),
+        "expected a diagnostic help containing {expected:?}, got {helps:#?}"
+    );
+}
+
 #[test]
 fn reference_program_type_checks() {
     assert_clean(include_str!("../examples/particles.loi"));
@@ -2354,5 +2365,52 @@ fn callbacks_reject_bad_directions_arithmetic_comparison_and_calls() {
             "{CALLBACK_SOURCE}\nflow main {{\n    cb <- callback(add)\n    x <- cb(1, 2)\n}}\n"
         ),
         "unknown function 'cb'",
+    );
+}
+
+#[test]
+fn splice_expands_quoted_code_with_unquoted_constants() {
+    assert_clean(
+        "comptime flow require_range\n    <- min: i32\n    <- max: i32\n    => Code\n{\n    => quote {\n        if value < unquote(min) or value > unquote(max) {\n            print_int(1)\n        }\n    }\n}\n\nflow main {\n    value <- 42\n    splice require_range(0, 100)\n}\n",
+    );
+}
+
+#[test]
+fn quote_is_only_allowed_in_a_comptime_flow() {
+    assert_message(
+        "flow bad {\n    => quote { print_int(1) }\n}\n",
+        "'quote' is only allowed in a comptime flow",
+    );
+}
+
+#[test]
+fn unquote_is_only_allowed_inside_quote() {
+    assert_message(
+        "flow main {\n    value <- unquote(1)\n}\n",
+        "'unquote' is only valid inside 'quote'",
+    );
+}
+
+#[test]
+fn splice_requires_a_comptime_code_value() {
+    assert_message(
+        "flow main {\n    splice 1\n}\n",
+        "'splice' expects a comptime expression of type 'Code'",
+    );
+}
+
+#[test]
+fn unquote_accepts_only_scalar_constants() {
+    assert_help(
+        "comptime flow bad\n    => Code\n{\n    => quote {\n        xs <- unquote([1, 2])\n    }\n}\n\nflow main {\n    splice bad()\n}\n",
+        "only scalar constants can be unquoted",
+    );
+}
+
+#[test]
+fn a_code_value_must_be_spliced_not_unquoted() {
+    assert_help(
+        "comptime flow bad\n    => Code\n{\n    => quote {\n        splice unquote(quote { print_int(1) })\n    }\n}\n\nflow main {\n    splice bad()\n}\n",
+        "a 'Code' value cannot be unquoted as an expression; use 'splice'",
     );
 }

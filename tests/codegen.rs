@@ -1736,3 +1736,21 @@ fn headers_expose_the_callback_abi() {
         "header must declare callback shape fields:\n{h}"
     );
 }
+
+#[test]
+fn code_templates_do_not_remove_other_comptime_flows() {
+    let source = "comptime flow double\n    <- x: i32\n    => i32\n{\n    => x * 2\n}\n\nLIMIT: i32 <- comptime double(21)\n\ncomptime flow report_limit\n    => Code\n{\n    => quote {\n        print_int(unquote(LIMIT))\n    }\n}\n\nflow main {\n    splice report_limit()\n}\n";
+    let c = generated(source);
+    assert!(
+        c.contains("loi_fn_double"),
+        "ordinary comptime flows must still be emitted:\n{c}"
+    );
+    assert!(
+        !c.contains("loi_fn_report_limit"),
+        "Code templates must not be emitted:\n{c}"
+    );
+    let run = compile_and_run_output("code-template-with-comptime", &c, "");
+    let Some(run) = run else { return };
+    assert_eq!(run.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "42");
+}

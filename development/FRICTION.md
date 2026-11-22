@@ -920,3 +920,54 @@ diagnostic whose declaration had moved to line 19. Each failure was a test-only
 drift, not a compiler regression; the exact command output named the mismatched
 file and expected/actual value. The expectations were refreshed to the current
 canonical sources before this change could be committed.
+
+## Code as value — metaprogramming limits
+
+### `unquote` inserts literals, not arbitrary syntax
+
+Attempted design: unquote a slice constant to build a statement, and unquote a
+`quote` result from inside another `quote`. The exact diagnostic help is:
+
+```text
+only scalar constants can be unquoted
+a 'Code' value cannot be unquoted as an expression; use 'splice'
+```
+
+`unquote` evaluates its inner expression at compile time and writes the result
+back as a literal expression. Only integers, unsigned integers, floats, bools
+and string/cstr values have a literal form. Composites would need a full
+AST-to-source printer with precedence and ownership rules; a nested `Code`
+value is a block, so it must be inserted with `splice`. The positive example is
+`examples/code_as_value.loi`; the two negative cases are pinned in
+`tests/checker.rs`.
+
+Language requirement for lifting the limit: expression-level AST splicing
+(`unquote_ast`) with a defined precedence contract. Not planned.
+
+### Quoted names resolve at the splice site
+
+A `quote` block is inserted before checking, so an identifier written inside it
+binds wherever the `splice` appears. Attempting to give each template its own
+private namespace would need hygiene, generated names and scope capture rules.
+For now the template author must choose names that are valid at every splice
+site, exactly as with a hand-copied block. This is documented in `LOI_SPEC.md`
+§5.1b rather than treated as a compiler bug.
+
+### `Code` has no runtime representation
+
+`Code` is a compile-time value. A `comptime flow` that produces `Code` is pure
+and is stripped before C and LLVM emission. Storing a `Code` in an ordinary
+local, shape field, global with runtime emission, or returning it from a normal
+flow would require a runtime AST representation and ABI, which the language
+does not have. A template is produced at compile time and consumed by a
+`splice` in the same compilation; its arguments must be compile-time constants.
+
+### Expansion precedes generics and checking
+
+`splice` is resolved before monomorphization and the checker. A quoted block
+cannot refer to a type parameter of an enclosing generic flow as if it were a
+runtime type, and diagnostics for an expanded statement point at the quoted
+source rather than at a generated call. Moving expansion after checking would
+allow more introspection but would require the checker and linter to understand
+`Code` nodes and would duplicate the ownership rules. The current order keeps
+one path for all later phases.

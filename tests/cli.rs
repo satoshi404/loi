@@ -1833,6 +1833,29 @@ fn check_color_flags_control_ansi_escapes() {
 }
 
 #[test]
+fn no_color_disables_default_and_forced_color() {
+    let dir = test_dir("no-color");
+    let input = dir.join("program.loi");
+    fs::write(&input, "flow main => i32 {\n    => missing\n}\n").expect("input should be writable");
+
+    for args in [vec!["check"], vec!["check", "--color=always"]] {
+        let output = Command::new(loi())
+            .args(&args)
+            .arg(&input)
+            .env("NO_COLOR", "1")
+            .output()
+            .expect("loi should run");
+        assert_eq!(output.status.code(), Some(1));
+        assert!(
+            !String::from_utf8_lossy(&output.stderr).contains('\u{1b}'),
+            "NO_COLOR should win for {args:?}"
+        );
+    }
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn lexer_errors_use_the_diagnostic_renderer() {
     let dir = test_dir("lexer-diagnostic");
     let input = dir.join("lex.loi");
@@ -2181,6 +2204,34 @@ fn link_error_without_a_shim_suggests_c_source_file() {
             "{format} output should carry the generic help: {stderr}"
         );
     }
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn check_colors_diagnostics_by_default() {
+    let dir = test_dir("default-color");
+    let input = dir.join("program.loi");
+    fs::write(&input, "flow main {\n    missing <- 1\n    => missng\n}\n")
+        .expect("input should be writable");
+
+    let output = Command::new(loi())
+        .arg("check")
+        .arg(&input)
+        .env_remove("NO_COLOR")
+        .env_remove("CLICOLOR_FORCE")
+        .output()
+        .expect("loi should run");
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("\u{1b}[31merror"),
+        "default diagnostics should be colored: {stderr}"
+    );
+    assert!(
+        stderr.contains("-->") && stderr.contains("did you mean 'missing'"),
+        "default diagnostics should carry location and help: {stderr}"
+    );
 
     let _ = fs::remove_dir_all(&dir);
 }

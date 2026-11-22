@@ -1,0 +1,37 @@
+// Metaprogramming with code as a value.
+//
+// `require_range` is a comptime flow that returns a `Code` value. The quoted
+// block is a template: `unquote(min)` and `unquote(max)` are replaced by the
+// call's constant arguments. Each `splice` inserts the finished statements in
+// its caller, so adding another validated reading needs no copied condition.
+comptime flow require_range
+    <- min: i32
+    <- max: i32
+    => Code
+{
+    => quote {
+        if value < unquote(min) or value > unquote(max) {
+            print_int(1)
+        }
+    }
+}
+
+flow validate_temperature
+    <- value: i32
+{
+    splice require_range(-40, 125)
+}
+
+flow validate_pressure
+    <- value: i32
+{
+    splice require_range(0, 1000)
+}
+
+flow main
+    => i32
+{
+    validate_temperature(20)
+    validate_pressure(1013)
+    => 0
+}

@@ -423,6 +423,47 @@ flow next
             to <code>f32</code> precision.
           </p>
 
+          <h3>Code as a value</h3>
+          <p>
+            A <code>comptime flow</code> can return <code>Code</code>: a block of Loi
+            statements produced by <code>quote</code>. A caller inserts those statements
+            with <code>splice</code>, so a validated pattern is written once and reused
+            without copying its body.
+          </p>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>code_as_value.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-loi">comptime flow require_range
+    &lt;- min: i32
+    &lt;- max: i32
+    =&gt; Code
+{
+    =&gt; quote {
+        if value &lt; unquote(min) or value &gt; unquote(max) {
+            print_int(1)
+        }
+    }
+}
+
+flow validate_pressure
+    &lt;- value: i32
+{
+    splice require_range(0, 1000)
+}</code></pre>
+          </div>
+
+          <p>
+            <code>quote { ... }</code> is valid only inside a <code>comptime flow</code>.
+            <code>unquote(expr)</code> evaluates its inner expression at compile time and
+            writes a scalar literal into the quoted block; composites and nested
+            <code>Code</code> values are rejected. <code>splice expr</code> requires a
+            compile-time <code>Code</code> value. Expansion runs before type checking,
+            linting and both backends, and the comptime flow that produced the template
+            is not emitted as a runtime function. Quoted identifiers resolve at the
+            splice site: there is no hygiene or generated-name facility. The full example
+            is <a href="examples/code_as_value.loi">examples/code_as_value.loi</a>.
+          </p>
+
           <h3>Bindings and assignment</h3>
           <div class="doc-code">
             <div class="doc-code-bar"><span>bindings.loi</span><button type="button" data-copy>copy</button></div>
@@ -1837,7 +1878,11 @@ loi build main.loi helpers.loi -o app</code></pre>
           </p>
           <p>
             Diagnostics are printed to standard error. By default they use a human-readable
-            layout with the source line, labelled underlines and a final count.
+            layout with the source line, labelled underlines and a final count, and that
+            layout is colored even when stderr is redirected. A non-empty <code>NO_COLOR</code>
+            or <code>--color never</code> disables ANSI escapes; <code>--color auto</code>
+            restores terminal-only detection. Every format keeps the source location and,
+            when available, the <code>help</code> text, which the LSP appends to its message.
             <code>--error-format=short</code> keeps the original
             <code>path:line:column: message</code> form, and <code>--error-format=json</code>
             emits machine-readable objects with a <code>severity</code> field.
@@ -1857,7 +1902,7 @@ loi build main.loi helpers.loi -o app</code></pre>
             </thead>
             <tbody>
               <tr><td><code>--error-format human|short|json</code></td><td>Selects the diagnostic layout (default <code>human</code>).</td></tr>
-              <tr><td><code>--color auto|always|never</code></td><td>Controls ANSI colors (default <code>auto</code>). <code>auto</code> colors only on a terminal and honors <code>NO_COLOR</code>; <code>CLICOLOR_FORCE</code> forces color.</td></tr>
+              <tr><td><code>--color auto|always|never</code></td><td>Controls ANSI colors (default <code>always</code>). A non-empty <code>NO_COLOR</code> wins in every mode; <code>never</code> disables color explicitly; <code>auto</code> colors only on a terminal and lets <code>CLICOLOR_FORCE</code> force it.</td></tr>
             </tbody>
           </table>
 
@@ -2168,7 +2213,8 @@ sealed flow winning_line
             <code>shape</code>, <code>mark</code>, <code>choice</code>, <code>flow</code>,
             <code>open</code>, <code>sealed</code>, <code>extern</code>, <code>opaque</code>,
             <code>mut</code>, <code>give</code>, <code>clone</code>, <code>protect</code>,
-            <code>guard</code>, <code>alloc</code>, <code>import</code>, <code>comptime</code>, <code>if</code>,
+            <code>guard</code>, <code>alloc</code>, <code>import</code>, <code>comptime</code>,
+            <code>quote</code>, <code>splice</code>, <code>unquote</code>, <code>if</code>,
             <code>else</code>, <code>while</code>, <code>for</code>, <code>in</code>,
             <code>continue</code>, <code>break</code>, <code>and</code>, <code>or</code>,
             <code>not</code>, <code>is</code>, <code>as</code>, <code>true</code>,
@@ -2195,6 +2241,7 @@ sealed flow winning_line
               <tr><td><code>cstr</code></td><td>An FFI-only NUL-terminated C string handle.</td></tr>
               <tr><td><code>callback</code></td><td>An FFI-only fixed-signature C function pointer, built with <code>callback(flow)</code>.</td></tr>
               <tr><td><code>callback(T, ...) =&gt; R</code></td><td>An FFI-only C function pointer with an explicit signature, inferred from a Loi flow and checked at each use. <code>R</code> may be <code>void</code>.</td></tr>
+              <tr><td><code>Code</code></td><td>A comptime-only block of statements produced by <code>quote</code> and inserted with <code>splice</code>. It has no runtime representation.</td></tr>
             </tbody>
           </table>
 
@@ -2214,6 +2261,9 @@ sealed flow winning_line
               <tr><td>Generic flow</td><td><code>flow f&lt;T&gt; &lt;- x: T =&gt; T { =&gt; x }</code>, called as <code>f&lt;i32&gt;(x)</code>; bounds: <code>flow f&lt;T: Clone + Eq&gt;</code></td></tr>
               <tr><td>Compile-time flow</td><td><code>comptime flow f &lt;- x: i32 =&gt; i32 { =&gt; x * 2 }</code></td></tr>
               <tr><td>Compile-time expression</td><td><code>comptime f(21)</code></td></tr>
+              <tr><td>Code template</td><td><code>comptime flow make &lt;- x: i32 =&gt; Code { =&gt; quote { print_int(unquote(x)) } }</code></td></tr>
+              <tr><td>Quoted value</td><td><code>unquote(x)</code> inside a <code>quote</code> block</td></tr>
+              <tr><td>Splice</td><td><code>splice make(1)</code> inserts the template's statements</td></tr>
               <tr><td>Immutable binding</td><td><code>x &lt;- 1</code></td></tr>
               <tr><td>Mutable binding</td><td><code>mut x: i32 &lt;- 1</code></td></tr>
               <tr><td>Assignment</td><td><code>x = 2</code>, <code>x += 1</code>, <code>x -= 1</code>, <code>x *= 2</code>, <code>x /= 2</code></td></tr>
@@ -2282,6 +2332,8 @@ sealed flow winning_line
               <tr><td>Type checker</td><td>Working, including literal ranges, intrinsic signatures, checked <code>printf</code> varargs, bitwise/shift rules, shape cycle detection, generic instantiation and canonical diagnostics.</td></tr>
               <tr><td>Monomorphization</td><td>Working: generic shapes and flows are expanded into concrete declarations before checking and code generation, with mangled names, a recursion depth limit, collision diagnostics, validation of unused templates and checking of <code>Clone</code>/<code>Copy</code>/<code>Eq</code> bounds at each instantiation.</td></tr>
               <tr><td>Compile-time evaluation</td><td>Working: pure <code>comptime flow</code> and <code>comptime expr</code>, constant globals of any shape, and shape defaults, with purity checks, step/depth limits and runtime-matching overflow, cast and <code>f32</code> semantics.</td></tr>
+              <tr><td>Code as value</td><td>Working: <code>Code</code> values from <code>quote</code>, scalar <code>unquote</code> and statement-level <code>splice</code> are expanded before checking and both backends. Comptime template flows are stripped from emitted C/LLVM.</td></tr>
+              <tr><td>Diagnostics</td><td>Colored by default in the human format; <code>--color never</code> and <code>NO_COLOR</code> opt out. Locations and <code>help</code> text remain in human, short, JSON and LSP output.</td></tr>
               <tr><td>Ownership analysis</td><td>Working: give liveness, definite assignment, exclusive <code>&lt;-&gt;</code>, region escape checks, allocating read intrinsics, lexical slice-view loans, and linear-resource <code>guard</code> validation.</td></tr>
               <tr><td>C backend</td><td>Working: one C11 translation unit, bounds checks, regions, checked arithmetic, bitwise/shift helpers, file/stdin I/O, numeric and formatted printing, source maps, headers, multi-file objects. This is the default production backend.</td></tr>
               <tr><td>LLVM backend</td><td>Opt-in for scalars and scalar slices: real textual IR with opaque pointers, a C-compatible slice header and region ABI, and <code>clang</code> linking. Composite features are rejected with explicit diagnostics; C11 stays the production path.</td></tr>
@@ -2304,6 +2356,7 @@ sealed flow winning_line
             <li>Binding generation is conservative: C function pointers, variadics, unions, bitfields, inline arrays, pointer-to-pointer, wide strings, pointer results and pointers to unsafe records need a hand-written shim. Read-only <code>const T *</code> and mutable <code>char *</code> parameters bind as slices; other callback signatures than the fixed <code>callback</code> ABI also need a hand-written <code>extern flow</code>.</li>
             <li>The SDL2 and raylib 5.5 bindings and their shims are syntax-verified, but full link/run tests need a machine with those runtimes installed.</li>
             <li>The opt-in LLVM backend covers scalars, scalar slices, <code>protect</code> regions and the print/math intrinsics; shapes, choices, callbacks, composites and the remaining intrinsics are rejected with a clear diagnostic. Use the C11 backend for those programs.</li>
+            <li><code>Code</code> templates are compile-time only: <code>unquote</code> accepts scalar literals, quoted names resolve at the splice site, and a <code>splice</code> expression cannot depend on runtime values. There is no expression-level AST splicing or hygiene.</li>
             <li>The playground executes code on the machine running the server. Run it locally and do not expose it as a public service.</li>
           </ul>
 

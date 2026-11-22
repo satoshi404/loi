@@ -126,6 +126,7 @@ fn collect_statement_bindings(statement: &Stmt, out: &mut Vec<Binding>) {
             collect_bindings(body, out);
         }
         StmtKind::Return(_) | StmtKind::Continue | StmtKind::Break => {}
+        StmtKind::Splice(expr) => collect_expr_uses(expr, &mut HashSet::new()),
     }
 }
 
@@ -193,6 +194,7 @@ fn collect_statement_uses(statement: &Stmt, out: &mut HashSet<String>) {
             }
         }
         StmtKind::Continue | StmtKind::Break => {}
+        StmtKind::Splice(expr) => collect_expr_uses(expr, out),
     }
 }
 
@@ -242,5 +244,11 @@ fn collect_expr_uses(expr: &Expr, out: &mut HashSet<String>) {
             collect_expr_uses(base, out);
             collect_expr_uses(index, out);
         }
+        ExprKind::Quote(block) => {
+            for statement in &block.statements {
+                collect_statement_uses(statement, out);
+            }
+        }
+        ExprKind::Unquote(inner) => collect_expr_uses(inner, out),
     }
 }

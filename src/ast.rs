@@ -444,6 +444,8 @@ pub enum StmtKind {
         value: Expr,
         body: Block,
     },
+    /// `splice expr`: insert the statements of a comptime `Code` value here.
+    Splice(Expr),
     Return(Option<Expr>),
     Continue,
     Break,
@@ -537,6 +539,10 @@ pub enum ExprKind {
     },
     /// `comptime expr`: force compile-time evaluation.
     Comptime(Box<Expr>),
+    /// `quote { ... }`: a comptime value holding a block of Loi statements.
+    Quote(Block),
+    /// `unquote(expr)`: splice a comptime value into an enclosing `quote`.
+    Unquote(Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

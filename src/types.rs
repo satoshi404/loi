@@ -47,6 +47,8 @@ pub enum Ty {
     IntLiteral,
     /// The type of an unsuffixed float literal before coercion.
     FloatLiteral,
+    /// A comptime-only block of Loi statements produced by `quote`.
+    Code,
     /// The result type of a function with no `-> T`.
     Void,
     /// Placeholder used after a diagnostic to avoid cascading errors.
@@ -156,6 +158,7 @@ impl Ty {
             "f32" => Ty::F32,
             "f64" => Ty::F64,
             "bool" => Ty::Bool,
+            "Code" => Ty::Code,
             _ => return None,
         };
         Some(ty)
@@ -237,6 +240,7 @@ impl fmt::Display for Ty {
             }
             Ty::CStr => write!(f, "cstr"),
             Ty::Slice(element) => write!(f, "[{element}]"),
+            Ty::Code => write!(f, "Code"),
             Ty::IntLiteral => write!(f, "integer literal"),
             Ty::FloatLiteral => write!(f, "float literal"),
             Ty::Void => write!(f, "void"),
@@ -319,7 +323,7 @@ fn comparison_caps_inner(
         | Ty::IntLiteral
         | Ty::FloatLiteral => ComparisonCaps::BOTH,
         Ty::Opaque(_) => ComparisonCaps::IDENTITY,
-        Ty::Callback(_) | Ty::Void | Ty::Error => ComparisonCaps::NONE,
+        Ty::Callback(_) | Ty::Void | Ty::Error | Ty::Code => ComparisonCaps::NONE,
         Ty::Slice(element) => comparison_caps_inner(element, env, visited),
         Ty::Named(name) => {
             let key = format!("shape:{name}");

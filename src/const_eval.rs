@@ -43,6 +43,8 @@ pub enum ConstValue {
         variant: String,
         payload: Box<ConstValue>,
     },
+    /// A block of Loi statements produced by `quote`.
+    Code(Block),
 }
 
 impl ConstValue {
@@ -91,8 +93,34 @@ impl ConstValue {
             ConstValue::Shape { name, .. } => Ty::Named(name.clone()),
             ConstValue::Mark { name, .. } => Ty::Mark(name.clone()),
             ConstValue::Choice { name, .. } => Ty::Choice(name.clone()),
+            ConstValue::Code(_) => Ty::Code,
         }
     }
+}
+
+/// Turn a compile-time value into the literal expression that reconstructs it
+/// inside a quoted block.
+fn const_to_expr(value: ConstValue, span: Span) -> Result<ExprKind, ConstError> {
+    let kind = match value {
+        ConstValue::Int(value) => ExprKind::Int(value.to_string()),
+        ConstValue::UInt(value) => ExprKind::Int(value.to_string()),
+        ConstValue::Float(value) => ExprKind::Float(value.to_string()),
+        ConstValue::Bool(value) => ExprKind::Bool(value),
+        ConstValue::String(value) | ConstValue::CStr(value) => ExprKind::String(value),
+        ConstValue::Code(_) => {
+            return Err(ConstError::new(
+                span,
+                "a 'Code' value cannot be unquoted as an expression; use 'splice'",
+            ));
+        }
+        _ => {
+            return Err(ConstError::new(
+                span,
+                "only scalar constants can be unquoted",
+            ));
+        }
+    };
+    Ok(kind)
 }
 
 /// A failure during constant evaluation.
@@ -205,6 +233,131 @@ impl<'a> ConstEvaluator<'a> {
     ) -> Result<ConstValue, ConstError> {
         let mut env = Env::new();
         self.eval_expr_env(expr, expected, &mut env)
+    }
+
+    /// Evaluate the `unquote` calls in a quoted block, leaving a concrete code
+    /// value behind. Nested blocks are visited too.
+    fn instantiate_block(&mut self, block: &Block, env: &mut Env) -> Result<Block, ConstError> {
+        let mut block = block.clone();
+        for statement in &mut block.statements {
+            self.instantiate_stmt(statement, env)?;
+        }
+        Ok(block)
+    }
+
+    fn instantiate_stmt(&mut self, stmt: &mut Stmt, env: &mut Env) -> Result<(), ConstError> {
+        match &mut stmt.kind {
+            StmtKind::Let { value, .. } => {
+                if let Some(value) = value {
+                    self.instantiate_expr(value, env)?;
+                }
+            }
+            StmtKind::Assign { target, value, .. } => {
+                self.instantiate_expr(target, env)?;
+                self.instantiate_expr(value, env)?;
+            }
+            StmtKind::Expr(expr) | StmtKind::Splice(expr) => self.instantiate_expr(expr, env)?,
+            StmtKind::If {
+                condition,
+                then_block,
+                else_branch,
+            } => {
+                self.instantiate_expr(condition, env)?;
+                self.instantiate_block(then_block, env)?;
+                match else_branch {
+                    Some(ElseBranch::Block(block)) => {
+                        self.instantiate_block(block, env)?;
+                    }
+                    Some(ElseBranch::If(inner)) => {
+                        self.instantiate_stmt(inner, env)?;
+                    }
+                    None => {}
+                }
+            }
+            StmtKind::While { condition, body } => {
+                self.instantiate_expr(condition, env)?;
+                self.instantiate_block(body, env)?;
+            }
+            StmtKind::ForRange {
+                start, end, body, ..
+            } => {
+                self.instantiate_expr(start, env)?;
+                self.instantiate_expr(end, env)?;
+                self.instantiate_block(body, env)?;
+            }
+            StmtKind::ForEach { iterable, body, .. } => {
+                self.instantiate_expr(iterable, env)?;
+                self.instantiate_block(body, env)?;
+            }
+            StmtKind::Protect(body) => {
+                self.instantiate_block(body, env)?;
+            }
+            StmtKind::Guard { value, body, .. } => {
+                self.instantiate_expr(value, env)?;
+                self.instantiate_block(body, env)?;
+            }
+            StmtKind::Return(value) => {
+                if let Some(value) = value {
+                    self.instantiate_expr(value, env)?;
+                }
+            }
+            StmtKind::Continue | StmtKind::Break => {}
+        }
+        Ok(())
+    }
+
+    fn instantiate_expr(&mut self, expr: &mut Expr, env: &mut Env) -> Result<(), ConstError> {
+        if let ExprKind::Unquote(inner) = &expr.kind {
+            let value = self.eval_expr_env(inner, None, env)?;
+            expr.kind = const_to_expr(value, expr.span)?;
+            return Ok(());
+        }
+        match &mut expr.kind {
+            ExprKind::Quote(block) => {
+                self.instantiate_block(block, env)?;
+            }
+            ExprKind::SliceLiteral { elements, .. } => {
+                for element in elements {
+                    self.instantiate_expr(element, env)?;
+                }
+            }
+            ExprKind::InterfaceLiteral { fields, .. } => {
+                for field in fields {
+                    self.instantiate_expr(&mut field.value, env)?;
+                }
+            }
+            ExprKind::Unary { operand, .. } | ExprKind::Move(operand) | ExprKind::Copy(operand) => {
+                self.instantiate_expr(operand, env)?
+            }
+            ExprKind::Binary { left, right, .. } => {
+                self.instantiate_expr(left, env)?;
+                self.instantiate_expr(right, env)?;
+            }
+            ExprKind::Cast { expr: inner, .. } | ExprKind::Comptime(inner) => {
+                self.instantiate_expr(inner, env)?
+            }
+            ExprKind::Call { args, .. } => {
+                for arg in args {
+                    self.instantiate_expr(&mut arg.value, env)?;
+                }
+            }
+            ExprKind::Alloc { target, count, .. } => {
+                self.instantiate_expr(target, env)?;
+                self.instantiate_expr(count, env)?;
+            }
+            ExprKind::Member { base, .. } => self.instantiate_expr(base, env)?,
+            ExprKind::Index { base, index } => {
+                self.instantiate_expr(base, env)?;
+                self.instantiate_expr(index, env)?;
+            }
+            ExprKind::Unquote(_) => unreachable!("unquote is handled before this match"),
+            ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::String(_)
+            | ExprKind::Ident(_) => {}
+        }
+        Ok(())
     }
 
     fn tick(&mut self, span: Span) -> Result<(), ConstError> {
@@ -524,6 +677,14 @@ impl<'a> ConstEvaluator<'a> {
                 };
                 self.eval_call(name, args, env, expr.span)
             }
+            ExprKind::Quote(block) => {
+                let block = self.instantiate_block(block, env)?;
+                Ok(ConstValue::Code(block))
+            }
+            ExprKind::Unquote(_) => Err(ConstError::new(
+                expr.span,
+                "'unquote' is only valid inside 'quote'",
+            )),
             ExprKind::Alloc { .. } => Err(ConstError::new(
                 expr.span,
                 "'alloc' is not allowed in a comptime expression",
@@ -979,6 +1140,10 @@ impl<'a> ConstEvaluator<'a> {
             }
             StmtKind::Continue => Ok(Flow::Continue),
             StmtKind::Break => Ok(Flow::Break),
+            StmtKind::Splice(_) => Err(ConstError::new(
+                statement.span,
+                "'splice' is not allowed in a comptime flow",
+            )),
         }
     }
 }
@@ -1515,6 +1680,10 @@ fn convert_impl(
                 format!("expected a compile-time value of choice '{expected}'"),
             )),
         },
+        Ty::Code => match value {
+            ConstValue::Code(block) => Ok(ConstValue::Code(block)),
+            _ => Err(ConstError::new(span, "expected a compile-time Code value")),
+        },
         Ty::Slice(_) => Ok(value),
         Ty::Named(_) => Ok(value),
         _ => Err(ConstError::new(span, "unsupported compile-time conversion")),
@@ -1842,6 +2011,14 @@ fn validate_statement(
             statement.span,
             "'guard' is not allowed in a comptime flow",
         )),
+        StmtKind::Splice(expr) => validate_expr(
+            expr,
+            globals,
+            choices,
+            comptime_functions,
+            all_functions,
+            errors,
+        ),
         StmtKind::Return(value) => {
             if let Some(value) = value {
                 validate_expr(
@@ -2002,6 +2179,16 @@ fn validate_expr(
                 errors,
             );
         }
+        // Quoted statements are code data, not executed by the comptime flow.
+        ExprKind::Quote(_) => {}
+        ExprKind::Unquote(inner) => validate_expr(
+            inner,
+            globals,
+            choices,
+            comptime_functions,
+            all_functions,
+            errors,
+        ),
         ExprKind::Int(_)
         | ExprKind::Float(_)
         | ExprKind::Bool(_)
@@ -2027,6 +2214,7 @@ fn check_block_comptime(
                 check_expr_comptime(value, evaluator, errors);
             }
             StmtKind::Expr(expr) => check_expr_comptime(expr, evaluator, errors),
+            StmtKind::Splice(expr) => check_expr_comptime(expr, evaluator, errors),
             StmtKind::If {
                 condition,
                 then_block,
@@ -2133,6 +2321,8 @@ fn check_expr_comptime(
             check_expr_comptime(index, evaluator, errors);
         }
         ExprKind::Comptime(inner) => check_expr_comptime(inner, evaluator, errors),
+        ExprKind::Quote(_) => {}
+        ExprKind::Unquote(inner) => check_expr_comptime(inner, evaluator, errors),
         ExprKind::Int(_)
         | ExprKind::Float(_)
         | ExprKind::Bool(_)

@@ -2,7 +2,7 @@
 
 **Version:** 0.3.0-draft
 **Status:** Active Development
-**Last Updated:** 2026-11-20
+**Last Updated:** 2026-11-22
 **Author:** Clayton Pedro (Satoshi)
 
 Items marked **(provisional)** are temporary decisions made to close a gap. They can change. The nine former *Open Design Questions* are resolved in section 5. The distinctive surface (Loi Flow Syntax) is the only surface, adopted in 5.10 and fully cleaned up: legacy forms are no longer accepted, and `fmt` emits the canonical Flow Syntax.
@@ -45,7 +45,7 @@ The goal is that any new model can open `development/PROGRESS.md` and immediatel
 - Explicit memory and ownership control, without lifetimes or a borrow checker
 - Every function signature states what comes in and what goes out
 - Simple, regular syntax that is easy to lex and parse
-- Strong metaprogramming (`comptime`) — implemented as pure, step-limited compile-time evaluation
+- Strong metaprogramming (`comptime`) — pure, step-limited compile-time evaluation plus code-as-value templates (`quote`/`splice`)
 
 ### Core Design Decisions
 
@@ -62,7 +62,7 @@ The goal is that any new model can open `development/PROGRESS.md` and immediatel
 | Memory scope         | `protect { }` — everything allocated inside lives only there             |
 | Arrays               | Slices `[T]` (pointer + length, bounds checked)                          |
 | Generics             | `shape Vec<T>` / `flow f<T>`; explicit arguments, monomorphized, optional `T: Clone + Copy + Eq + Ord` bounds (§5.1a) |
-| Compile-time values  | `comptime flow` (pure) and `comptime expr`; globals require constants     |
+| Compile-time values  | `comptime flow` (pure), `comptime expr` and `Code` templates; globals require constants |
 | Cleanup              | No `defer`. `protect` covers memory; `guard` covers linear resources (§5.6) |
 | Variables            | `name <- value` immutable, `mut name <- value` mutable                   |
 | Globals              | Top-level bindings with constant initializers of any shape               |
@@ -644,6 +644,19 @@ identifiers, not keywords, and an unknown name is a parse error.
 
 **Status:** implemented and tested for shapes, flows, nested instantiations, speculative `>>` token splitting, depth limits, name collisions, unused-template validation and all four bounds (positive and negative cases at call sites and type uses).
 
+### 5.1b Code as a value — comptime templates
+
+**Decision:** `Code` is a comptime-only type holding a block of Loi statements. `quote { ... }` constructs it inside a `comptime flow`; `unquote(expr)` injects a scalar compile-time value into a quoted block; `splice expr` evaluates a `Code`-producing expression at compile time and inserts its statements into the caller. The canonical spelling is in [`SINTAXE.md`](../SINTAXE.md) §5.5a.
+
+- `Code` is data, not a runtime value. It has no C representation, is not comparable, and cannot be stored in a runtime variable or returned by an ordinary flow.
+- `quote` is valid only in a `comptime flow`. Quoted statements are code data, not executed by the comptime evaluator; only the inner expression of an `unquote` is evaluated. Misplaced `quote` or `unquote` is reported before expansion.
+- An `unquote` inner expression must evaluate to a scalar constant. Composite constants and nested `Code` values are rejected with distinct diagnostics; the canonical messages are listed in `SINTAXE.md` §5.5a.
+- `splice` requires a comptime expression whose value is `Code`. Any other value, or an evaluation failure, is rejected with the underlying reason attached as help.
+- Expansion runs after module resolution but before monomorphization, type checking, linting and both backends. Every later phase sees the expanded program. Comptime flows that produce `Code` are stripped before C and LLVM emission because they have no runtime body.
+- Templates insert already-instantiated statements. There is no hygiene or generated-name facility: identifiers written in a quoted block resolve at the splice site, and a splice expression cannot depend on runtime state.
+
+**Status:** implemented. The parser, AST, pretty-printer and type system accept the three forms; `src/expand.rs` validates placement and expands splices through the pure const evaluator. The C11 production backend and the opt-in LLVM backend lower the expanded program. Positive and negative tests cover parsing, formatting, expansion, placement errors and value-kind errors; `examples/code_as_value.loi` is the realistic two-caller template. Remaining limitations are recorded in `FRICTION.md`.
+
 ### 5.2 Pointers — none (question 2)
 
 **Decision:** Loi has no general-purpose pointers, no address-of (`&expr`), no dereference (`*p`), no `*T` and no `nil`. `&` exists only as the bitwise AND operator.
@@ -1067,6 +1080,7 @@ The full Flow Syntax was chosen because it makes the three distinctive ideas —
 ### Phase 3 — Advanced Features
 
 - [x] `comptime` (semantics in 5.1; pure evaluator implemented)
+- [x] Code-as-value templates: `quote` / `unquote` / `splice` (semantics in 5.1b)
 - [x] Generics (`Vec<T>` shapes and flows, explicit arguments, monomorphization)
 - [ ] Freshness, spatial hints and ordering blocks (see 4.7)
 
@@ -1140,7 +1154,7 @@ default and the semantic oracle.
 
 ## 7. Lexical Notes
 
-- **Keywords:** `shape`, `flow`, `open`, `sealed`, `extern`, `opaque`, `mut`, `give`, `clone`, `protect`, `alloc`, `import`, `comptime`, `if`, `else`, `while`, `for`, `in`, `continue`, `break`, `and`, `or`, `not`, `as`, `true`, `false`.
+- **Keywords:** `alloc`, `and`, `as`, `break`, `choice`, `clone`, `comptime`, `continue`, `else`, `extern`, `false`, `flow`, `for`, `give`, `guard`, `if`, `import`, `in`, `is`, `mark`, `mut`, `not`, `opaque`, `open`, `or`, `protect`, `quote`, `sealed`, `shape`, `splice`, `true`, `unquote`, `while`.
 - **Direction glyphs:** `<-` (read), `->` (write/out), `<->` (read-write), `=>` (result).
 - **FFI types:** `opaque Name`, `cstr`.
 - `in` is a keyword only as the separator in `for i in a..b` and `for <- p in xs`; it is not a direction.

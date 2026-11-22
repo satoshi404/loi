@@ -22,7 +22,17 @@ use crate::types::{self, Ty};
 /// scalar subset. The caller reports it with the source path and a normal
 /// frontend-style diagnostic prefix.
 pub fn generate_llvm_ir(program: &Program) -> Result<String, String> {
-    let (owned, errors) = crate::monomorphize::monomorphize(program);
+    let mut expanded = crate::expand::expand_program(program).map_err(|errors| {
+        let error = &errors[0];
+        format!(
+            "{}:{}: {}",
+            error.span.line, error.span.column, error.message
+        )
+    })?;
+    expanded.items.retain(|item| {
+        !matches!(item, ast::Item::Function(decl) if decl.comptime && crate::expand::is_code_template(decl))
+    });
+    let (owned, errors) = crate::monomorphize::monomorphize(&expanded);
     if let Some(error) = errors.first() {
         return Err(format!(
             "{}:{}: {}",
@@ -306,6 +316,9 @@ impl<'a> Emitter<'a> {
                 return Err("LLVM backend does not support 'guard' bindings".to_string());
             }
             StmtKind::Return(None) | StmtKind::Continue | StmtKind::Break => {}
+            StmtKind::Splice(_) => {
+                return Err("splice must be expanded before LLVM validation".to_string());
+            }
         }
         Ok(())
     }
@@ -387,6 +400,9 @@ impl<'a> Emitter<'a> {
             }
             ExprKind::Comptime(_) => {
                 return Err("LLVM backend does not support 'comptime' expressions".to_string());
+            }
+            ExprKind::Quote(_) | ExprKind::Unquote(_) => {
+                return Err("quote/unquote must be expanded before LLVM validation".to_string());
             }
         }
         Ok(())
@@ -749,6 +765,9 @@ impl<'a> Emitter<'a> {
             StmtKind::ForEach { .. } => {
                 return Err("LLVM backend does not support foreach loops".to_string());
             }
+            StmtKind::Splice(_) => {
+                return Err("splice must be expanded before LLVM emission".to_string());
+            }
         }
         Ok(())
     }
@@ -1000,6 +1019,9 @@ impl<'a> Emitter<'a> {
             }
             ExprKind::Comptime(_) => {
                 Err("LLVM backend does not support 'comptime' expressions".to_string())
+            }
+            ExprKind::Quote(_) | ExprKind::Unquote(_) => {
+                Err("quote/unquote must be expanded before LLVM generation".to_string())
             }
         }
     }
@@ -1493,6 +1515,9 @@ impl<'a> Emitter<'a> {
             },
             ExprKind::Comptime(_) => {
                 Err("LLVM backend does not support 'comptime' expressions".to_string())
+            }
+            ExprKind::Quote(_) | ExprKind::Unquote(_) => {
+                Err("quote/unquote must be expanded before LLVM inference".to_string())
             }
         }
     }

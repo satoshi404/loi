@@ -267,6 +267,12 @@ impl Resolver<'_> {
                 self.expr(index);
             }
             ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::String(_) => {}
+            ExprKind::Quote(block) => {
+                for statement in &mut block.statements {
+                    self.stmt(statement);
+                }
+            }
+            ExprKind::Unquote(inner) => self.expr(inner),
         }
     }
 
@@ -359,6 +365,7 @@ impl Resolver<'_> {
                 }
             }
             StmtKind::Continue | StmtKind::Break => {}
+            StmtKind::Splice(expr) => self.expr(expr),
         }
     }
 

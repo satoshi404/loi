@@ -25,7 +25,8 @@ compiler requires Rust 1.88 or newer, as declared by `rust-version` in
   ```text
   alloc  and  as  break  choice  clone  comptime  continue  else  extern
   false  flow   for  give   guard   if      import  in   is    mark    mut
-  not    opaque open or     protect sealed  shape   true  while
+  not    opaque open or     protect quote    sealed shape   splice true
+  unquote while
   ```
 
 - Direction glyphs: `<-` (read), `->` (write), `<->` (read/write), `=>` (result).
@@ -63,6 +64,7 @@ compiler requires Rust 1.88 or newer, as declared by `rust-version` in
 | `cstr` | NUL-terminated C string handle (FFI only) |
 | `callback` | C function pointer with fixed ABI (FFI only) |
 | `callback(T, ...) => R` | C function pointer with an explicit signature (FFI only); `R` may be `void` |
+| `Code` | comptime-only block of Loi statements produced by `quote` (§5.5a) |
 
 There is no general `void`, no pointer type, no array type and no `nil`. A
 function with no `=> T` returns nothing; `void` is written only as a callback
@@ -427,6 +429,50 @@ flow next
   still an explicit truncating cast, so `300 as i8` is `44`. `f32` results are
   rounded to `f32` precision, so `comptime 1.0 / 3.0` used as `f32` matches the
   value the C backend computes at runtime.
+
+### 5.5a Code as a value: `quote`, `unquote` and `splice`
+
+```loi
+comptime flow require_range
+    <- min: i32
+    <- max: i32
+    => Code
+{
+    => quote {
+        if value < unquote(min) or value > unquote(max) {
+            print_int(1)
+        }
+    }
+}
+
+flow validate_pressure
+    <- value: i32
+{
+    splice require_range(0, 1000)
+}
+```
+
+- `Code` is a comptime-only type. It is the value of a `quote { ... }` block: a
+  piece of Loi syntax, not a string and not a runtime value. A `Code` value has
+  no C representation and cannot be stored, returned by an ordinary flow or
+  used as an expression.
+- `quote { ... }` is allowed only inside a `comptime flow`. The compiler reports
+  `'quote' is only allowed in a comptime flow` elsewhere, with a help line that
+  points at `comptime flow`.
+- `unquote(expr)` is allowed only inside a `quote`. The inner expression is
+  evaluated at compile time and must produce a scalar constant; the constant is
+  written into the quoted block as a literal. Composite values, marks, choices
+  and nested `Code` values are rejected with
+  `only scalar constants can be unquoted` or
+  `a 'Code' value cannot be unquoted as an expression; use 'splice'`.
+- `splice expr` evaluates `expr` at compile time; it must produce `Code`. The
+  statements of that value are inserted at the splice site before type checking
+  and before either backend. A non-`Code` or non-constant expression reports
+  `'splice' expects a comptime expression of type 'Code'`.
+- Expansion happens before monomorphization and checking. The expanded program
+  is what the ownership checker, warnings, C backend and LLVM backend see;
+  comptime flows that produce `Code` are not emitted as runtime functions.
+- See `examples/code_as_value.loi` for a realistic template used by two flows.
 
 ---
 
@@ -1185,6 +1231,11 @@ quiet. Warnings do not change the exit status, so JSON output may contain a
 warning while `check` still exits 0. When a diagnostic has a `help` field, the
 LSP message is `message: help`, for example
 `unknown variable 'missng': did you mean 'missing'?`.
+
+Compiler diagnostics are colored by default, even when stderr is redirected.
+`--color never` and a non-empty `NO_COLOR` turn colors off; `--color auto`
+restores terminal-only detection. Every diagnostic keeps its source location
+and, when available, a `help` suggestion appended to the LSP message.
 
 ### Editor completion
 

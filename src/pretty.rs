@@ -507,6 +507,9 @@ impl PrettyPrinter {
                 );
             }
             StmtKind::Expr(expr) => self.line_at(source_line, format_expr(expr)),
+            StmtKind::Splice(expr) => {
+                self.line_at(source_line, format!("splice {}", format_expr(expr)))
+            }
             StmtKind::If {
                 condition,
                 then_block,
@@ -867,5 +870,30 @@ fn expr_str(expr: &Expr, parent_precedence: u8) -> String {
             let text = format!("comptime {}", expr_str(inner, PREC_UNARY));
             parenthesize(text, PREC_UNARY, parent_precedence)
         }
+        ExprKind::Quote(block) => {
+            let text = quote_block_string(block);
+            parenthesize(text, PREC_ATOM, parent_precedence)
+        }
+        ExprKind::Unquote(inner) => {
+            let text = format!("unquote({})", expr_str(inner, 0));
+            parenthesize(text, PREC_ATOM, parent_precedence)
+        }
+    }
+}
+
+/// Render a quoted block on its own lines for `format_expr`.
+fn quote_block_string(block: &Block) -> String {
+    let mut printer = PrettyPrinter::new();
+    printer.statements(block);
+    let body = printer.output.trim_end_matches('\n');
+    let indented = body
+        .lines()
+        .map(|line| format!("    {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if indented.is_empty() {
+        "quote {\n}".to_string()
+    } else {
+        format!("quote {{\n{indented}\n}}")
     }
 }

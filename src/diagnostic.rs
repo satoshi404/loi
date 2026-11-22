@@ -43,8 +43,8 @@ impl Severity {
 /// How to decide whether ANSI colors are emitted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ColorChoice {
-    #[default]
     Auto,
+    #[default]
     Always,
     Never,
 }
@@ -61,16 +61,17 @@ impl ColorChoice {
 
     /// Resolve the choice for a compiler writing to stderr.
     ///
-    /// `NO_COLOR` wins in `auto` mode, `CLICOLOR_FORCE` forces color even when
-    /// stderr is not a terminal, and an explicit `--color` always wins.
+    /// Loi emits ANSI colors by default. `--color never` and a non-empty
+    /// `NO_COLOR` both turn them off; `CLICOLOR_FORCE` and a terminal only
+    /// matter for the opt-in `--color auto` mode.
     pub fn resolve(self) -> bool {
+        if env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty()) {
+            return false;
+        }
         match self {
-            Self::Always => true,
             Self::Never => false,
+            Self::Always => true,
             Self::Auto => {
-                if env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty()) {
-                    return false;
-                }
                 if env::var_os("CLICOLOR_FORCE").is_some_and(|value| value != "0") {
                     return true;
                 }
