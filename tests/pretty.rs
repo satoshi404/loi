@@ -17,7 +17,7 @@ fn assert_format_stable(source: &str) -> String {
 fn reference_program_round_trips() {
     let formatted = assert_format_stable(include_str!("../examples/particles.loi"));
     assert!(formatted.contains("open flow world_new"));
-    assert!(formatted.contains("shape Particle ["));
+    assert!(formatted.contains("shape Particle {"));
     assert!(formatted.contains("w.particles = give(ps)"));
 }
 
@@ -92,10 +92,11 @@ fn preserves_operator_precedence_and_grouping() {
 
 #[test]
 fn bracket_literals_need_no_parentheses_in_headers() {
-    let formatted =
-        assert_format_stable("flow f {\n    if Vec2[ x: 1, y: 2 ].x > 0 {\n        =>\n    }\n}\n");
+    let formatted = assert_format_stable(
+        "flow f {\n    if Vec2 { x: 1, y: 2 }.x > 0 {\n        =>\n    }\n}\n",
+    );
 
-    assert!(formatted.contains("if Vec2[ x: 1, y: 2 ].x > 0 {"));
+    assert!(formatted.contains("if Vec2 { x: 1, y: 2 }.x > 0 {"));
 }
 
 #[test]
@@ -235,26 +236,26 @@ fn formatting_without_comments_still_discards_them() {
 
 #[test]
 fn formats_generics_and_comptime_stably() {
-    let source = "comptime flow sum<T>\n    <- xs: Vec<T>\n    => i32\n{\n    => 0\n}\n\nflow main\n    => i32\n{\n    xs <- Vec<i32>[ data: [i32: 1, 2], len: 2 ]\n    => sum<i32>(xs) + comptime 2 * 3\n}\n";
+    let source = "comptime flow sum<T>\n    <- xs: Vec<T>\n    => i32\n{\n    => 0\n}\n\nflow main\n    => i32\n{\n    xs <- Vec<i32> { data: [i32: 1, 2], len: 2 }\n    => sum<i32>(xs) + comptime 2 * 3\n}\n";
     let formatted = assert_format_stable(source);
 
     assert!(formatted.contains("comptime flow sum<T>"));
     assert!(formatted.contains("<- xs: Vec<T>"));
-    assert!(formatted.contains("Vec<i32>[ data: [i32: 1, 2], len: 2 ]"));
+    assert!(formatted.contains("Vec<i32> { data: [i32: 1, 2], len: 2 }"));
     assert!(formatted.contains("sum<i32>(xs) + comptime 2 * 3"));
 }
 
 #[test]
 fn formats_bounded_type_params_stably() {
-    let source = "shape Pair<T: Copy> [\n    first: T\n    second: T\n]\n\nflow find<T: Clone + Eq, U>\n    <- xs: [T]\n    <- needle: U\n{\n}\n";
+    let source = "shape Pair<T: Copy> {\n    first: T\n    second: T\n}\n\nflow find<T: Clone + Eq, U>\n    <- xs: [T]\n    <- needle: U\n{\n}\n";
     let formatted = assert_format_stable(source);
-    assert!(formatted.contains("shape Pair<T: Copy>"));
+    assert!(formatted.contains("shape Pair<T: Copy> {"));
     assert!(formatted.contains("flow find<T: Clone + Eq, U>"));
 }
 
 #[test]
 fn formats_nested_generic_types_stably() {
-    let source = "shape Vec<T> [\n    data: [T]\n]\n\nflow f\n    <- xs: Vec<Vec<i32>>\n{\n}\n";
+    let source = "shape Vec<T> {\n    data: [T]\n}\n\nflow f\n    <- xs: Vec<Vec<i32>>\n{\n}\n";
     let formatted = assert_format_stable(source);
     assert!(formatted.contains("<- xs: Vec<Vec<i32>>"));
 }
@@ -262,7 +263,7 @@ fn formats_nested_generic_types_stably() {
 #[test]
 fn trailing_comments_follow_the_last_token_on_their_source_line() {
     let source = "\
-shape Point [ x: i32, y: i32 ] // inline shape\n\
+shape Point { x: i32, y: i32 } // inline shape\n\
 flow add <- a: i32 => i32 { // inline flow\n\
     => a\n\
 }\n\
@@ -275,8 +276,8 @@ flow scaled\n\
 
     let formatted = format_with_comments(source);
     assert!(
-        formatted.contains("] // inline shape"),
-        "comment should follow the shape's closing bracket: {formatted}"
+        formatted.contains("} // inline shape"),
+        "comment should follow the shape's closing brace: {formatted}"
     );
     assert!(
         formatted.contains("{ // inline flow"),
@@ -303,12 +304,12 @@ fn comment_idempotence_edge_cases() {
         ),
         (
             "between fields",
-            "shape S [\n    a: i32\n    // between\n    b: i32\n]\n",
+            "shape S {\n    a: i32\n    // between\n    b: i32\n}\n",
             "// between",
         ),
         (
             "after last field",
-            "shape S [\n    a: i32 // after last\n]\n",
+            "shape S {\n    a: i32 // after last\n}\n",
             "// after last",
         ),
         (

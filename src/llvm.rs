@@ -1148,6 +1148,9 @@ impl<'a> Emitter<'a> {
                     .line(format!("{result} = call double @{name}({operands})"));
                 Ok(result)
             }
+            "format" => {
+                Err("LLVM backend does not support 'format' yet; use the C backend".to_string())
+            }
             _ => Err(format!("LLVM backend does not support intrinsic '{name}'")),
         }
     }

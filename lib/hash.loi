@@ -11,9 +11,9 @@
 //! is exactly what FNV-1a requires. `hash_u64` hashes the little-endian bytes
 //! of the integer; `hash_pair_u64(a, b)` is the hash of `a`'s bytes followed by
 //! `b`'s bytes.
-
 // FNV-1a 64-bit parameters.
 open HASH_OFFSET: u64 <- 0xcbf29ce484222325
+
 open HASH_PRIME: u64 <- 0x100000001b3
 
 open flow hash_bytes_seeded

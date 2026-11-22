@@ -10,11 +10,9 @@
 //! Names are prefixed by kind (`min_i32`, `str_find`, ...) to avoid clashes
 //! with user code. See also `lib/math.loi`, `lib/ctype.loi`, `lib/os.loi` and
 //! `lib/net.loi`.
-
 // ---------------------------------------------------------------------------
 // Integers
 // ---------------------------------------------------------------------------
-
 open flow min_i32
     <- a: i32
     <- b: i32
@@ -65,7 +63,6 @@ open flow clamp_i32
 // ---------------------------------------------------------------------------
 // Integers as byte strings
 // ---------------------------------------------------------------------------
-
 /// Decimal bytes for `value`, without leading zeros or a sign. Allocates in
 /// the caller's `protect` region.
 open flow u64_to_bytes
@@ -101,7 +98,7 @@ open flow i64_to_bytes
     mut magnitude: u64
     if value < 0 {
         negative = true
-        magnitude = (-(value + 1)) as u64 + 1
+        magnitude = -(value + 1) as u64 + 1
     } else {
         magnitude = value as u64
     }
@@ -121,7 +118,6 @@ open flow i64_to_bytes
 // ---------------------------------------------------------------------------
 // Floats
 // ---------------------------------------------------------------------------
-
 open flow min_f64
     <- a: f64
     <- b: f64
@@ -172,7 +168,6 @@ open flow clamp_f64
 // ---------------------------------------------------------------------------
 // Byte strings (`[u8]`)
 // ---------------------------------------------------------------------------
-
 open flow str_len
     <- text: [u8]
     => u64
@@ -216,7 +211,7 @@ open flow str_find
     if needle.len == 0 {
         => 0
     }
-    for i in 0..(text.len - needle.len + 1) {
+    for i in 0..text.len - needle.len + 1 {
         mut matches: bool <- true
         for j in 0..needle.len {
             if text[i + j] != needle[j] {

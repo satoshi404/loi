@@ -9,7 +9,6 @@
 //! These helpers work on ASCII bytes (`u8`), which is also how Loi strings are
 //! represented. Names are prefixed so several libraries can be imported at
 //! once without collisions.
-
 open flow ctype_is_digit
     <- byte: u8
     => bool
@@ -49,14 +48,14 @@ open flow ctype_is_hex_digit
     <- byte: u8
     => bool
 {
-    => ctype_is_digit(byte) or (byte >= 65 and byte <= 70) or (byte >= 97 and byte <= 102)
+    => ctype_is_digit(byte) or byte >= 65 and byte <= 70 or byte >= 97 and byte <= 102
 }
 
 open flow ctype_is_space
     <- byte: u8
     => bool
 {
-    => byte == 32 or (byte >= 9 and byte <= 13)
+    => byte == 32 or byte >= 9 and byte <= 13
 }
 
 open flow ctype_is_ascii
@@ -92,23 +91,23 @@ open flow ctype_hex_value
     => i32
 {
     if ctype_is_digit(byte) {
-        => (byte as i32) - 48
+        => byte as i32 - 48
     }
     if byte >= 65 and byte <= 70 {
-        => (byte as i32) - 55
+        => byte as i32 - 55
     }
     if byte >= 97 and byte <= 102 {
-        => (byte as i32) - 87
+        => byte as i32 - 87
     }
     => -1
 }
 
 /// Result of `ctype_parse_u64`: `ok` is false on bad input or overflow.
-open shape CTypeParseResult [
+open shape CTypeParseResult {
     ok: bool
     value: u64
     consumed: u64
-]
+}
 
 /// Parse an unsigned decimal prefix; `consumed` counts the digits read.
 open flow ctype_parse_u64
@@ -124,15 +123,15 @@ open flow ctype_parse_u64
         }
         digit <- (byte - 48) as u64
         if value > (18446744073709551615 - digit) / 10 {
-            => CTypeParseResult[ ok: false, value: 0, consumed: index ]
+            => CTypeParseResult { ok: false, value: 0, consumed: index }
         }
         value = value * 10 + digit
         index += 1
     }
     if index == 0 {
-        => CTypeParseResult[ ok: false, value: 0, consumed: 0 ]
+        => CTypeParseResult { ok: false, value: 0, consumed: 0 }
     }
-    => CTypeParseResult[ ok: true, value: value, consumed: index ]
+    => CTypeParseResult { ok: true, value: value, consumed: index }
 }
 
 open flow ctype_count_digits

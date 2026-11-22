@@ -10,11 +10,10 @@ open flow main
         for i in 0..data.len {
             data[i] = ((i * 131 + 7) % 251) as u8
         }
-
         mut seed: u64 <- 42
         mut round: u64 <- 0
         while round < 2048 {
-            seed = hash_bytes_seeded(data, seed) ^ (round * 0x9e3779b97f4a7c15)
+            seed = hash_bytes_seeded(data, seed) ^ round * 0x9e3779b97f4a7c15
             round += 1
         }
         printf("hash %llu %llu\n", seed, data[65535] as u64)

@@ -4,7 +4,6 @@
 // Build:
 //   loi build examples/callbacks.loi \
 //       --c-source examples/callbacks_shim.c -o callbacks
-
 extern flow reduce_range
     <- start: i32
     <- end: i32

@@ -12,10 +12,11 @@
 //! continues a finished CRC the way zlib's `crc32(crc, buf)` does, and
 //! `crc32_bytes` is the one-shot form with the standard initial and final
 //! XOR values.
-
 // Reflected CRC-32 polynomial, initial state and final XOR.
 open CRC32_POLY: u32 <- 0xedb88320
+
 open CRC32_INIT: u32 <- 0xffffffff
+
 open CRC32_XOROUT: u32 <- 0xffffffff
 
 /// One nibble table entry: four reflected steps applied to `index`.
@@ -26,8 +27,8 @@ comptime flow crc32_nibble_entry
     mut c: u32 <- index as u32
     mut k: u64 <- 0
     while k < 4 {
-        if (c & 1) != 0 {
-            c = (c >> 1) ^ CRC32_POLY
+        if c & 1 != 0 {
+            c = c >> 1 ^ CRC32_POLY
         } else {
             c >>= 1
         }
@@ -43,27 +44,18 @@ comptime flow crc32_word
 {
     low <- crc32_nibble_entry(which * 2) as u64
     high <- crc32_nibble_entry(which * 2 + 1) as u64
-    => low | (high << 32)
+    => low | high << 32
 }
 
-open CRC32_TABLE: [u64] <- [u64:
-    comptime crc32_word(0),
-    comptime crc32_word(1),
-    comptime crc32_word(2),
-    comptime crc32_word(3),
-    comptime crc32_word(4),
-    comptime crc32_word(5),
-    comptime crc32_word(6),
-    comptime crc32_word(7)
-]
+open CRC32_TABLE: [u64] <- [u64: comptime crc32_word(0), comptime crc32_word(1), comptime crc32_word(2), comptime crc32_word(3), comptime crc32_word(4), comptime crc32_word(5), comptime crc32_word(6), comptime crc32_word(7)]
 
-sealed flow crc32_nibble
+flow crc32_nibble
     <- index: u32
     => u32
 {
     at <- index as u64
     word <- CRC32_TABLE[at / 2]
-    shifted <- word >> ((at % 2) * 32)
+    shifted <- word >> at % 2 * 32
     => shifted as u32
 }
 
@@ -77,8 +69,8 @@ open flow crc32_update
     mut crc: u32 <- state
     for <- byte in data {
         crc ^= byte as u32
-        crc = (crc >> 4) ^ crc32_nibble(crc & 0xf)
-        crc = (crc >> 4) ^ crc32_nibble(crc & 0xf)
+        crc = crc >> 4 ^ crc32_nibble(crc & 0xf)
+        crc = crc >> 4 ^ crc32_nibble(crc & 0xf)
     }
     => crc
 }

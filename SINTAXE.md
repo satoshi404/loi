@@ -87,28 +87,28 @@ result.
 ### 3.1 Shapes — product types
 
 ```loi
-shape Vec2 [ x: f64, y: f64 ]
+shape Vec2 { x: f64, y: f64 }
 
-shape Particle [
+shape Particle {
     pos:   Vec2
     vel:   Vec2
     mass:  f64
     alive: bool = true
-]
+}
 ```
 
-- `shape Name [ ... ]` declares a data-only type. No methods, no inheritance.
+- `shape Name { ... }` declares a data-only type. No methods, no inheritance.
 - Fields are `name: Type`, separated by commas or newlines; the trailing comma
   is optional.
 - A field may have a default: `alive: bool = true`.
-- Empty shape: `shape Empty []`.
-- Visibility: `open shape Name [...]` exports the shape; the default is
+- Empty shape: `shape Empty {}`.
+- Visibility: `open shape Name { ... }` exports the shape; the default is
   `sealed`. `sealed shape ...` is allowed for emphasis.
-- A shape literal carries its type name and **brackets**:
+- A shape literal carries its type name and **braces**:
 
   ```loi
-  origin <- Vec2[ x: 0, y: 0 ]
-  empty  <- Empty[]
+  origin <- Vec2 { x: 0, y: 0 }
+  empty  <- Empty {}
   ```
 
 - Complete initialization is the norm. Fields with defaults may be omitted; the
@@ -176,22 +176,22 @@ if r is Result.Ok {
 ### 3.4 Generic shapes
 
 ```loi
-shape Vec<T> [
+shape Vec<T> {
     data: [T]
     len:  u64
-]
+}
 
-shape Pair<T, U> [
+shape Pair<T, U> {
     first:  T
     second: U
-]
+}
 
-numbers <- Vec<i32>[ data: [i32: 1, 2, 3], len: 3 ]
-pair    <- Pair<i32, bool>[ first: 1, second: true ]
-nested  <- Vec<Vec<i32>>[ data: [Vec<i32>:], len: 0 ]
+numbers <- Vec<i32> { data: [i32: 1, 2, 3], len: 3 }
+pair    <- Pair<i32, bool> { first: 1, second: true }
+nested  <- Vec<Vec<i32>> { data: [Vec<i32>:], len: 0 }
 ```
 
-- Type parameters are declared after the shape name: `shape Name<T, U> [...]`.
+- Type parameters are declared after the shape name: `shape Name<T, U> { ... }`.
   They may carry constraints (`shape Slot<T: Copy>`); see §5.4.
 - Every instantiation supplies all type arguments explicitly; there is no
   inference. `Vec[...]` without `<...>` is an error.
@@ -220,7 +220,7 @@ nested  <- Vec<Vec<i32>>[ data: [Vec<i32>:], len: 0 ]
 answer <- 42                 // immutable
 mut total: i64 <- 0          // mutable, explicit type
 mut buffer: [u8]             // uninitialized; only valid as an `->` target
-name: Vec2 <- Vec2[ x: 1, y: 2 ]
+name: Vec2 <- Vec2 { x: 1, y: 2 }
 ```
 
 - `name <- value` declares an immutable binding.
@@ -322,7 +322,7 @@ flow sum<T>
 flow main
     => i32
 {
-    xs <- Vec<i32>[ data: [i32: 1, 2, 3], len: 3 ]
+    xs <- Vec<i32> { data: [i32: 1, 2, 3], len: 3 }
     => sum<i32>(xs)
 }
 ```
@@ -361,11 +361,11 @@ flow find<T: Clone + Eq>
     => -1
 }
 
-shape Slot<T: Copy> [
+shape Slot<T: Copy> {
     value: T
-]
+}
 
-slot <- Slot<i32>[ value: 7 ]
+slot <- Slot<i32> { value: 7 }
 index <- find<i32>([i32: 1, 2], 2)
 ```
 
@@ -460,7 +460,7 @@ Rules:
 
 ```loi
 sum <- add(2, 3)
-world_new(256, Vec2[ x: 800, y: 600 ], -> w)   // `-> w` is required
+world_new(256, Vec2 { x: 800, y: 600 }, -> w)   // `-> w` is required
 step(<-> w, 1.0 / 60)                           // `<-> w` is required
 bounce(<-> p, 0)
 ```
@@ -606,7 +606,7 @@ xs.len         // u64
   function that owns it; use `clone(...)` instead.
 
   ```loi
-  a <- Vec2[ x: 1, y: 2 ]
+  a <- Vec2 { x: 1, y: 2 }
   b <- give(a)
   // a is dead here
   ```
@@ -649,10 +649,10 @@ partially consumed composite may be passed as a read-only view when those reads
 avoid every consumed path; a flow that reads a moved path is still rejected.
 
 ```loi
-shape Pair [
+shape Pair {
     left: [u8]
     right: u64
-]
+}
 
 flow right_only
     <- p: Pair
@@ -778,7 +778,7 @@ flow exchange
 protect {
     mut items: [Item]
     alloc(-> items, Item, 4)
-    items[0] = Item[ value: 1 ]
+    items[0] = Item { value: 1 }
 
     for i in 0..items.len {
         items[i].value *= 2
@@ -835,7 +835,7 @@ import "lib/std.loi"              // binds module `std`
 import "lib/math.loi" as m        // binds module `m`
 
 sum <- m::math_sum<u8>([u8: 1, 2, 3])
-p   <- m::Point[ x: 1, y: 2 ]
+p   <- m::Point { x: 1, y: 2 }
 ```
 
 - Each source file is a **module**. Its default name is the file stem
@@ -878,6 +878,7 @@ Compiler intrinsics (always available, cannot be redeclared):
 | `panic` | `(<- [u8])` |
 | `print_int` | `(<- i8 \| i16 \| i32 \| i64 \| u8 \| u16 \| u32 \| u64)` |
 | `printf` | `(<- [u8], ...)` | Formatted output; literal format string plus typed varargs |
+| `format` | `(<- [u8], ...) => [u8]` | Build a formatted string with `{}` placeholders; allocates in caller `protect` |
 | `print_float` | `(<- f32 \| f64)` |
 | `read_file` | `(<- [u8]) => [u8]` |
 | `write_file` | `(<- [u8], <- [u8]) => bool` |
@@ -1152,8 +1153,10 @@ guard child <- process_spawn_args(compiler, args) {
 
 Set `LOI_COMPILER` (default `loi`) to choose the compiler binary. The compiler
 writes its JSON to stderr; a clean check writes zero bytes. `initialize` answers
-with `textDocumentSync: 1` (full-document), `publishDiagnosticsProvider: true`
-and the `completionProvider` object shown in the example above.
+with `textDocumentSync: 1` (full-document), `publishDiagnosticsProvider: true`,
+the `completionProvider` object shown in the example above,
+`hoverProvider: true`, `definitionProvider: true` and the
+`signatureHelpProvider` object shown in `examples/lsp_server.loi`.
 `didOpen` and `didChange` call `lsp_write_document(shadow, text)` from
 `lib/lsp.loi` (link `--c-source lib/lsp_shim.c`) before checking, so diagnostics
 follow the editor buffer without overwriting the client's file. The server
@@ -1199,6 +1202,26 @@ written with `lsp_write_document`; the second translates the compiler array into
 `examples/lsp_server.loi` caches the `didOpen` / `didChange` text separately from
 the short-lived check shadow, answers `textDocument/completion` from that cache,
 and removes it on `textDocument/didClose`.
+
+### Editor information
+
+`loi lsp-info FILE --kind KIND [--line N --column N] [--uri URI] [--new-name NAME]`
+answers editor queries from the source buffer. `KIND` is one of `hover`,
+`definition`, `signature`, `references`, `prepareRename`, `rename`,
+`documentSymbol`, `semanticTokens`, `inlayHint` or `foldingRange`.
+Position-based kinds require `--line` and `--column` (1-based). `rename`
+requires `--new-name`. `--uri` is echoed in location-bearing results.
+
+The command prints one compact JSON LSP result: hover returns markdown contents,
+definition/references return locations, signature returns signature help,
+rename returns a workspace edit, documentSymbol/semanticTokens/inlayHint/foldingRange
+return their respective arrays/objects. Unknown or unresolved positions return
+valid empty results rather than an error.
+
+The language server adds one to LSP's 0-based positions before calling the CLI.
+It decodes `%XX` escapes from `file://` URIs and removes the extra slash before a
+Windows drive. The server never writes to the client's path; it runs checks on a
+hidden shadow and keeps the edited buffer in its own cache.
 
 ### Process spawning
 
@@ -1631,7 +1654,7 @@ examples, docs or generated bindings:
 | Forbidden | Canonical |
 |---|---|
 | `fun f(...)` | `flow f ...` |
-| `interface Name { ... }` | `shape Name [ ... ]` |
+| `interface Name { ... }` | `shape Name { ... }` |
 | `enum Name { ... }` | `mark Name [ ... ]` |
 | `union Name { ... }` | `choice Name [ Variant: T, ... ]` |
 | `let x = v` | `x <- v` |
@@ -1645,7 +1668,7 @@ examples, docs or generated bindings:
 | `copy(x)` | `clone(x)` |
 | `visible` / `hidden` | `open` / `sealed` |
 | `[]T` | `[T]` |
-| `T{ field: v }` | `T[ field: v ]` |
+| `T{ field: v }` | `T { field: v }` |
 | `[]T{ a, b }` | `[T: a, b]` |
 | `for in x in xs` | `for <- x in xs` |
 | `for inout x in xs` | `for <-> x in xs` |
@@ -1663,21 +1686,21 @@ examples, docs or generated bindings:
 ```loi
 // Braces are scopes, brackets are data, arrows are movement.
 
-shape Vec2 [ x: f64, y: f64 ]
+shape Vec2 { x: f64, y: f64 }
 
-shape Particle [
+shape Particle {
     pos:   Vec2
     vel:   Vec2
     mass:  f64
     alive: bool = true
-]
+}
 
 open flow spawn
     <- at: Vec2
     -> p: Particle
 {
     p.pos = clone(at)
-    p.vel = Vec2[ x: 0, y: 0 ]
+    p.vel = Vec2 { x: 0, y: 0 }
     p.mass = 1
 }
 
@@ -1698,7 +1721,7 @@ open flow main
     mut mass: f64
     protect {
         mut p: Particle
-        spawn(Vec2[ x: 10, y: 20 ], -> p)
+        spawn(Vec2 { x: 10, y: 20 }, -> p)
         p.pos.x = clamp(p.pos.x + 5, 0, 100)
         mass = p.mass
     }

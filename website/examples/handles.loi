@@ -1,6 +1,5 @@
 // Standard-library linear handles: `guard` closes files on every exit path.
 // Build with: loi build examples/handles.loi -o handles --c-source lib/os_shim.c
-
 import "../lib/os.loi"
 
 open flow main
@@ -10,12 +9,11 @@ open flow main
         if out.fd < 0 {
             => 1
         }
-        written <- file_write(<- out, "guard closed this file\n")
+        written <- file_write(out, "guard closed this file\n")
         if written <= 0 {
             => 2
         }
     }
-
     protect {
         mut data: [u8]
         alloc(-> data, u8, 64)
@@ -23,7 +21,7 @@ open flow main
             if input.fd < 0 {
                 => 3
             }
-            n <- file_read(<- input, <-> data)
+            n <- file_read(input, <-> data)
             if n <= 0 {
                 => 4
             }

@@ -12,23 +12,22 @@
 //! cryptography. All flows take the generator inout so the new state is always
 //! written back to the caller. A zero seed is replaced by `RNG_FALLBACK_SEED`
 //! because xorshift64* would otherwise stay at zero forever.
-
 /// Nonzero replacement for `rng_new(0)`. The golden-ratio constant gives a
 /// deterministic, well-distributed state.
 open RNG_FALLBACK_SEED: u64 <- 0x9e3779b97f4a7c15
 
-open shape Rng [
+open shape Rng {
     state: u64
-]
+}
 
 open flow rng_new
     <- seed: u64
     => Rng
 {
     if seed == 0 {
-        => Rng[ state: RNG_FALLBACK_SEED ]
+        => Rng { state: RNG_FALLBACK_SEED }
     }
-    => Rng[ state: seed ]
+    => Rng { state: seed }
 }
 
 open flow rng_state
@@ -82,7 +81,7 @@ open flow rng_pick<T: Clone>
     => clone(values[at])
 }
 
-sealed flow rng_swap<T: Clone>
+flow rng_swap<T: Clone>
     <-> values: [T]
     <- i: u64
     <- j: u64
@@ -97,7 +96,7 @@ open flow rng_shuffle<T: Clone>
     <-> values: [T]
 {
     if values.len < 2 {
-        => 
+        =>
     }
     mut i: u64 <- values.len - 1
     while i > 0 {

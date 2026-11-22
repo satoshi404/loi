@@ -10,10 +10,8 @@ open flow main
         for i in 0..seed_values.len {
             seed_values[i] = 0
         }
-
         mut values: Vec<i32>
         vec_from_slice<i32>(seed_values, -> values)
-
         mut state: u64 <- 0x1234_5678_9abc_def0
         mut round: u64 <- 0
         while round < 16 {
@@ -27,10 +25,9 @@ open flow main
             vec_sort<i32>(<-> values)
             round += 1
         }
-
         mut checksum: u64 <- 0
         for i in 0..values.len {
-            checksum += (values.data[i] as u64) * ((i % 97) + 1)
+            checksum += values.data[i] as u64 * (i % 97 + 1)
         }
         printf("sort %llu %llu\n", checksum, values.len)
     }

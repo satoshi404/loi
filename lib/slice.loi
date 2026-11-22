@@ -11,12 +11,10 @@
 //! arena and declare `T: Clone`. `slice_find<T>` declares `T: Eq`, so equality
 //! search is structural for shapes, choices and slices of comparable values.
 //! Ordering helpers such as `vec_sort<T>` declare `T: Ord`.
-
 // ---------------------------------------------------------------------------
 // Runtime error formatting
 // ---------------------------------------------------------------------------
-
-sealed flow slice_decimal_len
+flow slice_decimal_len
     <- value: u64
     => u64
 {
@@ -29,7 +27,7 @@ sealed flow slice_decimal_len
     => digits
 }
 
-sealed flow slice_write_bytes
+flow slice_write_bytes
     <- text: [u8]
     <-> out: [u8]
     <- pos: u64
@@ -43,7 +41,7 @@ sealed flow slice_write_bytes
     => at
 }
 
-sealed flow slice_write_u64
+flow slice_write_u64
     <- value: u64
     <-> out: [u8]
     <- pos: u64
@@ -58,7 +56,7 @@ sealed flow slice_write_u64
     }
     mut at: u64 <- pos
     while divisor > 0 {
-        digit <- (value / divisor) % 10
+        digit <- value / divisor % 10
         out[at] = digit as u8 + 48
         at += 1
         divisor /= 10
@@ -66,7 +64,7 @@ sealed flow slice_write_u64
     => at
 }
 
-sealed flow slice_fail_range
+flow slice_fail_range
     <- name: [u8]
     <- index: u64
     <- len: u64
@@ -89,7 +87,7 @@ sealed flow slice_fail_range
     panic(msg)
 }
 
-sealed flow slice_fail_empty
+flow slice_fail_empty
     <- name: [u8]
     <- len: u64
 {
@@ -110,7 +108,6 @@ sealed flow slice_fail_empty
 // ---------------------------------------------------------------------------
 // Inspection
 // ---------------------------------------------------------------------------
-
 open flow slice_view<T>
     <- values: [T]
     <- start: u64
@@ -191,7 +188,6 @@ open flow slice_equals_u8
 // ---------------------------------------------------------------------------
 // Copying and mutation
 // ---------------------------------------------------------------------------
-
 open flow slice_clone<T: Clone>
     <- values: [T]
     => [T]
@@ -214,7 +210,7 @@ open flow slice_copy<T: Clone>
     }
 }
 
-sealed flow slice_swap<T: Clone>
+flow slice_swap<T: Clone>
     <-> values: [T]
     <- i: u64
     <- j: u64

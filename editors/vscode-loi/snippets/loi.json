@@ -1,0 +1,131 @@
+{
+  "Flow": {
+    "prefix": "flow",
+    "description": "A Loi flow declaration",
+    "body": [
+      "flow ${1:name}",
+      "    <- ${2:value}: ${3:i32}",
+      "    => ${4:i32}",
+      "{",
+      "    $0",
+      "}"
+    ]
+  },
+  "Open flow": {
+    "prefix": "oflow",
+    "description": "A public Loi flow declaration",
+    "body": [
+      "open flow ${1:name}",
+      "    <- ${2:value}: ${3:i32}",
+      "    => ${4:i32}",
+      "{",
+      "    $0",
+      "}"
+    ]
+  },
+  "Main flow": {
+    "prefix": "main",
+    "description": "A Loi program entry point",
+    "body": [
+      "open flow main",
+      "    => i32",
+      "{",
+      "    $0",
+      "    => 0",
+      "}"
+    ]
+  },
+  "Shape": {
+    "prefix": "shape",
+    "description": "A Loi shape declaration",
+    "body": [
+      "shape ${1:Name} [",
+      "    ${2:field}: ${3:i32}",
+      "]"
+    ]
+  },
+  "Mark": {
+    "prefix": "mark",
+    "description": "A Loi finite tag set",
+    "body": [
+      "mark ${1:Name} [ ${2:Variant}, $0 ]"
+    ]
+  },
+  "Choice": {
+    "prefix": "choice",
+    "description": "A Loi tagged union",
+    "body": [
+      "choice ${1:Name} [",
+      "    ${2:Variant}: ${3:i32}",
+      "]"
+    ]
+  },
+  "If": {
+    "prefix": "if",
+    "description": "A Loi conditional block",
+    "body": [
+      "if ${1:condition} {",
+      "    $0",
+      "}"
+    ]
+  },
+  "While": {
+    "prefix": "while",
+    "description": "A Loi while loop",
+    "body": [
+      "while ${1:condition} {",
+      "    $0",
+      "}"
+    ]
+  },
+  "For": {
+    "prefix": "for",
+    "description": "A Loi range loop",
+    "body": [
+      "for ${1:i} in ${2:0}..${3:10} {",
+      "    $0",
+      "}"
+    ]
+  },
+  "Protect": {
+    "prefix": "protect",
+    "description": "A Loi lexical memory region",
+    "body": [
+      "protect {",
+      "    $0",
+      "}"
+    ]
+  },
+  "Guard": {
+    "prefix": "guard",
+    "description": "A Loi linear-resource guard",
+    "body": [
+      "guard ${1:resource} <- ${2:acquire()} {",
+      "    $0",
+      "}"
+    ]
+  },
+  "Extern flow": {
+    "prefix": "extern",
+    "description": "A Loi foreign function declaration",
+    "body": [
+      "extern flow ${1:name}",
+      "    <- ${2:value}: ${3:i32}",
+      "    => ${4:i32}"
+    ]
+  },
+  "Import": {
+    "prefix": "import",
+    "description": "A Loi module import",
+    "body": [
+      "import \"${1:lib/std.loi}\""
+    ]
+  },
+  "Allocate": {
+    "prefix": "alloc",
+    "description": "Allocate a slice in the current protect region",
+    "body": [
+      "alloc(-> ${1:items}, ${2:i32}, ${3:count})"
+    ]
+  }
+}

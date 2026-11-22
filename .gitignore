@@ -4,3 +4,7 @@ editors/vscode-loi/node_modules/
 editors/vscode-loi/*.vsix
 __pycache__/
 *.py[cod]
+*.exe
+*.loi
+*.o
+*.loi-stamp

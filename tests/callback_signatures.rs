@@ -236,7 +236,8 @@ int32_t zero_arg(LoiCallback_0_i32 f) {
     return f();
 }
 "#;
-    let dir = std::path::PathBuf::from("/tmp/opencode")
+    let dir = std::env::temp_dir()
+        .join("opencode")
         .join(format!("loi-callback-sigs-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("test directory should be creatable");

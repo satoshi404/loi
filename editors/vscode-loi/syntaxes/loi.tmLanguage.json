@@ -1,0 +1,123 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Loi",
+  "scopeName": "source.loi",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#declarations" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#control" },
+    { "include": "#modifiers" },
+    { "include": "#constants" },
+    { "include": "#types" },
+    { "include": "#calls" },
+    { "include": "#directions" },
+    { "include": "#operators" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.documentation.loi",
+          "match": "///.*$"
+        },
+        {
+          "name": "comment.line.loi",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "name": "entity.name.function.loi",
+          "match": "\\b(?:open|sealed)?\\s*flow\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "0": { "name": "keyword.declaration.loi" },
+            "1": { "name": "entity.name.function.loi" }
+          }
+        },
+        {
+          "match": "\\b(?:shape|mark|choice|opaque)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "0": { "name": "keyword.declaration.loi" },
+            "1": { "name": "entity.name.type.loi" }
+          }
+        },
+        {
+          "name": "keyword.declaration.loi",
+          "match": "\\b(?:import|extern|open|sealed)\\b"
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.loi",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.loi",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.loi",
+          "match": "\\b(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|[0-9][0-9_]*(?:\\.[0-9_]+)?(?:[eE][+-]?[0-9_]+)?)\\b"
+        }
+      ]
+    },
+    "control": {
+      "name": "keyword.control.loi",
+      "match": "\\b(?:if|else|while|for|in|continue|break)\\b"
+    },
+    "modifiers": {
+      "name": "keyword.operator.word.loi",
+      "match": "\\b(?:mut|give|clone|protect|guard|alloc|comptime|and|or|not|is|as)\\b"
+    },
+    "constants": {
+      "name": "constant.language.loi",
+      "match": "\\b(?:true|false)\\b"
+    },
+    "types": {
+      "name": "support.type.primitive.loi",
+      "match": "\\b(?:i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|bool|u8|cstr|opaque)\\b"
+    },
+    "calls": {
+      "name": "entity.name.function.loi",
+      "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()"
+    },
+    "directions": {
+      "name": "storage.modifier.loi",
+      "match": "<->|<-|->|=>"
+    },
+    "operators": {
+      "name": "keyword.operator.loi",
+      "match": "<<=|>>=|\\+=|-=|\\*=|/=|%=|&=|\\|=|\\^=|==|!=|<=|>=|<<|>>|\\+|-|\\*|/|%|&|\\||\\^|~|=|<|>"
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.section.block.loi",
+          "match": "[{}]"
+        },
+        {
+          "name": "punctuation.section.brackets.loi",
+          "match": "[\\[\\]]"
+        },
+        {
+          "name": "punctuation.section.group.loi",
+          "match": "[()]"
+        },
+        {
+          "name": "punctuation.separator.loi",
+          "match": "[,.:;]"
+        }
+      ]
+    }
+  }
+}

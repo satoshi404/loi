@@ -31,13 +31,11 @@ open flow main
 {
     InitWindow(800, 600, "Editor Loi")
     SetTargetFPS(60)
-
-    bg: Color <- Color[ r: 24, g: 26, b: 38, a: 255 ]
-    ink: Color <- Color[ r: 232, g: 236, b: 248, a: 255 ]
-    accent: Color <- Color[ r: 120, g: 200, b: 255, a: 255 ]
+    bg: Color <- Color { r: 24, g: 26, b: 38, a: 255 }
+    ink: Color <- Color { r: 232, g: 236, b: 248, a: 255 }
+    accent: Color <- Color { r: 120, g: 200, b: 255, a: 255 }
     hint: cstr <- "F2: salvar | ESC: sair | setas/backspace: editar"
     path: [u8] <- "editor.txt"
-
     protect {
         mut buf: [u8]
         alloc(-> buf, u8, 2048)
@@ -45,12 +43,10 @@ open flow main
         mut cursor: i32 <- 0
         mut blink: f32 <- 0.0
         mut saved: bool <- false
-
         while not WindowShouldClose() {
             dt <- GetFrameTime()
             blink += dt
             key <- GetKeyPressed()
-
             if key == KEY_ESCAPE {
                 break
             }
@@ -105,23 +101,19 @@ open flow main
                 len += 1
                 saved <- false
             }
-
             BeginDrawing()
             ClearBackground(bg)
             DrawText("Editor simples em Loi", 20, 16, 22, accent)
             DrawText(hint, 20, 46, 14, ink)
-
             // Fundo da area de texto e as linhas ate o cursor.
-            DrawRectangle(16, 76, 768, 460, Color[ r: 32, g: 35, b: 50, a: 255 ])
-            DrawRectangleLines(16, 76, 768, 460, Color[ r: 70, g: 78, b: 105, a: 255 ])
+            DrawRectangle(16, 76, 768, 460, Color { r: 32, g: 35, b: 50, a: 255 })
+            DrawRectangleLines(16, 76, 768, 460, Color { r: 70, g: 78, b: 105, a: 255 })
             loi_draw_text_slice(buf, len, 28, 88, 18, ink)
-
             // Cursor piscando na posicao correta da primeira linha.
             if fmod(blink as f64, 1.0) < 0.5 {
                 before <- loi_measure_text_slice(buf, cursor, 18)
                 DrawRectangle(28 + before, 88, 2, 20, accent)
             }
-
             if saved {
                 DrawText("salvo", 700, 48, 14, accent)
             }
@@ -129,7 +121,6 @@ open flow main
             EndDrawing()
         }
     }
-
     CloseWindow()
     => 0
 }

@@ -9,8 +9,7 @@
 // The emitted IR can also be inspected directly:
 //
 //   loi gen examples/llvm_scalars.loi --emit-llvm-ir llvm_scalars.ll
-
-sealed flow factorial
+flow factorial
     <- n: i32
     => i32
 {
@@ -20,14 +19,14 @@ sealed flow factorial
     => n * factorial(n - 1)
 }
 
-sealed flow square
+flow square
     <- value: i32
     => i32
 {
     => value * value
 }
 
-sealed flow mean
+flow mean
     <- left: f64
     <- right: f64
     => f64
@@ -42,14 +41,12 @@ open flow main
     for i in 1..6 {
         squares += square(i)
     }
-
     mut fact: i32 <- factorial(5)
     if fact == 120 and squares == 55 {
         fact += 0
     } else {
         fact = -1
     }
-
     print("factorial=")
     print_int(fact as i64)
     print(" squares=")

@@ -171,10 +171,10 @@ Probes: `c_ownership.loi`, `c_generic_give.loi`, `c_in_read.loi` and
 syntax that checked, built and ran:
 
 ```loi
-first <- Item[ value: 7 ]
+first <- Item { value: 7 }
 a <- take_item(give(first))          // <- item: Item
 
-second <- Item[ value: 9 ]
+second <- Item { value: 9 }
 consume<Item>(give(second))          // generic: flow consume<T> <- item: T
 ```
 

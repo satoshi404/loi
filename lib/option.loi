@@ -12,11 +12,10 @@
 //! ```loi
 //! import "lib/option.loi"
 //! ```
-
-open shape Option<T> [
+open shape Option<T> {
     present: bool = false
     value: T
-]
+}
 
 /// Build an absent option. `value` is zero-initialized; never read it.
 open flow option_none<T>
@@ -54,7 +53,9 @@ open flow option_get_or<T: Clone>
     <- fallback: T
     => T
 {
-    if opt.present { => clone(opt.value) }
+    if opt.present {
+        => clone(opt.value)
+    }
     => clone(fallback)
 }
 
@@ -63,6 +64,8 @@ open flow option_unwrap<T: Clone>
     <- opt: Option<T>
     => T
 {
-    if not opt.present { panic("option_unwrap: no value\n") }
+    if not opt.present {
+        panic("option_unwrap: no value\n")
+    }
     => clone(opt.value)
 }

@@ -28,6 +28,7 @@ fn has_c_compiler() -> bool {
     has_tool("cc")
 }
 
+#[cfg(unix)]
 fn line_count(path: &std::path::Path) -> usize {
     fs::read_to_string(path)
         .map(|text| text.lines().count())

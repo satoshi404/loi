@@ -64,13 +64,13 @@
             <span class="code-filename">particle.loi</span>
             <button class="code-copy" type="button" data-copy>copy</button>
           </div>
-          <pre><code class="language-loi" data-loi>shape Vec2 [ x: f64, y: f64 ]
+          <pre><code class="language-loi" data-loi>shape Vec2 { x: f64, y: f64 }
 
-shape Particle [
+shape Particle {
     pos:   Vec2
     vel:   Vec2
     alive: bool = true
-]
+}
 
 open flow step
     &lt;-&gt; p: Particle
@@ -87,10 +87,10 @@ open flow step
 open flow main
     =&gt; i32
 {
-    mut p: Particle &lt;- Particle[
+    mut p: Particle &lt;- Particle {
         pos: Vec2[ x: 0, y: 10 ],
         vel: Vec2[ x: 2, y: -1 ],
-    ]
+    }
 
     step(&lt;-&gt; p, 1.0)
     print("particle updated\n")
@@ -175,8 +175,8 @@ open flow main
             </div>
             <h3>Shapes are data</h3>
             <p>
-              <code>shape Vec2 [ x: f64, y: f64 ]</code> declares a named record with defaults
-              and no methods. Literals use brackets: <code>Vec2[ x: 1, y: 2 ]</code>.
+              <code>shape Vec2 { x: f64, y: f64 }</code> declares a named record with defaults
+              and no methods. Literals use brackets: <code>Vec2 { x: 1, y: 2 }</code>.
             </p>
           </article>
 

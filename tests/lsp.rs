@@ -16,7 +16,9 @@ fn repo_root() -> PathBuf {
 }
 
 fn test_dir(name: &str) -> PathBuf {
-    let dir = PathBuf::from("/tmp/opencode").join(format!("loi-lsp-{}-{name}", std::process::id()));
+    let root = std::env::temp_dir().join("opencode");
+    fs::create_dir_all(&root).expect("temp root should be creatable");
+    let dir = root.join(format!("loi-lsp-{}-{name}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("test directory should be creatable");
     dir
@@ -171,29 +173,70 @@ fn json_string(text: &str) -> String {
         .replace('\r', "\\r")
 }
 
+/// File URIs use forward slashes even on Windows, as VS Code and the LSP
+/// specification expect.
+fn document_uri(path: &Path) -> String {
+    format!("file://{}", path.to_string_lossy().replace('\\', "/"))
+}
+
+/// The canonical form sent by VS Code: an absolute path and percent-escaped
+/// reserved characters, for example `file:///C:/My%20Project/main.loi`.
+fn canonical_document_uri(path: &Path) -> String {
+    let slashes = path.to_string_lossy().replace('\\', "/");
+    let absolute = if slashes.starts_with('/') {
+        slashes
+    } else {
+        format!("/{slashes}")
+    };
+    let escaped = absolute.replace('%', "%25").replace(' ', "%20");
+    format!("file://{escaped}")
+}
+
+fn capabilities() -> &'static str {
+    r#"{"textDocumentSync":1,"publishDiagnosticsProvider":true,"completionProvider":{"resolveProvider":false,"triggerCharacters":["."]},"hoverProvider":true,"definitionProvider":true,"referencesProvider":true,"renameProvider":{"prepareProvider":true},"documentSymbolProvider":true,"foldingRangeProvider":true,"inlayHintProvider":true,"semanticTokensProvider":{"legend":{"tokenTypes":["keyword","number","string","function","type","variable","comment"],"tokenModifiers":[]},"full":true},"codeActionProvider":true,"signatureHelpProvider":{"triggerCharacters":["(",","]}}"#
+}
+
+fn initialize(id: u64) -> String {
+    format!(
+        r#"{{"jsonrpc":"2.0","id":{id},"result":{{"capabilities":{}}}}}"#,
+        capabilities()
+    )
+}
+
 fn did_open(uri: &str, text: &str) -> String {
     format!(
-        r#"{{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{{"textDocument":{{"uri":"{uri}","languageId":"loi","version":1,"text":"{}"}}}}}}"#,
+        r#"{{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{{"textDocument":{{"uri":"{}","languageId":"loi","version":1,"text":"{}"}}}}}}"#,
+        json_string(uri),
         json_string(text)
     )
 }
 
 fn did_change(uri: &str, text: &str) -> String {
     format!(
-        r#"{{"jsonrpc":"2.0","method":"textDocument/didChange","params":{{"textDocument":{{"uri":"{uri}","version":2}},"contentChanges":[{{"text":"{}"}}]}}}}"#,
+        r#"{{"jsonrpc":"2.0","method":"textDocument/didChange","params":{{"textDocument":{{"uri":"{}","version":2}},"contentChanges":[{{"text":"{}"}}]}}}}"#,
+        json_string(uri),
         json_string(text)
     )
 }
 
 fn published(uri: &str, diagnostics: &str) -> String {
     format!(
-        r#"{{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{{"uri":"{uri}","diagnostics":[{diagnostics}]}}}}"#
+        r#"{{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{{"uri":"{}","diagnostics":[{diagnostics}]}}}}"#,
+        json_string(uri)
     )
 }
 
 fn completion(uri: &str, line: u64, character: u64) -> String {
     format!(
-        r#"{{"jsonrpc":"2.0","id":2,"method":"textDocument/completion","params":{{"textDocument":{{"uri":"{uri}"}},"position":{{"line":{line},"character":{character}}}}}}}"#
+        r#"{{"jsonrpc":"2.0","id":2,"method":"textDocument/completion","params":{{"textDocument":{{"uri":"{}"}},"position":{{"line":{line},"character":{character}}}}}}}"#,
+        json_string(uri)
+    )
+}
+
+fn info_request(uri: &str, id: u64, method: &str, line: u64, character: u64) -> String {
+    format!(
+        r#"{{"jsonrpc":"2.0","id":{id},"method":"textDocument/{method}","params":{{"textDocument":{{"uri":"{}"}},"position":{{"line":{line},"character":{character}}}}}}}"#,
+        json_string(uri)
     )
 }
 
@@ -209,7 +252,7 @@ fn lsp_server_publishes_real_compiler_diagnostics() {
         json.contains(r#""severity":"error""#),
         "compiler should report an error: {json}"
     );
-    let uri = format!("file://{}", dir.join("broken.loi").to_string_lossy());
+    let uri = document_uri(&dir.join("broken.loi"));
 
     let mut input = frame(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#);
     input.extend(frame(&did_open(
@@ -219,9 +262,7 @@ fn lsp_server_publishes_real_compiler_diagnostics() {
 
     // Compiler spans are 1-based; LSP line and character are 0-based.
     let diagnostic = r#"{"range":{"start":{"line":1,"character":7},"end":{"line":1,"character":14}},"severity":1,"message":"unknown variable 'missing'"}"#;
-    let mut expected = frame(
-        r#"{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"publishDiagnosticsProvider":true,"completionProvider":{"resolveProvider":false,"triggerCharacters":["."]}}}}"#,
-    );
+    let mut expected = frame(&initialize(1));
     expected.extend(frame(&published(&uri, diagnostic)));
 
     assert_server(&dir, &input, &expected);
@@ -244,16 +285,14 @@ fn lsp_server_publishes_warnings_with_severity_two() {
         json.contains(r#""message":"unused variable 'unused'""#),
         "compiler should name the unused binding: {json}"
     );
-    let uri = format!("file://{}", dir.join("broken.loi").to_string_lossy());
+    let uri = document_uri(&dir.join("broken.loi"));
 
     let mut input = frame(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#);
     input.extend(frame(&did_open(&uri, source)));
 
     // `unused variable 'unused'` points at the three-character `mut` keyword.
     let diagnostic = r#"{"range":{"start":{"line":1,"character":4},"end":{"line":1,"character":7}},"severity":2,"message":"unused variable 'unused'"}"#;
-    let mut expected = frame(
-        r#"{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"publishDiagnosticsProvider":true,"completionProvider":{"resolveProvider":false,"triggerCharacters":["."]}}}}"#,
-    );
+    let mut expected = frame(&initialize(1));
     expected.extend(frame(&published(&uri, diagnostic)));
 
     assert_server(&dir, &input, &expected);
@@ -274,15 +313,13 @@ fn lsp_server_includes_compiler_suggestions_in_diagnostic_messages() {
         json.contains(r#""help":"did you mean 'missing'?""#),
         "compiler should suggest a close name: {json}"
     );
-    let uri = format!("file://{}", dir.join("broken.loi").to_string_lossy());
+    let uri = document_uri(&dir.join("broken.loi"));
 
     let mut input = frame(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#);
     input.extend(frame(&did_open(&uri, source)));
 
     let diagnostic = r#"{"range":{"start":{"line":2,"character":7},"end":{"line":2,"character":13}},"severity":1,"message":"unknown variable 'missng': did you mean 'missing'?"}"#;
-    let mut expected = frame(
-        r#"{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"publishDiagnosticsProvider":true,"completionProvider":{"resolveProvider":false,"triggerCharacters":["."]}}}}"#,
-    );
+    let mut expected = frame(&initialize(1));
     expected.extend(frame(&published(&uri, diagnostic)));
 
     assert_server(&dir, &input, &expected);
@@ -303,19 +340,89 @@ fn lsp_server_answers_completion_from_the_edited_buffer() {
         "flow main => i32 {\n    mut beta: i32 <- 1\n    => beta\n}\n",
     )
     .expect("source should be writable");
-    let uri = format!("file://{}", source_path.to_string_lossy());
+    let uri = document_uri(&source_path);
     let source = "flow main => i32 {\n    mut alpha: i32 <- 1\n    => alpha\n}\n";
 
     let mut input = frame(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#);
     input.extend(frame(&did_open(&uri, source)));
     input.extend(frame(&completion(&uri, 1, 13)));
 
-    let mut expected = frame(
-        r#"{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"publishDiagnosticsProvider":true,"completionProvider":{"resolveProvider":false,"triggerCharacters":["."]}}}}"#,
-    );
+    let mut expected = frame(&initialize(1));
     expected.extend(frame(&published(&uri, "")));
     expected.extend(frame(
         r#"{"jsonrpc":"2.0","id":2,"result":{"isIncomplete":false,"items":[{"label":"alpha","kind":5,"detail":"variable"}]}}"#,
+    ));
+
+    assert_server(&dir, &input, &expected);
+}
+
+#[test]
+fn lsp_server_accepts_canonical_percent_encoded_file_uris() {
+    if !has_c_compiler() {
+        eprintln!("skipping lsp_server_accepts_canonical_percent_encoded_file_uris: cc not found");
+        return;
+    }
+    let dir = test_dir("uri encoded");
+    let source_path = dir.join("document.loi");
+    let disk_source = "flow main => i32 {\n    mut beta: i32 <- 1\n    => beta\n}\n";
+    fs::write(&source_path, disk_source).expect("source should be writable");
+    let uri = canonical_document_uri(&source_path);
+    assert!(uri.contains("%20"), "test path should be escaped: {uri}");
+    let buffer_source = "flow main => i32 {\n    mut alpha: i32 <- 1\n    => alpha\n}\n";
+
+    let mut input = frame(&did_open(&uri, buffer_source));
+    input.extend(frame(&completion(&uri, 1, 13)));
+
+    let mut expected = frame(&published(&uri, ""));
+    expected.extend(frame(
+        r#"{"jsonrpc":"2.0","id":2,"result":{"isIncomplete":false,"items":[{"label":"alpha","kind":5,"detail":"variable"}]}}"#,
+    ));
+
+    assert_server(&dir, &input, &expected);
+    assert_eq!(
+        fs::read_to_string(&source_path).expect("original source should still be readable"),
+        disk_source,
+        "a decoded URI must not make the server write over the client's file"
+    );
+}
+
+#[test]
+fn lsp_server_answers_hover_definition_and_signature_help() {
+    if !has_c_compiler() {
+        eprintln!("skipping lsp_server_answers_hover_definition_and_signature_help: cc not found");
+        return;
+    }
+    let dir = test_dir("info");
+    let source_path = dir.join("document.loi");
+    let source = "/// Add two numbers.\nopen flow add\n    <- left: i32\n    <- right: i32\n    => i32\n{\n    mut result: i32 <- left + right\n    => result\n}\n\nflow main => i32 {\n    => add(1, 2)\n}\n";
+    fs::write(&source_path, source).expect("source should be writable");
+    let uri = document_uri(&source_path);
+
+    let mut input = frame(&did_open(&uri, source));
+    input.extend(frame(&info_request(&uri, 2, "hover", 11, 8)));
+    input.extend(frame(&info_request(&uri, 3, "definition", 11, 8)));
+    input.extend(frame(&info_request(&uri, 4, "signatureHelp", 11, 14)));
+
+    let label = "open flow add <- left: i32 <- right: i32 => i32";
+    let hover_value = format!("**flow** `add`\n\n```loi\n{label}\n```\n\nAdd two numbers.");
+    let mut expected = frame(&published(&uri, ""));
+    expected.extend(frame(
+        &format!(
+            r#"{{"jsonrpc":"2.0","id":2,"result":{{"contents":{{"kind":"markdown","value":"{}"}},"range":{{"start":{{"line":11,"character":7}},"end":{{"line":11,"character":10}}}}}}}}"#,
+            json_string(&hover_value)
+        ),
+    ));
+    expected.extend(frame(
+        &format!(
+            r#"{{"jsonrpc":"2.0","id":3,"result":{{"uri":"{}","range":{{"start":{{"line":1,"character":10}},"end":{{"line":1,"character":13}}}}}}}}"#,
+            json_string(&uri)
+        ),
+    ));
+    expected.extend(frame(
+        &format!(
+            r#"{{"jsonrpc":"2.0","id":4,"result":{{"signatures":[{{"label":"{}","documentation":"Add two numbers.","parameters":[{{"label":"left"}},{{"label":"right"}}]}}],"activeSignature":0,"activeParameter":1}}}}"#,
+            json_string(label)
+        ),
     ));
 
     assert_server(&dir, &input, &expected);
@@ -331,19 +438,18 @@ fn lsp_server_discards_the_completion_cache_on_did_close() {
     let source_path = dir.join("document.loi");
     let disk_source = "flow main => i32 {\n    mut beta: i32 <- 1\n    => beta\n}\n";
     fs::write(&source_path, disk_source).expect("source should be writable");
-    let uri = format!("file://{}", source_path.to_string_lossy());
+    let uri = document_uri(&source_path);
     let buffer_source = "flow main => i32 {\n    mut alpha: i32 <- 1\n    => alpha\n}\n";
 
     let mut input = frame(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#);
     input.extend(frame(&did_open(&uri, buffer_source)));
     input.extend(frame(&format!(
-        r#"{{"jsonrpc":"2.0","method":"textDocument/didClose","params":{{"textDocument":{{"uri":"{uri}"}}}}}}"#
+        r#"{{"jsonrpc":"2.0","method":"textDocument/didClose","params":{{"textDocument":{{"uri":"{}"}}}}}}"#,
+        json_string(&uri)
     )));
     input.extend(frame(&completion(&uri, 1, 12)));
 
-    let mut expected = frame(
-        r#"{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"publishDiagnosticsProvider":true,"completionProvider":{"resolveProvider":false,"triggerCharacters":["."]}}}}"#,
-    );
+    let mut expected = frame(&initialize(1));
     expected.extend(frame(&published(&uri, "")));
     expected.extend(frame(
         r#"{"jsonrpc":"2.0","id":2,"result":{"isIncomplete":false,"items":[{"label":"beta","kind":5,"detail":"variable"}]}}"#,
@@ -364,7 +470,7 @@ fn lsp_server_clears_diagnostics_for_a_clean_document() {
         json.is_empty(),
         "clean source should produce no diagnostics: {json}"
     );
-    let uri = format!("file://{}", dir.join("broken.loi").to_string_lossy());
+    let uri = document_uri(&dir.join("broken.loi"));
 
     let input = frame(&did_open(&uri, "flow main => i32 {\n    => 0\n}\n"));
     let expected = frame(&published(&uri, ""));
@@ -383,7 +489,7 @@ fn lsp_server_uses_did_change_text_instead_of_the_on_disk_file() {
     let source_path = dir.join("document.loi");
     fs::write(&source_path, "flow main => i32 {\n    => 0\n}\n")
         .expect("source should be writable");
-    let uri = format!("file://{}", source_path.to_string_lossy());
+    let uri = document_uri(&source_path);
     let broken = "flow main => i32 {\n    => missing\n}\n";
 
     let mut input = frame(&did_open(&uri, "flow main => i32 {\n    => 0\n}\n"));
@@ -424,7 +530,7 @@ fn lsp_server_never_writes_the_client_file() {
     let source_path = dir.join("document.loi");
     let original = "flow main => i32 {\n    => 0\n}\n";
     fs::write(&source_path, original).expect("source should be writable");
-    let uri = format!("file://{}", source_path.to_string_lossy());
+    let uri = document_uri(&source_path);
     let broken = "flow main => i32 {\n    => missing\n}\n";
 
     let input = frame(&did_open(&uri, broken));
@@ -488,9 +594,7 @@ fn loi_lsp_is_a_separate_stdio_executable() {
         "loi-lsp failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let mut expected = frame(
-        r#"{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"textDocumentSync":1,"publishDiagnosticsProvider":true,"completionProvider":{"resolveProvider":false,"triggerCharacters":["."]}}}}"#,
-    );
+    let mut expected = frame(&initialize(1));
     expected.extend(frame(r#"{"jsonrpc":"2.0","id":2,"result":null}"#));
     assert_eq!(output.stdout, expected);
     assert!(

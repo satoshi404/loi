@@ -16,12 +16,10 @@
 //! blocks until the enclosing `protect` ends, so call `vec_reserve<T>` when the
 //! final size is known: pre-reserving once avoids the peak memory of repeated
 //! geometric growth.
-
 // ---------------------------------------------------------------------------
 // Runtime error formatting
 // ---------------------------------------------------------------------------
-
-sealed flow vec_decimal_len
+flow vec_decimal_len
     <- value: u64
     => u64
 {
@@ -34,7 +32,7 @@ sealed flow vec_decimal_len
     => digits
 }
 
-sealed flow vec_write_bytes
+flow vec_write_bytes
     <- text: [u8]
     <-> out: [u8]
     <- pos: u64
@@ -48,7 +46,7 @@ sealed flow vec_write_bytes
     => at
 }
 
-sealed flow vec_write_u64
+flow vec_write_u64
     <- value: u64
     <-> out: [u8]
     <- pos: u64
@@ -63,7 +61,7 @@ sealed flow vec_write_u64
     }
     mut at: u64 <- pos
     while divisor > 0 {
-        digit <- (value / divisor) % 10
+        digit <- value / divisor % 10
         out[at] = digit as u8 + 48
         at += 1
         divisor /= 10
@@ -71,7 +69,7 @@ sealed flow vec_write_u64
     => at
 }
 
-sealed flow vec_fail_range
+flow vec_fail_range
     <- name: [u8]
     <- index: u64
     <- len: u64
@@ -94,7 +92,7 @@ sealed flow vec_fail_range
     panic(msg)
 }
 
-sealed flow vec_fail_empty
+flow vec_fail_empty
     <- name: [u8]
     <- len: u64
 {
@@ -115,12 +113,11 @@ sealed flow vec_fail_empty
 // ---------------------------------------------------------------------------
 // Shape and capacity
 // ---------------------------------------------------------------------------
-
-open shape Vec<T> [
+open shape Vec<T> {
     data: [T]
     len: u64
     cap: u64
-]
+}
 
 open flow vec_new<T>
     -> v: Vec<T>
@@ -170,7 +167,7 @@ open flow vec_reserve<T: Clone>
     <- capacity: u64
 {
     if capacity <= v.cap {
-        => 
+        =>
     }
     mut new_cap: u64 <- v.cap * 2
     if new_cap < capacity {
@@ -197,7 +194,6 @@ open flow vec_clear<T>
 // ---------------------------------------------------------------------------
 // Element access
 // ---------------------------------------------------------------------------
-
 open flow vec_get<T: Clone>
     <- v: Vec<T>
     <- index: u64
@@ -216,7 +212,7 @@ open flow vec_set<T: Clone>
 {
     if index >= v.len {
         vec_fail_range("vec_set", index, v.len)
-        => 
+        =>
     }
     v.data[index] = clone(value)
 }
@@ -287,8 +283,7 @@ open flow vec_as_slice<T: Clone>
 // ---------------------------------------------------------------------------
 // Mutation and ordering (ordering still requires numeric T)
 // ---------------------------------------------------------------------------
-
-sealed flow vec_swap<T: Clone>
+flow vec_swap<T: Clone>
     <-> v: Vec<T>
     <- i: u64
     <- j: u64
@@ -308,7 +303,7 @@ open flow vec_reverse<T: Clone>
     }
 }
 
-sealed flow vec_sift_down<T: Clone + Ord>
+flow vec_sift_down<T: Clone + Ord>
     <-> v: Vec<T>
     <- start: u64
     <- end: u64

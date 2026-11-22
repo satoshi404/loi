@@ -14,7 +14,6 @@
 //! ```sh
 //! loi build main.loi -o main --c-source lib/stdio_shim.c
 //! ```
-
 extern flow loi_stdio_read_exact
     <-> data: [u8]
     => i64
@@ -47,7 +46,6 @@ open flow stdio_write_all
 
 /// Flush stdout. Framed protocols need this before waiting for the next
 /// request: C stdio buffers output when stdout is a pipe.
-open flow stdio_flush
-{
+open flow stdio_flush {
     loi_stdio_flush()
 }

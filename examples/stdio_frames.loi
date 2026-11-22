@@ -1,6 +1,5 @@
 // A single LSP-style frame echo written in Loi.
 // Build with: loi build examples/stdio_frames.loi -o stdio_frames --c-source lib/stdio_shim.c
-
 import "../lib/stdio.loi"
 
 open flow starts_with
@@ -59,14 +58,12 @@ open flow handle_one
     if not found or length == 0 {
         => false
     }
-
     mut body: [u8]
     alloc(-> body, u8, length)
     got <- stdio_read_exact(<-> body)
     if got != length as i64 {
         => false
     }
-
     printf("Content-Length: %llu\r\n\r\n", length)
     written <- stdio_write_all(body)
     if written != got {

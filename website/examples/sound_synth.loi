@@ -36,20 +36,28 @@ extern flow loi_init_audio_device
 extern flow loi_close_audio_device
 
 SAMPLE_RATE: u32 <- 22050
+
 TOTAL_SAMPLES: i32 <- 22050
+
 VIEW_SAMPLES: i32 <- 760
 
-sealed flow wave_name
+flow wave_name
     <- kind: i32
     => cstr
 {
-    if kind == 0 { => "seno" }
-    if kind == 1 { => "quadrada" }
-    if kind == 2 { => "serra" }
+    if kind == 0 {
+        => "seno"
+    }
+    if kind == 1 {
+        => "quadrada"
+    }
+    if kind == 2 {
+        => "serra"
+    }
     => "triangulo"
 }
 
-sealed flow sample_value
+flow sample_value
     <- t: f64
     <- kind: f64
     <- freq: f64
@@ -58,15 +66,22 @@ sealed flow sample_value
     // fase em [0, 2*pi); cada formula e avaliada em f64 para evitar erro.
     tau <- 6.283185307179586
     mut raw: f64 <- fmod(t * freq * tau, tau)
-    if raw < 0.0 { raw += tau }
+    if raw < 0.0 {
+        raw += tau
+    }
     half <- raw / 3.141592653589793
-
-    if kind == 0.0 { => (c_sin(raw) * 0.85) as f32 }
+    if kind == 0.0 {
+        => (c_sin(raw) * 0.85) as f32
+    }
     if kind == 1.0 {
-        if c_sin(raw) >= 0.0 { => 0.85 as f32 }
+        if c_sin(raw) >= 0.0 {
+            => 0.85 as f32
+        }
         => -0.85 as f32
     }
-    if kind == 2.0 { => ((half - 1.0) * 0.85) as f32 }
+    if kind == 2.0 {
+        => ((half - 1.0) * 0.85) as f32
+    }
     => ((1.0 - 2.0 * fabs(half - 1.0)) * 0.85) as f32
 }
 
@@ -76,13 +91,11 @@ open flow main
     loi_init_audio_device()
     InitWindow(900, 540, "Sintese matematica de som")
     SetTargetFPS(60)
-
-    bg: Color <- Color[ r: 16, g: 18, b: 28, a: 255 ]
-    ink: Color <- Color[ r: 226, g: 232, b: 248, a: 255 ]
-    grid: Color <- Color[ r: 44, g: 50, b: 74, a: 255 ]
-    wave: Color <- Color[ r: 92, g: 214, b: 255, a: 255 ]
-    hot: Color <- Color[ r: 255, g: 129, b: 166, a: 255 ]
-
+    bg: Color <- Color { r: 16, g: 18, b: 28, a: 255 }
+    ink: Color <- Color { r: 226, g: 232, b: 248, a: 255 }
+    grid: Color <- Color { r: 44, g: 50, b: 74, a: 255 }
+    wave: Color <- Color { r: 92, g: 214, b: 255, a: 255 }
+    hot: Color <- Color { r: 255, g: 129, b: 166, a: 255 }
     protect {
         mut samples: [f32]
         alloc(-> samples, f32, 22050)
@@ -90,10 +103,11 @@ open flow main
         mut freq: f64 <- 220.0
         mut dirty: bool <- true
         mut started: bool <- false
-
         while not WindowShouldClose() {
             key <- GetKeyPressed()
-            if key == KEY_ESCAPE { break }
+            if key == KEY_ESCAPE {
+                break
+            }
             if key == KEY_ONE {
                 kind <- 0
                 dirty <- true
@@ -130,7 +144,6 @@ open flow main
                 loi_play_samples(samples, SAMPLE_RATE)
                 started <- true
             }
-
             // Recalcula o trecho visivel sempre que a forma ou a frequencia muda.
             if dirty {
                 for i in 0..VIEW_SAMPLES {
@@ -139,31 +152,28 @@ open flow main
                 }
                 dirty <- false
             }
-
             BeginDrawing()
             ClearBackground(bg)
-
             DrawText("Sintese de onda em Loi", 20, 16, 22, ink)
             DrawText("1 seno  2 quadrada  3 serra  4 triangulo", 20, 46, 14, ink)
             DrawText("audio automatico | 1..4: onda | cima/baixo: frequencia | ESC: sair", 20, 66, 14, ink)
-
             // Malha de referencia: linha do zero e linhas verticais.
             mid <- 300
             DrawLine(40, mid, 860, mid, grid)
             DrawLine(40, 150, 860, 150, grid)
             DrawLine(40, 450, 860, 450, grid)
-
             // Desenha a onda ligando amostras consecutivas.
             mut px: i32 <- 40
             mut py: i32 <- mid
             for i in 0..VIEW_SAMPLES {
                 v <- samples[i]
                 y <- mid - (v * 140.0) as i32
-                if i > 0 { DrawLine(px - 1, py, px, y, wave) }
+                if i > 0 {
+                    DrawLine(px - 1, py, px, y, wave)
+                }
                 py <- y
                 px += 1
             }
-
             if loi_samples_playing() {
                 DrawText("tocando", 760, 16, 14, hot)
             }
@@ -176,7 +186,6 @@ open flow main
         loi_audio_cleanup()
     }
     loi_close_audio_device()
-
     CloseWindow()
     => 0
 }

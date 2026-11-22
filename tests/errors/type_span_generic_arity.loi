@@ -1,7 +1,10 @@
-shape Box<T> [
+shape Box<T> {
     value: T
-]
-flow main => i32 {
+}
+
+flow main
+    => i32
+{
     mut b: Box<i32, i64>
     => 0
 }

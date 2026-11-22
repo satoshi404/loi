@@ -15,7 +15,6 @@ open flow main
         map_str_set<u64>(<-> m, "abcde", 6)
         map_str_set<u64>(<-> m, "abcdef", 7)
         map_str_set<u64>(<-> m, "abcdefg", 8)
-
         mut state: u64 <- 0x9e37_79b9_7f4a_7c15
         mut sum: u64 <- 0
         for step in 0..100000 {

@@ -1,4 +1,6 @@
-flow main => i32 {
+flow main
+    => i32
+{
     x: i32 <- true
     => 0
 }

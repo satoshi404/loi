@@ -15,20 +15,19 @@
 //! for a small, fully checked implementation with no hidden hash collisions.
 //! `map_*_lookup` returns both a status and a caller-supplied default in one
 //! scan, and `map_*_get_or` is the value-only form.
-
 open MAP_INITIAL_CAP: u64 <- 8
+
 open MAP_INITIAL_KEY_BYTES: u64 <- 64
 
 // ---------------------------------------------------------------------------
 // IntMap<V>
 // ---------------------------------------------------------------------------
-
-open shape IntMap<V> [
+open shape IntMap<V> {
     keys: [u64]
     values: [V]
     len: u64
     cap: u64
-]
+}
 
 open flow map_int_new<V>
     -> m: IntMap<V>
@@ -53,7 +52,7 @@ open flow map_int_capacity<V>
     => m.cap
 }
 
-sealed flow map_int_find<V>
+flow map_int_find<V>
     <- m: IntMap<V>
     <- key: u64
     => i64
@@ -119,7 +118,7 @@ open flow map_int_lookup<V: Clone>
     value = clone(m.values[at as u64])
 }
 
-sealed flow map_int_grow<V: Clone>
+flow map_int_grow<V: Clone>
     <-> m: IntMap<V>
 {
     new_cap <- m.cap * 2
@@ -144,7 +143,7 @@ open flow map_int_set<V: Clone>
     at <- map_int_find<V>(m, key)
     if at >= 0 {
         m.values[at as u64] = clone(value)
-        => 
+        =>
     }
     if m.len == m.cap {
         map_int_grow<V>(<-> m)
@@ -183,8 +182,7 @@ open flow map_int_clear<V>
 // ---------------------------------------------------------------------------
 // StrMap<V>
 // ---------------------------------------------------------------------------
-
-open shape StrMap<V> [
+open shape StrMap<V> {
     keys: [u8]
     starts: [u64]
     lengths: [u64]
@@ -193,7 +191,7 @@ open shape StrMap<V> [
     cap: u64
     key_bytes: u64
     key_cap: u64
-]
+}
 
 open flow map_str_new<V>
     -> m: StrMap<V>
@@ -222,7 +220,7 @@ open flow map_str_capacity<V>
     => m.cap
 }
 
-sealed flow map_str_find<V>
+flow map_str_find<V>
     <- m: StrMap<V>
     <- key: [u8]
     => i64
@@ -299,7 +297,7 @@ open flow map_str_lookup<V: Clone>
     value = clone(m.values[at as u64])
 }
 
-sealed flow map_str_grow<V: Clone>
+flow map_str_grow<V: Clone>
     <-> m: StrMap<V>
 {
     new_cap <- m.cap * 2
@@ -320,7 +318,7 @@ sealed flow map_str_grow<V: Clone>
     m.cap = new_cap
 }
 
-sealed flow map_str_reserve_key<V>
+flow map_str_reserve_key<V>
     <-> m: StrMap<V>
     <- extra: u64
 {
@@ -346,7 +344,7 @@ open flow map_str_set<V: Clone>
     at <- map_str_find<V>(m, key)
     if at >= 0 {
         m.values[at as u64] = clone(value)
-        => 
+        =>
     }
     if m.len == m.cap {
         map_str_grow<V>(<-> m)

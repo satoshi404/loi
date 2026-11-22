@@ -1,12 +1,11 @@
 //! Two modules may expose the same names. Qualified references select the
 //! declaration, and the C backend emits `loi_t_module_mangling_local__Policy`,
 //! `loi_fn_module_mangling_local__policy` and their `remote` counterparts.
-
 import "module_mangling_local.loi" as local
+
 import "module_mangling_remote.loi" as remote
 
-open flow main
-{
+open flow main {
     local_policy <- local::policy()
     remote_policy <- remote::policy()
     print_int((local_policy.bonus + remote_policy.bonus) as i64)

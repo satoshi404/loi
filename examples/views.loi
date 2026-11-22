@@ -3,7 +3,6 @@
 // `view(data, start, end)` returns a subslice that aliases `data`; no element
 // is copied and no allocation happens. The source stays borrowed while the
 // view variable is in scope, so writing or moving it is a checker error.
-
 open flow prefix
     <- data: [u8]
     => [u8]

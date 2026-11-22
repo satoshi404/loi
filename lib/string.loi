@@ -10,7 +10,6 @@
 //! still allocate in the caller's `protect` region; query flows are `open` and
 //! need no region. Names avoid the helpers in `lib/std.loi` and
 //! `lib/ctype.loi`.
-
 open STRING_MAX_LEN: u64 <- 18446744073709551615
 
 open flow str_is_ascii_space
@@ -127,7 +126,7 @@ open flow str_index_of
     if needle.len > text.len {
         => -1
     }
-    for i in 0..(text.len - needle.len + 1) {
+    for i in 0..text.len - needle.len + 1 {
         mut matches: bool <- true
         for j in 0..needle.len {
             if text[i + j] != needle[j] {

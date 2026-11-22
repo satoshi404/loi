@@ -104,10 +104,10 @@
 
           <div class="doc-code">
             <div class="doc-code-bar"><span>hello.loi</span><button type="button" data-copy>copy</button></div>
-            <pre><code class="language-loi">shape Greeting [
+            <pre><code class="language-loi">shape Greeting {
     message: [u8]
     times:   u32
-]
+}
 
 open flow greet
     &lt;- greeting: Greeting
@@ -120,7 +120,7 @@ open flow greet
 open flow main
     =&gt; i32
 {
-    greet(Greeting[ message: "Hello, Loi!\n", times: 3 ])
+    greet(Greeting { message: "Hello, Loi!\n", times: 3 })
     =&gt; 0
 }</code></pre>
           </div>
@@ -184,24 +184,24 @@ open flow main
 
           <div class="doc-code">
             <div class="doc-code-bar"><span>shapes.loi</span><button type="button" data-copy>copy</button></div>
-            <pre><code class="language-loi">shape Vec2 [ x: f64, y: f64 ]
+            <pre><code class="language-loi">shape Vec2 { x: f64, y: f64 }
 
-shape Particle [
+shape Particle {
     pos:   Vec2
     vel:   Vec2
     mass:  f64
     alive: bool = true
-]
+}
 
-mut p: Particle &lt;- Particle[
+mut p: Particle &lt;- Particle {
     pos: Vec2[ x: 0, y: 10 ],
     vel: Vec2[ x: 2, y: -1 ],
-]</code></pre>
+}</code></pre>
           </div>
 
           <p>
             A literal always carries its shape name and uses brackets. A field with a default may
-            be omitted. <code>shape Name []</code> is the empty shape.
+            be omitted. <code>shape Name {}</code> is the empty shape.
           </p>
 
           <h3>Marks and choices</h3>
@@ -429,7 +429,7 @@ flow next
             <pre><code class="language-loi">answer &lt;- 42                  // immutable
 mut total: i64 &lt;- 0           // mutable, explicit type
 mut pending: Vec2             // uninitialized: only valid as -&gt;
-pending = Vec2[ x: 1, y: 2 ]  // assignment after initialization
+pending = Vec2 { x: 1, y: 2 }  // assignment after initialization
 
 total += 10                   // +=, -=, *= and /= are supported
 count &lt;- total as i32         // numeric cast with `as`</code></pre>
@@ -631,7 +631,7 @@ open flow main
     =&gt; i32
 {
     total &lt;- m::math_sum&lt;i32&gt;([i32: 1, 2, 3])
-    q &lt;- m::Point[ x: p.x ]
+    q &lt;- m::Point { x: p.x }
     if q.x != geo::origin.x { =&gt; 1 }
     =&gt; total
 }</code></pre>
@@ -667,9 +667,9 @@ open flow main
           <h3>Transfer and duplication</h3>
           <div class="doc-code">
             <div class="doc-code-bar"><span>ownership.loi</span><button type="button" data-copy>copy</button></div>
-            <pre><code class="language-loi">shape Point [ x: i32, y: i32 ]
+            <pre><code class="language-loi">shape Point { x: i32, y: i32 }
 
-point &lt;- Point[ x: 10, y: 20 ]
+point &lt;- Point { x: 10, y: 20 }
 copy  &lt;- clone(point)      // explicit deep duplicate
 other &lt;- give(point)       // ownership moves; `point` is now dead
 
@@ -724,7 +724,7 @@ xs[j] = tmp</code></pre>
           </p>
           <div class="doc-code">
             <div class="doc-code-bar"><span>read-view.loi</span><button type="button" data-copy>copy</button></div>
-            <pre><code class="language-loi">shape Pair [ left: [u8], right: u64 ]
+            <pre><code class="language-loi">shape Pair { left: [u8], right: u64 }
 
 flow right_only
     &lt;- p: Pair
@@ -1369,6 +1369,16 @@ flow exchange
             appends it to the displayed <code>message</code>, for example
             <code>unknown variable 'missng': did you mean 'missing'?</code>.</p>
 
+          <p>The server answers hover, definition, signature help, references, rename,
+            document symbols, semantic tokens, inlay hints, folding ranges and code actions,
+            advertised in <code>initialize</code>. It converts LSP's 0-based positions and
+            calls <code>loi lsp-info FILE --kind KIND [--line N --column N] [--uri URI]
+            [--new-name NAME]</code> over the cached editor buffer. File URIs are
+            normalized to forward slashes, <code>%XX</code> escapes are decoded and
+            the extra slash before a Windows drive is removed before the compiler
+            opens the path. The edited text stays in the server's cache, and the
+            original file is never written.</p>
+
           <p><code>lib/process.loi</code> runs external programs and captures both
             output streams. The C shim forks, uses <code>/bin/sh -c</code>,
             redirects stdout and stderr to temporary files before
@@ -1723,6 +1733,7 @@ python3 -m http.server -d web 8000   # abra http://localhost:8000</code></pre>
               <tr><td><code>loi fmt FILE</code></td><td>Prints canonical Flow Syntax to standard output.</td></tr>
               <tr><td><code>loi check FILE</code></td><td>Runs the checker and ownership analysis; no output on success.</td></tr>
               <tr><td><code>loi complete FILE --line N --column N</code></td><td>Prints JSON completion candidates from the raw buffer at a 1-based position.</td></tr>
+              <tr><td><code>loi lsp-info FILE --kind KIND [--line N --column N] [--uri URI] [--new-name NAME]</code></td><td>Prints one LSP result (hover, definition, signature, references, rename, documentSymbol, semanticTokens, inlayHint, foldingRange) for a source position or document.</td></tr>
               <tr><td><code>loi gen FILE [-o out.c]</code></td><td>Prints or writes the generated C11 translation unit.</td></tr>
               <tr><td><code>loi gen FILE --emit-llvm-ir FILE.ll</code></td><td>Writes real LLVM textual IR for the supported scalar subset; can be combined with <code>-o out.c</code>.</td></tr>
               <tr><td><code>loi build FILE... [-o out]</code></td><td>Checks, generates C, invokes <code>cc</code> and links the output. With <code>--backend llvm</code>, compiles scalar IR with <code>clang</code> instead.</td></tr>
@@ -1901,8 +1912,8 @@ node website/server.mjs
             <code>cargo build</code> creates it next to <code>loi</code>; the launcher compiles
             and caches the server written in Loi on first use, then speaks LSP over stdio. It
             advertises full-document synchronization, publishes compiler diagnostics after
-            every <code>didOpen</code> and <code>didChange</code>, and answers
-            <code>textDocument/completion</code> from a cached copy of the editor buffer. It never
+            every <code>didOpen</code> and <code>didChange</code>, and answers completion, hover,
+            definition and signature help from a cached copy of the editor buffer. It never
             writes over the file you are editing; it checks a hidden shadow file in the same
             directory and deletes it after each check. Relative imports therefore resolve exactly
             as they do for the real file.
@@ -1937,24 +1948,38 @@ export LOI_COMPILER=/absolute/path/to/loi/target/debug/loi
 
           <h3>Visual Studio Code</h3>
           <p>
-            A minimal client lives in <code>editors/vscode-loi/</code>. Install its dependency
-            with <code>npm install</code>, open that folder in VS Code and press <code>F5</code>
-            to launch an Extension Development Host. Set <code>loi.lsp.command</code> to the
-            absolute path of <code>loi-lsp</code> and <code>loi.compiler</code> to your
-            <code>loi</code> binary. The extension registers the <code>.loi</code> language and
-            starts the server in stdio mode. Errors and warnings appear in the Problems panel;
-            <code>Ctrl+Space</code> requests completion and <code>.</code> triggers it as you type.
+            A full client lives in <code>editors/vscode-loi/</code>. Install the VSIX from
+            <code>npx --yes @vscode/vsce package</code> with
+            <code>code --install-extension loi-lsp-0.1.0.vsix</code>, or run
+            <code>npm install</code>, open that folder in VS Code and press <code>F5</code> for
+            an Extension Development Host. The extension registers the <code>.loi</code>
+            language with syntax highlighting, snippets and bracket matching, ships a
+            <code>vs-seti</code>-based file icon theme that gives <code>.loi</code> files the
+            Loi icon, and uses a PNG extension icon in the Extensions view. It discovers
+            <code>loi-lsp</code> on PATH and in the workspace's <code>target/debug</code> or
+            <code>target/release</code> folder, pairs it with the <code>loi</code> binary
+            beside it, and shows an actionable error when neither is found. The server runs
+            in stdio mode. Errors and warnings appear in the Problems panel;
+            <code>Ctrl+Space</code> requests completion and <code>.</code> triggers it as you
+            type. Hover, go-to-definition and signature help work through the same server.
           </p>
           <div class="doc-code">
             <div class="doc-code-bar"><span>VS Code settings</span><button type="button" data-copy>copy</button></div>
             <pre><code class="language-json">{
   "loi.lsp.command": "/absolute/path/to/loi/target/debug/loi-lsp",
-  "loi.compiler": "/absolute/path/to/loi/target/debug/loi"
+  "loi.compiler": "/absolute/path/to/loi/target/debug/loi",
+  "loi.lsp.cacheDir": "/absolute/path/to/loi/.lsp-cache"
 }</code></pre>
           </div>
           <p>
-            <code>loi.compiler</code> is passed to the server as <code>LOI_COMPILER</code>;
-            set it explicitly when <code>loi</code> is not on the editor's <code>PATH</code>.
+            <code>loi.lsp.command</code> defaults to <code>loi-lsp</code> and is searched
+            on PATH, in <code>target/debug</code> / <code>target/release</code> and under
+            <code>${workspaceFolder}</code>; <code>loi.compiler</code> is passed to
+            the server as <code>LOI_COMPILER</code>. Set either explicitly when the binaries
+            are not on the editor's <code>PATH</code>. An empty
+            <code>loi.lsp.cacheDir</code> uses the system temporary directory. The active
+            file icon theme is <em>Loi File Icons</em>, which extends <em>Seti</em> so all
+            other file icons keep their usual appearance.
           </p>
           <div class="doc-code">
             <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
@@ -2179,7 +2204,7 @@ sealed flow winning_line
               <tr><th>Form</th><th>Example</th></tr>
             </thead>
             <tbody>
-              <tr><td>Shape</td><td><code>shape Vec2 [ x: f64, y: f64 ]</code></td></tr>
+              <tr><td>Shape</td><td><code>shape Vec2 { x: f64, y: f64 }</code></td></tr>
               <tr><td>Mark</td><td><code>mark Color [ Red, Green, Blue ]</code></td></tr>
               <tr><td>Choice</td><td><code>choice Result [ Ok: i32, Err: i64 ]</code></td></tr>
               <tr><td>Choice constructor</td><td><code>Result.Ok(42)</code></td></tr>

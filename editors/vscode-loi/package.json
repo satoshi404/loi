@@ -1,27 +1,61 @@
 {
   "name": "loi-lsp",
-  "displayName": "Loi Language Server",
-  "description": "Minimal VS Code client for the Loi language server written in Loi.",
+  "displayName": "Loi Language Support",
+  "description": "Loi language, syntax highlighting, file icon and LSP client for the Loi language server.",
   "version": "0.1.0",
   "publisher": "loi",
+  "icon": "icon.png",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
-    "Programming Languages"
+    "Programming Languages",
+    "Snippets",
+    "Themes"
+  ],
+  "keywords": [
+    "loi",
+    "lsp",
+    "language server",
+    "file icon"
   ],
   "activationEvents": [
-    "onLanguage:loi"
+    "onLanguage:loi",
+    "workspaceContains:**/*.loi"
   ],
   "main": "./extension.js",
   "contributes": {
     "languages": [
       {
         "id": "loi",
+        "aliases": [
+          "Loi",
+          "loi"
+        ],
         "extensions": [
           ".loi"
         ],
         "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "loi",
+        "scopeName": "source.loi",
+        "path": "./syntaxes/loi.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "loi",
+        "path": "./snippets/loi.json"
+      }
+    ],
+    "iconThemes": [
+      {
+        "id": "loi-file-icons",
+        "label": "Loi File Icons",
+        "path": "./icons/loi-file-icon-theme.json"
       }
     ],
     "configuration": {
@@ -29,15 +63,23 @@
       "properties": {
         "loi.lsp.command": {
           "type": "string",
-          "default": "${workspaceFolder}/target/debug/loi-lsp",
-          "description": "Path to the loi-lsp server binary."
+          "default": "loi-lsp",
+          "description": "Path to the loi-lsp server binary. Absolute paths, ${workspaceFolder}, relative paths and commands on PATH are supported."
         },
         "loi.compiler": {
           "type": "string",
           "default": "loi",
-          "description": "Compiler binary passed to the server as LOI_COMPILER."
+          "description": "Compiler binary passed to the server as LOI_COMPILER. Use an absolute path when loi is not on the editor's PATH."
+        },
+        "loi.lsp.cacheDir": {
+          "type": "string",
+          "default": "",
+          "description": "Directory for language-server caches. Empty uses the system temporary directory."
         }
       }
+    },
+    "configurationDefaults": {
+      "workbench.iconTheme": "loi-file-icons"
     }
   },
   "dependencies": {

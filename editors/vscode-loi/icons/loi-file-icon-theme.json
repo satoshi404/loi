@@ -1,0 +1,14 @@
+{
+  "extends": "vs-seti",
+  "iconDefinitions": {
+    "loi_file": {
+      "iconPath": "../icon.svg"
+    }
+  },
+  "fileExtensions": {
+    "loi": "loi_file"
+  },
+  "languageIds": {
+    "loi": "loi_file"
+  }
+}

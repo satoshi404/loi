@@ -3,24 +3,16 @@
 // runtime. Build and run with:
 //     loi build examples/choices.loi -o choices
 //     ./choices
+open mark Priority [ Low, High ]
 
-open mark Priority [
-    Low
-    High
-]
+open choice JobResult [ Done: i32, Retry: i32, Failed: Priority ]
 
-open choice JobResult [
-    Done: i32
-    Retry: i32
-    Failed: Priority
-]
-
-shape Job [
+shape Job {
     id: i32
     result: JobResult
-]
+}
 
-sealed flow result_code
+flow result_code
     <- result: JobResult
     => i32
 {
@@ -28,7 +20,7 @@ sealed flow result_code
         => result.Done
     }
     if result is JobResult.Retry {
-        => -(result.Retry)
+        => -result.Retry
     }
     if result is JobResult.Failed {
         if result.Failed == Priority.High {
@@ -49,7 +41,6 @@ open flow main
     if result_code(done) != 7 {
         => 2
     }
-
     retry <- JobResult.Retry(2)
     if retry is JobResult.Done {
         => 3
@@ -57,7 +48,6 @@ open flow main
     if result_code(retry) != -2 {
         => 4
     }
-
     failed <- JobResult.Failed(Priority.High)
     if not (failed is JobResult.Failed) {
         => 5
@@ -65,8 +55,7 @@ open flow main
     if result_code(failed) != -3 {
         => 6
     }
-
-    job: Job <- Job[ id: 1, result: give(done) ]
+    job: Job <- Job { id: 1, result: give(done) }
     if job.id != 1 {
         => 7
     }
@@ -76,7 +65,6 @@ open flow main
     if job.result.Done != 7 {
         => 9
     }
-
     print("choices ok\n")
     => 0
 }

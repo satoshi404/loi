@@ -14,11 +14,14 @@
 //! deletes that shadow afterwards. The caller chooses the path, so a server
 //! can keep the editor's original file untouched. Link `lib/lsp_shim.c` when
 //! using those flows.
-
 import "json.loi"
+
 import "jsonrpc.loi"
+
 import "std.loi"
+
 import "string.loi"
+
 import "vec.loi"
 
 extern flow loi_lsp_write_document
@@ -78,7 +81,7 @@ open flow lsp_read_document
     => data
 }
 
-sealed flow lsp_zero_based
+flow lsp_zero_based
     <- value: i64
     => u64
 {
@@ -88,16 +91,16 @@ sealed flow lsp_zero_based
     => 0
 }
 
-sealed flow lsp_severity
+flow lsp_severity
     <- doc: JsonDoc
     <- item: i64
     => u64
 {
-    node <- json_object_get(<- doc, item, "severity")
-    if node < 0 or json_kind(<- doc, node) != JsonKind.String {
+    node <- json_object_get(doc, item, "severity")
+    if node < 0 or json_kind(doc, node) != JsonKind.String {
         => 1
     }
-    text <- json_string(<- doc, node)
+    text <- json_string(doc, node)
     if str_eq(text, "warning") {
         => 2
     }
@@ -107,31 +110,31 @@ sealed flow lsp_severity
     => 1
 }
 
-sealed flow lsp_number
+flow lsp_number
     <- doc: JsonDoc
     <- node: i64
     => i64
 {
-    if node < 0 or json_kind(<- doc, node) != JsonKind.Number {
+    if node < 0 or json_kind(doc, node) != JsonKind.Number {
         => 0
     }
-    => json_number_i64(<- doc, node)
+    => json_number_i64(doc, node)
 }
 
 /// The compiler's `help` field carries concrete suggestions such as a close
 /// variable name. LSP diagnostics have no help field, so append it to the
 /// message clients actually display.
-sealed flow lsp_message
+flow lsp_message
     <- doc: JsonDoc
     <- item: i64
     => [u8]
 {
-    message <- json_string(<- doc, json_object_get(<- doc, item, "message"))
-    help <- json_object_get(<- doc, item, "help")
-    if help < 0 or json_kind(<- doc, help) != JsonKind.String {
+    message <- json_string(doc, json_object_get(doc, item, "message"))
+    help <- json_object_get(doc, item, "help")
+    if help < 0 or json_kind(doc, help) != JsonKind.String {
         => message
     }
-    suggestion <- json_string(<- doc, help)
+    suggestion <- json_string(doc, help)
     => str_concat(str_concat(message, ": "), suggestion)
 }
 
@@ -149,45 +152,38 @@ open flow lsp_publish_diagnostics
     json_object_set(<-> out, params, "uri", uri_node)
     array <- json_new_array(<-> out)
     json_object_set(<-> out, params, "diagnostics", array)
-
     mut doc: JsonDoc
     ok <- json_parse(diagnostics_json, -> doc)
     if ok {
-        root <- json_root(<- doc)
-        count <- json_array_len(<- doc, root)
+        root <- json_root(doc)
+        count <- json_array_len(doc, root)
         for i in 0..count {
-            item <- json_array_get(<- doc, root, i)
-
+            item <- json_array_get(doc, root, i)
             range <- json_new_object(<-> out)
             start <- json_new_object(<-> out)
             end <- json_new_object(<-> out)
-            start_line <- json_new_u64(<-> out, lsp_zero_based(lsp_number(<- doc, json_object_get(<- doc, item, "line"))))
-            start_character <- json_new_u64(<-> out, lsp_zero_based(lsp_number(<- doc, json_object_get(<- doc, item, "column"))))
-            end_line <- json_new_u64(<-> out, lsp_zero_based(lsp_number(<- doc, json_object_get(<- doc, item, "end_line"))))
-            end_character <- json_new_u64(<-> out, lsp_zero_based(lsp_number(<- doc, json_object_get(<- doc, item, "end_column"))))
+            start_line <- json_new_u64(<-> out, lsp_zero_based(lsp_number(doc, json_object_get(doc, item, "line"))))
+            start_character <- json_new_u64(<-> out, lsp_zero_based(lsp_number(doc, json_object_get(doc, item, "column"))))
+            end_line <- json_new_u64(<-> out, lsp_zero_based(lsp_number(doc, json_object_get(doc, item, "end_line"))))
+            end_character <- json_new_u64(<-> out, lsp_zero_based(lsp_number(doc, json_object_get(doc, item, "end_column"))))
             json_object_set(<-> out, start, "line", start_line)
             json_object_set(<-> out, start, "character", start_character)
             json_object_set(<-> out, end, "line", end_line)
             json_object_set(<-> out, end, "character", end_character)
             json_object_set(<-> out, range, "start", start)
             json_object_set(<-> out, range, "end", end)
-
             entry <- json_new_object(<-> out)
             json_object_set(<-> out, entry, "range", range)
-            severity <- json_new_u64(<-> out, lsp_severity(<- doc, item))
+            severity <- json_new_u64(<-> out, lsp_severity(doc, item))
             json_object_set(<-> out, entry, "severity", severity)
-
-            message <- lsp_message(<- doc, item)
+            message <- lsp_message(doc, item)
             message_value <- json_new_string(<-> out, message)
             json_object_set(<-> out, entry, "message", message_value)
             json_array_push(<-> out, array, entry)
         }
     }
     json_set_root(<-> out, params)
-    jsonrpc_send_notification(
-        "textDocument/publishDiagnostics",
-        json_stringify(<- out)
-    )
+    jsonrpc_send_notification("textDocument/publishDiagnostics", json_stringify(out))
 }
 
 /// Convert `loi complete` JSON into a `textDocument/completion` response. The
@@ -204,30 +200,25 @@ open flow lsp_send_completion
     incomplete <- json_new_bool(<-> out, false)
     json_object_set(<-> out, result, "isIncomplete", incomplete)
     json_object_set(<-> out, result, "items", items)
-
     mut doc: JsonDoc
     if json_parse(completion_json, -> doc) {
-        root <- json_root(<- doc)
-        count <- json_array_len(<- doc, root)
+        root <- json_root(doc)
+        count <- json_array_len(doc, root)
         for i in 0..count {
-            compiler_item <- json_array_get(<- doc, root, i)
+            compiler_item <- json_array_get(doc, root, i)
             item <- json_new_object(<-> out)
-
-            label <- json_string(<- doc, json_object_get(<- doc, compiler_item, "label"))
+            label <- json_string(doc, json_object_get(doc, compiler_item, "label"))
             label_value <- json_new_string(<-> out, label)
             json_object_set(<-> out, item, "label", label_value)
-
-            kind <- json_number_i64(<- doc, json_object_get(<- doc, compiler_item, "kind"))
+            kind <- json_number_i64(doc, json_object_get(doc, compiler_item, "kind"))
             kind_value <- json_new_u64(<-> out, kind as u64)
             json_object_set(<-> out, item, "kind", kind_value)
-
-            detail <- json_string(<- doc, json_object_get(<- doc, compiler_item, "detail"))
+            detail <- json_string(doc, json_object_get(doc, compiler_item, "detail"))
             detail_value <- json_new_string(<-> out, detail)
             json_object_set(<-> out, item, "detail", detail_value)
-
             json_array_push(<-> out, items, item)
         }
     }
     json_set_root(<-> out, result)
-    jsonrpc_send_result(id, json_stringify(<- out))
+    jsonrpc_send_result(id, json_stringify(out))
 }

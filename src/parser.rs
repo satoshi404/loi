@@ -269,11 +269,13 @@ impl Parser {
         let name = self.parse_identifier("shape name")?;
         let type_params = self.parse_type_params()?;
 
-        // Data bodies use brackets in Flow Syntax.
-        let close = if self.matches(TokenKind::LBracket) {
+        // Shape bodies use braces in Flow Syntax. Brackets accepted for migration.
+        let close = if self.matches(TokenKind::LBrace) {
+            TokenKind::RBrace
+        } else if self.matches(TokenKind::LBracket) {
             TokenKind::RBracket
         } else {
-            return Err(self.error_current("expected '[' to open a shape body"));
+            return Err(self.error_current("expected '{' to open a shape body"));
         };
         self.skip_newlines();
 
@@ -306,7 +308,12 @@ impl Parser {
             }
         }
 
-        let close_token = self.expect(close, "the shape body terminator")?;
+        let close_msg = if close == TokenKind::RBrace {
+            "'}' to close a shape body"
+        } else {
+            "']' to close a shape body"
+        };
+        let close_token = self.expect(close, close_msg)?;
         Ok(InterfaceDecl {
             span,
             close_line: close_token.line,
@@ -1373,14 +1380,21 @@ impl Parser {
             TokenKind::Identifier => {
                 self.advance();
                 let type_args = if self.at(TokenKind::Lt) {
-                    self.try_parse_type_args(TokenKind::LBracket)
-                        .unwrap_or_default()
+                    if let Some(args) = self.try_parse_type_args(TokenKind::LBrace) {
+                        args
+                    } else {
+                        self.try_parse_type_args(TokenKind::LBracket)
+                            .unwrap_or_default()
+                    }
                 } else {
                     Vec::new()
                 };
-                let bracket_literal =
-                    self.at(TokenKind::LBracket) && self.bracket_looks_like_shape_literal();
-                if bracket_literal {
+                let brace_literal = self.at(TokenKind::LBrace)
+                    && self.brace_looks_like_shape_literal(&token.lexeme);
+                let bracket_literal = !brace_literal
+                    && self.at(TokenKind::LBracket)
+                    && self.bracket_looks_like_shape_literal();
+                if brace_literal || bracket_literal {
                     self.parse_interface_literal(token.lexeme, type_args, span)
                 } else if type_args.is_empty() {
                     Ok(Expr::new(ExprKind::Ident(token.lexeme), span))
@@ -1434,16 +1448,14 @@ impl Parser {
         }
     }
 
-    /// Does the `[` at the current position start a Flow-Syntax shape literal
-    /// (`Name[ field: value ]`) rather than an index expression?
+    /// Legacy bracket shape literals (`Name[...]`) are accepted during migration.
     fn bracket_looks_like_shape_literal(&self) -> bool {
         if !self.at(TokenKind::LBracket) {
             return false;
         }
         if self.peek_kind(1) == TokenKind::RBracket {
-            return true; // `Name[]` is an empty shape literal
+            return true;
         }
-
         let mut depth = 0usize;
         let mut index = self.position;
         while let Some(token) = self.tokens.get(index) {
@@ -1460,6 +1472,62 @@ impl Parser {
                 }
                 TokenKind::Colon if depth == 1 => return true,
                 TokenKind::Comma if depth == 1 => return false,
+                TokenKind::Eof => return false,
+                _ => {}
+            }
+            index += 1;
+        }
+        false
+    }
+
+    /// Does the `{` at the current position start a shape literal
+    /// (`Name { field: value }`) rather than a block?
+    ///
+    /// A field initializer `ident:` at depth 1 is a strong signal. Empty `{}`
+    /// is treated as a shape literal only for uppercase/type-like names to avoid
+    /// eating `if cond {}` blocks.
+    fn brace_looks_like_shape_literal(&self, name: &str) -> bool {
+        if !self.at(TokenKind::LBrace) {
+            return false;
+        }
+        if self.peek_kind(1) == TokenKind::RBrace {
+            return name
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_uppercase());
+        }
+
+        // First significant token at depth 1 decides: shape literal fields are
+        // `ident: expr`, while blocks start with statements/keywords.
+        let mut depth = 0usize;
+        let mut index = self.position;
+        let mut saw_open = false;
+        while let Some(token) = self.tokens.get(index) {
+            match token.kind {
+                TokenKind::LBracket | TokenKind::LBrace | TokenKind::LParen => {
+                    depth += 1;
+                    if depth == 1 {
+                        saw_open = true;
+                    }
+                }
+                TokenKind::RBracket | TokenKind::RBrace | TokenKind::RParen => {
+                    if depth == 0 {
+                        return false;
+                    }
+                    depth -= 1;
+                    if depth == 0 {
+                        return false;
+                    }
+                }
+                TokenKind::Newline if depth == 1 => {}
+                TokenKind::Identifier if depth == 1 && saw_open => {
+                    let mut j = index + 1;
+                    while matches!(self.tokens.get(j).map(|t| t.kind), Some(TokenKind::Newline)) {
+                        j += 1;
+                    }
+                    return matches!(self.tokens.get(j).map(|t| t.kind), Some(TokenKind::Colon));
+                }
+                _ if depth == 1 && saw_open => return false,
                 TokenKind::Eof => return false,
                 _ => {}
             }
@@ -1534,11 +1602,13 @@ impl Parser {
         type_args: Vec<Type>,
         span: Span,
     ) -> ParseResult<Expr> {
-        // Data literals use brackets in Flow Syntax.
-        let close = if self.matches(TokenKind::LBracket) {
+        // Shape literals use braces in Flow Syntax. Brackets accepted for migration.
+        let close = if self.matches(TokenKind::LBrace) {
+            TokenKind::RBrace
+        } else if self.matches(TokenKind::LBracket) {
             TokenKind::RBracket
         } else {
-            return Err(self.error_current("expected '[' to open a shape literal"));
+            return Err(self.error_current("expected '{' to open a shape literal"));
         };
         self.skip_newlines();
 
@@ -1562,7 +1632,12 @@ impl Parser {
             }
         }
 
-        self.expect(close, "the shape literal terminator")?;
+        let close_msg = if close == TokenKind::RBrace {
+            "'}' to close a shape literal"
+        } else {
+            "']' to close a shape literal"
+        };
+        self.expect(close, close_msg)?;
         Ok(Expr::new(
             ExprKind::InterfaceLiteral {
                 name,

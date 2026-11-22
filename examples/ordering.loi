@@ -4,26 +4,18 @@
 // Build and run with:
 //     loi build examples/ordering.loi -o ordering
 //     ./ordering
-
 import "../lib/vec.loi"
 
-open mark Priority [
-    Low
-    Normal
-    High
-]
+open mark Priority [ Low, Normal, High ]
 
-open choice Status [
-    Queued: u64
-    Running: u64
-]
+open choice Status [ Queued: u64, Running: u64 ]
 
-shape Task [
+shape Task {
     priority: Priority
     status: Status
     id: u64
     label: [u8]
-]
+}
 
 open flow main
     => i32
@@ -31,55 +23,30 @@ open flow main
     protect {
         mut tasks: Vec<Task>
         vec_new<Task>(-> tasks)
-
-        vec_push<Task>(<-> tasks, Task[
-            id: 1
-            priority: Priority.Normal
-            status: Status.Queued(0)
-            label: "alpha"
-        ])
-        vec_push<Task>(<-> tasks, Task[
-            id: 2
-            priority: Priority.High
-            status: Status.Running(4)
-            label: "beta"
-        ])
-        vec_push<Task>(<-> tasks, Task[
-            id: 3
-            priority: Priority.High
-            status: Status.Queued(0)
-            label: "gamma"
-        ])
-
+        vec_push<Task>(<-> tasks, Task { id: 1, priority: Priority.Normal, status: Status.Queued(0), label: "alpha" })
+        vec_push<Task>(<-> tasks, Task { id: 2, priority: Priority.High, status: Status.Running(4), label: "beta" })
+        vec_push<Task>(<-> tasks, Task { id: 3, priority: Priority.High, status: Status.Queued(0), label: "gamma" })
         // `Ord` is structural: marks follow declaration order, choices
         // compare their variant before the payload, and shapes compare their
         // fields in declaration order. Labels use byte-slice ordering.
         vec_sort<Task>(<-> tasks)
-
         first <- vec_get<Task>(tasks, 0)
         second <- vec_get<Task>(tasks, 1)
         third <- vec_get<Task>(tasks, 2)
-        if first.id != 1 or second.id != 3 or third.id != 2 { => 1 }
-
+        if first.id != 1 or second.id != 3 or third.id != 2 {
+            => 1
+        }
         // `Eq` is structural too: the whole needle matches only when every
         // field, including the label bytes, matches.
-        found <- vec_find<Task>(tasks, Task[
-            id: 2
-            priority: Priority.High
-            status: Status.Running(4)
-            label: "beta"
-        ])
-        if found != 2 { => 2 }
-
-        missing <- vec_find<Task>(tasks, Task[
-            id: 2
-            priority: Priority.High
-            status: Status.Running(4)
-            label: "beta!"
-        ])
-        if missing != -1 { => 3 }
+        found <- vec_find<Task>(tasks, Task { id: 2, priority: Priority.High, status: Status.Running(4), label: "beta" })
+        if found != 2 {
+            => 2
+        }
+        missing <- vec_find<Task>(tasks, Task { id: 2, priority: Priority.High, status: Status.Running(4), label: "beta!" })
+        if missing != -1 {
+            => 3
+        }
     }
-
     print("ordering ok\n")
     => 0
 }

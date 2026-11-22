@@ -1,7 +1,7 @@
 # Loi Language — Specification & Development Protocol
 
-**Version:** 0.3.0-draft  
-**Status:** Active Development  
+**Version:** 0.3.0-draft
+**Status:** Active Development
 **Last Updated:** 2026-11-20
 **Author:** Clayton Pedro (Satoshi)
 
@@ -35,9 +35,9 @@ The goal is that any new model can open `development/PROGRESS.md` and immediatel
 
 ## 2. Language Overview
 
-**Name:** Loi  
-**File extension:** `.loi` (final; see 5.8)  
-**Type:** Compiled systems language  
+**Name:** Loi
+**File extension:** `.loi` (final; see 5.8)
+**Type:** Compiled systems language
 **Paradigm:** Procedural + value-oriented (no OOP, no methods)
 
 **Key goals:**
@@ -84,21 +84,21 @@ The example below is the complete reference program in canonical Flow Syntax. Se
 // The reference simulation. Braces are scopes, brackets are data,
 // arrows are movement.
 
-shape Vec2 [ x: f64, y: f64 ]
+shape Vec2 { x: f64, y: f64 }
 
-shape Particle [
+shape Particle {
     pos:   Vec2
     vel:   Vec2
     mass:  f64
     alive: bool = true
-]
+}
 
-shape World [
+shape World {
     particles: [Particle]
     gravity:   Vec2
     bounds:    Vec2
     tick:      u64 = 0
-]
+}
 
 open flow world_new
     <- count: u32
@@ -108,14 +108,14 @@ open flow world_new
     mut ps: [Particle]
     alloc(-> ps, Particle, count)          // belongs to the caller's protect
     for i in 0..count {
-        ps[i] = Particle[
+        ps[i] = Particle {
             pos:  Vec2[ x: i as f64 / count as f64 * size.x, y: size.y / 2 ],
             vel:  Vec2[ x: i as f64 * 0.1 - 5, y: 0 ],
             mass: 1 + (i % 3) as f64,
-        ]
+        }
     }
     w.particles = give(ps)                 // ps is dead, w owns the array
-    w.gravity   = Vec2[ x: 0, y: -9.81 ]
+    w.gravity   = Vec2 { x: 0, y: -9.81 }
     w.bounds    = clone(size)              // size is borrowed, so clone it
 }
 
@@ -174,7 +174,7 @@ open flow main
     mut mass: f64                          // exists before the protect
     protect {
         mut w: World
-        world_new(256, Vec2[ x: 800, y: 600 ], -> w)
+        world_new(256, Vec2 { x: 800, y: 600 }, -> w)
         for _ in 0..3600 { step(<-> w, 1.0 / 60) }
         mass = total_mass(w)               // scalar result written outside
     }                                      // w and all its memory die here
@@ -188,8 +188,8 @@ open flow main
 
 ### 4.1 Declarations and literals
 
-- `shape Name [ field: Type, ... ]` declares a data type. Fields may have a default value (`alive: bool = true`). No methods.
-- A literal always carries the type name and uses brackets: `Vec2[ x: 1, y: 2 ]`.
+- `shape Name { field: Type, ... }` declares a data type. Fields may have a default value (`alive: bool = true`). No methods.
+- A literal always carries the type name and uses brackets: `Vec2 { x: 1, y: 2 }`.
 - `name <- value` creates an immutable binding; `mut name <- value` creates a mutable one. A declaration without a value (`mut w: World`) is uninitialized and can only be passed as `->`.
 - Control flow: `if` / `else`, `while`, `for i in a..b`, `for <- p in xs` (read), `for <-> p in xs` (mutate), `continue`, `break`, and `=> value` for returns.
 
@@ -423,8 +423,8 @@ These rules were added to unblock real programs and are implemented and tested. 
 
 **Optional and error values (Block A6).**
 
-- `Option<T>` is `shape Option<T> [ present: bool = false, value: T ]` and
-  `Result<T, E>` is `shape Result<T, E> [ ok: bool = true, value: T, error: E ]`,
+- `Option<T>` is `shape Option<T> { present: bool = false, value: T }` and
+  `Result<T, E>` is `shape Result<T, E> { ok: bool = true, value: T, error: E }`,
   both declared in the standard library. They are shapes because Loi choices
   are not generic and their payloads may not contain slices.
 - A `->` out-parameter zero-initializes fields with no default, so the field
@@ -697,18 +697,18 @@ protect {
 **Decision:** cycles are represented with integer handles into an owning slice; the slice, not the links, owns the nodes.
 
 ```loi
-shape Node [
+shape Node {
     parent:       u32
     first_child:  u32
     next_sibling: u32
-]
+}
 
 no_node: u32 <- 4294967295
 ```
 
 - Indices are `u32`/`u64`; a sentinel or a `valid` flag marks "none".
 - The node array lives in the same `protect` region as the graph, so destruction is region destruction; there is no reference counting and no weak/strong distinction.
-- Reuse-after-free is detected with a generation counter: a handle is `shape Handle [ index: u32, generation: u32 ]` and stale handles are rejected by the library that owns the array.
+- Reuse-after-free is detected with a generation counter: a handle is `shape Handle { index: u32, generation: u32 }` and stale handles are rejected by the library that owns the array.
 - Parent pointers, doubly linked lists and general graphs all become index fields.
 
 **Why:** handles preserve single ownership, are trivially copyable, and make the owner explicit. They also produce stable, cache-friendly layouts.
@@ -831,6 +831,16 @@ LSP's 0-based `line`/`character` to the compiler's 1-based positions, call
 response. Compiler `help` text has no LSP diagnostic field, so the server
 appends it to the displayed message instead.
 
+`loi lsp-info FILE --kind KIND [--line N --column N] [--uri URI] [--new-name NAME]`
+exposes compiler-backed editor information. Supported kinds: `hover`,
+`definition`, `signature`, `references`, `prepareRename`, `rename`,
+`documentSymbol`, `semanticTokens`, `inlayHint`, `foldingRange`. Position-based
+kinds take 1-based `--line`/`--column`; `rename` requires `--new-name`; `--uri`
+is echoed in location-bearing results. The server advertises the corresponding
+capabilities, converts LSP 0-based positions, and forwards requests over the
+cached editor buffer. It decodes `%XX` escapes in `file://` URIs and drops the
+extra slash before a Windows drive, keeping the separate stdio server model.
+
 The compiler also reports source-level warnings for bindings that are never
 read: local `<-` bindings, `for` variables and `guard` bindings. A `_` binding and
 parameters are deliberate and stay quiet. Warnings are computed from the
@@ -915,7 +925,7 @@ The table below records the historical migration mapping. The left column is no 
 
 | Historical (removed) | Canonical Flow Syntax | Why |
 |---|---|---|
-| `interface Vec2 { ... }` | `shape Vec2 [ ... ]` | data-only types; brackets mark data |
+| `interface Vec2 { ... }` | `shape Vec2 { ... }` | data-only types; brackets mark data |
 | `fun f(...)` | `flow f ...` | functions are data flow through directions |
 | `in x: T` | `<- x: T` | direction glyph, not a keyword |
 | `out x: T` | `-> x: T` | same |
@@ -928,7 +938,7 @@ The table below records the historical migration mapping. The left column is no 
 | `copy(x)` | `clone(x)` | explicit duplication |
 | `visible` / `hidden` | `open` / `sealed` | module boundary; default `sealed` |
 | `[]T` | `[T]` | bracket = data |
-| `Vec2{ x: 1 }` | `Vec2[ x: 1 ]` | brace = scope; bracket = value |
+| `Vec2{ x: 1 }` | `Vec2 { x: 1 }` | brace = scope; bracket = value |
 | `for in p in xs` | `for <- p in xs` | same direction glyphs |
 | `for inout p in xs` | `for <-> p in xs` | same |
 | call `f(out w)` | `f(-> w)` | same |
@@ -937,8 +947,8 @@ The table below records the historical migration mapping. The left column is no 
 
 **Implemented details**
 
-- **Shapes** use brackets: `shape Vec2 [ x: f64, y: f64 ]`; the closing `]` may be on its own line. `shape Name []` is an empty shape.
-- **Shape literals** use brackets: `Vec2[ x: 1, y: 2 ]` and `Vec2[]`. Bracket literals are unambiguous in `if`/`while`/`for` headers, so the formatter no longer inserts parentheses there.
+- **Shapes** use brackets: `shape Vec2 { x: f64, y: f64 }`; the closing `]` may be on its own line. `shape Name {}` is an empty shape.
+- **Shape literals** use brackets: `Vec2 { x: 1, y: 2 }` and `Vec2 {}`. Bracket literals are unambiguous in `if`/`while`/`for` headers, so the formatter no longer inserts parentheses there.
 - **Functions** may be written inline (`flow f(<- x: i32) => i32 { ... }`) or vertically:
 
   ```loi
@@ -962,21 +972,21 @@ The table below records the historical migration mapping. The left column is no 
 Canonical reference:
 
 ```loi
-shape Vec2 [ x: f64, y: f64 ]
+shape Vec2 { x: f64, y: f64 }
 
-shape Particle [
+shape Particle {
     pos:   Vec2
     vel:   Vec2
     mass:  f64
     alive: bool = true
-]
+}
 
-shape World [
+shape World {
     particles: [Particle]
     gravity:   Vec2
     bounds:    Vec2
     tick:      u64 = 0
-]
+}
 
 open flow world_new
     <- count: u32
@@ -986,14 +996,14 @@ open flow world_new
     mut ps: [Particle]
     alloc(-> ps, Particle, count)
     for i in 0..count {
-        ps[i] = Particle[
+        ps[i] = Particle {
             pos: Vec2[ x: i as f64 / count as f64 * size.x, y: size.y / 2 ],
             vel: Vec2[ x: i as f64 * 0.1 - 5, y: 0 ],
             mass: 1 + (i % 3) as f64,
-        ]
+        }
     }
     w.particles = give(ps)
-    w.gravity = Vec2[ x: 0, y: -9.81 ]
+    w.gravity = Vec2 { x: 0, y: -9.81 }
     w.bounds = clone(size)
 }
 
@@ -1138,7 +1148,7 @@ default and the semantic oracle.
 - Multi-character tokens use **longest match first**: `<->`, `<-`, `=>`, `..`, `->`, `<<=`, `>>=`, `<<`, `>>`, `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `==`, `!=`, `<=`, `>=`.
 - Comments start with `//` and run to the end of the line.
 - Fields in a `shape` body and arguments in a call are separated by commas or newlines.
-- A top-level `:` inside `[...]` marks a shape literal (`Vec2[ x: i32 ]`) or a typed slice literal (`[i32: 1, 2]`); without one, `[...]` is an index or an inferred slice literal.
+- A top-level `:` inside `[...]` marks a shape literal (`Vec2 { x: i32 }`) or a typed slice literal (`[i32: 1, 2]`); without one, `[...]` is an index or an inferred slice literal.
 
 ---
 

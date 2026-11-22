@@ -16,18 +16,62 @@
 // imports still resolve. Set LOI_COMPILER to choose the compiler binary
 // (default: `loi`). The process is a guarded resource, so its captured output
 // is released on every exit path. Build with `lib/lsp_shim.c` as well.
+import "../lib/ctype.loi"
 
 import "../lib/hash.loi"
+
 import "../lib/json.loi"
+
 import "../lib/jsonrpc.loi"
+
 import "../lib/lsp.loi"
+
 import "../lib/os.loi"
+
 import "../lib/process.loi"
+
 import "../lib/std.loi"
+
 import "../lib/string.loi"
+
 import "../lib/vec.loi"
 
-/// Strip the `file://` prefix from a document URI.
+/// Decode `%XX` escapes from a URI path. VS Code percent-encodes spaces and
+/// non-ASCII bytes in `file://` URIs; the compiler checks ordinary paths.
+flow uri_decode
+    <- text: [u8]
+    => [u8]
+{
+    mut out: [u8]
+    alloc(-> out, u8, text.len)
+    mut at: u64 <- 0
+    mut index: u64 <- 0
+    while index < text.len {
+        if text[index] == 37 and index + 2 < text.len {
+            high <- ctype_hex_value(text[index + 1])
+            low <- ctype_hex_value(text[index + 2])
+            if high >= 0 and low >= 0 {
+                out[at] = (high * 16 + low) as u8
+                at += 1
+                index += 3
+                continue
+            }
+        }
+        out[at] = text[index]
+        at += 1
+        index += 1
+    }
+    mut decoded: [u8]
+    alloc(-> decoded, u8, at)
+    for i in 0..at {
+        decoded[i] = out[i]
+    }
+    => give(decoded)
+}
+
+/// Convert a document URI to a path the compiler can open. The canonical
+/// Windows form `file:///C:/dir/file.loi` has an extra slash before the drive;
+/// POSIX paths keep their leading slash.
 open flow document_path
     <- uri: [u8]
     => [u8]
@@ -35,7 +79,11 @@ open flow document_path
     if uri.len > 7 {
         prefix <- view(uri, 0, 7)
         if str_eq(prefix, "file://") {
-            => view(uri, 7, uri.len)
+            path <- uri_decode(view(uri, 7, uri.len))
+            if path.len >= 3 and path[0] == 47 and ctype_is_alpha(path[1]) and path[2] == 58 {
+                => view(path, 1, path.len)
+            }
+            => path
         }
     }
     => uri
@@ -46,24 +94,24 @@ open flow request_uri
     <- request: JsonRpcRequest
     => [u8]
 {
-    root <- json_root(<- request.doc)
-    params <- json_object_get(<- request.doc, root, "params")
-    if params < 0 or json_kind(<- request.doc, params) != JsonKind.Object {
+    root <- json_root(request.doc)
+    params <- json_object_get(request.doc, root, "params")
+    if params < 0 or json_kind(request.doc, params) != JsonKind.Object {
         => ""
     }
-    document <- json_object_get(<- request.doc, params, "textDocument")
-    if document < 0 or json_kind(<- request.doc, document) != JsonKind.Object {
+    document <- json_object_get(request.doc, params, "textDocument")
+    if document < 0 or json_kind(request.doc, document) != JsonKind.Object {
         => ""
     }
-    uri_node <- json_object_get(<- request.doc, document, "uri")
+    uri_node <- json_object_get(request.doc, document, "uri")
     if uri_node < 0 {
         => ""
     }
-    => json_string(<- request.doc, uri_node)
+    => json_string(request.doc, uri_node)
 }
 
 /// Byte offset of the last `/` in `path`, or -1 when the path has no directory.
-sealed flow last_slash
+flow last_slash
     <- path: [u8]
     => i64
 {
@@ -122,24 +170,24 @@ open flow document_text
     => [u8]
 {
     found = false
-    document <- json_object_get(<- doc, params, "textDocument")
-    if document >= 0 and json_kind(<- doc, document) == JsonKind.Object {
-        text <- json_object_get(<- doc, document, "text")
-        if text >= 0 and json_kind(<- doc, text) == JsonKind.String {
+    document <- json_object_get(doc, params, "textDocument")
+    if document >= 0 and json_kind(doc, document) == JsonKind.Object {
+        text <- json_object_get(doc, document, "text")
+        if text >= 0 and json_kind(doc, text) == JsonKind.String {
             found = true
-            => json_string(<- doc, text)
+            => json_string(doc, text)
         }
     }
-    changes <- json_object_get(<- doc, params, "contentChanges")
-    if changes >= 0 and json_kind(<- doc, changes) == JsonKind.Array {
-        count <- json_array_len(<- doc, changes)
+    changes <- json_object_get(doc, params, "contentChanges")
+    if changes >= 0 and json_kind(doc, changes) == JsonKind.Array {
+        count <- json_array_len(doc, changes)
         if count > 0 {
-            change <- json_array_get(<- doc, changes, count - 1)
-            if json_kind(<- doc, change) == JsonKind.Object {
-                text <- json_object_get(<- doc, change, "text")
-                if text >= 0 and json_kind(<- doc, text) == JsonKind.String {
+            change <- json_array_get(doc, changes, count - 1)
+            if json_kind(doc, change) == JsonKind.Object {
+                text <- json_object_get(doc, change, "text")
+                if text >= 0 and json_kind(doc, text) == JsonKind.String {
                     found = true
-                    => json_string(<- doc, text)
+                    => json_string(doc, text)
                 }
             }
         }
@@ -148,7 +196,7 @@ open flow document_text
 }
 
 /// Check `path` with the real compiler and publish its diagnostics for `uri`.
-sealed flow check_and_publish
+flow check_and_publish
     <- compiler: [u8]
     <- path: [u8]
     <- uri: [u8]
@@ -161,8 +209,7 @@ sealed flow check_and_publish
     vec_push<[u8]>(<-> args, "json")
     vec_push<[u8]>(<-> args, "--color")
     vec_push<[u8]>(<-> args, "never")
-
-    guard child <- process_spawn_args(compiler, vec_view<[u8]>(<- args, 0, args.len)) {
+    guard child <- process_spawn_args(compiler, vec_view<[u8]>(args, 0, args.len)) {
         diagnostics <- process_stderr(child)
         lsp_publish_diagnostics(uri, diagnostics)
     }
@@ -172,29 +219,27 @@ sealed flow check_and_publish
 open flow publish_diagnostics_for
     <- request: JsonRpcRequest
 {
-    root <- json_root(<- request.doc)
-    params <- json_object_get(<- request.doc, root, "params")
-    if params < 0 or json_kind(<- request.doc, params) != JsonKind.Object {
+    root <- json_root(request.doc)
+    params <- json_object_get(request.doc, root, "params")
+    if params < 0 or json_kind(request.doc, params) != JsonKind.Object {
         =>
     }
-    document <- json_object_get(<- request.doc, params, "textDocument")
-    if document < 0 or json_kind(<- request.doc, document) != JsonKind.Object {
+    document <- json_object_get(request.doc, params, "textDocument")
+    if document < 0 or json_kind(request.doc, document) != JsonKind.Object {
         =>
     }
-    uri_node <- json_object_get(<- request.doc, document, "uri")
+    uri_node <- json_object_get(request.doc, document, "uri")
     if uri_node < 0 {
         =>
     }
-    uri <- json_string(<- request.doc, uri_node)
+    uri <- json_string(request.doc, uri_node)
     path <- document_path(uri)
-
     mut compiler: [u8] <- os_env("LOI_COMPILER")
     if compiler.len == 0 {
         compiler = "loi"
     }
-
     mut has_text: bool
-    text <- document_text(<- request.doc, params, -> has_text)
+    text <- document_text(request.doc, params, -> has_text)
     if has_text {
         // Keep the editor buffer for later completion requests; unlike the
         // check shadow, this cache survives until `didClose`.
@@ -206,7 +251,6 @@ open flow publish_diagnostics_for
         lsp_remove_document(shadow)
         =>
     }
-
     // A notification without text (for example a bare didSave) only reads the
     // file on disk; it must never write over the editor's document.
     check_and_publish(compiler, path, uri)
@@ -214,31 +258,24 @@ open flow publish_diagnostics_for
 
 /// Answer `textDocument/completion` by asking `loi complete` about the last
 /// editor buffer. LSP positions are 0-based; the compiler takes 1-based ones.
-sealed flow complete_for
+flow complete_for
     <- request: JsonRpcRequest
 {
     uri <- request_uri(request)
     if uri.len == 0 {
         =>
     }
-    root <- json_root(<- request.doc)
-    params <- json_object_get(<- request.doc, root, "params")
-    if params < 0 or json_kind(<- request.doc, params) != JsonKind.Object {
+    root <- json_root(request.doc)
+    params <- json_object_get(request.doc, root, "params")
+    if params < 0 or json_kind(request.doc, params) != JsonKind.Object {
         =>
     }
-    position <- json_object_get(<- request.doc, params, "position")
-    if position < 0 or json_kind(<- request.doc, position) != JsonKind.Object {
+    position <- json_object_get(request.doc, params, "position")
+    if position < 0 or json_kind(request.doc, position) != JsonKind.Object {
         =>
     }
-    line <- json_number_i64(
-        <- request.doc,
-        json_object_get(<- request.doc, position, "line")
-    ) + 1
-    character <- json_number_i64(
-        <- request.doc,
-        json_object_get(<- request.doc, position, "character")
-    ) + 1
-
+    line <- json_number_i64(request.doc, json_object_get(request.doc, position, "line")) + 1
+    character <- json_number_i64(request.doc, json_object_get(request.doc, position, "character")) + 1
     cache <- completion_cache_path(uri)
     mut source: [u8] <- lsp_read_document(cache)
     mut checked_path: [u8] <- give(cache)
@@ -249,7 +286,6 @@ sealed flow complete_for
     if source.len == 0 {
         =>
     }
-
     mut compiler: [u8] <- os_env("LOI_COMPILER")
     if compiler.len == 0 {
         compiler = "loi"
@@ -262,10 +298,180 @@ sealed flow complete_for
     vec_push<[u8]>(<-> args, i64_to_bytes(line))
     vec_push<[u8]>(<-> args, "--column")
     vec_push<[u8]>(<-> args, i64_to_bytes(character))
-
-    guard child <- process_spawn_args(compiler, vec_view<[u8]>(<- args, 0, args.len)) {
+    guard child <- process_spawn_args(compiler, vec_view<[u8]>(args, 0, args.len)) {
         result <- process_stdout(child)
         lsp_send_completion(request.id, result)
+    }
+}
+
+/// Answer hover, definition and signature help with the same cached buffer
+/// used by completion. The compiler returns a complete LSP result, so the
+/// server only has to forward it; no half-typed file is ever checked here.
+flow info_for
+    <- request: JsonRpcRequest
+    <- kind: [u8]
+{
+    uri <- request_uri(request)
+    if uri.len == 0 {
+        =>
+    }
+    root <- json_root(request.doc)
+    params <- json_object_get(request.doc, root, "params")
+    if params < 0 or json_kind(request.doc, params) != JsonKind.Object {
+        =>
+    }
+    position <- json_object_get(request.doc, params, "position")
+    if position < 0 or json_kind(request.doc, position) != JsonKind.Object {
+        =>
+    }
+    line <- json_number_i64(request.doc, json_object_get(request.doc, position, "line")) + 1
+    character <- json_number_i64(request.doc, json_object_get(request.doc, position, "character")) + 1
+    cache <- completion_cache_path(uri)
+    mut source: [u8] <- lsp_read_document(cache)
+    mut checked_path: [u8] <- give(cache)
+    if source.len == 0 {
+        checked_path = document_path(uri)
+        source = lsp_read_document(checked_path)
+    }
+    if source.len == 0 {
+        =>
+    }
+    mut compiler: [u8] <- os_env("LOI_COMPILER")
+    if compiler.len == 0 {
+        compiler = "loi"
+    }
+    mut args: Vec<[u8]>
+    vec_new<[u8]>(-> args)
+    vec_push<[u8]>(<-> args, "lsp-info")
+    vec_push<[u8]>(<-> args, checked_path)
+    vec_push<[u8]>(<-> args, "--kind")
+    vec_push<[u8]>(<-> args, kind)
+    vec_push<[u8]>(<-> args, "--line")
+    vec_push<[u8]>(<-> args, i64_to_bytes(line))
+    vec_push<[u8]>(<-> args, "--column")
+    vec_push<[u8]>(<-> args, i64_to_bytes(character))
+    vec_push<[u8]>(<-> args, "--uri")
+    vec_push<[u8]>(<-> args, uri)
+    guard child <- process_spawn_args(compiler, vec_view<[u8]>(args, 0, args.len)) {
+        result <- process_stdout(child)
+        mut length: u64 <- result.len
+        if length > 0 and result[length - 1] == 10 {
+            length = length - 1
+            if length > 0 and result[length - 1] == 13 {
+                length = length - 1
+            }
+        }
+        reply <- view(result, 0, length)
+        jsonrpc_send_result(request.id, reply)
+    }
+}
+
+flow info_for_doc
+    <- request: JsonRpcRequest
+    <- kind: [u8]
+{
+    uri <- request_uri(request)
+    if uri.len == 0 {
+        =>
+    }
+    cache <- completion_cache_path(uri)
+    mut source: [u8] <- lsp_read_document(cache)
+    mut checked_path: [u8] <- give(cache)
+    if source.len == 0 {
+        checked_path = document_path(uri)
+        source = lsp_read_document(checked_path)
+    }
+    if source.len == 0 {
+        =>
+    }
+    mut compiler: [u8] <- os_env("LOI_COMPILER")
+    if compiler.len == 0 {
+        compiler = "loi"
+    }
+    mut args: Vec<[u8]>
+    vec_new<[u8]>(-> args)
+    vec_push<[u8]>(<-> args, "lsp-info")
+    vec_push<[u8]>(<-> args, checked_path)
+    vec_push<[u8]>(<-> args, "--kind")
+    vec_push<[u8]>(<-> args, kind)
+    vec_push<[u8]>(<-> args, "--uri")
+    vec_push<[u8]>(<-> args, uri)
+    guard child <- process_spawn_args(compiler, vec_view<[u8]>(args, 0, args.len)) {
+        result <- process_stdout(child)
+        mut length: u64 <- result.len
+        if length > 0 and result[length - 1] == 10 {
+            length = length - 1
+            if length > 0 and result[length - 1] == 13 {
+                length = length - 1
+            }
+        }
+        reply <- view(result, 0, length)
+        jsonrpc_send_result(request.id, reply)
+    }
+}
+
+flow info_for_rename
+    <- request: JsonRpcRequest
+{
+    uri <- request_uri(request)
+    if uri.len == 0 {
+        =>
+    }
+    root <- json_root(request.doc)
+    params <- json_object_get(request.doc, root, "params")
+    if params < 0 or json_kind(request.doc, params) != JsonKind.Object {
+        =>
+    }
+    position <- json_object_get(request.doc, params, "position")
+    if position < 0 or json_kind(request.doc, position) != JsonKind.Object {
+        =>
+    }
+    new_name_node <- json_object_get(request.doc, params, "newName")
+    if new_name_node < 0 {
+        =>
+    }
+    new_name <- json_string(request.doc, new_name_node)
+    line <- json_number_i64(request.doc, json_object_get(request.doc, position, "line")) + 1
+    character <- json_number_i64(request.doc, json_object_get(request.doc, position, "character")) + 1
+    cache <- completion_cache_path(uri)
+    mut source: [u8] <- lsp_read_document(cache)
+    mut checked_path: [u8] <- give(cache)
+    if source.len == 0 {
+        checked_path = document_path(uri)
+        source = lsp_read_document(checked_path)
+    }
+    if source.len == 0 {
+        =>
+    }
+    mut compiler: [u8] <- os_env("LOI_COMPILER")
+    if compiler.len == 0 {
+        compiler = "loi"
+    }
+    mut args: Vec<[u8]>
+    vec_new<[u8]>(-> args)
+    vec_push<[u8]>(<-> args, "lsp-info")
+    vec_push<[u8]>(<-> args, checked_path)
+    vec_push<[u8]>(<-> args, "--kind")
+    vec_push<[u8]>(<-> args, "rename")
+    vec_push<[u8]>(<-> args, "--line")
+    vec_push<[u8]>(<-> args, i64_to_bytes(line))
+    vec_push<[u8]>(<-> args, "--column")
+    vec_push<[u8]>(<-> args, i64_to_bytes(character))
+    vec_push<[u8]>(<-> args, "--uri")
+    vec_push<[u8]>(<-> args, uri)
+    vec_push<[u8]>(<-> args, "--new-name")
+    vec_push<[u8]>(<-> args, new_name)
+    guard child <- process_spawn_args(compiler, vec_view<[u8]>(args, 0, args.len)) {
+        result <- process_stdout(child)
+        mut length: u64 <- result.len
+        if length > 0 and result[length - 1] == 10 {
+            length = length - 1
+            if length > 0 and result[length - 1] == 13 {
+                length = length - 1
+            }
+        }
+        reply <- view(result, 0, length)
+        jsonrpc_send_result(request.id, reply)
     }
 }
 
@@ -275,10 +481,7 @@ open flow dispatch
     => bool
 {
     if str_eq(request.method, "initialize") {
-        jsonrpc_send_result(
-            request.id,
-            "{\"capabilities\":{\"textDocumentSync\":1,\"publishDiagnosticsProvider\":true,\"completionProvider\":{\"resolveProvider\":false,\"triggerCharacters\":[\".\"]}}}"
-        )
+        jsonrpc_send_result(request.id, "{\"capabilities\":{\"textDocumentSync\":1,\"publishDiagnosticsProvider\":true,\"completionProvider\":{\"resolveProvider\":false,\"triggerCharacters\":[\".\"]},\"hoverProvider\":true,\"definitionProvider\":true,\"referencesProvider\":true,\"renameProvider\":{\"prepareProvider\":true},\"documentSymbolProvider\":true,\"foldingRangeProvider\":true,\"inlayHintProvider\":true,\"semanticTokensProvider\":{\"legend\":{\"tokenTypes\":[\"keyword\",\"number\",\"string\",\"function\",\"type\",\"variable\",\"comment\"],\"tokenModifiers\":[]},\"full\":true},\"codeActionProvider\":true,\"signatureHelpProvider\":{\"triggerCharacters\":[\"(\",\",\"]}}}")
         => true
     }
     if str_eq(request.method, "shutdown") {
@@ -310,6 +513,50 @@ open flow dispatch
     }
     if str_eq(request.method, "textDocument/completion") {
         complete_for(request)
+        => true
+    }
+    if str_eq(request.method, "textDocument/hover") {
+        info_for(request, "hover")
+        => true
+    }
+    if str_eq(request.method, "textDocument/definition") {
+        info_for(request, "definition")
+        => true
+    }
+    if str_eq(request.method, "textDocument/signatureHelp") {
+        info_for(request, "signature")
+        => true
+    }
+    if str_eq(request.method, "textDocument/references") {
+        info_for(request, "references")
+        => true
+    }
+    if str_eq(request.method, "textDocument/prepareRename") {
+        info_for(request, "prepareRename")
+        => true
+    }
+    if str_eq(request.method, "textDocument/rename") {
+        info_for_rename(request)
+        => true
+    }
+    if str_eq(request.method, "textDocument/documentSymbol") {
+        info_for_doc(request, "documentSymbol")
+        => true
+    }
+    if str_eq(request.method, "textDocument/semanticTokens/full") {
+        info_for_doc(request, "semanticTokens")
+        => true
+    }
+    if str_eq(request.method, "textDocument/inlayHint") {
+        info_for_doc(request, "inlayHint")
+        => true
+    }
+    if str_eq(request.method, "textDocument/foldingRange") {
+        info_for_doc(request, "foldingRange")
+        => true
+    }
+    if str_eq(request.method, "textDocument/codeAction") {
+        jsonrpc_send_result(request.id, "[]")
         => true
     }
     // Notifications never get a reply, even when their method is unknown.

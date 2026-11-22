@@ -12,12 +12,11 @@
 //!
 //! The byte-level helpers are pure Loi. Foreign sockets stay behind the shim
 //! as integer descriptors, so no pointer types enter ordinary Loi values.
-
 /// Result of `net_parse_ipv4`: `ok` is false for malformed addresses.
-open shape NetIpv4Result [
+open shape NetIpv4Result {
     ok: bool
     addr: u32
-]
+}
 
 /// Build a big-endian IPv4 address from four octets.
 open flow net_ipv4
@@ -27,7 +26,7 @@ open flow net_ipv4
     <- d: u8
     => u32
 {
-    => (a as u32) << 24 | (b as u32) << 16 | (c as u32) << 8 | d as u32
+    => a as u32 << 24 | b as u32 << 16 | c as u32 << 8 | d as u32
 }
 
 /// Read octet 0 (most significant) through 3; out-of-range indices return 0.
@@ -64,29 +63,29 @@ open flow net_parse_ipv4
         byte <- text[i]
         if byte == 46 {
             if digits == 0 or value > 255 {
-                => NetIpv4Result[ ok: false, addr: 0 ]
+                => NetIpv4Result { ok: false, addr: 0 }
             }
-            addr = (addr << 8) | value
+            addr = addr << 8 | value
             parts += 1
             value = 0
             digits = 0
         } else {
             if not (byte >= 48 and byte <= 57) {
-                => NetIpv4Result[ ok: false, addr: 0 ]
+                => NetIpv4Result { ok: false, addr: 0 }
             }
             value = value * 10 + (byte - 48) as u32
             digits += 1
             if value > 255 {
-                => NetIpv4Result[ ok: false, addr: 0 ]
+                => NetIpv4Result { ok: false, addr: 0 }
             }
         }
         i += 1
     }
     if digits == 0 or value > 255 or parts != 3 {
-        => NetIpv4Result[ ok: false, addr: 0 ]
+        => NetIpv4Result { ok: false, addr: 0 }
     }
-    addr = (addr << 8) | value
-    => NetIpv4Result[ ok: true, addr: addr ]
+    addr = addr << 8 | value
+    => NetIpv4Result { ok: true, addr: addr }
 }
 
 extern flow loi_net_tcp_connect
@@ -156,15 +155,13 @@ open flow net_recv
 // ---------------------------------------------------------------------------
 // Linear socket handles
 // ---------------------------------------------------------------------------
-
 //! A `TcpStream` is a linear non-memory resource. Use it with `guard`; the
 //! convention-named `tcp_stream_release` flow closes the socket on every exit
 //! path. The raw descriptor helpers above remain available for FFI bindings.
-
 /// An owned connected socket descriptor. `fd` is -1 after failure or release.
-open shape TcpStream [
+open shape TcpStream {
     fd: i32
-]
+}
 
 /// Close the descriptor. `guard` calls this automatically.
 open flow tcp_stream_release
@@ -184,9 +181,9 @@ open flow tcp_stream_connect
     => TcpStream
 {
     if not net_port_is_valid(port) {
-        => TcpStream[ fd: -1 ]
+        => TcpStream { fd: -1 }
     }
-    => TcpStream[ fd: loi_net_tcp_connect(host, port) ]
+    => TcpStream { fd: loi_net_tcp_connect(host, port) }
 }
 
 /// Send every byte of `data`; returns false on a short write or error.

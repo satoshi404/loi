@@ -1,4 +1,5 @@
 open mark Mode [ Fast, Safe ]
+
 Bad: Mode <- impure_mark()
 
 open flow impure_mark

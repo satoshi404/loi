@@ -1,13 +1,13 @@
-shape Vec<T> [
+shape Vec<T> {
     data: [T]
     len: u64
-]
+}
 
 flow f<T>
     <- x: T
     => i32
 {
-    empty <- Vec<T>[ data: [T:], len: 0 ]
+    empty <- Vec<T> { data: [T:], len: 0 }
     => f<Vec<T>>(empty)
 }
 

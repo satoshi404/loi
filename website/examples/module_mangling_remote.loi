@@ -1,12 +1,11 @@
 //! The second policy module. `Policy` and `policy` are also declared here;
 //! module-qualified mangling keeps their C symbols distinct.
-
-open shape Policy [
+open shape Policy {
     bonus: i32
-]
+}
 
 open flow policy
     => Policy
 {
-    => Policy[ bonus: 7 ]
+    => Policy { bonus: 7 }
 }

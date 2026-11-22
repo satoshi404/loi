@@ -1,6 +1,8 @@
-shape Item [ value: i32 ]
+shape Item {
+    value: i32
+}
 
-sealed flow sum_items
+flow sum_items
     <- items: [Item]
     <- n: u32
     => i32
@@ -12,7 +14,7 @@ sealed flow sum_items
     => total
 }
 
-sealed flow double_items
+flow double_items
     <-> items: [Item]
     <- n: u32
 {
@@ -27,18 +29,15 @@ open flow main
     protect {
         mut items: [Item]
         alloc(-> items, Item, 4)
-        items[0] = Item[ value: 1 ]
-        items[1] = Item[ value: 2 ]
-        items[2] = Item[ value: 3 ]
-        items[3] = Item[ value: 4 ]
-
+        items[0] = Item { value: 1 }
+        items[1] = Item { value: 2 }
+        items[2] = Item { value: 3 }
+        items[3] = Item { value: 4 }
         mut s: i32 <- sum_items(items, 4)
         if s != 10 {
             => 3
         }
-
         double_items(<-> items, 4)
-
         s = sum_items(items, 4)
         if s != 20 {
             => 4

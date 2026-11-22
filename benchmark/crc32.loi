@@ -10,7 +10,6 @@ open flow main
         for i in 0..data.len {
             data[i] = ((i * 97 + 13) % 251) as u8
         }
-
         mut state: u32 <- CRC32_INIT
         mut round: u64 <- 0
         while round < 1024 {

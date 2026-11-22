@@ -1,6 +1,7 @@
 use std::env;
 use std::ffi::OsString;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command};
 
@@ -9,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use loi::modules::{ModuleExport, ModuleView, ResolutionContext};
 use loi::{ColorChoice, ErrorFormat};
 
-const USAGE: &str = "usage:\n  loi <lex|parse|fmt|check> <file.loi>\n  loi complete <file.loi> --line N --column N\n  loi gen <file.loi> [-o output.c] [--emit-h header.h] [--source-map map.json]\n                    [--emit-llvm-ir file.ll]\n  loi build <file.loi> [-o output] [--emit exe|obj|lib]\n                    [--debug|--release] [--rebuild] [--emit-c file.c] [--emit-h header.h]\n                    [--arena-size BYTES] [--source-map map.json] [--cc-flag FLAG]...\n                    [--c-source FILE]... [--backend c|llvm]\n  loi clean <file.loi> [-o output]\n\n'gen', 'build' and 'clean' accept -o/--output.\n'--emit', '--debug', '--release', '--rebuild', '--emit-c', '--emit-h', '--arena-size', '--source-map', '--cc-flag' and '--c-source'\nare only supported by 'build'. '--c-source' compiles an extra C file (a vendored\nFFI shim) and links it into an executable or library; it is rejected with '--emit obj'.\n'--emit-h', '--source-map' and '--emit-llvm-ir' are also supported by 'gen'.\n'--line' and '--column' are only supported by 'complete'; positions are 1-based\nand the completion items are printed as JSON on standard output.\n'--backend' selects the LLVM opt-in backend (C11 is the default); it supports\nonly single-file executables and rejects C-only build options.\nWith '--emit obj' the default output is '<input stem>.o'; with '--emit lib'\nit is 'lib<input stem>.a'; otherwise it is './a.out'.\n'build' invokes 'cc' and 'ar'; set 'CC'/'AR' to override them. Those values\nmay contain arguments, split like a POSIX shell command line ('...' quotes,\n\"...\" quotes and backslash escapes).\nWithout -o, 'clean' removes ./a.out, <input stem>.o and lib<input stem>.a\nwhen their .loi-stamp files exist; with -o it removes exactly that output\nand its stamp. Both forms also remove generated C retained for that output\nthrough 'build --emit-c'. It does not read or check the source.\n\noptions:\n  -h, --help     show this help\n  -V, --version  show the compiler version\n  -g, --debug    compile with debug info (-g)\n      --release  compile with optimizations (-O2)\n      --rebuild  force recompilation, ignoring the incremental stamp\n      --arena-size BYTES  set the protect arena size (default 67108864 = 64 MiB)\n      --source-map FILE  write source map JSON Lines to FILE\n      --error-format FMT  diagnostic format: human, short or json (default human)\n      --color WHEN   colorize diagnostics: auto, always or never (default auto)\n      --line N      1-based line for 'complete' (LSP line + 1)\n      --column N    1-based column for 'complete' (LSP character + 1)";
+const USAGE: &str = "usage:\n  loi <lex|parse|fmt|check> <file.loi>\n  loi complete <file.loi> --line N --column N\n  loi lsp-info <file.loi> --kind hover|definition|signature --line N --column N\n                          [--uri file:///path/to/file.loi]\n  loi gen <file.loi> [-o output.c] [--emit-h header.h] [--source-map map.json]\n                    [--emit-llvm-ir file.ll]\n  loi build <file.loi> [-o output] [--emit exe|obj|lib]\n                    [--debug|--release] [--rebuild] [--emit-c file.c] [--emit-h header.h]\n                    [--arena-size BYTES] [--source-map map.json] [--cc-flag FLAG]...\n                    [--c-source FILE]... [--backend c|llvm]\n  loi clean <file.loi> [-o output]\n\n'gen', 'build' and 'clean' accept -o/--output.\n'--emit', '--debug', '--release', '--rebuild', '--emit-c', '--emit-h', '--arena-size', '--source-map', '--cc-flag' and '--c-source'\nare only supported by 'build'. '--c-source' compiles an extra C file (a vendored\nFFI shim) and links it into an executable or library; it is rejected with '--emit obj'.\n'--emit-h', '--source-map' and '--emit-llvm-ir' are also supported by 'gen'.\n'--line' and '--column' are supported by 'complete' and 'lsp-info'; positions are\n1-based. 'complete' prints candidates, while 'lsp-info' prints a ready-to-use\nLSP hover, definition or signature-help result.\n'--backend' selects the LLVM opt-in backend (C11 is the default); it supports\nonly single-file executables and rejects C-only build options.\nWith '--emit obj' the default output is '<input stem>.o'; with '--emit lib'\nit is 'lib<input stem>.a'; otherwise it is './a.out'.\n'build' invokes 'cc' and 'ar'; set 'CC'/'AR' to override them. Those values\nmay contain arguments, split like a POSIX shell command line ('...' quotes,\n\"...\" quotes and backslash escapes).\nWithout -o, 'clean' removes ./a.out, <input stem>.o and lib<input stem>.a\nwhen their .loi-stamp files exist; with -o it removes exactly that output\nand its stamp. Both forms also remove generated C retained for that output\nthrough 'build --emit-c'. It does not read or check the source.\n\noptions:\n  -h, --help     show this help\n  -V, --version  show the compiler version\n  -g, --debug    compile with debug info (-g)\n      --release  compile with optimizations (-O2)\n      --rebuild  force recompilation, ignoring the incremental stamp\n      --arena-size BYTES  set the protect arena size (default 67108864 = 64 MiB)\n      --source-map FILE  write source map JSON Lines to FILE\n      --error-format FMT  diagnostic format: human, short or json (default human)\n      --color WHEN   colorize diagnostics: auto, always or never (default auto)\n      --line N      1-based line for 'complete' (LSP line + 1)\n      --column N    1-based column for 'complete' (LSP character + 1)";
 
 fn main() {
     let options = Options::parse();
@@ -51,6 +52,19 @@ fn main() {
                 .column
                 .expect("'--column' is required for 'complete'"),
         ),
+        "lsp-info" => lsp_info_source(
+            &source,
+            primary_path,
+            options.line.unwrap_or(1),
+            options.column.unwrap_or(1),
+            options.uri.as_deref().unwrap_or(""),
+            options
+                .kind
+                .as_deref()
+                .and_then(loi::InfoKind::parse)
+                .expect("'--kind' is validated for 'lsp-info'"),
+            options.new_name.as_deref().unwrap_or(""),
+        ),
         "gen" => gen_source(
             &source,
             primary_path,
@@ -81,7 +95,7 @@ fn main() {
         ),
         other => {
             eprintln!(
-                "loi: unknown mode '{other}' (expected 'lex', 'parse', 'fmt', 'check', 'complete', 'gen', 'build' or 'clean')"
+                "loi: unknown mode '{other}' (expected 'lex', 'parse', 'fmt', 'check', 'complete', 'lsp-info', 'gen', 'build' or 'clean')"
             );
             process::exit(2);
         }
@@ -262,6 +276,9 @@ struct Options {
     color: ColorChoice,
     line: Option<usize>,
     column: Option<usize>,
+    kind: Option<String>,
+    uri: Option<String>,
+    new_name: Option<String>,
 }
 
 impl Options {
@@ -304,6 +321,9 @@ impl Options {
         let mut color = ColorChoice::Auto;
         let mut line = None;
         let mut column = None;
+        let mut kind = None;
+        let mut uri = None;
+        let mut new_name = None;
         let mut index = 1;
 
         while index < args.len() {
@@ -484,6 +504,45 @@ impl Options {
                         process::exit(2);
                     }
                 }
+                "--kind" => {
+                    index += 1;
+                    let Some(value) = args.get(index) else {
+                        eprintln!("loi: '--kind' requires an LSP info kind");
+                        process::exit(2);
+                    };
+                    if loi::InfoKind::parse(value).is_none() {
+                        eprintln!(
+                            "loi: unknown info kind '{value}' (expected hover, definition, signature, references, prepareRename, rename, documentSymbol, semanticTokens, inlayHint or foldingRange)"
+                        );
+                        process::exit(2);
+                    }
+                    if kind.replace(value.clone()).is_some() {
+                        eprintln!("loi: '--kind' specified more than once");
+                        process::exit(2);
+                    }
+                }
+                "--uri" => {
+                    index += 1;
+                    let Some(value) = args.get(index) else {
+                        eprintln!("loi: '--uri' requires a document URI");
+                        process::exit(2);
+                    };
+                    if uri.replace(value.clone()).is_some() {
+                        eprintln!("loi: '--uri' specified more than once");
+                        process::exit(2);
+                    }
+                }
+                "--new-name" => {
+                    index += 1;
+                    let Some(value) = args.get(index) else {
+                        eprintln!("loi: '--new-name' requires a name");
+                        process::exit(2);
+                    };
+                    if new_name.replace(value.clone()).is_some() {
+                        eprintln!("loi: '--new-name' specified more than once");
+                        process::exit(2);
+                    }
+                }
                 "--error-format" => {
                     index += 1;
                     let Some(value) = args.get(index) else {
@@ -606,13 +665,52 @@ impl Options {
             eprintln!("loi: '--c-source' is only supported by 'build'");
             process::exit(2);
         }
-        if (line.is_some() || column.is_some()) && mode != "complete" {
-            eprintln!("loi: '--line' and '--column' are only supported by 'complete'");
+        if (line.is_some() || column.is_some()) && !matches!(mode.as_str(), "complete" | "lsp-info")
+        {
+            eprintln!(
+                "loi: '--line' and '--column' are only supported by 'complete' and 'lsp-info'"
+            );
             process::exit(2);
         }
         if mode == "complete" && (line.is_none() || column.is_none()) {
             eprintln!("loi: 'complete' requires both '--line' and '--column'");
             process::exit(2);
+        }
+        if kind.is_some() && mode != "lsp-info" {
+            eprintln!("loi: '--kind' is only supported by 'lsp-info'");
+            process::exit(2);
+        }
+        if uri.is_some() && mode != "lsp-info" {
+            eprintln!("loi: '--uri' is only supported by 'lsp-info'");
+            process::exit(2);
+        }
+        if new_name.is_some() && mode != "lsp-info" {
+            eprintln!("loi: '--new-name' is only supported by 'lsp-info'");
+            process::exit(2);
+        }
+        if mode == "lsp-info" {
+            let Some(kind_value) = kind.as_deref() else {
+                eprintln!("loi: 'lsp-info' requires '--kind'");
+                process::exit(2);
+            };
+            let parsed_kind = loi::InfoKind::parse(kind_value).unwrap_or(loi::InfoKind::Hover);
+            let needs_position = !matches!(
+                parsed_kind,
+                loi::InfoKind::DocumentSymbol
+                    | loi::InfoKind::SemanticTokens
+                    | loi::InfoKind::FoldingRange
+                    | loi::InfoKind::InlayHint
+            );
+            if needs_position && (line.is_none() || column.is_none()) {
+                eprintln!(
+                    "loi: 'lsp-info --kind {kind_value}' requires both '--line' and '--column'"
+                );
+                process::exit(2);
+            }
+            if matches!(parsed_kind, loi::InfoKind::Rename) && new_name.is_none() {
+                eprintln!("loi: 'lsp-info --kind rename' requires '--new-name'");
+                process::exit(2);
+            }
         }
 
         // Multi-file build requires an output path (can't default to ./a.out with
@@ -642,6 +740,9 @@ impl Options {
             color,
             line,
             column,
+            kind,
+            uri,
+            new_name,
         }
     }
 }
@@ -722,6 +823,33 @@ fn check_source(source: &str, path: &Path, diagnostics: DiagnosticOptions) {
 fn complete_source(source: &str, path: &Path, line: usize, column: usize) {
     let items = loi::completions(source, &path.display().to_string(), line, column);
     println!("{}", loi::completions_to_json(&items));
+}
+
+/// Print a ready-to-use LSP result for editor queries.
+/// Like completion, this reads the raw buffer so an incomplete document still
+/// answers editor requests without emitting compiler diagnostics.
+fn lsp_info_source(
+    source: &str,
+    path: &Path,
+    line: usize,
+    column: usize,
+    uri: &str,
+    kind: loi::InfoKind,
+    new_name: &str,
+) {
+    print!(
+        "{}",
+        loi::lsp_info_json(
+            source,
+            &path.display().to_string(),
+            line,
+            column,
+            uri,
+            kind,
+            new_name
+        )
+    );
+    let _ = std::io::stdout().flush();
 }
 
 #[allow(clippy::too_many_arguments)]

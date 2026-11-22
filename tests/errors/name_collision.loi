@@ -1,16 +1,16 @@
-shape Vec<T> [
+shape Vec<T> {
     data: [T]
     len: u64
-]
+}
 
-shape Vec__i32 [
+shape Vec__i32 {
     x: i32
-]
+}
 
 flow main
     => i32
 {
-    v <- Vec<i32>[ data: [i32: 1], len: 1 ]
-    w <- Vec__i32[ x: 2 ]
+    v <- Vec<i32> { data: [i32: 1], len: 1 }
+    w <- Vec__i32 { x: 2 }
     => v.len as i32 + w.x
 }

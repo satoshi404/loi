@@ -1,6 +1,6 @@
-shape Particle [
+shape Particle {
     mass: f64
-]
+}
 
 flow main {
     mut ps: [Particle]

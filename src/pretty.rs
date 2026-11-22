@@ -344,14 +344,14 @@ impl PrettyPrinter {
             self.line_at(
                 interface.span.line,
                 format!(
-                    "{}shape {}{} []",
+                    "{}shape {}{} {{}}",
                     visibility_prefix(interface.visibility),
                     interface.name,
                     type_params
                 ),
             );
-            // An empty shape prints its brackets on the header line, so a
-            // comment after `]` on a later source line still belongs there.
+            // An empty shape prints its braces on the header line, so a
+            // comment after `}` on a later source line still belongs there.
             self.anchor(interface.close_line);
             self.flush_comments_before(interface.close_line);
             return;
@@ -360,7 +360,7 @@ impl PrettyPrinter {
         self.line_at(
             interface.span.line,
             format!(
-                "{}shape {}{} [",
+                "{}shape {}{} {{",
                 visibility_prefix(interface.visibility),
                 interface.name,
                 type_params
@@ -377,7 +377,7 @@ impl PrettyPrinter {
         }
         self.flush_comments_before(interface.close_line);
         self.indent -= 1;
-        self.line_at(interface.close_line, "]");
+        self.line_at(interface.close_line, "}");
     }
 
     fn function(&mut self, function: &FunctionDecl) {
@@ -777,14 +777,14 @@ fn expr_str(expr: &Expr, parent_precedence: u8) -> String {
         } => {
             let name = format!("{name}{}", format_type_args(type_args));
             if fields.is_empty() {
-                format!("{name}[]")
+                format!("{name}{{}}")
             } else {
                 let fields = fields
                     .iter()
                     .map(|field| format!("{}: {}", field.name, expr_str(&field.value, 0)))
                     .collect::<Vec<_>>()
                     .join(", ");
-                format!("{name}[ {fields} ]")
+                format!("{name} {{ {fields} }}")
             }
         }
         ExprKind::Unary { op, operand } => {

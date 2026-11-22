@@ -1,6 +1,6 @@
-shape World [
+shape World {
     particles: [i32]
-]
+}
 
 flow f
     -> w: World

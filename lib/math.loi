@@ -10,9 +10,10 @@
 //! clashes with user code and with the other library files. Generic helpers
 //! declare `T: Copy` because they pass `T` by value; arithmetic still requires
 //! numeric `T` even though ordering also has an `Ord` bound.
-
 open MATH_PI: f64 <- 3.141592653589793
+
 open MATH_E: f64 <- 2.718281828459045
+
 open MATH_TAU: f64 <- comptime 2.0 * MATH_PI
 
 /// Compile-time factorial; usable in globals and `comptime` expressions.
@@ -182,7 +183,7 @@ open flow math_pow_u64
     mut factor: u64 <- base
     mut power: u32 <- exponent
     while power > 0 {
-        if (power & 1) != 0 {
+        if power & 1 != 0 {
             result *= factor
         }
         factor *= factor

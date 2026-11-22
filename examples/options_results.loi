@@ -1,5 +1,7 @@
 import "../lib/option.loi"
+
 import "../lib/result.loi"
+
 import "../lib/string.loi"
 
 /// Parse a decimal number, reporting the failure as a byte-slice message.
@@ -40,7 +42,7 @@ open flow setting
         option_none<u64>(-> none)
         => none
     }
-    from <- (start as u64) + name.len
+    from <- start as u64 + name.len
     if from >= line.len or line[from] != 61 {
         mut none: Option<u64>
         option_none<u64>(-> none)
@@ -70,7 +72,9 @@ open flow main
             print("\n")
         }
         missing <- setting(line, "port")
-        if option_is_some<u64>(missing) { print("unexpected port\n") }
+        if option_is_some<u64>(missing) {
+            print("unexpected port\n")
+        }
         bad <- parse_u64("abc")
         if result_is_err<u64, [u8]>(bad) {
             print(result_unwrap_err<u64, [u8]>(bad))

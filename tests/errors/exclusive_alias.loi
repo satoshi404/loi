@@ -1,7 +1,7 @@
-shape Vec2 [
+shape Vec2 {
     x: f64
     y: f64
-]
+}
 
 flow swap
     <-> a: Vec2

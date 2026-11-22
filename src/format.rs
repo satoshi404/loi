@@ -169,6 +169,65 @@ pub fn type_matches(kind: FormatKind, ty: &Ty) -> bool {
     }
 }
 
+/// A piece of a `format(...)` template string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BracedPiece {
+    Text(String),
+    Placeholder,
+}
+
+/// Parse a `format(...)` template. `{}` is a placeholder, `{{`/`}}` escape
+/// literal braces.
+pub fn parse_braced_format(format: &str) -> Result<Vec<BracedPiece>, String> {
+    let mut pieces: Vec<BracedPiece> = Vec::new();
+    let mut text = String::new();
+    let mut chars = format.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '{' => {
+                if chars.peek() == Some(&'{') {
+                    chars.next();
+                    text.push('{');
+                    continue;
+                }
+                if chars.peek() == Some(&'}') {
+                    chars.next();
+                    if !text.is_empty() {
+                        pieces.push(BracedPiece::Text(std::mem::take(&mut text)));
+                    }
+                    pieces.push(BracedPiece::Placeholder);
+                } else {
+                    return Err("unclosed '{' in format string; use '{}' for a placeholder or '{{' for a literal '{'".to_string());
+                }
+            }
+            '}' => {
+                if chars.peek() == Some(&'}') {
+                    chars.next();
+                    text.push('}');
+                } else {
+                    return Err(
+                        "unmatched '}' in format string; use '}}' for a literal '}'".to_string()
+                    );
+                }
+            }
+            _ => text.push(ch),
+        }
+    }
+    if !text.is_empty() {
+        pieces.push(BracedPiece::Text(text));
+    }
+    Ok(pieces)
+}
+
+/// Whether a value can be printed by a `{}` placeholder.
+pub fn is_braced_printable(ty: &Ty, _is_string_literal: bool) -> bool {
+    ty.is_integer()
+        || ty.is_float()
+        || matches!(ty, Ty::Bool)
+        || matches!(ty, Ty::CStr)
+        || matches!(ty, Ty::Slice(inner) if matches!(inner.as_ref(), Ty::U8))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -46,7 +46,7 @@ arguments and assignment, while `and`/`or` keep their short-circuit behavior.
 and a C11 compiler.
 
 ```loi
-shape Vec2 [ x: f64, y: f64 ]
+shape Vec2 { x: f64, y: f64 }
 
 open flow main
     => i32
@@ -56,7 +56,7 @@ open flow main
         mut points: [Vec2]
         alloc(-> points, Vec2, 3)
         for i in 0..3 {
-            points[i] = Vec2[ x: i as f64, y: 2 * i as f64 ]
+            points[i] = Vec2 { x: i as f64, y: 2 * i as f64 }
             total += points[i].x + points[i].y
         }
     }
@@ -81,6 +81,7 @@ cargo build                         # builds both loi and the separate loi-lsp
 ```text
 loi <lex|parse|fmt|check> FILE
 loi complete FILE --line N --column N
+loi lsp-info FILE --kind KIND [--line N --column N] [--uri URI] [--new-name NAME]
 loi gen FILE [-o out.c] [--emit-h header.h] [--emit-ir ir] [--source-map map.json]
 loi build FILE... [-o out] [--emit exe|obj|lib] [--debug|--release] [--rebuild]
           [--emit-c c] [--emit-h header.h] [--emit-ir ir]
@@ -94,13 +95,25 @@ server like `clangd`. Editors start it directly; it compiles and caches the
 server written in `examples/lsp_server.loi` on first launch and uses the
 compiler next to it for `loi check`. Set `LOI_COMPILER` to override that
 compiler, or `LOI_LSP_CACHE_DIR` to move the cached server. `initialize`
-advertises full-document sync, diagnostics and `completionProvider`; warnings
-arrive as severity 2, compiler suggestions are appended to diagnostic messages,
-and `textDocument/completion` is answered from a cache of the editor buffer.
+advertises full-document sync, diagnostics, completion, hover, definition,
+references, rename, document symbols, semantic tokens, inlay hints, folding
+ranges, code actions and signature help; warnings arrive as severity 2,
+compiler suggestions are appended to diagnostic messages, and editor requests
+are answered from a cache of the editor buffer. Editor requests are forwarded to
+`loi lsp-info FILE --kind ... [--line N --column N] [--uri URI] [--new-name NAME]`.
 `loi complete FILE --line N --column N` is the same source-level completion for
-direct editor use: it prints a compact JSON array of candidates from the raw
-buffer with 1-based positions, so an unfinished program still gets names and
-keywords.
+direct editor use. File URIs are normalized to forward slashes, percent escapes
+are decoded and the extra slash before a Windows drive is removed before the
+compiler opens the path.
+
+For VS Code, install the packaged `editors/vscode-loi` extension. It registers
+the `.loi` language with syntax highlighting, snippets and bracket matching,
+ships a `vs-seti`-based file icon theme with the Loi icon for `.loi` files, and
+uses a real PNG icon in the Extensions view. It discovers `loi-lsp` on PATH and
+in the workspace's `target/debug` / `target/release` folders, pairs it with the
+`loi` binary next to it, and reports a specific error if neither is found. Set
+`loi.lsp.command`, `loi.compiler` or `loi.lsp.cacheDir` when those defaults do
+not fit your setup.
 
 Every mode accepts `--error-format human|short|json` (default `human`) and
 `--color auto|always|never` (default `auto`). Human diagnostics show the source

@@ -8,9 +8,10 @@
 //       --c-source lib/process_shim.c --c-source lib/os_shim.c
 // Run:
 //   LOI_PROGRAM=/bin/echo ./process_run
-
 import "../lib/os.loi"
+
 import "../lib/process.loi"
+
 import "../lib/vec.loi"
 
 open flow main
@@ -21,13 +22,11 @@ open flow main
         if program.len == 0 {
             program = "/bin/echo"
         }
-
         mut args: Vec<[u8]>
         vec_new<[u8]>(-> args)
         vec_push<[u8]>(<-> args, "hello")
         vec_push<[u8]>(<-> args, "from Loi")
-
-        guard child <- process_spawn_args(program, vec_view<[u8]>(<- args, 0, args.len)) {
+        guard child <- process_spawn_args(program, vec_view<[u8]>(args, 0, args.len)) {
             if not process_ok(child) {
                 => 1
             }

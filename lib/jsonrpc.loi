@@ -15,23 +15,26 @@
 //! build a compact response and write it back as a framed, flushed message.
 //! Every flow that allocates requires the caller's `protect` region. As in
 //! `lib/stdio.loi`, a zero-length frame or EOF ends the exchange.
-
 import "ctype.loi"
+
 import "json.loi"
+
 import "std.loi"
+
 import "stdio.loi"
+
 import "vec.loi"
 
 /// A validated JSON-RPC 2.0 request. `method` is a borrowed view into the
 /// decoded-string arena of `doc`; both stay live until `protect` ends.
-open shape JsonRpcRequest [
+open shape JsonRpcRequest {
     doc: JsonDoc
     id: i64
     method: [u8]
     has_id: bool
-]
+}
 
-sealed flow jsonrpc_starts_with
+flow jsonrpc_starts_with
     <- text: [u8]
     <- prefix: [u8]
     => bool
@@ -47,7 +50,7 @@ sealed flow jsonrpc_starts_with
     => true
 }
 
-sealed flow jsonrpc_header_length
+flow jsonrpc_header_length
     <- line: [u8]
     -> length: u64
     => bool
@@ -112,36 +115,36 @@ open flow jsonrpc_parse_request
     if not ok {
         => false
     }
-    root <- json_root(<- request.doc)
-    if json_kind(<- request.doc, root) != JsonKind.Object {
+    root <- json_root(request.doc)
+    if json_kind(request.doc, root) != JsonKind.Object {
         => false
     }
-    version <- json_object_get(<- request.doc, root, "jsonrpc")
-    if version < 0 or json_kind(<- request.doc, version) != JsonKind.String {
+    version <- json_object_get(request.doc, root, "jsonrpc")
+    if version < 0 or json_kind(request.doc, version) != JsonKind.String {
         => false
     }
-    if not str_eq(json_string(<- request.doc, version), "2.0") {
+    if not str_eq(json_string(request.doc, version), "2.0") {
         => false
     }
-    method <- json_object_get(<- request.doc, root, "method")
-    if method < 0 or json_kind(<- request.doc, method) != JsonKind.String {
+    method <- json_object_get(request.doc, root, "method")
+    if method < 0 or json_kind(request.doc, method) != JsonKind.String {
         => false
     }
-    request.method = json_string(<- request.doc, method)
+    request.method = json_string(request.doc, method)
     request.has_id = false
     request.id = 0
-    id <- json_object_get(<- request.doc, root, "id")
+    id <- json_object_get(request.doc, root, "id")
     if id >= 0 {
-        if json_kind(<- request.doc, id) != JsonKind.Number {
+        if json_kind(request.doc, id) != JsonKind.Number {
             => false
         }
-        request.id = json_number_i64(<- request.doc, id)
+        request.id = json_number_i64(request.doc, id)
         request.has_id = true
     }
     => true
 }
 
-sealed flow jsonrpc_append_bytes
+flow jsonrpc_append_bytes
     <-> out: Vec<u8>
     <- bytes: [u8]
 {
@@ -150,7 +153,7 @@ sealed flow jsonrpc_append_bytes
     }
 }
 
-sealed flow jsonrpc_send_bytes
+flow jsonrpc_send_bytes
     <- body: [u8]
 {
     printf("Content-Length: %llu\r\n\r\n", body.len)
@@ -161,7 +164,7 @@ sealed flow jsonrpc_send_bytes
     stdio_flush()
 }
 
-sealed flow jsonrpc_begin_response
+flow jsonrpc_begin_response
     -> out: Vec<u8>
 {
     vec_new<u8>(-> out)
@@ -180,7 +183,7 @@ open flow jsonrpc_send_result
     jsonrpc_append_bytes(<-> out, ",\"result\":")
     jsonrpc_append_bytes(<-> out, result)
     jsonrpc_append_bytes(<-> out, "}")
-    jsonrpc_send_bytes(vec_view<u8>(<- out, 0, out.len))
+    jsonrpc_send_bytes(vec_view<u8>(out, 0, out.len))
 }
 
 /// Send a framed server-to-client notification. There is no `id`, so the
@@ -197,7 +200,7 @@ open flow jsonrpc_send_notification
     jsonrpc_append_bytes(<-> out, "\",\"params\":")
     jsonrpc_append_bytes(<-> out, params)
     jsonrpc_append_bytes(<-> out, "}")
-    jsonrpc_send_bytes(vec_view<u8>(<- out, 0, out.len))
+    jsonrpc_send_bytes(vec_view<u8>(out, 0, out.len))
 }
 
 /// Reply with a JSON-RPC error object. `message` must not need escaping.
@@ -214,5 +217,5 @@ open flow jsonrpc_send_error
     jsonrpc_append_bytes(<-> out, ",\"message\":\"")
     jsonrpc_append_bytes(<-> out, message)
     jsonrpc_append_bytes(<-> out, "\"}}")
-    jsonrpc_send_bytes(vec_view<u8>(<- out, 0, out.len))
+    jsonrpc_send_bytes(vec_view<u8>(out, 0, out.len))
 }

@@ -1,6 +1,9 @@
-shape Point [ x: i32, y: i32 ]
+shape Point {
+    x: i32
+    y: i32
+}
 
-sealed flow sum_points
+flow sum_points
     <- pts: [Point]
     <- n: u32
     => i32
@@ -12,13 +15,13 @@ sealed flow sum_points
     => total
 }
 
-sealed flow fill_points
+flow fill_points
     -> pts: [Point]
     <- n: u32
 {
     alloc(-> pts, Point, n)
     for i in 0..n {
-        pts[i] = Point[ x: i as i32, y: (n - i) as i32 ]
+        pts[i] = Point { x: i as i32, y: (n - i) as i32 }
     }
 }
 

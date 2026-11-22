@@ -181,12 +181,12 @@ open flow main
     InitWindow(640, 480, "Audio Visualizer - Loi + raylib")
     loi_init_audio_device()
     SetTargetFPS(60)
-    bg: Color <- Color[ r: 15, g: 23, b: 42, a: 255 ]
-    magenta: Color <- Color[ r: 255, g: 20, b: 147, a: 80 ]
-    blue: Color <- Color[ r: 20, g: 80, b: 240, a: 180 ]
-    cyan: Color <- Color[ r: 0, g: 255, b: 255, a: 220 ]
-    gold: Color <- Color[ r: 240, g: 200, b: 20, a: 120 ]
-    white: Color <- Color[ r: 255, g: 255, b: 255, a: 255 ]
+    bg: Color <- Color { r: 15, g: 23, b: 42, a: 255 }
+    magenta: Color <- Color { r: 255, g: 20, b: 147, a: 80 }
+    blue: Color <- Color { r: 20, g: 80, b: 240, a: 180 }
+    cyan: Color <- Color { r: 0, g: 255, b: 255, a: 220 }
+    gold: Color <- Color { r: 240, g: 200, b: 20, a: 120 }
+    white: Color <- Color { r: 255, g: 255, b: 255, a: 255 }
     protect {
         mut samples: [f32]
         alloc(-> samples, f32, FRAMES_PER_TICK)

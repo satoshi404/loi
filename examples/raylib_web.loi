@@ -1,4 +1,4 @@
-// Raylib + Emscripten — demo interativa para a web.
+// Raylib + Emscripten ΓÇö demo interativa para a web.
 //
 // Roda nativamente com `loi build` e no navegador com Emscripten:
 //   sh examples/build_web.sh examples/raylib_web.loi
@@ -7,46 +7,64 @@
 // Clique para criar bolas; ESPACO pausa; R reinicia; setas mudam a cor.
 import "../vendor/raylib/raylib.loi"
 
-shape Ball [
+shape Ball {
     x: f32
     y: f32
     vx: f32
     vy: f32
     radius: f32
     tone: i32
-]
+}
 
-sealed flow ball_color
+flow ball_color
     <- tone: i32
     => Color
 {
-    if tone == 0 { => Color[ r: 255, g: 99, b: 132, a: 255 ] }
-    if tone == 1 { => Color[ r: 63, g: 185, b: 255, a: 255 ] }
-    if tone == 2 { => Color[ r: 147, g: 255, b: 119, a: 255 ] }
-    => Color[ r: 255, g: 213, b: 79, a: 255 ]
+    if tone == 0 {
+        => Color { r: 255, g: 99, b: 132, a: 255 }
+    }
+    if tone == 1 {
+        => Color { r: 63, g: 185, b: 255, a: 255 }
+    }
+    if tone == 2 {
+        => Color { r: 147, g: 255, b: 119, a: 255 }
+    }
+    => Color { r: 255, g: 213, b: 79, a: 255 }
 }
 
-sealed flow bg_color
+flow bg_color
     <- tone: i32
     => Color
 {
-    if tone == 0 { => Color[ r: 18, g: 20, b: 32, a: 255 ] }
-    if tone == 1 { => Color[ r: 11, g: 28, b: 48, a: 255 ] }
-    if tone == 2 { => Color[ r: 14, g: 38, b: 28, a: 255 ] }
-    => Color[ r: 44, g: 34, b: 14, a: 255 ]
+    if tone == 0 {
+        => Color { r: 18, g: 20, b: 32, a: 255 }
+    }
+    if tone == 1 {
+        => Color { r: 11, g: 28, b: 48, a: 255 }
+    }
+    if tone == 2 {
+        => Color { r: 14, g: 38, b: 28, a: 255 }
+    }
+    => Color { r: 44, g: 34, b: 14, a: 255 }
 }
 
-sealed flow tone_name
+flow tone_name
     <- tone: i32
     => cstr
 {
-    if tone == 0 { => "rosa" }
-    if tone == 1 { => "azul" }
-    if tone == 2 { => "verde" }
+    if tone == 0 {
+        => "rosa"
+    }
+    if tone == 1 {
+        => "azul"
+    }
+    if tone == 2 {
+        => "verde"
+    }
     => "amarelo"
 }
 
-sealed flow spawn
+flow spawn
     -> b: Ball
     <- x: f32
     <- y: f32
@@ -94,44 +112,48 @@ open flow main
     height <- 450
     InitWindow(width, height, "Loi + raylib na web")
     SetTargetFPS(60)
-
-    ink: Color <- Color[ r: 232, g: 236, b: 248, a: 255 ]
+    ink: Color <- Color { r: 232, g: 236, b: 248, a: 255 }
     hint: cstr <- "clique: criar bola | espaco: pausa | R: reinicia | setas: cor"
-
     protect {
         mut balls: [Ball]
         alloc(-> balls, Ball, 64)
         mut count: i32 <- 3
         mut tone: i32 <- 0
         mut paused: bool <- false
-
         spawn(-> balls[0], 400.0, 120.0, 0)
         spawn(-> balls[1], 250.0, 180.0, 1)
         spawn(-> balls[2], 550.0, 200.0, 2)
-
         while not WindowShouldClose() {
             dt <- GetFrameTime()
-
-            if IsKeyPressed(KEY_SPACE) { paused = not paused }
-            if IsKeyPressed(KEY_R) { count <- 3 }
-            if IsKeyPressed(KEY_LEFT) { tone <- 0 }
-            if IsKeyPressed(KEY_DOWN) { tone <- 1 }
-            if IsKeyPressed(KEY_UP) { tone <- 2 }
-            if IsKeyPressed(KEY_RIGHT) { tone <- 3 }
-
+            if IsKeyPressed(KEY_SPACE) {
+                paused = not paused
+            }
+            if IsKeyPressed(KEY_R) {
+                count <- 3
+            }
+            if IsKeyPressed(KEY_LEFT) {
+                tone <- 0
+            }
+            if IsKeyPressed(KEY_DOWN) {
+                tone <- 1
+            }
+            if IsKeyPressed(KEY_UP) {
+                tone <- 2
+            }
+            if IsKeyPressed(KEY_RIGHT) {
+                tone <- 3
+            }
             if IsMouseButtonPressed(MOUSE_BUTTON_LEFT) {
                 if count < 64 {
                     spawn(-> balls[count], GetMouseX() as f32, GetMouseY() as f32, tone)
                     count += 1
                 }
             }
-
             if not paused {
                 for i in 0..count {
                     step_ball(<-> balls[i], dt, width, height)
                 }
             }
-
             BeginDrawing()
             ClearBackground(bg_color(tone))
             for i in 0..count {
@@ -140,12 +162,13 @@ open flow main
             }
             DrawText(hint, 10, 10, 14, ink)
             DrawText(tone_name(tone), 10, 30, 14, ball_color(tone))
-            if paused { DrawText("PAUSADO", 10, 50, 14, ink) }
+            if paused {
+                DrawText("PAUSADO", 10, 50, 14, ink)
+            }
             DrawFPS(10, height - 24)
             EndDrawing()
         }
     }
-
     CloseWindow()
     => 0
 }

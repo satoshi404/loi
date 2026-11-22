@@ -630,7 +630,7 @@ impl<'a> ConstEvaluator<'a> {
                 }
             }
             "read_file" | "read_stdin" | "read_line" | "write_file" | "print_int"
-            | "print_float" | "printf" => Err(ConstError::new(
+            | "print_float" | "printf" | "format" => Err(ConstError::new(
                 span,
                 "I/O is not allowed in a comptime expression",
             )),

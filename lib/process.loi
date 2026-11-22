@@ -12,7 +12,6 @@
 //!
 //! Build with:
 //! `loi build main.loi -o main --c-source lib/process_shim.c`
-
 import "vec.loi"
 
 extern flow loi_process_spawn
@@ -40,9 +39,9 @@ extern flow loi_process_release
 /// A linear handle to a finished child process and its captured streams.
 /// `handle` is -1 or less when spawning failed; such a value is still safe to
 /// guard and read (the lengths are zero and the exit code is -1).
-open shape Process [
+open shape Process {
     handle: i32
-]
+}
 
 /// Release the C-side captured buffers. Called automatically by `guard`.
 open flow process_release
@@ -54,7 +53,7 @@ open flow process_release
     }
 }
 
-sealed flow process_append_quoted
+flow process_append_quoted
     <-> command: Vec<u8>
     <- part: [u8]
 {
@@ -86,7 +85,7 @@ open flow process_spawn_args
         vec_push<u8>(<-> command, 32)
         process_append_quoted(<-> command, args[i])
     }
-    => process_spawn(vec_view<u8>(<- command, 0, command.len))
+    => process_spawn(vec_view<u8>(command, 0, command.len))
 }
 
 /// Spawn a raw shell command. Prefer `process_spawn_args` for untrusted input.
@@ -94,7 +93,7 @@ open flow process_spawn
     <- command: [u8]
     => Process
 {
-    => Process[ handle: loi_process_spawn(command) ]
+    => Process { handle: loi_process_spawn(command) }
 }
 
 open flow process_ok

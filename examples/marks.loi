@@ -2,19 +2,14 @@
 // set of named tags. Build and run with:
 //     loi build examples/marks.loi -o marks
 //     ./marks
+open mark Signal [ Red, Green, Amber ]
 
-open mark Signal [
-    Red
-    Green
-    Amber
-]
-
-shape Crossing [
+shape Crossing {
     light: Signal
     cars_waiting: i32
-]
+}
 
-sealed flow next_signal
+flow next_signal
     <- current: Signal
     => Signal
 {
@@ -27,7 +22,7 @@ sealed flow next_signal
     => Signal.Red
 }
 
-sealed flow can_pass
+flow can_pass
     <- crossing: Crossing
     => bool
 {
@@ -41,33 +36,27 @@ open flow main
     if light != Signal.Red {
         => 1
     }
-
     light = next_signal(light)
     if light != Signal.Green {
         => 2
     }
-
-    busy: Crossing <- Crossing[ light: light, cars_waiting: 1 ]
+    busy: Crossing <- Crossing { light: light, cars_waiting: 1 }
     if can_pass(busy) {
         => 3
     }
-
-    ready: Crossing <- Crossing[ light: light, cars_waiting: 0 ]
+    ready: Crossing <- Crossing { light: light, cars_waiting: 0 }
     if not can_pass(ready) {
         => 4
     }
-
     light = next_signal(light)
-    amber: Crossing <- Crossing[ light: light, cars_waiting: 0 ]
+    amber: Crossing <- Crossing { light: light, cars_waiting: 0 }
     if light != Signal.Amber or can_pass(amber) {
         => 5
     }
-
     light = next_signal(light)
     if light != Signal.Red {
         => 6
     }
-
     print("marks ok\n")
     => 0
 }

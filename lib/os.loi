@@ -13,7 +13,6 @@
 //! Like the vendored bindings, the `extern flow` declarations below are a thin
 //! binding: the shim owns the POSIX details and keeps foreign pointers out of
 //! ordinary Loi values. The helpers are POSIX-only.
-
 extern flow loi_os_pid
     => i32
 
@@ -123,11 +122,9 @@ open flow os_exit
 // ---------------------------------------------------------------------------
 // Linear file handles
 // ---------------------------------------------------------------------------
-
 //! A `File` is a linear non-memory resource: put it in a `guard` block and the
 //! matching `file_release` flow closes the descriptor on every exit path. The
 //! handle is an integer descriptor; the shim owns the POSIX file details.
-
 extern flow loi_io_open
     <- path: cstr
     <- write: i32
@@ -147,9 +144,9 @@ extern flow loi_io_write
     => i64
 
 /// An owned file descriptor. `fd` is -1 after a failed open or a release.
-open shape File [
+open shape File {
     fd: i32
-]
+}
 
 /// Close the descriptor. `guard` calls this automatically; do not call it
 /// directly on a guarded handle.
@@ -167,7 +164,7 @@ open flow file_open_read
     <- path: cstr
     => File
 {
-    => File[ fd: loi_io_open(path, 0) ]
+    => File { fd: loi_io_open(path, 0) }
 }
 
 /// Open (or create and truncate) a file for writing.
@@ -175,7 +172,7 @@ open flow file_open_write
     <- path: cstr
     => File
 {
-    => File[ fd: loi_io_open(path, 1) ]
+    => File { fd: loi_io_open(path, 1) }
 }
 
 /// Read into the caller's buffer. Returns the byte count, or -1 on error or

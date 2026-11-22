@@ -5,7 +5,6 @@
 // Build:
 //   loi build examples/callback_signatures.loi \
 //       --c-source examples/callback_signatures_shim.c -o callback_signatures
-
 open extern flow sum_mapped
     <- count: i32
     <- f: callback(i32) => i32
@@ -13,7 +12,7 @@ open extern flow sum_mapped
 
 open extern flow visit
     <- count: i32
-    <- f: callback(i32) => void
+    <- f: callback(i32)
 
 flow square
     <- value: i32

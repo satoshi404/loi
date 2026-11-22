@@ -3061,6 +3061,9 @@ impl Checker {
         if name == "printf" {
             return self.check_printf_call(args, span);
         }
+        if name == "format" {
+            return self.check_format_call(args, span);
+        }
 
         let Some(signature) = self.functions.get(name).cloned() else {
             self.error_unknown(
@@ -3383,6 +3386,69 @@ impl Checker {
         }
 
         Ty::Void
+    }
+
+    /// Check the `format` intrinsic: `format("...{}...", args...)` returns a
+    /// `[]u8` allocated in the caller's `protect` region.
+    fn check_format_call(&mut self, args: &[CallArg], span: Span) -> Ty {
+        let Some(fmt) = args.first() else {
+            self.error(span, "format expects a template string argument");
+            return Ty::Slice(Box::new(Ty::U8));
+        };
+        if fmt.direction != Direction::In {
+            self.error(fmt.value.span, "format expects a '<-' template string");
+        }
+
+        let ExprKind::String(text) = &fmt.value.kind else {
+            self.error(fmt.value.span, "format template must be a string literal");
+            self.check_expr(&fmt.value);
+            for arg in &args[1..] {
+                self.check_unmatched_arg(arg);
+            }
+            return Ty::Slice(Box::new(Ty::U8));
+        };
+
+        let pieces = match crate::format::parse_braced_format(text) {
+            Ok(pieces) => pieces,
+            Err(message) => {
+                self.error(fmt.value.span, format!("invalid format string: {message}"));
+                for arg in &args[1..] {
+                    self.check_unmatched_arg(arg);
+                }
+                return Ty::Slice(Box::new(Ty::U8));
+            }
+        };
+        let placeholders = pieces
+            .iter()
+            .filter(|piece| matches!(piece, crate::format::BracedPiece::Placeholder))
+            .count();
+
+        if placeholders != args.len() - 1 {
+            self.error(
+                span,
+                format!(
+                    "format template expects {} argument(s), found {}",
+                    placeholders,
+                    args.len() - 1
+                ),
+            );
+        }
+
+        for arg in &args[1..] {
+            if arg.direction != Direction::In {
+                self.error(arg.value.span, "format expects '<-' arguments");
+            }
+            let ty = self.check_expr(&arg.value);
+            let is_string_lit = matches!(arg.value.kind, ExprKind::String(_));
+            if !ty.is_error() && !crate::format::is_braced_printable(&ty, is_string_lit) {
+                self.error(
+                    arg.value.span,
+                    format!("format placeholder expects an integer, float, bool, string or cstr, found {ty}"),
+                );
+            }
+        }
+
+        Ty::Slice(Box::new(Ty::U8))
     }
 
     /// Carry protect-region taints from consumed `inout` arguments to `out`
@@ -3870,11 +3936,18 @@ impl Checker {
                 _ => Ty::Error,
             },
             ExprKind::Call { callee, .. } => match &callee.kind {
-                ExprKind::Ident(name) => self
-                    .functions
-                    .get(name)
-                    .map(|signature| signature.return_type.clone())
-                    .unwrap_or(Ty::Error),
+                ExprKind::Ident(name) => {
+                    if name == "format" {
+                        Ty::Slice(Box::new(Ty::U8))
+                    } else if name == "printf" {
+                        Ty::Void
+                    } else {
+                        self.functions
+                            .get(name)
+                            .map(|signature| signature.return_type.clone())
+                            .unwrap_or(Ty::Error)
+                    }
+                }
                 _ => Ty::Error,
             },
             ExprKind::SliceLiteral {
@@ -4157,10 +4230,7 @@ impl Checker {
             );
             return false;
         }
-        if self.check_view_source(&name, &path, span) {
-            return false;
-        }
-        true
+        !self.check_view_source(&name, &path, span)
     }
 
     fn mark_written(&mut self, name: &str, path: &str) {
@@ -4359,7 +4429,10 @@ impl Checker {
                     }
                 }
                 if let ExprKind::Ident(name) = &callee.kind
-                    && matches!(name.as_str(), "read_file" | "read_stdin" | "read_line")
+                    && matches!(
+                        name.as_str(),
+                        "read_file" | "read_stdin" | "read_line" | "format"
+                    )
                     && let Some(region) = self.current_protect_region()
                 {
                     regions.push(region);
@@ -5123,6 +5196,7 @@ pub fn intrinsic_names() -> &'static [&'static str] {
         "print_int",
         "print_float",
         "printf",
+        "format",
     ]
 }
 
@@ -5310,7 +5384,10 @@ fn scan_expr_effects(
                 scan.calls.insert(name.clone());
                 if depth == 0 {
                     scan.unguarded_deps.push(name.clone());
-                    if matches!(name.as_str(), "read_file" | "read_stdin" | "read_line") {
+                    if matches!(
+                        name.as_str(),
+                        "read_file" | "read_stdin" | "read_line" | "format"
+                    ) {
                         scan.direct_alloc = true;
                     }
                 }
