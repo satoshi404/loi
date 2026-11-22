@@ -1,1 +1,1 @@
-tests/errors/type_span_unknown_local.loi:2:12: unknown type 'Contador'
+tests/errors/type_span_unknown_local.loi:4:12: unknown type 'Contador'

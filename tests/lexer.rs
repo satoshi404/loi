@@ -11,7 +11,7 @@ fn lexes_the_reference_program() {
         .expect("the reference program must lex");
 
     assert_eq!(tokens.last().unwrap().kind, TokenKind::Eof);
-    assert_eq!(tokens.len(), 642, "641 source tokens plus EOF");
+    assert_eq!(tokens.len(), 651, "650 source tokens plus EOF");
 
     let kinds: Vec<TokenKind> = tokens.iter().map(|token| token.kind).collect();
     for expected in [

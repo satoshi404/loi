@@ -1,1 +1,1 @@
-tests/errors/utf8_unknown_variable.loi:4:8: unknown variable 'héllo'
+tests/errors/utf8_unknown_variable.loi:4:9: unexpected character '├'

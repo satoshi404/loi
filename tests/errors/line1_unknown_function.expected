@@ -1,1 +1,1 @@
-tests/errors/line1_unknown_function.loi:1:10: unknown function 'nope'
+tests/errors/line1_unknown_function.loi:2:5: unknown function 'nope'

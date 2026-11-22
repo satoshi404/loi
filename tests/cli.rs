@@ -2125,7 +2125,7 @@ fn link_error_points_at_the_extern_flow_and_suggests_its_shim() {
     let human_stderr = String::from_utf8_lossy(&human.stderr);
     assert!(
         human_stderr.contains(&format!("error: {message}"))
-            && human_stderr.contains("--> lib/os.loi:20:1")
+            && human_stderr.contains("--> lib/os.loi:19:1")
             && human_stderr.contains(&format!("= help: {help}")),
         "unexpected human output: {human_stderr}"
     );
@@ -2142,7 +2142,7 @@ fn link_error_points_at_the_extern_flow_and_suggests_its_shim() {
     assert_eq!(short.status.code(), Some(1));
     let short_stderr = String::from_utf8_lossy(&short.stderr);
     assert!(
-        short_stderr.contains(&format!("lib/os.loi:20:1: {message}\n"))
+        short_stderr.contains(&format!("lib/os.loi:19:1: {message}\n"))
             && short_stderr.contains(&format!("  = help: {help}\n")),
         "short output should carry the help line: {short_stderr}"
     );
@@ -2154,7 +2154,7 @@ fn link_error_points_at_the_extern_flow_and_suggests_its_shim() {
         json_stderr.starts_with('[')
             && json_stderr.contains(&format!("\"message\":\"{message}\""))
             && json_stderr.contains("\"file\":\"lib/os.loi\"")
-            && json_stderr.contains("\"line\":20")
+            && json_stderr.contains("\"line\":19")
             && json_stderr.contains("\"column\":1")
             && json_stderr.contains(&format!("\"help\":\"{help}\"")),
         "unexpected JSON: {json_stderr}"

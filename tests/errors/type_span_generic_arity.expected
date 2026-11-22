@@ -1,1 +1,1 @@
-tests/errors/type_span_generic_arity.loi:5:12: shape 'Box' expects 1 type argument(s), found 2
+tests/errors/type_span_generic_arity.loi:8:12: shape 'Box' expects 1 type argument(s), found 2

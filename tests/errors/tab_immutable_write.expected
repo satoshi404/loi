@@ -1,1 +1,1 @@
-tests/errors/tab_immutable_write.loi:5:2: cannot assign to immutable variable 'x'
+tests/errors/tab_immutable_write.loi:5:5: cannot assign to immutable variable 'x'
