@@ -17,6 +17,9 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
 use crate::diagnostic::Diagnostic;
+use crate::flow::{
+    Borrow, BorrowMode, DataPath, FlowEffect, FlowSummary, LoanDestination, LoanSource,
+};
 use crate::types::{self, CallbackSig, ComparisonEnv, Ty};
 
 fn is_callback_void(ty: &Type) -> bool {
@@ -56,8 +59,7 @@ pub fn check(program: &Program) -> Vec<Diagnostic> {
     checker.resolve_marks_and_choices(&program);
     checker.check_interface_value_cycles(&program);
     checker.resolve_functions(&program);
-    checker.analyze_function_effects(&program);
-    checker.analyze_view_returns(&program);
+    checker.analyze_flow_summaries(&program);
     checker.check_interface_defaults(&program);
     checker.declare_globals(&program);
     checker.check_functions(&program);
@@ -247,17 +249,11 @@ struct ViewLoan {
     span: Span,
 }
 
-/// Which `<-` parameters may escape through a flow's outputs.
+/// Mutable state used while summarizing view flow inside one function scan.
+///
+/// It is temporary scan state, not a durable contract: the durable result is
+/// recorded as `Borrow` effects in `FlowSummary`.
 #[derive(Debug, Default)]
-struct ViewSummary {
-    /// Sources that may appear in the `=>` result.
-    returned: HashSet<usize>,
-    /// Sources that may be written to each `->` parameter, by parameter index.
-    out: HashMap<usize, HashSet<usize>>,
-}
-
-/// Mutable state used while summarizing one function body.
-#[derive(Default)]
 struct ViewScanState {
     /// `<-` parameter indices whose views a local may carry.
     locals: HashMap<String, HashSet<usize>>,
@@ -287,6 +283,12 @@ struct FunctionScan {
     calls: HashSet<String>,
     /// Root-relative places consumed by `give(...)` in this body.
     moved_places: HashSet<(String, String)>,
+    /// Root-relative places assigned in this body.
+    written_places: HashSet<(String, String)>,
+    /// Root-relative places initialized by `alloc(-> place, ...)`.
+    initialized_places: HashSet<(String, String)>,
+    /// Whether a value reaches a `=>` result in this body.
+    produces_result: bool,
     /// Call sites with the direction and place of every argument.
     call_args: Vec<CallSiteScan>,
     /// Whether returning a place transfers ownership (composite return type).
@@ -297,6 +299,10 @@ struct FunctionScan {
     /// Per `<-` parameter index, the root-relative places the body reads
     /// directly (excluding whole-value `<-` arguments refined by the fixpoint).
     direct_reads: Vec<HashSet<String>>,
+    /// Sources that reached a `=>` result in the current scan iteration.
+    view_returned: HashSet<usize>,
+    /// View sources carried by locals and `->` parameters in this iteration.
+    views: ViewScanState,
 }
 
 impl FunctionScan {
@@ -359,29 +365,18 @@ struct Checker {
     /// Nesting depth of loops (`while`, `for`, `for in`, `for inout`). Used to
     /// validate that `break` and `continue` only appear inside loops.
     loop_depth: usize,
+    /// Control-state snapshots taken at `break`/`continue` sites. A loop merges
+    /// these into its fall-through state: a value moved on a path that leaves
+    /// the loop early is still moved after the loop. Without this, a `give`
+    /// inside an `if` whose branch ends in `break` is silently discarded by
+    /// the `if` join.
+    loop_exit_states: Vec<Vec<HashMap<String, ControlState>>>,
     /// Active linear-resource guards, innermost last.
     guards: Vec<GuardCleanup>,
-    /// Function names that can allocate without a lexical `protect` in this
-    /// function (directly or through another such function).
-    unguarded_allocators: HashSet<String>,
-    /// Function names whose result carries storage allocated by a recursive
-    /// `clone` of a slice-containing type. Used to taint call results with the
-    /// caller's active `protect` region.
-    clone_allocators: HashSet<String>,
-    /// Per function, the root-relative places each parameter may lose through
-    /// the call. `""` means the whole parameter.
-    param_consumption: HashMap<String, Vec<HashSet<String>>>,
-    /// Per function, the root-relative places each `<-` parameter may be read
-    /// through. `""` means the whole parameter. A partially consumed composite
-    /// may be passed to a `<-` flow whose reads avoid the consumed paths.
-    param_reads: HashMap<String, Vec<HashSet<String>>>,
-    /// Per function, the `<-` parameter indices whose views may appear in the
-    /// `=>` result. Used to carry loans from a call's argument to its result
-    /// without a new ABI or runtime handle.
-    view_returns: HashMap<String, HashSet<usize>>,
-    /// Per function, the `<-` parameter indices whose views may be written to
-    /// each `->` parameter, keyed by out-parameter index.
-    view_out: HashMap<String, HashMap<usize, HashSet<usize>>>,
+    /// Single durable contract for every canonical function. Legacy maps for
+    /// consumption, reads, views and allocation are derived through the
+    /// compatibility accessors on `FlowSummary`.
+    flow_summaries: HashMap<String, FlowSummary>,
     /// Names declared by top-level `let`/`var`, for duplicate diagnostics.
     global_names: HashSet<String>,
     /// Parent region for each lexical block or `protect` region.
@@ -426,19 +421,19 @@ impl Checker {
             current_function: String::new(),
             reachable: true,
             loop_depth: 0,
+            loop_exit_states: Vec::new(),
             guards: Vec::new(),
-            unguarded_allocators: HashSet::new(),
-            clone_allocators: HashSet::new(),
-            param_consumption: HashMap::new(),
-            param_reads: HashMap::new(),
-            view_returns: HashMap::new(),
-            view_out: HashMap::new(),
+            flow_summaries: HashMap::new(),
             global_names: HashSet::new(),
             region_parents: Vec::new(),
             region_kinds: Vec::new(),
             region_origins: Vec::new(),
             region_stack: Vec::new(),
         }
+    }
+
+    fn summary(&self, name: &str) -> Option<&FlowSummary> {
+        self.flow_summaries.get(name)
     }
 
     fn error(&mut self, span: Span, message: impl Into<String>) {
@@ -1286,7 +1281,8 @@ impl Checker {
     // ------------------------------------------------------------------
     // Function-effect prepass
     // ------------------------------------------------------------------
-    /// Compute cross-function effects before checking any body.
+    /// Compute one durable `FlowSummary` per canonical function before bodies
+    /// are checked.
     ///
     /// Allocation: an allocation in a callee belongs to the nearest `protect`
     /// of its caller, so a non-entry function may contain an unguarded `alloc`
@@ -1301,9 +1297,31 @@ impl Checker {
     /// directly or through another call. Consumption is path-sensitive: moving
     /// a field does not kill the rest of the value. At a call site only the
     /// consumed paths of an `out` or `inout` argument are moved for the caller.
-    fn analyze_function_effects(&mut self, program: &Program) {
-        let mut scans: HashMap<String, FunctionScan> = HashMap::new();
+    ///
+    /// A single visitor over each body records allocation, consumption, reads
+    /// and borrowed-view effects. One monotone fixpoint joins those effects
+    /// along calls, including recursion, directly into `FlowSummary`.
+    /// `FunctionScan` and `ViewScanState` exist only while a body is scanned.
+    fn analyze_flow_summaries(&mut self, program: &Program) {
+        let globals: Vec<(String, Ty)> = program
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Global(global) => {
+                    let ty = global
+                        .ty
+                        .as_ref()
+                        .map(|ty| self.resolve_type_pure(ty))
+                        .unwrap_or_else(|| self.scan_expr_ty(&global.value, &HashMap::new()));
+                    Some((global.name.clone(), ty))
+                }
+                _ => None,
+            })
+            .collect();
+
+        let mut bodies: HashMap<String, &Block> = HashMap::new();
         let mut params: HashMap<String, Vec<(String, Direction, Ty)>> = HashMap::new();
+        let mut local_types: HashMap<String, Vec<(String, Ty)>> = HashMap::new();
         let mut spans: Vec<(String, Span)> = Vec::new();
 
         for item in &program.items {
@@ -1313,164 +1331,214 @@ impl Checker {
             if !self.is_canonical_function(&decl.name, decl.span) {
                 continue;
             }
-
-            let mut scan = FunctionScan::default();
-            let mut locals = HashMap::new();
-            if let Some(signature) = self.functions.get(&decl.name) {
-                scan.returns_composite = is_composite(&signature.return_type);
-                for (index, param) in signature.params.iter().enumerate() {
-                    locals.insert(param.name.clone(), param.ty.clone());
-                    if param.direction == Direction::In {
-                        scan.read_params.insert(param.name.clone(), index);
-                    }
-                }
-                scan.direct_reads = vec![HashSet::new(); signature.params.len()];
-            }
-            for item in &program.items {
-                if let Item::Global(global) = item {
-                    let ty = global
-                        .ty
-                        .as_ref()
-                        .map(|ty| self.resolve_type_pure(ty))
-                        .unwrap_or_else(|| self.scan_expr_ty(&global.value, &HashMap::new()));
-                    locals.insert(global.name.clone(), ty);
-                }
-            }
-            scan_block_effects(self, &decl.body, 0, &mut scan, &mut locals);
-            scans.insert(decl.name.clone(), scan);
-            let param_types = self
-                .functions
-                .get(&decl.name)
-                .map(|signature| signature.params.clone())
-                .unwrap_or_default();
-            params.insert(
+            let Some(signature) = self.functions.get(&decl.name) else {
+                continue;
+            };
+            let param_list = decl
+                .params
+                .iter()
+                .enumerate()
+                .map(|(index, param)| {
+                    let ty = signature
+                        .params
+                        .get(index)
+                        .map(|sig| sig.ty.clone())
+                        .unwrap_or(Ty::Error);
+                    (param.name.clone(), param.direction, ty)
+                })
+                .collect::<Vec<_>>();
+            bodies.insert(decl.name.clone(), &decl.body);
+            local_types.insert(
                 decl.name.clone(),
-                decl.params
+                signature
+                    .params
                     .iter()
-                    .enumerate()
-                    .map(|(index, param)| {
-                        let ty = param_types
-                            .get(index)
-                            .map(|sig| sig.ty.clone())
-                            .unwrap_or(Ty::Error);
-                        (param.name.clone(), param.direction, ty)
-                    })
+                    .map(|param| (param.name.clone(), param.ty.clone()))
                     .collect(),
             );
+            params.insert(decl.name.clone(), param_list);
             spans.push((decl.name.clone(), decl.span));
         }
 
-        let mut direct = HashSet::new();
-        let mut clone_direct = HashSet::new();
-        let mut deps: HashMap<String, Vec<String>> = HashMap::new();
-        let mut called = HashSet::new();
-        for (name, scan) in &scans {
-            if scan.direct_alloc {
-                direct.insert(name.clone());
-            }
-            if scan.clone_direct {
-                clone_direct.insert(name.clone());
-            }
-            deps.insert(name.clone(), scan.unguarded_deps.clone());
-            called.extend(scan.calls.iter().cloned());
-        }
+        let mut names: Vec<String> = params.keys().cloned().collect();
+        names.sort();
+        let mut summaries: HashMap<String, FlowSummary> = params
+            .iter()
+            .map(|(name, list)| (name.clone(), FlowSummary::with_params(list.len())))
+            .collect();
 
-        let mut unguarded = direct;
         loop {
             let mut changed = false;
-            for (name, callees) in &deps {
-                if unguarded.contains(name) {
-                    continue;
-                }
-                if callees.iter().any(|callee| unguarded.contains(callee)) {
-                    unguarded.insert(name.clone());
-                    changed = true;
-                }
-            }
-            if !changed {
-                break;
-            }
-        }
-
-        for (name, span) in &spans {
-            // `main` is the only entry point for this check. An uncalled helper
-            // can only run when another Loi function calls it, so its caller's
-            // `protect` is available even when the helper is exported.
-            let entry = name == "main";
-            if entry && unguarded.contains(name) {
-                self.error(
-                    *span,
-                    format!("function '{name}' can allocate outside a 'protect' block"),
-                );
-            }
-        }
-        self.unguarded_allocators = unguarded;
-
-        // A flow whose result may carry clone-allocated storage is itself a
-        // clone allocator when it calls such a flow. This mirrors the
-        // unguarded-allocation propagation but uses all calls, not just calls
-        // outside `protect`: a clone inside a nested `protect` still allocates.
-        let mut clone_allocators = clone_direct;
-        loop {
-            let mut changed = false;
-            for (name, scan) in &scans {
-                if clone_allocators.contains(name) {
-                    continue;
-                }
-                if scan
-                    .calls
-                    .iter()
-                    .any(|callee| clone_allocators.contains(callee))
-                {
-                    clone_allocators.insert(name.clone());
-                    changed = true;
-                }
-            }
-            if !changed {
-                break;
-            }
-        }
-        self.clone_allocators = clone_allocators;
-
-        let mut consumption: HashMap<String, Vec<HashSet<String>>> = HashMap::new();
-        for (name, param_list) in &params {
-            let scan = &scans[name];
-            let mut paths: Vec<HashSet<String>> =
-                param_list.iter().map(|_| HashSet::new()).collect();
-            for (root, path) in &scan.moved_places {
-                let Some((index, (_, direction, ty))) = param_list
+            for name in &names {
+                let param_list = params.get(name).expect("function parameters");
+                let signature = self.functions.get(name);
+                let borrowed_params: HashMap<String, usize> = param_list
                     .iter()
                     .enumerate()
-                    .find(|(_, (param, _, _))| param == root)
-                else {
-                    continue;
+                    .filter(|(_, (_, direction, _))| *direction == Direction::In)
+                    .map(|(index, (param, _, _))| (param.clone(), index))
+                    .collect();
+                let out_params: HashSet<String> = param_list
+                    .iter()
+                    .filter(|(_, direction, _)| *direction == Direction::Out)
+                    .map(|(param, _, _)| param.clone())
+                    .collect();
+                let mut scan = FunctionScan {
+                    returns_composite: signature
+                        .map(|sig| is_composite(&sig.return_type))
+                        .unwrap_or(false),
+                    read_params: borrowed_params.clone(),
+                    direct_reads: vec![HashSet::new(); param_list.len()],
+                    ..FunctionScan::default()
                 };
-                if *direction == Direction::In || !self.move_consumes_place(ty, path) {
-                    continue;
+                let mut locals: HashMap<String, Ty> = local_types
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect();
+                locals.extend(globals.clone());
+                let body = bodies.get(name).expect("function body");
+                {
+                    let ctx = FlowScanCtx {
+                        params: &borrowed_params,
+                        out_params: &out_params,
+                        summaries: &summaries,
+                    };
+                    scan.view_returned =
+                        scan_block_effects(self, &ctx, body, 0, &mut scan, &mut locals);
                 }
-                insert_consumed_path(&mut paths[index], path.clone());
-            }
-            consumption.insert(name.clone(), paths);
-        }
 
-        loop {
-            let mut changed = false;
-            for (name, scan) in &scans {
-                let Some(param_list) = params.get(name) else {
-                    continue;
-                };
+                let param_names: Vec<String> = param_list
+                    .iter()
+                    .map(|(param, _, _)| param.clone())
+                    .collect();
+                let mut next = summaries
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_else(|| FlowSummary::with_params(param_list.len()));
+
+                for (root, path) in &scan.moved_places {
+                    let Some((index, (_, direction, ty))) = param_list
+                        .iter()
+                        .enumerate()
+                        .find(|(_, (param, _, _))| param == root)
+                    else {
+                        continue;
+                    };
+                    if *direction == Direction::In || !self.move_consumes_place(ty, path) {
+                        continue;
+                    }
+                    next.record_param_effect(
+                        index,
+                        FlowEffect::Move(DataPath::from_relative(&param_names[index], path)),
+                    );
+                }
+
+                let external = signature.is_some_and(|sig| sig.external);
+                if external {
+                    for (index, (_, direction, _)) in param_list.iter().enumerate() {
+                        if *direction == Direction::In {
+                            next.record_param_effect(
+                                index,
+                                FlowEffect::Read(DataPath::new(param_names[index].clone())),
+                            );
+                        }
+                    }
+                }
+                for (index, direct) in scan.direct_reads.iter().enumerate() {
+                    for relative in direct {
+                        next.record_param_effect(
+                            index,
+                            FlowEffect::Read(DataPath::from_relative(
+                                &param_names[index],
+                                relative,
+                            )),
+                        );
+                    }
+                }
+
+                for (root, path) in &scan.written_places {
+                    let Some((index, (_, direction, _))) = param_list
+                        .iter()
+                        .enumerate()
+                        .find(|(_, (param, _, _))| param == root)
+                    else {
+                        continue;
+                    };
+                    if *direction == Direction::In {
+                        continue;
+                    }
+                    next.record_param_effect(
+                        index,
+                        FlowEffect::Write(DataPath::from_relative(&param_names[index], path)),
+                    );
+                }
+                for (root, path) in &scan.initialized_places {
+                    let Some((index, (_, direction, _))) = param_list
+                        .iter()
+                        .enumerate()
+                        .find(|(_, (param, _, _))| param == root)
+                    else {
+                        continue;
+                    };
+                    if *direction == Direction::In {
+                        continue;
+                    }
+                    let place = DataPath::from_relative(&param_names[index], path);
+                    let effect = if *direction == Direction::Out {
+                        FlowEffect::Init(place)
+                    } else {
+                        // An `alloc` into an existing `<->` place overwrites it.
+                        FlowEffect::Write(place)
+                    };
+                    next.record_param_effect(index, effect);
+                }
+                if scan.produces_result {
+                    next.result.produces = true;
+                }
+
+                if scan.direct_alloc {
+                    next.allocations = true;
+                    next.unguarded_allocations = true;
+                }
+                if scan.clone_direct {
+                    next.allocations = true;
+                    next.clone_allocations = true;
+                }
+                for callee in &scan.unguarded_deps {
+                    if summaries
+                        .get(callee)
+                        .is_some_and(|summary| summary.unguarded_allocations)
+                    {
+                        next.allocations = true;
+                        next.unguarded_allocations = true;
+                    }
+                }
+                for callee in &scan.calls {
+                    if summaries
+                        .get(callee)
+                        .is_some_and(|summary| summary.clone_allocations)
+                    {
+                        next.allocations = true;
+                        next.clone_allocations = true;
+                    }
+                }
+
                 for site in &scan.call_args {
-                    let Some(callee_paths) = consumption.get(&site.callee).cloned() else {
+                    let Some(callee_summary) = summaries.get(&site.callee) else {
                         continue;
                     };
                     let Some(callee_signature) = self.functions.get(&site.callee) else {
                         continue;
                     };
                     for (index, arg) in site.args.iter().enumerate() {
-                        let Some(consumed_paths) = callee_paths.get(index) else {
-                            continue;
-                        };
-                        if consumed_paths.is_empty() {
+                        let callee_moves: Vec<DataPath> = callee_summary
+                            .params
+                            .get(index)
+                            .map(|param| param.moves.iter().cloned().collect())
+                            .unwrap_or_default();
+                        if callee_moves.is_empty() {
                             continue;
                         }
                         let direction = callee_signature
@@ -1494,42 +1562,19 @@ impl Checker {
                         if *caller_direction == Direction::In {
                             continue;
                         }
-                        let caller_paths = consumption.get_mut(name).expect("consumption paths");
-                        for relative in consumed_paths {
-                            let combined = join_paths(arg_path, relative);
-                            changed |= insert_consumed_path(&mut caller_paths[position], combined);
+                        for callee_path in callee_moves {
+                            let combined = join_paths(arg_path, &callee_path.relative_string());
+                            next.record_param_effect(
+                                position,
+                                FlowEffect::Move(DataPath::from_relative(
+                                    &param_names[position],
+                                    &combined,
+                                )),
+                            );
                         }
                     }
                 }
-            }
-            if !changed {
-                break;
-            }
-        }
 
-        self.param_consumption = consumption;
-
-        // Read views: summarize which paths of each `<-` parameter a flow may
-        // read. Direct reads come from the body scan; whole-value `<-`
-        // arguments are refined here from the callee's summary, so a flow that
-        // forwards `p` to a field-limited reader keeps that field precision.
-        let mut reads: HashMap<String, Vec<HashSet<String>>> = HashMap::new();
-        for (name, param_list) in &params {
-            let scan = &scans[name];
-            let mut paths: Vec<HashSet<String>> =
-                param_list.iter().map(|_| HashSet::new()).collect();
-            for (index, direct) in scan.direct_reads.iter().enumerate() {
-                paths[index].extend(direct.iter().cloned());
-            }
-            reads.insert(name.clone(), paths);
-        }
-
-        loop {
-            let mut changed = false;
-            for (name, scan) in &scans {
-                let Some(param_list) = params.get(name) else {
-                    continue;
-                };
                 for site in &scan.call_args {
                     for (index, arg) in site.args.iter().enumerate() {
                         if arg.0 != Direction::In {
@@ -1550,118 +1595,196 @@ impl Checker {
                         }
                         // An unknown callee (intrinsic or external flow) may
                         // read the whole borrowed value: stay conservative.
-                        let effective = reads
+                        let effective: Vec<DataPath> = summaries
                             .get(&site.callee)
-                            .and_then(|callee| callee.get(index).cloned())
-                            .unwrap_or_else(|| HashSet::from([String::new()]));
-                        let caller_paths =
-                            &mut reads.get_mut(name).expect("read paths")[caller_index];
-                        for relative in &effective {
-                            let combined = join_paths(arg_path, relative);
-                            changed |= insert_read_path(caller_paths, combined);
+                            .and_then(|summary| summary.params.get(index))
+                            .map(|param| param.reads.iter().cloned().collect())
+                            .unwrap_or_else(|| vec![DataPath::new(String::new())]);
+                        for callee_path in effective {
+                            let combined = join_paths(arg_path, &callee_path.relative_string());
+                            next.record_param_effect(
+                                caller_index,
+                                FlowEffect::Read(DataPath::from_relative(
+                                    &param_names[caller_index],
+                                    &combined,
+                                )),
+                            );
                         }
                     }
                 }
-            }
-            if !changed {
-                break;
-            }
-        }
 
-        self.param_reads = reads;
-    }
-
-    /// Summarize which `<-` parameters of each flow may escape as borrowed
-    /// slice views, through the `=>` result or through a `->` parameter. The
-    /// fixpoint handles flows that forward another flow's view, so a view can
-    /// travel through any number of calls before reaching its caller. `clone`
-    /// deliberately stops the chain: its result owns fresh storage and carries
-    /// no loan.
-    fn analyze_view_returns(&mut self, program: &Program) {
-        let declarations: Vec<&FunctionDecl> = program
-            .items
-            .iter()
-            .filter_map(|item| match item {
-                Item::Function(decl) => Some(decl),
-                _ => None,
-            })
-            .collect();
-        let mut summaries: HashMap<String, ViewSummary> = HashMap::new();
-        for decl in &declarations {
-            summaries.insert(decl.name.clone(), ViewSummary::default());
-        }
-        loop {
-            let mut changed = false;
-            for decl in &declarations {
-                let borrowed_params: HashMap<String, usize> = decl
-                    .params
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, param)| param.direction == Direction::In)
-                    .map(|(index, param)| (param.name.clone(), index))
-                    .collect();
-                let out_params: HashSet<String> = decl
-                    .params
-                    .iter()
-                    .filter(|param| param.direction == Direction::Out)
-                    .map(|param| param.name.clone())
-                    .collect();
-                let ctx = ViewScanCtx {
-                    params: &borrowed_params,
-                    out_params: &out_params,
-                    summaries: &summaries,
-                };
-                let mut state = ViewScanState::default();
-                let returned = scan_view_block(&decl.body, &ctx, &mut state);
-
-                // A scalar result cannot carry a view even if the source text
-                // returns a `<-` parameter by value. Only outputs whose type
-                // contains a slice are allowed to publish a loan.
-                let signature = self.functions.get(&decl.name);
-                let mut next = ViewSummary::default();
-                if signature.is_some_and(|sig| self.type_contains_slice(&sig.return_type)) {
-                    next.returned = returned;
+                for site in &scan.call_args {
+                    let Some(callee_summary) = summaries.get(&site.callee) else {
+                        continue;
+                    };
+                    let Some(callee_signature) = self.functions.get(&site.callee) else {
+                        continue;
+                    };
+                    for (index, arg) in site.args.iter().enumerate() {
+                        let Some((arg_root, arg_path)) = &arg.1 else {
+                            continue;
+                        };
+                        let Some((caller_index, (_, caller_direction, _))) = param_list
+                            .iter()
+                            .enumerate()
+                            .find(|(_, (param, _, _))| param == arg_root)
+                        else {
+                            continue;
+                        };
+                        if *caller_direction == Direction::In && arg.0 != Direction::In {
+                            continue;
+                        }
+                        let Some(callee_param) = callee_summary.params.get(index) else {
+                            continue;
+                        };
+                        let callee_direction = callee_signature
+                            .params
+                            .get(index)
+                            .map(|param| param.direction)
+                            .unwrap_or(Direction::In);
+                        let paths = |set: &crate::flow::DataPathSet| -> Vec<DataPath> {
+                            set.iter().cloned().collect()
+                        };
+                        let mut effects: Vec<FlowEffect> = Vec::new();
+                        if *caller_direction != Direction::In
+                            && !matches!(callee_direction, Direction::In)
+                        {
+                            for path in paths(&callee_param.writes) {
+                                effects.push(FlowEffect::Write(path));
+                            }
+                            for path in paths(&callee_param.inits) {
+                                let effect = if *caller_direction == Direction::Out {
+                                    FlowEffect::Init(path)
+                                } else {
+                                    FlowEffect::Write(path)
+                                };
+                                effects.push(effect);
+                            }
+                        }
+                        for path in paths(&callee_param.escapes) {
+                            effects.push(FlowEffect::Escape(path));
+                        }
+                        for borrow in &callee_param.borrows {
+                            if borrow.escaped
+                                && let Some(path) = borrow.source_path()
+                            {
+                                effects.push(FlowEffect::Escape(path.clone()));
+                            }
+                        }
+                        for effect in effects {
+                            for path in effect.paths() {
+                                let combined = join_paths(arg_path, &path.relative_string());
+                                let mapped = match effect {
+                                    FlowEffect::Write(_) => {
+                                        FlowEffect::Write(DataPath::from_relative(
+                                            &param_names[caller_index],
+                                            &combined,
+                                        ))
+                                    }
+                                    FlowEffect::Init(_) => {
+                                        FlowEffect::Init(DataPath::from_relative(
+                                            &param_names[caller_index],
+                                            &combined,
+                                        ))
+                                    }
+                                    FlowEffect::Escape(_) => {
+                                        FlowEffect::Escape(DataPath::from_relative(
+                                            &param_names[caller_index],
+                                            &combined,
+                                        ))
+                                    }
+                                    _ => unreachable!("only mappable effects are queued"),
+                                };
+                                next.record_param_effect(caller_index, mapped);
+                            }
+                        }
+                    }
+                    if callee_summary.result.produces {
+                        next.result.produces = true;
+                    }
                 }
-                for (name, sources) in state.out {
-                    let Some((index, _)) = decl
-                        .params
+
+                if signature.is_some_and(|sig| self.type_contains_slice(&sig.return_type)) {
+                    for source in &scan.view_returned {
+                        let source_name = param_names.get(*source).cloned().unwrap_or_default();
+                        next.record_param_effect(
+                            *source,
+                            FlowEffect::Borrow(Borrow {
+                                source: LoanSource::Param {
+                                    index: *source,
+                                    path: DataPath::new(source_name),
+                                },
+                                holder: DataPath::new("result"),
+                                destination: LoanDestination::Result,
+                                mode: BorrowMode::Shared,
+                                escaped: true,
+                            }),
+                        );
+                    }
+                }
+                for (holder_name, sources) in &scan.views.out {
+                    let Some((destination, _)) = param_list
                         .iter()
                         .enumerate()
-                        .find(|(_, param)| param.name == name)
+                        .find(|(_, (param, _, _))| param == holder_name)
                     else {
                         continue;
                     };
-                    if signature
-                        .and_then(|sig| sig.params.get(index))
+                    if !signature
+                        .and_then(|sig| sig.params.get(destination))
                         .is_some_and(|param| self.type_contains_slice(&param.ty))
                     {
-                        next.out.insert(index, sources);
+                        continue;
+                    }
+                    for source in sources {
+                        let source_name = param_names.get(*source).cloned().unwrap_or_default();
+                        next.record_param_effect(
+                            *source,
+                            FlowEffect::Escape(DataPath::new(source_name.clone())),
+                        );
+                        next.record_param_effect(
+                            *source,
+                            FlowEffect::Borrow(Borrow {
+                                source: LoanSource::Param {
+                                    index: *source,
+                                    path: DataPath::new(source_name),
+                                },
+                                holder: DataPath::new(holder_name.clone()),
+                                destination: LoanDestination::OutParam(destination),
+                                mode: BorrowMode::Shared,
+                                escaped: true,
+                            }),
+                        );
                     }
                 }
 
-                let entry = summaries.entry(decl.name.clone()).or_default();
-                for index in next.returned {
-                    changed |= entry.returned.insert(index);
-                }
-                for (index, sources) in next.out {
-                    let out_entry = entry.out.entry(index).or_default();
-                    for source in sources {
-                        changed |= out_entry.insert(source);
-                    }
+                if next != *summaries.get(name).expect("existing summary") {
+                    changed = true;
+                    *summaries.get_mut(name).expect("existing summary") = next;
                 }
             }
             if !changed {
                 break;
             }
         }
-        self.view_returns = summaries
-            .iter()
-            .map(|(name, summary)| (name.clone(), summary.returned.clone()))
-            .collect();
-        self.view_out = summaries
-            .iter()
-            .map(|(name, summary)| (name.clone(), summary.out.clone()))
-            .collect();
+
+        for (name, span) in &spans {
+            // `main` is the only entry point for this check. An uncalled helper
+            // can only run when another Loi function calls it, so its caller's
+            // `protect` is available even when the helper is exported.
+            if name == "main"
+                && summaries
+                    .get(name)
+                    .is_some_and(|summary| summary.unguarded_allocations)
+            {
+                self.error(
+                    *span,
+                    format!("function '{name}' can allocate outside a 'protect' block"),
+                );
+            }
+        }
+
+        self.flow_summaries = summaries;
     }
 
     // ------------------------------------------------------------------
@@ -1982,10 +2105,12 @@ impl Checker {
             StmtKind::While { condition, body } => {
                 self.check_condition(condition);
                 let entry_reachable = self.reachable;
+                let exit_start = self.loop_exit_states.len();
                 self.loop_depth += 1;
                 let before = self.snapshot();
                 let body_reachable = self.check_block(body);
                 self.loop_depth -= 1;
+                self.join_loop_exits(exit_start);
                 let after = self.snapshot();
                 self.restore(&before);
 
@@ -2011,6 +2136,7 @@ impl Checker {
                 let variable_ty = self.check_range_bounds(&start_ty, &end_ty, start, end);
 
                 let entry_reachable = self.reachable;
+                let exit_start = self.loop_exit_states.len();
                 self.loop_depth += 1;
                 let before = self.snapshot();
                 self.scopes.push(HashMap::new());
@@ -2036,6 +2162,7 @@ impl Checker {
                 self.end_region(body_region);
                 self.scopes.pop();
                 self.loop_depth -= 1;
+                self.join_loop_exits(exit_start);
                 let after = self.snapshot();
                 self.restore(&before);
                 self.merge_states(&before, &after);
@@ -2067,6 +2194,7 @@ impl Checker {
                 };
 
                 let entry_reachable = self.reachable;
+                let exit_start = self.loop_exit_states.len();
                 self.loop_depth += 1;
                 let before = self.snapshot();
                 self.scopes.push(HashMap::new());
@@ -2092,6 +2220,7 @@ impl Checker {
                 self.end_region(body_region);
                 self.scopes.pop();
                 self.loop_depth -= 1;
+                self.join_loop_exits(exit_start);
                 let after = self.snapshot();
                 self.restore(&before);
                 self.merge_states(&before, &after);
@@ -2176,12 +2305,16 @@ impl Checker {
             StmtKind::Continue => {
                 if self.loop_depth == 0 {
                     self.error(statement.span, "'continue' is only allowed inside a loop");
+                } else {
+                    self.loop_exit_states.push(self.snapshot());
                 }
                 self.reachable = false;
             }
             StmtKind::Break => {
                 if self.loop_depth == 0 {
                     self.error(statement.span, "'break' is only allowed inside a loop");
+                } else {
+                    self.loop_exit_states.push(self.snapshot());
                 }
                 self.reachable = false;
             }
@@ -3119,7 +3252,9 @@ impl Checker {
             );
         }
 
-        let may_allocate = self.unguarded_allocators.contains(name);
+        let may_allocate = self
+            .summary(name)
+            .is_some_and(|summary| summary.unguarded_allocations);
         let mut out_targets = Vec::new();
         for (index, arg) in args.iter().enumerate() {
             match signature.params.get(index) {
@@ -3486,9 +3621,12 @@ impl Checker {
         if out_targets.is_empty() {
             return;
         }
-        let Some(consumed) = self.param_consumption.get(name).cloned() else {
+        let Some(summary) = self.summary(name) else {
             return;
         };
+        let consumed: Vec<Vec<String>> = (0..signature.params.len())
+            .map(|index| summary.consumed_paths(index))
+            .collect();
 
         let mut transfer = Vec::new();
         for (index, arg) in args.iter().enumerate() {
@@ -3531,7 +3669,7 @@ impl Checker {
         args: &[CallArg],
         out_targets: &[(usize, LvalueInfo)],
     ) {
-        let Some(out_effects) = self.view_out.get(name).cloned() else {
+        let Some(out_effects) = self.summary(name).map(FlowSummary::view_out) else {
             return;
         };
         for (index, info) in out_targets {
@@ -3563,9 +3701,12 @@ impl Checker {
         args: &[CallArg],
         signature: &FunctionSig,
     ) {
-        let Some(consumed) = self.param_consumption.get(name).cloned() else {
+        let Some(summary) = self.summary(name) else {
             return;
         };
+        let consumed: Vec<Vec<String>> = (0..signature.params.len())
+            .map(|index| summary.consumed_paths(index))
+            .collect();
         for (index, arg) in args.iter().enumerate() {
             let Some(relative_paths) = consumed.get(index) else {
                 continue;
@@ -3660,6 +3801,17 @@ impl Checker {
     /// passed by read-only view when the callee's read summary avoids every
     /// consumed path; the normal whole-place rule is kept otherwise.
     fn check_read_argument(&mut self, value: &Expr, callee: &str, param_index: usize) -> Ty {
+        // `Name.Variant` is a value (a mark variant or a choice constructor
+        // name), not an lvalue rooted at the type name. The checker's free
+        // `is_place` cannot see the mark table, so filter it here instead of
+        // misreporting "unknown variable 'Name'". The C11 backend applies the
+        // equivalent guard in `codegen.rs::is_place`.
+        if let ExprKind::Member { base, .. } = &value.kind
+            && let ExprKind::Ident(name) = &base.kind
+            && (self.marks.contains_key(name) || self.choices.contains_key(name))
+        {
+            return self.check_expr(value);
+        }
         let info = if is_place(value) {
             Some(self.lvalue_info(value))
         } else {
@@ -3675,9 +3827,8 @@ impl Checker {
             return self.check_expr(value);
         };
         let Some(reads) = self
-            .param_reads
-            .get(callee)
-            .and_then(|params| params.get(param_index))
+            .summary(callee)
+            .map(|summary| summary.read_paths(param_index))
         else {
             return self.check_expr(value);
         };
@@ -3692,7 +3843,7 @@ impl Checker {
             return info.ty;
         }
         for read in reads {
-            let effective = join_paths(&path, read);
+            let effective = join_paths(&path, &read);
             if path_is_moved(&var.moved, &effective) {
                 self.error_moved(
                     value.span,
@@ -4439,11 +4590,11 @@ impl Checker {
                     self.collect_value_regions(&source.value, regions);
                 }
                 if let ExprKind::Ident(name) = &callee.kind
-                    && let Some(indices) = self.view_returns.get(name)
+                    && let Some(indices) = self.summary(name).map(FlowSummary::view_returns)
                     && matches!(self.functions.get(name), Some(sig) if matches!(sig.return_type, Ty::Slice(_)))
                 {
                     for index in indices {
-                        if let Some(arg) = args.get(*index) {
+                        if let Some(arg) = args.get(index) {
                             self.collect_value_regions(&arg.value, regions);
                         }
                     }
@@ -4467,7 +4618,9 @@ impl Checker {
                 // allocates its result in the caller's active arena, which
                 // must be a `protect` region that outlives the result.
                 if let ExprKind::Ident(name) = &callee.kind
-                    && self.clone_allocators.contains(name)
+                    && self
+                        .summary(name)
+                        .is_some_and(|summary| summary.clone_allocations)
                     && let Some(region) = self.current_protect_region()
                 {
                     regions.push(region);
@@ -4475,7 +4628,11 @@ impl Checker {
                 if let ExprKind::Ident(name) = &callee.kind
                     && let Some(signature) = self.functions.get(name)
                     && self.type_contains_slice(&signature.return_type)
-                    && let Some(consumed) = self.param_consumption.get(name)
+                    && let Some(consumed) = self.summary(name).map(|summary| {
+                        (0..signature.params.len())
+                            .map(|index| summary.consumed_paths(index))
+                            .collect::<Vec<_>>()
+                    })
                 {
                     for (index, arg) in args.iter().enumerate() {
                         if consumed.get(index).is_none_or(|paths| paths.is_empty()) {
@@ -4626,9 +4783,9 @@ impl Checker {
                     }
                     return;
                 }
-                if let Some(indices) = self.view_returns.get(name) {
+                if let Some(indices) = self.summary(name).map(FlowSummary::view_returns) {
                     for index in indices {
-                        if let Some(arg) = args.get(*index) {
+                        if let Some(arg) = args.get(index) {
                             self.collect_view_source(&arg.value, loans);
                         }
                     }
@@ -4896,6 +5053,21 @@ impl Checker {
         }
     }
 
+    /// Fold the `break`/`continue` states collected since `start` into the
+    /// current control state. Loop statements call this before joining the
+    /// pre-loop state, so a move on an early-exit path remains visible after
+    /// the loop.
+    fn join_loop_exits(&mut self, start: usize) {
+        let exits: Vec<_> = self.loop_exit_states.drain(start..).collect();
+        let mut acc = self.snapshot();
+        for exit in exits {
+            self.restore(&acc);
+            let current = self.snapshot();
+            self.merge_states(&current, &exit);
+            acc = self.snapshot();
+        }
+    }
+
     /// Join two control-flow paths.
     ///
     /// A variable is initialized only if it is initialized on both paths. Move
@@ -4995,17 +5167,29 @@ impl Checker {
     }
 }
 
-/// Context for summarizing view flow through one function body.
-struct ViewScanCtx<'a> {
+/// Context for the single body visitor that produces `FlowSummary`.
+struct FlowScanCtx<'a> {
     /// `<-` parameter name to its declaration index.
     params: &'a HashMap<String, usize>,
     /// Names of this function's `->` parameters.
     out_params: &'a HashSet<String>,
-    /// Current fixpoint approximation of every function's view summary.
-    summaries: &'a HashMap<String, ViewSummary>,
+    /// Current fixpoint approximation of every function's durable summary.
+    summaries: &'a HashMap<String, FlowSummary>,
 }
 
-impl ViewScanCtx<'_> {
+impl FlowScanCtx<'_> {
+    /// Sources carried by a name in the current scan iteration.
+    fn sources(&self, name: &str, views: &ViewScanState) -> HashSet<usize> {
+        let mut borrowed = views.locals.get(name).cloned().unwrap_or_default();
+        if let Some(sources) = views.out.get(name) {
+            borrowed.extend(sources.iter().copied());
+        }
+        if let Some(index) = self.params.get(name) {
+            borrowed.insert(*index);
+        }
+        borrowed
+    }
+
     /// Record that writing `target` may publish `sources` as views.
     fn record_target(&self, target: &Expr, sources: HashSet<usize>, state: &mut ViewScanState) {
         if sources.is_empty() {
@@ -5021,179 +5205,42 @@ impl ViewScanCtx<'_> {
         }
     }
 
-    fn expr(&self, expr: &Expr, state: &mut ViewScanState) -> HashSet<usize> {
-        match &expr.kind {
-            ExprKind::Ident(name) => {
-                let mut borrowed = state.locals.get(name).cloned().unwrap_or_default();
-                if let Some(sources) = state.out.get(name) {
-                    borrowed.extend(sources.iter().copied());
-                }
-                if let Some(index) = self.params.get(name) {
-                    borrowed.insert(*index);
-                }
-                borrowed
+    /// View sources published by one call, after its arguments were scanned.
+    ///
+    /// `arg_sources` is computed by the same expression visitor that records
+    /// ownership, allocation and read effects, so no expression is traversed
+    /// twice.
+    fn call_sources(
+        &self,
+        name: &str,
+        args: &[CallArg],
+        arg_sources: &[HashSet<usize>],
+        state: &mut ViewScanState,
+    ) -> HashSet<usize> {
+        if name == "view" {
+            return arg_sources.first().cloned().unwrap_or_default();
+        }
+        let Some(summary) = self.summaries.get(name) else {
+            return HashSet::new();
+        };
+        let mut borrowed = HashSet::new();
+        for index in summary.view_returns() {
+            if let Some(sources) = arg_sources.get(index) {
+                borrowed.extend(sources.iter().copied());
             }
-            ExprKind::Call { callee, args, .. } => {
-                let ExprKind::Ident(name) = &callee.kind else {
-                    return HashSet::new();
-                };
-                // Visit every argument first: a nested call may publish views
-                // into a local or out parameter even when its result is unused.
-                for arg in args {
-                    self.expr(&arg.value, state);
+        }
+        for (out_index, sources) in summary.view_out() {
+            let mut mapped = HashSet::new();
+            for index in sources {
+                if let Some(sources) = arg_sources.get(index) {
+                    mapped.extend(sources.iter().copied());
                 }
-                if name == "view" {
-                    return args
-                        .first()
-                        .map(|source| self.expr(&source.value, state))
-                        .unwrap_or_default();
-                }
-                let Some(summary) = self.summaries.get(name) else {
-                    return HashSet::new();
-                };
-                let mut borrowed = HashSet::new();
-                for index in &summary.returned {
-                    if let Some(arg) = args.get(*index) {
-                        borrowed.extend(self.expr(&arg.value, state));
-                    }
-                }
-                for (out_index, sources) in &summary.out {
-                    let mut mapped = HashSet::new();
-                    for index in sources {
-                        if let Some(arg) = args.get(*index) {
-                            mapped.extend(self.expr(&arg.value, state));
-                        }
-                    }
-                    if let Some(arg) = args.get(*out_index) {
-                        self.record_target(&arg.value, mapped, state);
-                    }
-                }
-                borrowed
             }
-            ExprKind::Member { base, .. }
-            | ExprKind::Index { base, .. }
-            | ExprKind::Unary { operand: base, .. }
-            | ExprKind::Cast { expr: base, .. }
-            | ExprKind::Comptime(base) => self.expr(base, state),
-            ExprKind::Binary { left, right, .. } => {
-                let mut borrowed = self.expr(left, state);
-                borrowed.extend(self.expr(right, state));
-                borrowed
+            if let Some(arg) = args.get(out_index) {
+                self.record_target(&arg.value, mapped, state);
             }
-            ExprKind::InterfaceLiteral { fields, .. } => {
-                let mut borrowed = HashSet::new();
-                for field in fields {
-                    borrowed.extend(self.expr(&field.value, state));
-                }
-                borrowed
-            }
-            ExprKind::SliceLiteral { elements, .. } => {
-                let mut borrowed = HashSet::new();
-                for element in elements {
-                    borrowed.extend(self.expr(element, state));
-                }
-                borrowed
-            }
-            ExprKind::Move(value) => self.expr(value, state),
-            // A clone owns its own storage; it cannot extend a source loan.
-            ExprKind::Copy(_) => HashSet::new(),
-            ExprKind::Int(_)
-            | ExprKind::Float(_)
-            | ExprKind::Bool(_)
-            | ExprKind::String(_)
-            | ExprKind::Alloc { .. } => HashSet::new(),
-            ExprKind::Quote(_) | ExprKind::Unquote(_) => HashSet::new(),
         }
-    }
-}
-
-/// Collect the `<-` parameters whose views may reach an output of a block.
-/// Locals that hold views are tracked so a view can be returned later; out
-/// parameters are tracked separately because they become views in the caller.
-fn scan_view_block(
-    block: &Block,
-    ctx: &ViewScanCtx<'_>,
-    state: &mut ViewScanState,
-) -> HashSet<usize> {
-    let mut returned = HashSet::new();
-    for statement in &block.statements {
-        returned.extend(scan_view_statement(statement, ctx, state));
-    }
-    returned
-}
-
-fn scan_view_statement(
-    statement: &Stmt,
-    ctx: &ViewScanCtx<'_>,
-    state: &mut ViewScanState,
-) -> HashSet<usize> {
-    match &statement.kind {
-        StmtKind::Let { name, value, .. } => {
-            let borrowed = value
-                .as_ref()
-                .map(|value| ctx.expr(value, state))
-                .unwrap_or_default();
-            state.locals.insert(name.clone(), borrowed);
-            HashSet::new()
-        }
-        StmtKind::Assign { target, value, .. } => {
-            let borrowed = ctx.expr(value, state);
-            if let ExprKind::Ident(name) = &target.kind {
-                if ctx.out_params.contains(name) {
-                    state.out.insert(name.clone(), borrowed);
-                } else {
-                    state.locals.insert(name.clone(), borrowed);
-                }
-            } else {
-                ctx.record_target(target, borrowed, state);
-            }
-            HashSet::new()
-        }
-        StmtKind::Expr(expr) => {
-            ctx.expr(expr, state);
-            HashSet::new()
-        }
-        StmtKind::If {
-            condition,
-            then_block,
-            else_branch,
-        } => {
-            ctx.expr(condition, state);
-            let mut returned = scan_view_block(then_block, ctx, state);
-            match else_branch {
-                Some(ElseBranch::Block(block)) => {
-                    returned.extend(scan_view_block(block, ctx, state))
-                }
-                Some(ElseBranch::If(inner)) => {
-                    returned.extend(scan_view_statement(inner, ctx, state))
-                }
-                None => {}
-            }
-            returned
-        }
-        StmtKind::While { condition, body } => {
-            ctx.expr(condition, state);
-            scan_view_block(body, ctx, state)
-        }
-        StmtKind::ForRange {
-            start, end, body, ..
-        } => {
-            ctx.expr(start, state);
-            ctx.expr(end, state);
-            scan_view_block(body, ctx, state)
-        }
-        StmtKind::ForEach { iterable, body, .. } => {
-            ctx.expr(iterable, state);
-            scan_view_block(body, ctx, state)
-        }
-        StmtKind::Protect(block) => scan_view_block(block, ctx, state),
-        StmtKind::Guard { value, body, .. } => {
-            ctx.expr(value, state);
-            scan_view_block(body, ctx, state)
-        }
-        StmtKind::Return(Some(value)) => ctx.expr(value, state),
-        StmtKind::Return(None) | StmtKind::Continue | StmtKind::Break => HashSet::new(),
-        StmtKind::Splice(expr) => ctx.expr(expr, state),
+        borrowed
     }
 }
 
@@ -5236,37 +5283,49 @@ fn direction_name(direction: Direction) -> &'static str {
     }
 }
 
-/// Scan a function body for allocation and ownership effects.
+/// Scan a function body for allocation, ownership, read and view effects.
 ///
-/// `depth` counts enclosing lexical `protect` blocks. Allocations and calls at
-/// depth zero are effects that a caller must cover with a `protect`.
+/// This is the single body visitor behind `FlowSummary`. `depth` counts
+/// enclosing lexical `protect` blocks; allocations and calls at depth zero are
+/// effects that a caller must cover with a `protect`. It returns the view
+/// sources that may reach a `=>` result in this block.
 fn scan_block_effects(
     checker: &Checker,
+    ctx: &FlowScanCtx<'_>,
     block: &Block,
     depth: usize,
     scan: &mut FunctionScan,
     locals: &mut HashMap<String, Ty>,
-) {
+) -> HashSet<usize> {
+    let mut returned = HashSet::new();
     for statement in &block.statements {
-        scan_statement_effects(checker, statement, depth, scan, locals);
+        returned.extend(scan_statement_effects(
+            checker, ctx, statement, depth, scan, locals,
+        ));
     }
+    returned
 }
 
 fn scan_statement_effects(
     checker: &Checker,
+    ctx: &FlowScanCtx<'_>,
     statement: &Stmt,
     depth: usize,
     scan: &mut FunctionScan,
     locals: &mut HashMap<String, Ty>,
-) {
+) -> HashSet<usize> {
     match &statement.kind {
         StmtKind::Let {
             name, ty, value, ..
         } => {
-            if let Some(value) = value {
-                scan.record_reads(value);
-                scan_expr_effects(checker, value, depth, scan, locals);
-            }
+            let borrowed = value
+                .as_ref()
+                .map(|value| {
+                    scan.record_reads(value);
+                    scan_expr_effects(checker, ctx, value, depth, scan, locals)
+                })
+                .unwrap_or_default();
+            scan.views.locals.insert(name.clone(), borrowed);
             let inferred = ty
                 .as_ref()
                 .map(|ty| checker.resolve_type_pure(ty))
@@ -5278,16 +5337,34 @@ fn scan_statement_effects(
             if let Some(ty) = inferred {
                 locals.insert(name.clone(), ty);
             }
+            HashSet::new()
         }
         StmtKind::Assign { target, value, .. } => {
             scan.record_reads(target);
             scan.record_reads(value);
-            scan_expr_effects(checker, target, depth, scan, locals);
-            scan_expr_effects(checker, value, depth, scan, locals);
+            if let (Some(root), Some(path)) = (place_root(target), place_path(target)) {
+                scan.written_places.insert((root.clone(), path));
+                if ctx.out_params.contains(&root) {
+                    scan.produces_result = true;
+                }
+            }
+            scan_expr_effects(checker, ctx, target, depth, scan, locals);
+            let borrowed = scan_expr_effects(checker, ctx, value, depth, scan, locals);
+            if let ExprKind::Ident(name) = &target.kind {
+                if ctx.out_params.contains(name) {
+                    scan.views.out.insert(name.clone(), borrowed);
+                } else {
+                    scan.views.locals.insert(name.clone(), borrowed);
+                }
+            } else {
+                ctx.record_target(target, borrowed, &mut scan.views);
+            }
+            HashSet::new()
         }
         StmtKind::Expr(expr) => {
             scan.record_reads(expr);
-            scan_expr_effects(checker, expr, depth, scan, locals);
+            scan_expr_effects(checker, ctx, expr, depth, scan, locals);
+            HashSet::new()
         }
         StmtKind::If {
             condition,
@@ -5295,22 +5372,23 @@ fn scan_statement_effects(
             else_branch,
         } => {
             scan.record_reads(condition);
-            scan_expr_effects(checker, condition, depth, scan, locals);
-            scan_block_effects(checker, then_block, depth, scan, locals);
+            scan_expr_effects(checker, ctx, condition, depth, scan, locals);
+            let mut returned = scan_block_effects(checker, ctx, then_block, depth, scan, locals);
             match else_branch {
                 Some(ElseBranch::Block(block)) => {
-                    scan_block_effects(checker, block, depth, scan, locals)
+                    returned.extend(scan_block_effects(checker, ctx, block, depth, scan, locals))
                 }
-                Some(ElseBranch::If(inner)) => {
-                    scan_statement_effects(checker, inner, depth, scan, locals)
-                }
+                Some(ElseBranch::If(inner)) => returned.extend(scan_statement_effects(
+                    checker, ctx, inner, depth, scan, locals,
+                )),
                 None => {}
             }
+            returned
         }
         StmtKind::While { condition, body } => {
             scan.record_reads(condition);
-            scan_expr_effects(checker, condition, depth, scan, locals);
-            scan_block_effects(checker, body, depth, scan, locals);
+            scan_expr_effects(checker, ctx, condition, depth, scan, locals);
+            scan_block_effects(checker, ctx, body, depth, scan, locals)
         }
         StmtKind::ForRange {
             variable,
@@ -5320,10 +5398,10 @@ fn scan_statement_effects(
         } => {
             scan.record_reads(start);
             scan.record_reads(end);
-            scan_expr_effects(checker, start, depth, scan, locals);
-            scan_expr_effects(checker, end, depth, scan, locals);
+            scan_expr_effects(checker, ctx, start, depth, scan, locals);
+            scan_expr_effects(checker, ctx, end, depth, scan, locals);
             locals.insert(variable.clone(), Ty::U64);
-            scan_block_effects(checker, body, depth, scan, locals);
+            scan_block_effects(checker, ctx, body, depth, scan, locals)
         }
         StmtKind::ForEach {
             variable,
@@ -5332,15 +5410,17 @@ fn scan_statement_effects(
             ..
         } => {
             scan.record_reads(iterable);
-            scan_expr_effects(checker, iterable, depth, scan, locals);
+            scan_expr_effects(checker, ctx, iterable, depth, scan, locals);
             let element = match checker.scan_expr_ty(iterable, locals) {
                 Ty::Slice(element) => *element,
                 _ => Ty::Error,
             };
             locals.insert(variable.clone(), element);
-            scan_block_effects(checker, body, depth, scan, locals);
+            scan_block_effects(checker, ctx, body, depth, scan, locals)
         }
-        StmtKind::Protect(block) => scan_block_effects(checker, block, depth + 1, scan, locals),
+        StmtKind::Protect(block) => {
+            scan_block_effects(checker, ctx, block, depth + 1, scan, locals)
+        }
         StmtKind::Guard {
             name,
             ty,
@@ -5348,7 +5428,7 @@ fn scan_statement_effects(
             body,
         } => {
             scan.record_reads(value);
-            scan_expr_effects(checker, value, depth, scan, locals);
+            scan_expr_effects(checker, ctx, value, depth, scan, locals);
             let inferred = ty
                 .as_ref()
                 .map(|ty| checker.resolve_type_pure(ty))
@@ -5356,56 +5436,83 @@ fn scan_statement_effects(
             locals.insert(name.clone(), inferred);
             // A guard scopes a resource, not a memory region: the body keeps
             // the current `protect` depth.
-            scan_block_effects(checker, body, depth, scan, locals);
+            scan_block_effects(checker, ctx, body, depth, scan, locals)
         }
         StmtKind::Return(value) => {
             if let Some(value) = value {
+                scan.produces_result = true;
                 if scan.returns_composite
                     && let (Some(root), Some(path)) = (place_root(value), place_path(value))
                 {
                     scan.moved_places.insert((root, path));
                 }
                 scan.record_reads(value);
-                scan_expr_effects(checker, value, depth, scan, locals);
+                scan_expr_effects(checker, ctx, value, depth, scan, locals)
+            } else {
+                HashSet::new()
             }
         }
-        StmtKind::Continue => {}
-        StmtKind::Break => {}
-        StmtKind::Splice(expr) => scan_expr_effects(checker, expr, depth, scan, locals),
+        StmtKind::Continue | StmtKind::Break => HashSet::new(),
+        StmtKind::Splice(expr) => {
+            scan_expr_effects(checker, ctx, expr, depth, scan, locals);
+            HashSet::new()
+        }
     }
 }
 
 fn scan_expr_effects(
     checker: &Checker,
+    ctx: &FlowScanCtx<'_>,
     expr: &Expr,
     depth: usize,
     scan: &mut FunctionScan,
     locals: &mut HashMap<String, Ty>,
-) {
+) -> HashSet<usize> {
     match &expr.kind {
-        ExprKind::Int(_)
-        | ExprKind::Float(_)
-        | ExprKind::Bool(_)
-        | ExprKind::String(_)
-        | ExprKind::Ident(_) => {}
+        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::String(_) => {
+            HashSet::new()
+        }
+        ExprKind::Ident(name) => ctx.sources(name, &scan.views),
         ExprKind::SliceLiteral { elements, .. } => {
+            let mut borrowed = HashSet::new();
             for element in elements {
-                scan_expr_effects(checker, element, depth, scan, locals);
+                borrowed.extend(scan_expr_effects(
+                    checker, ctx, element, depth, scan, locals,
+                ));
             }
+            borrowed
         }
         ExprKind::InterfaceLiteral { fields, .. } => {
+            let mut borrowed = HashSet::new();
             for field in fields {
-                scan_expr_effects(checker, &field.value, depth, scan, locals);
+                borrowed.extend(scan_expr_effects(
+                    checker,
+                    ctx,
+                    &field.value,
+                    depth,
+                    scan,
+                    locals,
+                ));
             }
+            borrowed
         }
-        ExprKind::Unary { operand, .. } => scan_expr_effects(checker, operand, depth, scan, locals),
+        ExprKind::Unary { operand, .. } => {
+            scan_expr_effects(checker, ctx, operand, depth, scan, locals)
+        }
         ExprKind::Binary { left, right, .. } => {
-            scan_expr_effects(checker, left, depth, scan, locals);
-            scan_expr_effects(checker, right, depth, scan, locals);
+            let mut borrowed = scan_expr_effects(checker, ctx, left, depth, scan, locals);
+            borrowed.extend(scan_expr_effects(checker, ctx, right, depth, scan, locals));
+            borrowed
         }
-        ExprKind::Cast { expr, .. } => scan_expr_effects(checker, expr, depth, scan, locals),
+        ExprKind::Cast { expr, .. } => scan_expr_effects(checker, ctx, expr, depth, scan, locals),
         ExprKind::Call { callee, args, .. } => {
-            if let ExprKind::Ident(name) = &callee.kind {
+            let callee_name = if let ExprKind::Ident(name) = &callee.kind {
+                Some(name.clone())
+            } else {
+                scan_expr_effects(checker, ctx, callee, depth, scan, locals);
+                None
+            };
+            if let Some(name) = &callee_name {
                 scan.calls.insert(name.clone());
                 if depth == 0 {
                     scan.unguarded_deps.push(name.clone());
@@ -5426,25 +5533,36 @@ fn scan_expr_effects(
                         })
                         .collect(),
                 });
-            } else {
-                scan_expr_effects(checker, callee, depth, scan, locals);
             }
+            let mut arg_sources = Vec::with_capacity(args.len());
             for arg in args {
-                scan_expr_effects(checker, &arg.value, depth, scan, locals);
+                arg_sources.push(scan_expr_effects(
+                    checker, ctx, &arg.value, depth, scan, locals,
+                ));
             }
+            callee_name
+                .map(|name| ctx.call_sources(&name, args, &arg_sources, &mut scan.views))
+                .unwrap_or_default()
         }
         ExprKind::Alloc { target, count, .. } => {
             if depth == 0 {
                 scan.direct_alloc = true;
             }
-            scan_expr_effects(checker, target, depth, scan, locals);
-            scan_expr_effects(checker, count, depth, scan, locals);
+            if let (Some(root), Some(path)) = (place_root(target), place_path(target)) {
+                scan.initialized_places.insert((root.clone(), path));
+                if ctx.out_params.contains(&root) {
+                    scan.produces_result = true;
+                }
+            }
+            scan_expr_effects(checker, ctx, target, depth, scan, locals);
+            scan_expr_effects(checker, ctx, count, depth, scan, locals);
+            HashSet::new()
         }
         ExprKind::Move(value) => {
             if let (Some(root), Some(path)) = (place_root(value), place_path(value)) {
                 scan.moved_places.insert((root, path));
             }
-            scan_expr_effects(checker, value, depth, scan, locals);
+            scan_expr_effects(checker, ctx, value, depth, scan, locals)
         }
         ExprKind::Copy(value) => {
             let value_ty = checker.scan_expr_ty(value, locals);
@@ -5454,15 +5572,19 @@ fn scan_expr_effects(
                     scan.direct_alloc = true;
                 }
             }
-            scan_expr_effects(checker, value, depth, scan, locals);
+            scan_expr_effects(checker, ctx, value, depth, scan, locals);
+            // A clone owns its own storage; it cannot extend a source loan.
+            HashSet::new()
         }
-        ExprKind::Member { base, .. } => scan_expr_effects(checker, base, depth, scan, locals),
+        ExprKind::Member { base, .. } | ExprKind::Comptime(base) => {
+            scan_expr_effects(checker, ctx, base, depth, scan, locals)
+        }
         ExprKind::Index { base, index } => {
-            scan_expr_effects(checker, base, depth, scan, locals);
-            scan_expr_effects(checker, index, depth, scan, locals);
+            let mut borrowed = scan_expr_effects(checker, ctx, base, depth, scan, locals);
+            borrowed.extend(scan_expr_effects(checker, ctx, index, depth, scan, locals));
+            borrowed
         }
-        ExprKind::Comptime(inner) => scan_expr_effects(checker, inner, depth, scan, locals),
-        ExprKind::Quote(_) | ExprKind::Unquote(_) => {}
+        ExprKind::Quote(_) | ExprKind::Unquote(_) => HashSet::new(),
     }
 }
 
@@ -5915,5 +6037,226 @@ fn collect_direct_index_reads(
             collect_direct_reads(index, read_params, reads);
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod flow_integration_tests {
+    use super::*;
+    use crate::{parse, tokenize};
+
+    fn checker_for(source: &str) -> Checker {
+        let tokens = tokenize(source, "<test>").expect("source should lex");
+        let program = parse(tokens).expect("source should parse");
+        let mut checker = Checker::new();
+        checker.collect_names(&program);
+        checker.resolve_interfaces(&program);
+        checker.resolve_marks_and_choices(&program);
+        checker.resolve_functions(&program);
+        checker.analyze_flow_summaries(&program);
+        checker
+    }
+
+    #[test]
+    fn legacy_effects_are_exposed_by_one_flow_summary() {
+        let checker = checker_for(
+            r#"shape Pair {
+    left: [i32]
+    right: [i32]
+}
+
+flow consume
+    <-> p: Pair
+{
+    p.left[0] = 0
+    gone <- give(p.left)
+}
+
+flow read_right
+    <- p: Pair
+    => i32
+{
+    => p.right[0]
+}
+
+flow clone_it
+    <- xs: [i32]
+    -> out: [i32]
+{
+    out = clone(xs)
+}
+
+flow head2
+    <- xs: [u8]
+    => [u8]
+{
+    => view(xs, 0, 2)
+}
+
+flow fill
+    <- xs: [u8]
+    -> out: [u8]
+{
+    out = view(xs, 0, 2)
+}
+"#,
+        );
+
+        let consume = checker.summary("consume").expect("consume summary");
+        assert_eq!(consume.consumed_paths(0), vec!["left"]);
+        let read_right = checker.summary("read_right").expect("read_right summary");
+        assert_eq!(read_right.read_paths(0), vec!["right[0]"]);
+        let clone_it = checker.summary("clone_it").expect("clone_it summary");
+        assert!(clone_it.allocations);
+        assert!(clone_it.unguarded_allocations);
+        assert!(clone_it.clone_allocations);
+        let head2 = checker.summary("head2").expect("head2 summary");
+        assert!(head2.view_returns().contains(&0));
+        let fill = checker.summary("fill").expect("fill summary");
+        assert!(
+            fill.view_out()
+                .get(&1)
+                .is_some_and(|sources| sources.contains(&0))
+        );
+    }
+
+    #[test]
+    fn one_visitor_produces_transitive_effects_for_independent_paths() {
+        let checker = checker_for(
+            r#"shape Pair {
+    left: [i32]
+    right: i32
+}
+
+flow consume_left
+    <-> p: Pair
+{
+    gone <- give(p.left)
+}
+
+flow forward_consume
+    <-> p: Pair
+{
+    consume_left(<-> p)
+}
+
+flow read_right
+    <- p: Pair
+    => i32
+{
+    => p.right
+}
+
+flow forward_read
+    <- p: Pair
+    => i32
+{
+    => read_right(p)
+}
+
+flow head2
+    <- xs: [u8]
+    => [u8]
+{
+    => view(xs, 0, 2)
+}
+
+flow forward_view
+    <- xs: [u8]
+    => [u8]
+{
+    => head2(xs)
+}
+"#,
+        );
+
+        let consume_left = checker.summary("consume_left").expect("consume_left");
+        assert_eq!(consume_left.consumed_paths(0), vec!["left"]);
+        let forward_consume = checker.summary("forward_consume").expect("forward_consume");
+        assert_eq!(forward_consume.consumed_paths(0), vec!["left"]);
+
+        let read_right = checker.summary("read_right").expect("read_right");
+        assert_eq!(read_right.read_paths(0), vec!["right"]);
+        let forward_read = checker.summary("forward_read").expect("forward_read");
+        assert_eq!(forward_read.read_paths(0), vec!["right"]);
+
+        let head2 = checker.summary("head2").expect("head2");
+        assert!(head2.view_returns().contains(&0));
+        let forward_view = checker.summary("forward_view").expect("forward_view");
+        assert!(forward_view.view_returns().contains(&0));
+    }
+
+    /// Teste A: o contrato inferido cobre efeitos além de leitura e movimento,
+    /// preservando caminhos independentes e a propagação entre flows.
+    #[test]
+    fn inferred_contract_records_writes_inits_production_and_escape() {
+        let checker = checker_for(
+            r#"shape Pair {
+    left: [i32]
+    right: i32
+}
+
+flow write_left
+    <-> p: Pair
+    <- value: i32
+{
+    p.left[0] = value
+}
+
+flow forward_write
+    <-> p: Pair
+    <- value: i32
+{
+    write_left(<-> p, <- value)
+}
+
+flow init_out
+    -> out: [i32]
+{
+    alloc(-> out, i32, 2)
+    out[1] = 7
+}
+
+flow escape_left
+    <- p: Pair
+    -> out: [i32]
+{
+    out = view(p.left, 0, 1)
+}
+
+flow forward_escape
+    <- p: Pair
+    -> out: [i32]
+{
+    escape_left(<- p, -> out)
+}
+"#,
+        );
+
+        let write_left = checker.summary("write_left").expect("write_left");
+        assert_eq!(
+            write_left.params[0].writes.relative_strings(),
+            vec!["left[0]"]
+        );
+        let forward_write = checker.summary("forward_write").expect("forward_write");
+        assert_eq!(
+            forward_write.params[0].writes.relative_strings(),
+            vec!["left[0]"]
+        );
+
+        let init_out = checker.summary("init_out").expect("init_out");
+        assert_eq!(init_out.params[0].inits.relative_strings(), vec![""]);
+
+        let escape_left = checker.summary("escape_left").expect("escape_left");
+        let forward_escape = checker.summary("forward_escape").expect("forward_escape");
+        assert!(escape_left.result.produces);
+        assert!(escape_left.params[0].escapes.iter().any(DataPath::is_whole));
+        assert!(forward_escape.result.produces);
+        assert!(
+            forward_escape.params[0]
+                .escapes
+                .iter()
+                .any(DataPath::is_whole)
+        );
     }
 }

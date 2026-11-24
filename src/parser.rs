@@ -736,6 +736,17 @@ impl Parser {
         }
     }
 
+    /// Undo a speculative parse, including `>>` tokens that `expect_type_close`
+    /// split into two `>` tokens. Restoring only `position` leaves the token
+    /// stream mutated and makes a later real parse of the same type fail.
+    fn restore_speculation(&mut self, saved_position: usize, saved_splits: usize) {
+        self.position = saved_position;
+        while self.splits.len() > saved_splits {
+            let (index, original) = self.splits.pop().expect("split token");
+            self.tokens[index] = original;
+        }
+    }
+
     /// Try to parse `<...>` type arguments followed by `after`, backtracking
     /// when the `<` is really a comparison operator.
     fn try_parse_type_args(&mut self, after: TokenKind) -> Option<Vec<Type>> {
@@ -747,11 +758,7 @@ impl Parser {
         match self.parse_type_arguments() {
             Ok(args) if self.at(after) => Some(args),
             _ => {
-                self.position = saved;
-                while self.splits.len() > saved_splits {
-                    let (index, original) = self.splits.pop().expect("split token");
-                    self.tokens[index] = original;
-                }
+                self.restore_speculation(saved, saved_splits);
                 None
             }
         }
@@ -1597,6 +1604,7 @@ impl Parser {
         // Explicit form `[T: a, b]`. Try a type followed by ':' and backtrack
         // if the brackets actually hold an inferred element list.
         let saved = self.position;
+        let saved_splits = self.splits.len();
         let typed = match self.parse_type() {
             Ok(element_type) if self.matches(TokenKind::Colon) => Some(element_type),
             _ => None,
@@ -1611,7 +1619,7 @@ impl Parser {
                 self.through_last(span),
             ));
         }
-        self.position = saved;
+        self.restore_speculation(saved, saved_splits);
 
         let elements = self.parse_element_list(TokenKind::RBracket, "slice literal")?;
         Ok(Expr::new(

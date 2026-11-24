@@ -243,6 +243,23 @@ impl Lexer {
 
         self.scan_digits_radix(radix);
 
+        // A radix prefix must be followed by at least one digit of that base.
+        // Without this check `0x` reaches constant folding as an empty literal
+        // and `0b2` is split into `0b` + `2` instead of being rejected here.
+        if radix != 10 {
+            let digits = self.source[start + 2..self.offset]
+                .iter()
+                .filter(|ch| **ch != '_')
+                .count();
+            if digits == 0 {
+                let mut bad: String = self.source[start..self.offset].iter().collect();
+                if let Some(ch) = self.peek() {
+                    bad.push(ch);
+                }
+                return Err(self.error(format!("invalid number literal '{bad}'"), line, column));
+            }
+        }
+
         let mut is_float = false;
 
         // A single '.' followed by a digit is a decimal point. Two dots are
@@ -342,9 +359,17 @@ impl Lexer {
                 return Err(self.error("unterminated string literal", line, column));
             }
             if ch == '\\' {
+                // Escape errors belong at the backslash, not at the opening
+                // quote. Unterminated strings keep the opening quote's span.
+                let escape_line = self.line;
+                let escape_column = self.column;
                 self.advance();
                 let Some(escaped) = self.advance() else {
-                    return Err(self.error("unterminated string escape", line, column));
+                    return Err(self.error(
+                        "unterminated string escape",
+                        escape_line,
+                        escape_column,
+                    ));
                 };
                 match escaped {
                     'n' => value.push('\n'),
@@ -364,8 +389,8 @@ impl Lexer {
                                 if !byte.is_ascii() {
                                     return Err(self.error(
                                         "'\\x' escape must be an ASCII byte (0x00-0x7f)",
-                                        line,
-                                        column,
+                                        escape_line,
+                                        escape_column,
                                     ));
                                 }
                                 value.push(byte as char);
@@ -373,8 +398,8 @@ impl Lexer {
                             _ => {
                                 return Err(self.error(
                                     "'\\x' escape requires two hexadecimal digits",
-                                    line,
-                                    column,
+                                    escape_line,
+                                    escape_column,
                                 ));
                             }
                         }
@@ -382,8 +407,8 @@ impl Lexer {
                     other => {
                         return Err(self.error(
                             format!("unknown string escape '\\{other}'"),
-                            line,
-                            column,
+                            escape_line,
+                            escape_column,
                         ));
                     }
                 }

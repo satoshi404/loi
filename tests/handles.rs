@@ -11,8 +11,7 @@ fn repo_root() -> PathBuf {
 }
 
 fn test_dir(name: &str) -> PathBuf {
-    let dir =
-        PathBuf::from("/tmp/opencode").join(format!("loi-handles-{}-{name}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("loi-handles-{}-{name}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("test directory should be creatable");
     dir
@@ -178,8 +177,12 @@ fn a_raw_descriptor_is_not_a_guard_resource() {
 #[test]
 fn a_guarded_file_handle_cannot_be_released_explicitly() {
     let dir = test_dir("double-release");
-    let body = "open flow main\n    => i32\n{\n    guard out <- file_open_write(\"/tmp/opencode/loi-handles-unused.txt\") {\n        file_release(<-> out)\n    }\n    => 0\n}\n";
-    let program = write_program(&dir, &["os.loi"], body);
+    let unused = std::env::temp_dir().join("loi-handles-unused.txt");
+    let body = format!(
+        "open flow main\n    => i32\n{{\n    guard out <- file_open_write(\"{}\") {{\n        file_release(<-> out)\n    }}\n    => 0\n}}\n",
+        unused.display()
+    );
+    let program = write_program(&dir, &["os.loi"], &body);
     let checked = check(&program);
     assert!(
         !checked.status.success(),

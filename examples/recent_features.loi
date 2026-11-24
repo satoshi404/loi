@@ -1,0 +1,84 @@
+// Recent Loi features in one program.
+//
+// Build and run with:
+//     loi build examples/recent_features.loi -o recent_features
+//     ./recent_features
+//
+// The example uses brace bodies for `mark`, `choice` and `shape`, comptime code
+// with `quote`/`unquote`/`splice`, official `Option<T>`, deep `clone`, a zero-copy
+// `view`, structural comparison, and the `format` intrinsic. All allocation
+// stays inside the caller's `protect` region.
+import "../lib/option.loi"
+
+open mark Level { Info, Warn }
+
+open choice State { Ready: u64, Failed: u64 }
+
+shape Event {
+    level: Level
+    state: State
+    code: u64
+    label: [u8]
+}
+
+comptime flow require_code
+    <- minimum: u64
+    => Code
+{
+    => quote {
+    if event.code < unquote(minimum) {
+        print("code below minimum\n")
+    }
+}
+}
+
+flow describe
+    <- event: Event
+{
+    splice require_code(100)
+    if event.state is State.Ready {
+        print("ready\n")
+    }
+}
+
+flow maybe_code
+    <- event: Event
+    => Option<u64>
+{
+    if event.code == 0 {
+        mut none: Option<u64>
+        option_none<u64>(-> none)
+        => none
+    }
+    mut some: Option<u64>
+    option_some<u64>(event.code, -> some)
+    => some
+}
+
+open flow main
+    => i32
+{
+    protect {
+        event <- Event { level: Level.Warn, state: State.Ready(7), code: 200, label: "ready" }
+        copy <- clone(event)
+        if event != copy {
+            => 1
+        }
+        if copy.state is State.Failed {
+            => 2
+        }
+        describe(event)
+        label <- view(event.label, 0, 5)
+        line <- format("{} code={}\n", label, event.code)
+        print(line)
+        found <- maybe_code(event)
+        if not option_is_some<u64>(found) {
+            => 3
+        }
+        if option_unwrap<u64>(found) != 200 {
+            => 4
+        }
+    }
+    print("recent features ok\n")
+    => 0
+}

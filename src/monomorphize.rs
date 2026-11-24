@@ -293,7 +293,7 @@ impl<'a> Monomorphizer<'a> {
                 ty, value, body, ..
             } => {
                 if let Some(ty) = ty {
-                    self.rewrite_type(ty, mapping);
+                    *ty = self.rewrite_type(ty, mapping);
                 }
                 self.rewrite_expr(value, mapping);
                 self.rewrite_block(body, mapping);

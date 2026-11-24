@@ -2414,3 +2414,62 @@ fn a_code_value_must_be_spliced_not_unquoted() {
         "a 'Code' value cannot be unquoted as an expression; use 'splice'",
     );
 }
+
+#[test]
+fn global_code_values_are_rejected() {
+    let found = messages("G: Code <- quote { print_int(1) }\n\nflow main {\n}\n");
+    assert!(
+        found
+            .iter()
+            .any(|message| message.contains("only allowed in a comptime flow")),
+        "expected a global quote to be rejected, got {found:#?}"
+    );
+}
+
+#[test]
+fn invalid_printf_length_modifiers_are_rejected() {
+    for spec in ["%llf", "%lll", "%Ls", "%hf"] {
+        let source = format!("flow main {{\n    printf(\"{spec}\", 1.0)\n}}\n");
+        let found = messages(&source);
+        assert!(
+            !found.is_empty(),
+            "accepted invalid printf conversion {spec}: {found:#?}"
+        );
+    }
+}
+
+#[test]
+fn nested_generic_shape_literals_in_slices_are_checked() {
+    assert_clean(
+        "shape Vec<T> { x: T }\n\nflow main {\n    xs <- [Vec<Vec<i32>> { x: Vec<i32> { x: 1 } }, Vec<Vec<i32>> { x: Vec<i32> { x: 2 } }]\n}\n",
+    );
+}
+
+// AUD-014: a mark variant passed directly as a `<-` argument must be treated
+// as a value, not as an lvalue rooted at the mark's type name.
+#[test]
+fn mark_variants_are_accepted_as_read_arguments() {
+    assert_clean(
+        "mark Color { Red, Green }\n\nflow same\n    <- a: Color\n    <- b: Color\n    => bool\n{\n    => a == b\n}\n\nflow main\n    => i32\n{\n    if same(Color.Red, Color.Red) { => 0 }\n    => 1\n}\n",
+    );
+}
+
+// AUD-016: a `give` on a path that exits a loop through `break` must still
+// poison that path after the loop.
+#[test]
+fn give_before_break_inside_an_if_poisons_the_value_after_the_loop() {
+    assert_message(
+        "shape Pair [ left: [u64]  right: u64 ]\nflow f <- n: u64 => u64 {\n    mut p <- Pair[ left: [u64: 1], right: 2 ]\n    for i in 0..n {\n        if i == 1 {\n            _ <- give(p.left)\n            break\n        }\n    }\n    => p.left.len\n}\n",
+        "use of moved value",
+    );
+}
+
+// AUD-017: an unknown/extern callee takes a read-only view of the whole value,
+// so a partially consumed composite cannot be passed as `<-`.
+#[test]
+fn extern_read_argument_rejects_a_partially_moved_composite() {
+    assert_message(
+        "shape Pair [ left: [u64]  right: u64 ]\nextern flow peek <- p: Pair\nflow main {\n    protect {\n        mut p <- Pair[ left: [u64: 1], right: 2 ]\n        _ <- give(p.left)\n        peek(p)\n    }\n}\n",
+        "use of moved value",
+    );
+}

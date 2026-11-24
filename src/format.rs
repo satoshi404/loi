@@ -125,11 +125,7 @@ pub fn parse_format(format: &str) -> Result<Vec<FormatPiece>, String> {
             }
         }
 
-        let mut length = String::new();
-        while matches!(chars.peek(), Some('h' | 'l' | 'L' | 'z' | 'j' | 't')) {
-            length.push(chars.next().unwrap());
-        }
-        raw.push_str(&length);
+        let length = parse_length(&mut chars, &mut raw)?;
 
         let conversion = chars
             .next()
@@ -141,8 +137,14 @@ pub fn parse_format(format: &str) -> Result<Vec<FormatPiece>, String> {
             conversion,
             length,
         };
-        if spec.kind().is_none() {
+        let Some(kind) = spec.kind() else {
             return Err(format!("unsupported conversion '%{}'", conversion));
+        };
+        if !length_is_valid(kind, &spec.length) {
+            return Err(format!(
+                "length modifier '{}' is not valid for '%{}'",
+                spec.length, conversion
+            ));
         }
 
         if !text.is_empty() {
@@ -155,6 +157,39 @@ pub fn parse_format(format: &str) -> Result<Vec<FormatPiece>, String> {
         pieces.push(FormatPiece::Text(text));
     }
     Ok(pieces)
+}
+
+/// Parse exactly one C length modifier. Repeating letters (`%lll`) or mixing
+/// them (`%hl`) would let C read a vararg of a different type than `c_cast`
+/// supplies, so an unrecognised sequence is a format error.
+fn parse_length(
+    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+    raw: &mut String,
+) -> Result<String, String> {
+    let first = match chars.peek() {
+        Some('h' | 'l' | 'L' | 'z' | 'j' | 't') => chars.next().unwrap(),
+        _ => return Ok(String::new()),
+    };
+    let mut length = first.to_string();
+    raw.push(first);
+    if matches!(first, 'h' | 'l') && chars.peek() == Some(&first) {
+        length.push(chars.next().unwrap());
+        raw.push(first);
+    }
+    Ok(length)
+}
+
+/// Length modifiers that stay well-defined for each Loi conversion category.
+fn length_is_valid(kind: FormatKind, length: &str) -> bool {
+    match kind {
+        FormatKind::SignedInt | FormatKind::UnsignedInt => {
+            matches!(length, "" | "h" | "hh" | "l" | "ll" | "z" | "j" | "t")
+        }
+        // `%lf` is accepted by C as an alias of `%f`; `%Lf` reads a long double.
+        FormatKind::Float => matches!(length, "" | "l" | "L"),
+        // Wide `l` variants of `%c`/`%s` are not part of Loi's string model.
+        FormatKind::Char | FormatKind::Str => length.is_empty(),
+    }
 }
 
 /// Return `true` when a Loi type may be passed to the given conversion.

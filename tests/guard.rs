@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::PathBuf;
 use std::process::Command;
 
 use loi::{check, generate_c, parse, tokenize};
@@ -145,7 +144,7 @@ fn run_with_harness(name: &str, source: &str, harness: &str) -> Option<i32> {
         return None;
     }
 
-    let dir = PathBuf::from("/tmp/opencode").join(format!("loi-guard-{name}"));
+    let dir = std::env::temp_dir().join(format!("loi-guard-{name}"));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("test directory should be creatable");
     let generated_path = dir.join("generated.c");
@@ -218,5 +217,12 @@ fn release_runs_before_the_enclosing_protect_is_restored_on_return() {
     assert!(
         release < restore,
         "release must run while the resource's slices are still live:\n{c}"
+    );
+}
+
+#[test]
+fn guard_accepts_a_generic_shape_type_after_monomorphization() {
+    assert_clean(
+        "shape Box<T> { value: T }\n\nsealed flow box__i32_release\n    <-> box: Box<i32>\n{\n}\n\nflow make_box<T>(<- x: T) => Box<T> {\n    => Box<T> { value: x }\n}\n\nflow use_box<T>(<- x: T) {\n    guard b: Box<T> <- make_box<T>(x) {\n        print_int(b.value)\n    }\n}\n\nflow main {\n    use_box<i32>(1)\n}\n",
     );
 }

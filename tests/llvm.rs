@@ -36,8 +36,7 @@ fn loi() -> &'static str {
 }
 
 fn test_dir(name: &str) -> PathBuf {
-    let dir =
-        PathBuf::from("/tmp/opencode").join(format!("loi-llvm-{}-{name}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("loi-llvm-{}-{name}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("test directory should be creatable");
     dir
@@ -487,4 +486,133 @@ fn build_rejects_an_unknown_backend() {
 
     assert_eq!(output.status.code(), Some(2), "{stderr}");
     assert!(stderr.contains("unknown backend 'gcc'"), "{stderr}");
+}
+
+#[test]
+fn llvm_matches_c11_arithmetic_traps() {
+    if !has_tool("cc") || !has_tool("clang") {
+        eprintln!("skipping llvm_matches_c11_arithmetic_traps");
+        return;
+    }
+    let dir = test_dir("arithmetic-traps");
+    let source = "open flow main\n    => i32\n{\n    mut x: i8 <- 127\n    x += 1\n    print_int(x as i32)\n    => 0\n}\n";
+    let input = write_program(&dir, source);
+    let c_exe = dir.join("c_program");
+    let llvm_exe = dir.join("llvm_program");
+
+    let c_build = Command::new(loi())
+        .arg("build")
+        .arg(&input)
+        .arg("-o")
+        .arg(&c_exe)
+        .output()
+        .expect("loi should run");
+    assert!(
+        c_build.status.success(),
+        "C11 build failed: {}",
+        String::from_utf8_lossy(&c_build.stderr)
+    );
+    let llvm_build = Command::new(loi())
+        .arg("build")
+        .arg(&input)
+        .arg("--backend")
+        .arg("llvm")
+        .arg("-o")
+        .arg(&llvm_exe)
+        .output()
+        .expect("loi should run");
+    assert!(
+        llvm_build.status.success(),
+        "LLVM build failed: {}",
+        String::from_utf8_lossy(&llvm_build.stderr)
+    );
+
+    let c_run = Command::new(&c_exe)
+        .output()
+        .expect("C11 binary should run");
+    let llvm_run = Command::new(&llvm_exe)
+        .output()
+        .expect("LLVM binary should run");
+    let c_stderr = String::from_utf8_lossy(&c_run.stderr).to_string();
+    let llvm_stderr = String::from_utf8_lossy(&llvm_run.stderr).to_string();
+    let _ = fs::remove_dir_all(&dir);
+
+    assert_eq!(c_run.status.code(), Some(1), "C11 should trap: {c_stderr}");
+    assert!(
+        c_stderr.contains("integer overflow"),
+        "C11 trap should name the error: {c_stderr}"
+    );
+    assert_eq!(
+        llvm_run.status.code(),
+        Some(1),
+        "LLVM must trap like C11, got stdout {:?} and stderr {llvm_stderr:?}",
+        String::from_utf8_lossy(&llvm_run.stdout)
+    );
+    assert!(
+        llvm_stderr.contains("integer overflow"),
+        "LLVM trap should name the error: {llvm_stderr}"
+    );
+}
+
+// AUD-015: LLVM must match C11 for the i64 boundary literal.
+#[test]
+fn llvm_matches_c11_for_large_negative_i64_literal() {
+    let source = "flow main {\n    x: i64 <- -9223372036854775808\n    print_int(x)\n}\n";
+    let dir = test_dir("negative-i64-min");
+    let input = write_program(&dir, source);
+    let c_exe = dir.join("c_program");
+    let llvm_exe = dir.join("llvm_program");
+    let c_build = Command::new(loi())
+        .arg("build")
+        .arg(&input)
+        .arg("-o")
+        .arg(&c_exe)
+        .output()
+        .expect("C11 build should run");
+    assert!(
+        c_build.status.success(),
+        "C11 build failed: {}",
+        String::from_utf8_lossy(&c_build.stderr)
+    );
+    let llvm_build = Command::new(loi())
+        .arg("build")
+        .arg(&input)
+        .arg("--backend")
+        .arg("llvm")
+        .arg("-o")
+        .arg(&llvm_exe)
+        .output()
+        .expect("LLVM build should run");
+    assert!(
+        llvm_build.status.success(),
+        "LLVM build failed: {}",
+        String::from_utf8_lossy(&llvm_build.stderr)
+    );
+    let c_run = Command::new(&c_exe)
+        .output()
+        .expect("C11 program should run");
+    let llvm_run = Command::new(&llvm_exe)
+        .output()
+        .expect("LLVM program should run");
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(
+        c_run.status.code(),
+        Some(0),
+        "C11 should succeed: {}",
+        String::from_utf8_lossy(&c_run.stderr)
+    );
+    assert_eq!(
+        llvm_run.status.code(),
+        Some(0),
+        "LLVM should succeed: {}",
+        String::from_utf8_lossy(&llvm_run.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&llvm_run.stdout),
+        String::from_utf8_lossy(&c_run.stdout)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&llvm_run.stdout),
+        "-9223372036854775808"
+    );
 }

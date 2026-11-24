@@ -7,8 +7,7 @@ fn loi() -> &'static str {
 }
 
 fn test_dir(name: &str) -> PathBuf {
-    let dir =
-        PathBuf::from("/tmp/opencode").join(format!("loi-modules-{}-{name}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("loi-modules-{}-{name}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("test directory should be creatable");
     dir
@@ -440,5 +439,27 @@ fn open_import_cycles_are_rejected() {
     assert!(
         text.contains("import cycle detected"),
         "unexpected diagnostics: {text}"
+    );
+}
+
+const GUARDED_RESOURCE: &str = "open shape HttpClient { id: i32 }\n\nopen flow http_client_release\n    <-> c: HttpClient\n{\n    c.id = 0\n}\n\nopen flow make_client\n    => HttpClient\n{\n    => HttpClient { id: 7 }\n}\n";
+
+#[test]
+fn guard_with_qualified_shape_resolves_its_release_flow() {
+    let dir = test_dir("qualified-guard");
+    write(&dir, "a.loi", GUARDED_RESOURCE);
+    write(&dir, "b.loi", GUARDED_RESOURCE);
+    let main = write(
+        &dir,
+        "main.loi",
+        "import \"a.loi\" as a\nimport \"b.loi\" as b\nopen flow main\n    => i32\n{\n    guard c: a::HttpClient <- a::make_client() {\n        print_int(c.id)\n    }\n    guard d: b::HttpClient <- b::make_client() {\n        print_int(d.id)\n    }\n    => 0\n}\n",
+    );
+
+    let output = run(&[Path::new("check"), &main]);
+    let text = stderr(&output);
+    let _ = fs::remove_dir_all(&dir);
+    assert!(
+        output.status.success(),
+        "qualified guard could not resolve its release flow: {text}"
     );
 }

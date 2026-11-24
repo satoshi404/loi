@@ -383,7 +383,7 @@ pub fn release_flow_name(ty: &Ty) -> Option<String> {
 /// available. Keeping the spelling here avoids a second snake-case rule.
 pub fn release_flow_name_for(shape: &str) -> String {
     if let Some((module, item)) = shape.split_once("::") {
-        return format!("{module}::{}", snake_case(item));
+        return format!("{module}::{}_release", snake_case(item));
     }
     format!("{}_release", snake_case(shape))
 }

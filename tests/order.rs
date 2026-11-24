@@ -7,8 +7,7 @@ fn loi() -> &'static str {
 }
 
 fn test_dir(name: &str) -> PathBuf {
-    let dir =
-        PathBuf::from("/tmp/opencode").join(format!("loi-order-{}-{name}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("loi-order-{}-{name}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("test directory should be creatable");
     dir
@@ -414,6 +413,88 @@ fn three_hundred_generated_programs_match_the_left_to_right_oracle() {
         assert_eq!(
             actual, expected,
             "differential case {seed} did not match the Rust oracle\nsource:\n{source}"
+        );
+    }
+}
+
+#[test]
+fn len_keeps_logical_short_circuiting() {
+    let Some(clang) = require_clang("len_keeps_logical_short_circuiting") else {
+        return;
+    };
+    let source = r#"
+flow no
+    => bool
+{
+    printf("L")
+    => false
+}
+
+flow touched
+    => [u8]
+{
+    printf("R")
+    => "abc"
+}
+
+open flow main
+    => i32
+{
+    if no() and (len(touched()) > 0) {
+        printf("X")
+    }
+    printf("\n")
+    => 0
+}
+"#;
+    let dir = test_dir("len-short-circuit");
+    let c_path = generated_c(source, &dir);
+    for (label, compiler) in [("gcc", "cc"), ("clang", clang.as_str())] {
+        let exe = dir.join(format!("len-short-circuit-{label}"));
+        assert_eq!(
+            compile_and_run(compiler, &c_path, &exe),
+            "L\n",
+            "{label} evaluated a short-circuited len() operand"
+        );
+    }
+}
+
+#[test]
+fn len_preserves_left_to_right_operand_order() {
+    let Some(clang) = require_clang("len_preserves_left_to_right_operand_order") else {
+        return;
+    };
+    let source = r#"
+flow first
+    => i32
+{
+    printf("L")
+    => 2
+}
+
+flow touched
+    => [u8]
+{
+    printf("R")
+    => "abc"
+}
+
+open flow main
+    => i32
+{
+    total <- first() + (len(touched()) as i32)
+    printf("\n")
+    => 0
+}
+"#;
+    let dir = test_dir("len-order");
+    let c_path = generated_c(source, &dir);
+    for (label, compiler) in [("gcc", "cc"), ("clang", clang.as_str())] {
+        let exe = dir.join(format!("len-order-{label}"));
+        assert_eq!(
+            compile_and_run(compiler, &c_path, &exe),
+            "LR\n",
+            "{label} evaluated len() before the earlier operand"
         );
     }
 }

@@ -631,6 +631,9 @@ fn semantic_token_type(kind: TokenKind, tokens: &[Token], index: usize) -> Optio
         | TokenKind::And
         | TokenKind::Or
         | TokenKind::Not
+        | TokenKind::Quote
+        | TokenKind::Unquote
+        | TokenKind::Splice
         | TokenKind::ArrowIn
         | TokenKind::ArrowInOut
         | TokenKind::FatArrow => Some(0), // keyword

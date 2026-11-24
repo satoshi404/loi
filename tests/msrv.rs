@@ -24,8 +24,17 @@ fn cargo_manifest_declares_edition_2024_msrv() {
         .map(|part| part.parse::<u32>().expect("rust-version must be numeric"))
         .collect();
     assert_eq!(parts.len(), 2, "rust-version must be MAJOR.MINOR");
+    let manifest_msrv = (parts[0], parts[1]);
+    let declared_in_readme = fs::read_to_string(repo_root().join("README.md"))
+        .expect("README.md should be readable")
+        .lines()
+        .any(|line| line.contains("1.88"));
     assert!(
-        (parts[0], parts[1]) >= (1, 85),
-        "edition 2024 requires rust-version >= 1.85, found {declared}"
+        declared_in_readme,
+        "README must state the supported Rust version"
+    );
+    assert!(
+        manifest_msrv >= (1, 88),
+        "Cargo.toml declares {declared} but the README promises 1.88"
     );
 }

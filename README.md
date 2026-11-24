@@ -41,6 +41,9 @@ The compiler is written in Rust (edition 2024, standard library only) and emits
 C11, so the normal toolchain is Cargo plus a C compiler. Ambiguous expressions
 are not rejected: Loi defines strict left-to-right evaluation for operands,
 arguments and assignment, while `and`/`or` keep their short-circuit behavior.
+Internally, the checker records ownership and loan effects in one `FlowSummary`
+per flow using structured `DataPath`s; this model is compiler-only and adds no
+syntax. See [`development/DATA_FLOW_DESIGN.md`](development/DATA_FLOW_DESIGN.md).
 
 **Requirements:** Rust 1.88 or newer (the verified minimum supported version)
 and a C11 compiler.
@@ -152,7 +155,9 @@ cargo test --all-targets
 - `read_file`, `write_file`, `read_stdin` and `read_line` cover whole-file and
   stdin I/O. `print_int`, `print_float` and `printf` print numbers and formatted
   text without building strings by hand; `printf` checks its varargs against a
-  literal format string. Reads allocate in the current `protect` region.
+  literal format string. `format` builds a string from `{}` placeholders; a
+  `[u8]` argument prints its bytes, not its slice header. Reads and `format`
+  allocate in the current `protect` region.
 - `loi fmt` preserves `//` comments and is idempotent.
 - Foreign C is available through `opaque` handles, `cstr`, `extern flow` and
   vendored shims.
@@ -164,7 +169,10 @@ Start with [`SINTAXE.md`](SINTAXE.md) for the canonical surface and
 [`examples/flow_syntax.loi`](examples/flow_syntax.loi) for a complete tour.
 [`examples/marks.loi`](examples/marks.loi) and
 [`examples/choices.loi`](examples/choices.loi) show finite tag sets and checked
-tagged payloads. The raylib examples include an automatic sound synth and a
+tagged payloads. [`examples/recent_features.loi`](examples/recent_features.loi)
+combines comptime `quote`/`unquote`/`splice`, brace declarations, `Option<T>`,
+deep `clone`, zero-copy `view`, structural comparison and `format` in one
+runnable program. The raylib examples include an automatic sound synth and a
 C3-inspired audio visualizer; see [`website/docs.html`](website/docs.html) for
 their build commands.
 
@@ -172,14 +180,14 @@ their build commands.
 
 | Path | Contents |
 |---|---|
-| `src/` | Compiler binaries (`loi` and the `loi-lsp` launcher), lexer, parser, type/ownership checker, C backend, draft IR/assembly |
-| `tests/` | Lexer/parser/checker/codegen/CLI/bindgen integration tests |
+| `src/` | Compiler binaries (`loi` and the `loi-lsp` launcher), lexer, parser, type/ownership checker, `flow.rs` effect primitives, C backend, draft IR/assembly |
+| `tests/` | Lexer/parser/checker/codegen/CLI/bindgen integration tests, including `data_path.rs` for flow path effects |
 | `lib/*.loi`, `lib/*_shim.c` | Modular library: pure Loi helpers plus POSIX shims for `os`/`net` |
-| `examples/` | Reference programs, including `flow_syntax.loi`, `marks.loi`, `choices.loi`, `systems.loi` and `tictactoe.loi` |
+| `examples/` | Reference programs, including `flow_syntax.loi`, `marks.loi`, `choices.loi`, `recent_features.loi`, `systems.loi` and `tictactoe.loi` |
 | `vendor/` | Generated Loi bindings for SDL2 and raylib 5.5, with shims and skip reports |
 | `tools/bindgen/` | Header-to-Loi binding generator |
 | `website/` | Static site, documentation and local playground |
-| `development/` | Language spec, progress, decisions and agent instructions |
+| `development/` | Language spec, progress, decisions, audits, Data Flow design and agent instructions |
 
 ## Documentation
 
@@ -189,11 +197,28 @@ their build commands.
 - [`development/PROGRESS.md`](development/PROGRESS.md) — current compiler
   state and limitations.
 - [`development/DECISIONS.md`](development/DECISIONS.md) — decision log.
+- [`development/DATA_FLOW_DESIGN.md`](development/DATA_FLOW_DESIGN.md) — internal Data Flow design and FASE 2 status.
+- [`development/CONTRACTS.md`](development/CONTRACTS.md) — verifiable language contracts.
+- [`development/MUTATION.md`](development/MUTATION.md) — manual mutation-smoke procedure.
 - [`website/docs.html`](website/docs.html) — public documentation.
 - [`website/README.md`](website/README.md) — how to run the site and
   playground.
 
 ## Testing
+
+The reproducible gate used by CI is:
+
+```sh
+./tools/ci.sh
+```
+
+It runs formatting, clippy, all Rust targets, golden-file integrity, the declared
+MSRV, example checks, strict C11 syntax checks, UBSan/ASan probes, runtime/contract
+suites, fuzz-smoke/property suites, an ABI golden and differential C11/LLVM suites.
+Individual steps can be selected, for example `./tools/ci.sh tests` or
+`./tools/ci.sh c11-strict`.
+
+The underlying commands are still available directly:
 
 ```sh
 cargo fmt --check
@@ -201,9 +226,12 @@ cargo clippy --all-targets -- -D warnings
 cargo test --all-targets
 ```
 
-Compile-and-run tests are skipped when `cc` is unavailable. The playground and
-the binding generator have their own prerequisites (`node` and `clang`
-respectively); see `website/README.md` and `vendor/<library>/README.md`.
+Compile-and-run tests are skipped when `cc` is unavailable; the gate reports
+those skips and fails unless `LOI_ALLOW_SKIPS=1` is set explicitly. The playground
+and the binding generator have their own prerequisites (`node` and `clang`
+respectively); see `website/README.md` and `vendor/<library>/README.md`. To
+regenerate an expected file, set `LOI_BLESS=1`, review the diff and commit it;
+CI rejects both `LOI_BLESS=1` and dirty golden files.
 
 ## License
 

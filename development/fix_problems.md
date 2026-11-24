@@ -1,4 +1,7 @@
-# Loi — análise do repositório: problemas encontrados
+# Loi — análise do repositório: problemas encontrados (relatório histórico)
+
+Este documento registra o estado de 2026-11-08 e não descreve o compilador atual.
+Os itens listados foram corrigidos; a fonte canônica é `SINTAXE.md`.
 
 Análise feita em 2026-11-08 sobre o zip `loi-main` (Rust, edition 2024, sem dependências externas).
 

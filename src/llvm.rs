@@ -420,6 +420,16 @@ impl<'a> Emitter<'a> {
         header.push_str("declare i32 @fwrite(ptr, i64, i64, ptr)\n");
         header.push_str("@stdout = external global ptr\n");
         header.push_str("@stderr = external global ptr\n");
+        // Checked signed arithmetic needs the overflow intrinsics. Declaring
+        // all widths up front keeps the emitted IR self-contained.
+        for width in [8, 16, 32, 64] {
+            let ty = format!("i{width}");
+            for intrinsic in ["sadd", "ssub", "smul"] {
+                header.push_str(&format!(
+                    "declare {{{ty}, i1}} @llvm.{intrinsic}.with.overflow.{ty}({ty}, {ty})\n"
+                ));
+            }
+        }
 
         let mut declarations = String::new();
         for decl in self.program.items.iter().filter_map(|item| match item {
@@ -613,7 +623,8 @@ impl<'a> Emitter<'a> {
                 code = self.coerce(&code, &inferred, &ty)?;
                 if *op != AssignOp::Assign {
                     let previous = self.load_raw(&pointer, &ty);
-                    code = self.binary_code(op_to_binary(*op), &previous, &code, &ty)?;
+                    code =
+                        self.binary_code(op_to_binary(*op), &previous, &code, &ty, statement.span)?;
                 }
                 self.current.line(format!(
                     "store {} {code}, ptr {}",
@@ -835,8 +846,26 @@ impl<'a> Emitter<'a> {
             }
             ExprKind::Unary { op, operand } => {
                 let ty = self.infer(operand, expected)?.concretize();
+                // Fold `-<literal>` into a constant of the expected width. The
+                // positive magnitude of i64::MIN does not fit in i64, so
+                // emitting it raw would wrap instead of producing the minimum.
+                if *op == UnaryOp::Neg
+                    && is_signed(&ty)
+                    && let ExprKind::Int(text) = &operand.kind
+                    && let Some(literal) = negative_int_literal(text, &ty)
+                {
+                    return Ok(literal);
+                }
                 let value = self.gen_expr(operand, Some(&ty))?;
                 let llvm = self.llvm_type(&ty)?;
+                if *op == UnaryOp::Neg && is_signed(&ty) {
+                    let minimum = signed_min(&ty)
+                        .ok_or_else(|| format!("LLVM backend cannot check negation of '{ty}'"))?;
+                    let is_min = self.fresh("%neg_overflow");
+                    self.current
+                        .line(format!("{is_min} = icmp eq {llvm} {value}, {minimum}"));
+                    self.checked_fail(&is_min, "integer overflow", expr.span);
+                }
                 let result = self.fresh("%un");
                 let code = match op {
                     UnaryOp::Neg if ty.is_float() => format!("{result} = fneg {llvm} {value}"),
@@ -858,7 +887,7 @@ impl<'a> Emitter<'a> {
                 let right_ty = self.infer(right, Some(&left_ty))?.concretize();
                 let left = self.gen_expr(left, Some(&left_ty))?;
                 let right = self.gen_expr(right, Some(&right_ty))?;
-                self.binary_code(*op, &left, &right, &left_ty)
+                self.binary_code(*op, &left, &right, &left_ty, expr.span)
             }
             ExprKind::Cast { expr, ty } => {
                 let target = self.ast_type(ty)?;
@@ -1283,6 +1312,7 @@ impl<'a> Emitter<'a> {
         left: &str,
         right: &str,
         ty: &Ty,
+        span: Span,
     ) -> Result<String, String> {
         if matches!(ty, Ty::Slice(_)) {
             if !matches!(op, BinaryOp::Eq | BinaryOp::Neq) {
@@ -1305,6 +1335,86 @@ impl<'a> Emitter<'a> {
         let llvm = self.llvm_type(ty)?;
         let result = self.fresh("%bin");
         let signed = is_signed(ty);
+
+        // Signed +, - and * trap on overflow, exactly like the C11 helpers.
+        if signed
+            && let Some(intrinsic) = match op {
+                BinaryOp::Add => Some("sadd"),
+                BinaryOp::Sub => Some("ssub"),
+                BinaryOp::Mul => Some("smul"),
+                _ => None,
+            }
+        {
+            let pair = self.fresh("%overflow");
+            let overflowed = self.fresh("%overflowed");
+            let value = self.fresh("%checked");
+            self.current.line(format!(
+                "{pair} = call {{{llvm}, i1}} @llvm.{intrinsic}.with.overflow.{llvm}({llvm} {left}, {llvm} {right})"
+            ));
+            self.current
+                .line(format!("{value} = extractvalue {{{llvm}, i1}} {pair}, 0"));
+            self.current.line(format!(
+                "{overflowed} = extractvalue {{{llvm}, i1}} {pair}, 1"
+            ));
+            self.checked_fail(&overflowed, "integer overflow", span);
+            return Ok(value);
+        }
+
+        // Divisions and remainders trap on a zero divisor. Signed division also
+        // traps on MIN / -1; signed MIN % -1 is defined to be zero in Loi.
+        if int_bits(ty).is_some() && matches!(op, BinaryOp::Div | BinaryOp::Mod) {
+            let divisor_is_zero = self.fresh("%divisor_zero");
+            self.current
+                .line(format!("{divisor_is_zero} = icmp eq {llvm} {right}, 0"));
+            let message = if op == BinaryOp::Div {
+                "division by zero"
+            } else {
+                "remainder by zero"
+            };
+            self.checked_fail(&divisor_is_zero, message, span);
+
+            if signed {
+                let minimum = signed_min(ty)
+                    .ok_or_else(|| format!("LLVM backend cannot check division for '{ty}'"))?;
+                let left_min = self.fresh("%left_min");
+                let right_minus_one = self.fresh("%right_minus_one");
+                let edge = self.fresh("%div_edge");
+                self.current
+                    .line(format!("{left_min} = icmp eq {llvm} {left}, {minimum}"));
+                self.current
+                    .line(format!("{right_minus_one} = icmp eq {llvm} {right}, -1"));
+                self.current
+                    .line(format!("{edge} = and i1 {left_min}, {right_minus_one}"));
+                if op == BinaryOp::Div {
+                    self.checked_fail(&edge, "integer overflow", span);
+                } else {
+                    // Avoid `srem MIN, -1` altogether: substitute 1 as the
+                    // divisor for that case and select the defined zero result.
+                    let safe_divisor = self.fresh("%rem_divisor");
+                    let raw = self.fresh("%rem_raw");
+                    self.current.line(format!(
+                        "{safe_divisor} = select i1 {edge}, {llvm} 1, {llvm} {right}"
+                    ));
+                    self.current
+                        .line(format!("{raw} = srem {llvm} {left}, {safe_divisor}"));
+                    self.current.line(format!(
+                        "{result} = select i1 {edge}, {llvm} 0, {llvm} {raw}"
+                    ));
+                    return Ok(result);
+                }
+            }
+        }
+
+        // Shift counts must be in [0, width), as in the C11 backend.
+        if matches!(op, BinaryOp::Shl | BinaryOp::Shr)
+            && let Some(bits) = int_bits(ty)
+        {
+            let out_of_range = self.fresh("%shift_bad");
+            self.current
+                .line(format!("{out_of_range} = icmp uge {llvm} {right}, {bits}"));
+            self.checked_fail(&out_of_range, "shift count out of range", span);
+        }
+
         let code = match op {
             BinaryOp::Add if ty.is_float() => format!("{result} = fadd {llvm} {left}, {right}"),
             BinaryOp::Add => format!("{result} = add {llvm} {left}, {right}"),
@@ -1621,6 +1731,25 @@ impl<'a> Emitter<'a> {
         self.finished.push(finished);
     }
 
+    /// Branch to a trap block when `condition` holds, then continue in a fresh
+    /// block. The trap uses the same diagnostic text and source position as the
+    /// C11 runtime so both backends report arithmetic failures identically.
+    fn checked_fail(&mut self, condition: &str, message: &str, span: Span) {
+        let fail_label = self.fresh_label("arith.fail");
+        let cont_label = self.fresh_label("arith.cont");
+        self.current.terminate(format!(
+            "br i1 {condition}, label %{fail_label}, label %{cont_label}"
+        ));
+        self.push_block(fail_label);
+        let text = self.gep_string(message);
+        self.current.line(format!(
+            "call void @loi_runtime_fail(ptr {text}, i64 {}, i64 {})",
+            span.line, span.column
+        ));
+        self.current.terminate("unreachable".to_string());
+        self.push_block(cont_label);
+    }
+
     fn fresh(&mut self, prefix: &str) -> String {
         self.counter += 1;
         format!("{}{}", prefix, self.counter)
@@ -1656,6 +1785,29 @@ fn is_signed(ty: &Ty) -> bool {
     matches!(ty, Ty::I8 | Ty::I16 | Ty::I32 | Ty::I64 | Ty::IntLiteral)
 }
 
+/// Bit width of an integer Loi type (booleans are not counted: their shifts
+/// are rejected elsewhere).
+fn int_bits(ty: &Ty) -> Option<usize> {
+    match ty {
+        Ty::I8 | Ty::U8 => Some(8),
+        Ty::I16 | Ty::U16 => Some(16),
+        Ty::I32 | Ty::U32 | Ty::IntLiteral => Some(32),
+        Ty::I64 | Ty::U64 => Some(64),
+        _ => None,
+    }
+}
+
+/// The most negative value of a signed type, in LLVM integer syntax.
+fn signed_min(ty: &Ty) -> Option<&'static str> {
+    match ty {
+        Ty::I8 => Some("-128"),
+        Ty::I16 => Some("-32768"),
+        Ty::I32 | Ty::IntLiteral => Some("-2147483648"),
+        Ty::I64 => Some("-9223372036854775808"),
+        _ => None,
+    }
+}
+
 fn op_to_binary(op: AssignOp) -> BinaryOp {
     match op {
         AssignOp::Add => BinaryOp::Add,
@@ -1682,6 +1834,39 @@ fn sanitize(name: &str) -> String {
             }
         })
         .collect()
+}
+
+/// Fold a negative integer literal into an LLVM constant of the expected
+/// signed width. Returns `None` if the literal is malformed or out of range.
+fn negative_int_literal(text: &str, ty: &Ty) -> Option<String> {
+    let cleaned = text.replace('_', "");
+    let (radix, digits) = if let Some(rest) = cleaned
+        .strip_prefix("0x")
+        .or_else(|| cleaned.strip_prefix("0X"))
+    {
+        (16, rest)
+    } else if let Some(rest) = cleaned
+        .strip_prefix("0b")
+        .or_else(|| cleaned.strip_prefix("0B"))
+    {
+        (2, rest)
+    } else {
+        (10, cleaned.as_str())
+    };
+    let value = i128::from_str_radix(digits, radix).ok()?.checked_neg()?;
+    let bits = match ty {
+        Ty::I8 => 8,
+        Ty::I16 => 16,
+        Ty::I32 | Ty::IntLiteral => 32,
+        Ty::I64 => 64,
+        _ => return None,
+    };
+    let min = -(1i128 << (bits - 1));
+    let max = (1i128 << (bits - 1)) - 1;
+    if value < min || value > max {
+        return None;
+    }
+    Some(value.to_string())
 }
 
 fn int_literal(text: &str) -> Result<String, String> {

@@ -11,8 +11,7 @@ fn repo_root() -> PathBuf {
 }
 
 fn test_dir(name: &str) -> PathBuf {
-    let dir =
-        PathBuf::from("/tmp/opencode").join(format!("loi-json-{}-{name}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("loi-json-{}-{name}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("test directory should be creatable");
     dir

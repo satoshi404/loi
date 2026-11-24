@@ -977,6 +977,7 @@ flow exchange
               <tr><td><code>print_int</code></td><td><code>&lt;- integer</code></td><td>Writes an integer's digits; no newline. Any width.</td></tr>
               <tr><td><code>print_float</code></td><td><code>&lt;- f32 | f64</code></td><td>Writes the shortest round-tripping decimal; no newline.</td></tr>
               <tr><td><code>printf</code></td><td><code>&lt;- [u8], ...</code></td><td>Formatted output; literal format string plus typed varargs.</td></tr>
+              <tr><td><code>format</code></td><td><code>&lt;- [u8], ... =&gt; [u8]</code></td><td>Builds a string with <code>{}</code> placeholders; a <code>[u8]</code> argument inserts its bytes; allocates in the caller's <code>protect</code> region.</td></tr>
               <tr><td><code>read_file</code></td><td><code>&lt;- [u8] =&gt; [u8]</code></td><td>Reads a whole file into the current <code>protect</code> region; traps on failure.</td></tr>
               <tr><td><code>write_file</code></td><td><code>&lt;- [u8], &lt;- [u8] =&gt; bool</code></td><td>Writes exact bytes; returns whether write and close succeeded.</td></tr>
               <tr><td><code>read_stdin</code></td><td><code>=> [u8]</code></td><td>Reads the rest of standard input into the current <code>protect</code> region.</td></tr>
@@ -1004,6 +1005,9 @@ flow exchange
             <code>%%</code>) decide how many values follow and of which kind. Flags, numeric width,
             precision and length modifiers are forwarded to C; dynamic <code>*</code> widths are
             rejected. Each value is cast to the C type its conversion reads.
+            <code>format</code> is the string-building counterpart: its first argument is a
+            literal template using <code>{}</code> placeholders, and a <code>[u8]</code>
+            argument contributes its byte contents rather than its slice header.
             <code>read_file</code>, <code>read_stdin</code> and <code>read_line</code> allocate,
             so call them inside a <code>protect</code> block and do not let their result escape it.
             <code>read_stdin</code> waits for EOF; use <code>lib/stdio.loi</code> when a
@@ -2210,6 +2214,10 @@ dofile("/absolute/path/to/loi/editors/nvim/loi.lua")</code></pre>
             <a class="feature-card" href="examples/options_results.loi">
               <h3>Options and results</h3>
               <p>Official <code>Option&lt;T&gt;</code> and <code>Result&lt;T, E&gt;</code> in a settings parser: explicit presence checks, fallbacks and typed error messages.</p>
+            </a>
+            <a class="feature-card" href="examples/recent_features.loi">
+              <h3>Recent features</h3>
+              <p>Comptime <code>quote</code>/<code>unquote</code>/<code>splice</code>, brace declarations, <code>Option&lt;T&gt;</code>, deep <code>clone</code>, zero-copy <code>view</code>, structural comparison and <code>format</code>.</p>
             </a>
             <a class="feature-card" href="examples/iteration.loi">
               <h3>Iteration</h3>

@@ -36,7 +36,7 @@ surface disagree, fix the compiler or record the change explicitly.
 - Canonical words: `shape`, `mark`, `choice`, `flow`, `open`, `sealed`, `<-`,
   `->`, `<->`, `=>`, `mut`, `give`, `clone`, `is`. Do not reintroduce
   `interface`, `enum`, `union`, `fun`, `let`, `var`, `visible`, `hidden`, `out`,
-  `inout`, `move`, `copy`, `return`, `[]T` or `Name { ... }`.
+  `inout`, `move`, `copy`, `return` or `[]T`.
 
 ### CLI
 

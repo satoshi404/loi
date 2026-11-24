@@ -202,3 +202,25 @@ fn tokenize_with_comments_keeps_comment_positions() {
     let tokens = tokenize(source, "<test>").expect("source should lex");
     assert!(tokens.iter().all(|token| !token.lexeme.starts_with("//")));
 }
+
+#[test]
+fn rejects_malformed_radix_literals() {
+    assert!(
+        tokenize("0x", "<test>").is_err(),
+        "a bare 0x prefix must be a lexical error"
+    );
+    assert!(
+        tokenize("0b2", "<test>").is_err(),
+        "a digit outside base 2 must be a lexical error"
+    );
+}
+
+#[test]
+fn string_escape_errors_point_at_the_backslash() {
+    let error = tokenize("\"a\\q\"", "<test>").unwrap_err();
+    assert_eq!(
+        (error.line, error.column, error.end_column),
+        (1, 3, 4),
+        "the diagnostic must point at the backslash: {error:?}"
+    );
+}

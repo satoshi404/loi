@@ -460,12 +460,16 @@ pub fn render_sourced(items: &[SourcedDiagnostic], format: ErrorFormat, color: b
                     color,
                 ));
             }
-            let count = sorted.len();
-            out.push('\n');
-            out.push_str(&format!(
-                "{count} error{}\n",
-                if count == 1 { "" } else { "s" }
-            ));
+            let refs = sorted
+                .iter()
+                .map(|item| &item.diagnostic)
+                .collect::<Vec<_>>();
+            let summary = summary(&refs);
+            if !summary.is_empty() {
+                out.push('\n');
+                out.push_str(&summary);
+                out.push('\n');
+            }
             out
         }
         ErrorFormat::Short => {

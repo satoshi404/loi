@@ -1246,6 +1246,20 @@ impl<'a> Generator<'a> {
             let index = self.string_index(text);
             return format!("((const char*)loi_str_{index})");
         }
+        // Fold `-<literal>` into a constant of the expected width. Emitting
+        // `loi_neg_i32(<magnitude>)` would first narrow the magnitude to
+        // `int32_t`, silently changing i64::MIN to 0 and trapping on i32::MIN.
+        // The checker has already proved the folded value fits.
+        if let ExprKind::Unary {
+            op: UnaryOp::Neg,
+            operand,
+        } = &expr.kind
+            && let ExprKind::Int(text) = &operand.kind
+            && let Some(ty) = expected
+            && let Some(literal) = folded_negative_literal(text, ty)
+        {
+            return literal;
+        }
         self.gen_expr(expr)
     }
 
@@ -3642,13 +3656,7 @@ impl<'a> Generator<'a> {
     /// Generate an expression in a context expecting `expected`. The only
     /// coercion is a string literal becoming a NUL-terminated `cstr`.
     fn gen_coerced_expr(&mut self, expr: &Expr, expected: &Ty) -> String {
-        if matches!(expected, Ty::CStr)
-            && let ExprKind::String(text) = &expr.kind
-        {
-            let index = self.string_index(text);
-            return format!("((const char*)loi_str_{index})");
-        }
-        self.gen_expr(expr)
+        self.gen_value(expr, Some(expected))
     }
 
     fn gen_call(&mut self, callee: &Expr, args: &[CallArg]) -> String {
@@ -3712,23 +3720,30 @@ impl<'a> Generator<'a> {
         match name {
             "print" | "eprint" => {
                 let arg = args.first()?;
-                let value = self.gen_expr(&arg.value);
-                // Capture the slice in a temporary so it is evaluated once.
-                let temp = self.fresh("print_arg");
+                let (steps, value) = self.ordered_expr(&arg.value, None, false);
+                // Declare the temporary without evaluating the argument. The
+                // assignment is a comma step in the returned expression, so a
+                // short-circuited operand never runs it.
                 let slice_ty = self.ty_of(&arg.value);
                 let slice_c = self.c_type(&slice_ty);
-                self.emit(format!("{slice_c} {temp} = {value};"));
+                let temp = self.declare_temp_typed(&slice_c, "print_arg");
+                let mut steps = steps;
+                steps.push(format!("{temp} = {value}"));
                 let stream = if name == "print" { "stdout" } else { "stderr" };
-                Some(format!("fwrite({temp}.data, 1, {temp}.len, {stream})"))
+                Some(Self::with_order(
+                    steps,
+                    format!("fwrite({temp}.data, 1, {temp}.len, {stream})"),
+                ))
             }
             "len" => {
                 let arg = args.first()?;
-                let value = self.gen_expr(&arg.value);
-                let temp = self.fresh("len_arg");
+                let (steps, value) = self.ordered_expr(&arg.value, None, false);
                 let slice_ty = self.ty_of(&arg.value);
                 let slice_c = self.c_type(&slice_ty);
-                self.emit(format!("{slice_c} {temp} = {value};"));
-                Some(format!("((uint64_t){temp}.len)"))
+                let temp = self.declare_temp_typed(&slice_c, "len_arg");
+                let mut steps = steps;
+                steps.push(format!("{temp} = {value}"));
+                Some(Self::with_order(steps, format!("((uint64_t){temp}.len)")))
             }
             "callback" => {
                 let arg = args.first()?;
@@ -3756,13 +3771,15 @@ impl<'a> Generator<'a> {
             }
             "panic" => {
                 let arg = args.first()?;
-                let value = self.gen_expr(&arg.value);
-                let temp = self.fresh("panic_arg");
+                let (steps, value) = self.ordered_expr(&arg.value, None, false);
                 let slice_ty = self.ty_of(&arg.value);
                 let slice_c = self.c_type(&slice_ty);
-                self.emit(format!("{slice_c} {temp} = {value};"));
-                Some(format!(
-                    "fwrite({temp}.data, 1, {temp}.len, stderr), exit(1)"
+                let temp = self.declare_temp_typed(&slice_c, "panic_arg");
+                let mut steps = steps;
+                steps.push(format!("{temp} = {value}"));
+                Some(Self::with_order(
+                    steps,
+                    format!("fwrite({temp}.data, 1, {temp}.len, stderr), exit(1)"),
                 ))
             }
             "sqrt" | "floor" | "ceil" | "fabs" => {
@@ -3878,7 +3895,6 @@ impl<'a> Generator<'a> {
                         crate::format::BracedPiece::Placeholder => {
                             let arg = args.get(arg_index + 1)?;
                             let ty = self.ty_of(&arg.value).concretize();
-                            let is_string_lit = matches!(arg.value.kind, ExprKind::String(_));
                             if ty.is_float() {
                                 fmt_c.push_str("%g");
                                 arg_items.push((&arg.value, None));
@@ -3887,12 +3903,18 @@ impl<'a> Generator<'a> {
                                 fmt_c.push_str("%s");
                                 arg_items.push((&arg.value, None));
                                 arg_kinds.push(ty);
-                            } else if matches!(ty, Ty::CStr)
-                                || (is_string_lit
-                                    && matches!(&ty, Ty::Slice(inner) if matches!(inner.as_ref(), Ty::U8)))
-                            {
+                            } else if matches!(ty, Ty::CStr) {
                                 fmt_c.push_str("%s");
                                 arg_items.push((&arg.value, Some(&Ty::CStr)));
+                                arg_kinds.push(ty);
+                            } else if matches!(&ty, Ty::Slice(inner) if matches!(inner.as_ref(), Ty::U8))
+                            {
+                                // A `[u8]` value is a `(data, len)` slice header,
+                                // not a NUL-terminated string. Pass its bytes
+                                // with an explicit precision instead of handing
+                                // the struct to varargs.
+                                fmt_c.push_str("%.*s");
+                                arg_items.push((&arg.value, None));
                                 arg_kinds.push(ty);
                             } else if matches!(ty, Ty::U64 | Ty::U32 | Ty::U16 | Ty::U8) {
                                 fmt_c.push_str("%llu");
@@ -3918,10 +3940,11 @@ impl<'a> Generator<'a> {
                         lowered.push(format!("((double)({value}))"));
                     } else if matches!(ty, Ty::Bool) {
                         lowered.push(format!("(({value}) ? \"true\" : \"false\")"));
-                    } else if matches!(ty, Ty::CStr)
-                        || matches!(&ty, Ty::Slice(inner) if matches!(inner.as_ref(), Ty::U8))
-                    {
+                    } else if matches!(ty, Ty::CStr) {
                         lowered.push(value.clone());
+                    } else if matches!(&ty, Ty::Slice(inner) if matches!(inner.as_ref(), Ty::U8)) {
+                        lowered.push(format!("((int)(({value}).len))"));
+                        lowered.push(format!("((const char*)(({value}).data))"));
                     } else if matches!(ty, Ty::U64 | Ty::U32 | Ty::U16 | Ty::U8) {
                         lowered.push(format!("((unsigned long long)({value}))"));
                     } else {
@@ -4378,6 +4401,41 @@ fn c_int_literal(text: &str) -> String {
         }
     }
     digits
+}
+
+/// Compile-time folded negative integer literal for a known expected type.
+/// Returns `None` when the expression is not a plain negative integer literal
+/// or the expected type is not a signed integer.
+fn folded_negative_literal(text: &str, ty: &Ty) -> Option<String> {
+    let cleaned = text.replace('_', "");
+    let (radix, digits) = if let Some(rest) = cleaned
+        .strip_prefix("0x")
+        .or_else(|| cleaned.strip_prefix("0X"))
+    {
+        (16, rest)
+    } else if let Some(rest) = cleaned
+        .strip_prefix("0b")
+        .or_else(|| cleaned.strip_prefix("0B"))
+    {
+        (2, rest)
+    } else {
+        (10, cleaned.as_str())
+    };
+    let value = i128::from_str_radix(digits, radix).ok()?.checked_neg()?;
+    let c_type = match ty {
+        Ty::I8 => "int8_t",
+        Ty::I16 => "int16_t",
+        Ty::I32 => "int32_t",
+        Ty::I64 => "int64_t",
+        _ => return None,
+    };
+    // `-9223372036854775808` alone is unary minus applied to an unsigned
+    // constant in C11 and triggers -Woverflow. Split it into a signed literal
+    // and a subtraction so the generated C is warning-free.
+    if value == i64::MIN as i128 {
+        return Some("((int64_t)(-9223372036854775807LL - 1))".into());
+    }
+    Some(format!("(({c_type})({value}))"))
 }
 
 fn c_signed_literal(value: i128) -> String {

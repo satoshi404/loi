@@ -1,0 +1,20 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust components
+        run: rustup component add rustfmt clippy && rustup toolchain install 1.88.0 --profile minimal
+      - name: Install system tools
+        run: sudo apt-get update && sudo apt-get install -y clang python3
+      - name: Run gate
+        env:
+          LOI_REQUIRE_MSRV: "1"
+        run: ./tools/ci.sh

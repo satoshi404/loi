@@ -7,8 +7,7 @@ fn loi() -> &'static str {
 }
 
 fn test_dir(name: &str) -> PathBuf {
-    let dir =
-        PathBuf::from("/tmp/opencode").join(format!("loi-const-{}-{name}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("loi-const-{}-{name}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("test directory should be creatable");
     dir
@@ -62,8 +61,8 @@ fn generated_c(source: &str, name: &str) -> String {
 
 fn assert_strict_c11(source: &str, name: &str) {
     let c = generated_c(source, name);
-    let path = PathBuf::from("/tmp/opencode")
-        .join(format!("loi-const-strict-{}-{name}.c", std::process::id()));
+    let path =
+        std::env::temp_dir().join(format!("loi-const-strict-{}-{name}.c", std::process::id()));
     fs::write(&path, c).expect("generated C should be writable");
     let output = Command::new("cc")
         .args([

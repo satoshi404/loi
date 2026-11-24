@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::PathBuf;
 use std::process::Command;
 
 use loi::{check, generate_c, generate_header, parse, tokenize};
@@ -43,8 +42,8 @@ fn assert_strict_c11(name: &str, source: &str) {
         return;
     }
 
-    let dir = PathBuf::from("/tmp/opencode")
-        .join(format!("loi-codegen-{}-{name}-strict", std::process::id()));
+    let dir =
+        std::env::temp_dir().join(format!("loi-codegen-{}-{name}-strict", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("test directory should be creatable");
     let path = dir.join("generated.c");
@@ -77,8 +76,7 @@ fn assert_sanitizers_compile(name: &str, source: &str) {
         return;
     }
 
-    let dir = PathBuf::from("/tmp/opencode")
-        .join(format!("loi-codegen-{}-{name}-san", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("loi-codegen-{}-{name}-san", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("test directory should be creatable");
     let path = dir.join("generated.c");
@@ -125,8 +123,7 @@ fn compile_and_run_output(name: &str, source: &str, harness: &str) -> Option<std
         return None;
     }
 
-    let dir =
-        PathBuf::from("/tmp/opencode").join(format!("loi-codegen-{}-{name}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("loi-codegen-{}-{name}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("test directory should be creatable");
 
@@ -849,7 +846,10 @@ int main(void) {
 
 #[test]
 fn compiled_reads_and_writes_files() {
-    let path = format!("/tmp/opencode/loi-codegen-io-{}.dat", std::process::id());
+    let path = std::env::temp_dir()
+        .join(format!("loi-codegen-io-{}.dat", std::process::id()))
+        .display()
+        .to_string();
     let source = "flow roundtrip\n    <- path: [u8]\n    => i32\n{\n    protect {\n        mut data: [u8] <- \"hello\"\n        if not write_file(<- path, <- data) {\n            => 1\n        }\n        mut read_back: [u8] <- read_file(<- path)\n        if read_back.len != 5 {\n            => 2\n        }\n        if read_back[0] != 104 {\n            => 3\n        }\n        if read_back[4] != 111 {\n            => 4\n        }\n        => 0\n    }\n}\n";
     let harness = format!(
         r#"
@@ -867,7 +867,10 @@ int main(void) {{
 
 #[test]
 fn compiled_reads_stdin_lines_and_the_remainder() {
-    let input_path = format!("/tmp/opencode/loi-codegen-stdin-{}.txt", std::process::id());
+    let input_path = std::env::temp_dir()
+        .join(format!("loi-codegen-stdin-{}.txt", std::process::id()))
+        .display()
+        .to_string();
     fs::write(&input_path, "hello\nrest\n").expect("stdin fixture should be writable");
 
     let source = "flow line_len\n    => i32\n{\n    protect {\n        mut line: [u8] <- read_line()\n        => line.len as i32\n    }\n}\n\nflow rest_len\n    => i32\n{\n    protect {\n        mut rest: [u8] <- read_stdin()\n        => rest.len as i32\n    }\n}\n";
@@ -995,8 +998,7 @@ fn composite_globals_compile_as_strict_c11() {
         return;
     }
 
-    let dir = PathBuf::from("/tmp/opencode")
-        .join(format!("loi-codegen-{}-strict-c11", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("loi-codegen-{}-strict-c11", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("test directory should be creatable");
     let path = dir.join("generated.c");
@@ -1073,6 +1075,26 @@ int main(void) {
 }
 
 const MARK_CHOICE_SOURCE: &str = "mark Color [ Red, Green, Blue ]\n\nchoice Result [ Ok: i32, Err: i64 ]\n\nflow classify\n    <- c: Color\n    <- r: Result\n    => i32\n{\n    if c == Color.Green and r is Result.Ok {\n        => r.Ok\n    }\n    => -1\n}\n\nflow wrong\n    => i64\n{\n    r <- Result.Ok(7)\n    => r.Err\n}\n";
+
+#[test]
+fn compiled_format_prints_byte_slice_contents_not_its_header() {
+    let source = "flow show {\n    protect {\n        text <- \"wire\"\n        line <- format(\"{} code={}\\n\", text, 7)\n        print(line)\n    }\n}\n";
+    let c = generated(source);
+    let harness = r#"
+int main(void) {
+    loi_fn_show();
+    return 0;
+}
+"#;
+    let Some(run) = compile_and_run_output("format-slice", &c, harness) else {
+        return;
+    };
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "wire code=7\n",
+        "format should print the bytes of a [u8] value:\n{c}"
+    );
+}
 
 #[test]
 fn mark_and_choice_generate_c_representations() {
@@ -1753,4 +1775,24 @@ fn code_templates_do_not_remove_other_comptime_flows() {
     let Some(run) = run else { return };
     assert_eq!(run.status.code(), Some(0));
     assert_eq!(String::from_utf8_lossy(&run.stdout), "42");
+}
+
+// AUD-015: `-9223372036854775808` annotated as `i64` is i64::MIN, not a
+// negation of an out-of-range i32 magnitude.
+#[test]
+fn large_negative_i64_literal_keeps_its_value_in_c11() {
+    let c = generated("flow main {\n    x: i64 <- -9223372036854775808\n    print_int(x)\n}\n");
+    assert!(
+        !c.contains("loi_neg_i32(9223372036854775808"),
+        "checked negation must not narrow i64::MIN to i32:\n{c}"
+    );
+    let Some(run) = compile_and_run_output("negative-i64-min", &c, "") else {
+        return;
+    };
+    assert!(
+        run.status.success(),
+        "program should run: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "-9223372036854775808");
 }

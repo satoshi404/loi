@@ -127,8 +127,14 @@ pub fn expand_program(program: &Program) -> Result<Program, Vec<Diagnostic>> {
 /// Validate placement of the new nodes before evaluating anything.
 fn validate_program(program: &Program, errors: &mut Vec<Diagnostic>) {
     for item in &program.items {
-        if let Item::Function(decl) = item {
-            validate_block(&decl.body, decl.comptime, false, errors);
+        match item {
+            Item::Function(decl) => validate_block(&decl.body, decl.comptime, false, errors),
+            // Globals are evaluated before any flow runs. Their initializers
+            // must obey the same placement rules as ordinary statements;
+            // otherwise a `Code` value can reach codegen, which has no C
+            // representation for it.
+            Item::Global(decl) => validate_expr(&decl.value, false, false, errors),
+            _ => {}
         }
     }
 }

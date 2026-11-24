@@ -933,7 +933,7 @@ Compiler intrinsics (always available, cannot be redeclared):
 | `panic` | `(<- [u8])` |
 | `print_int` | `(<- i8 \| i16 \| i32 \| i64 \| u8 \| u16 \| u32 \| u64)` |
 | `printf` | `(<- [u8], ...)` | Formatted output; literal format string plus typed varargs |
-| `format` | `(<- [u8], ...) => [u8]` | Build a formatted string with `{}` placeholders; allocates in caller `protect` |
+| `format` | `(<- [u8], ...) => [u8]` | Build a formatted string with `{}` placeholders; a `[u8]` argument prints its bytes; allocates in caller `protect` |
 | `print_float` | `(<- f32 \| f64)` |
 | `read_file` | `(<- [u8]) => [u8]` |
 | `write_file` | `(<- [u8], <- [u8]) => bool` |
@@ -1829,6 +1829,7 @@ Reference programs:
 - `examples/choices.loi` — tagged payloads, `is` tests and checked reads.
 - `examples/views.loi` — zero-copy slice views and their lexical loans.
 - `examples/options_results.loi` — official `Option<T>` and `Result<T, E>` in a settings parser.
+- `examples/recent_features.loi` — brace declarations, comptime code, `Option<T>`, deep `clone`, `view`, structural comparison and `format` in one program.
 - `examples/systems.loi` — bitwise flags, shifts and file/stdin I/O.
 - `examples/ordering.loi` — structural equality and `Ord` sorting/search.
 - `examples/module_mangling.loi` — two modules exposing the same API names.

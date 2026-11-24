@@ -18,9 +18,10 @@ const KIND_KEYWORD: u8 = 14;
 
 /// Every canonical keyword, in the same set as `SINTAXE.md` §1.
 const KEYWORDS: &[&str] = &[
-    "alloc", "and", "as", "break", "choice", "comptime", "continue", "else", "extern", "false",
-    "flow", "for", "give", "guard", "if", "import", "in", "is", "mark", "mut", "not", "opaque",
-    "open", "or", "protect", "sealed", "shape", "true", "while",
+    "alloc", "and", "as", "break", "choice", "clone", "comptime", "continue", "else", "extern",
+    "false", "flow", "for", "give", "guard", "if", "import", "in", "is", "mark", "mut", "not",
+    "opaque", "open", "or", "protect", "quote", "sealed", "shape", "splice", "true", "unquote",
+    "while",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]

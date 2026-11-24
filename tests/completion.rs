@@ -170,3 +170,18 @@ fn completion_json_is_deterministic() {
         "completion output should be stable"
     );
 }
+
+#[test]
+fn completion_offers_every_canonical_keyword() {
+    // Use a distinct prefix per keyword: the empty prefix is capped at 50
+    // items, so it cannot prove that the tail of the canonical set is present.
+    for label in ["clone", "quote", "splice", "unquote"] {
+        let prefix = &label[..3];
+        let source = format!("flow main => i32 {{\n    => {prefix}\n}}\n");
+        let items = labels(&check(&source, 2, 8 + prefix.len()));
+        assert!(
+            items.iter().any(|item| item == label),
+            "missing canonical keyword {label}: {items:?}"
+        );
+    }
+}

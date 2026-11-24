@@ -109,8 +109,8 @@ open flow world_new
     alloc(-> ps, Particle, count)          // belongs to the caller's protect
     for i in 0..count {
         ps[i] = Particle {
-            pos:  Vec2[ x: i as f64 / count as f64 * size.x, y: size.y / 2 ],
-            vel:  Vec2[ x: i as f64 * 0.1 - 5, y: 0 ],
+            pos:  Vec2 { x: i as f64 / count as f64 * size.x, y: size.y / 2 },
+            vel:  Vec2 { x: i as f64 * 0.1 - 5, y: 0 },
             mass: 1 + (i % 3) as f64,
         }
     }
@@ -425,8 +425,12 @@ These rules were added to unblock real programs and are implemented and tested. 
 
 **Builtin intrinsics and standard library**
 
-- Intrinsics: `print(<- [u8])`, `eprint(<- [u8])`, `panic(<- [u8])`, `print_int(<- integer)`, `print_float(<- f64)`, `printf(<- [u8], ...)` (literal format string plus typed varargs), `sqrt/floor/ceil/fabs(<- f64) => f64`, `pow/fmod(<- f64, <- f64) => f64`, `len([T]) => u64` and
+- Intrinsics: `print(<- [u8])`, `eprint(<- [u8])`, `panic(<- [u8])`, `print_int(<- integer)`, `print_float(<- f64)`, `printf(<- [u8], ...)` (literal format string plus typed varargs), `sqrt/floor/ceil/fabs(<- f64) => f64`, `pow/fmod(<- f64, <- f64) => f64`, `len([T]) => u64`, `format(<- [u8], ...) => [u8]` and
 `callback(<- flow) => callback`.
+- `format` consumes a literal template with `{}` placeholders and returns a
+  byte slice allocated in the caller's `protect` region. A `[u8]` argument is
+  inserted by its byte contents, not by its `(data, len)` header; `cstr` keeps
+  NUL-terminated insertion.
 - The library is a set of explicitly imported files: `lib/std.loi` (integer/float and byte-string helpers, including integer-to-decimal conversion), `lib/math.loi` (generic and `comptime` math), `lib/ctype.loi` (ASCII byte helpers), `lib/option.loi` and `lib/result.loi` (optional and error-carrying values), `lib/json.loi` (JSON documents), `lib/jsonrpc.loi` (JSON-RPC 2.0 transport), `lib/lsp.loi` (LSP diagnostics and completion bridge), `lib/process.loi` (process spawning with captured output), `lib/os.loi` and `lib/net.loi` (thin POSIX bindings with C shims), and `lib/stdio.loi` (deterministic byte I/O on the standard streams, also via a C shim). The pure files use only the features above; the five shim-backed files (`os`, `net`, `stdio`, `process`, `lsp`) use `extern flow` declarations and must be linked with their shims.
 
 **Optional and error values (Block A6).**
@@ -628,7 +632,7 @@ declare bounds with `T: Clone + Copy + Eq + Ord`; the canonical spelling is in
   The bound is still validated, so a misspelled bound cannot be treated as
   `Clone`, and it is a contract for future implementations where some types
   may not be cloneable.
-- `Copy` is satisfied by numbers, `bool`, marks, `opaque` handles and `cstr`:
+- `Copy` is satisfied by numbers, `bool`, marks, `callback`s, `opaque` handles and `cstr`:
   exactly the types the checker may copy implicitly without `give` or
   `clone`. Shapes, choices and slices are composite and do not satisfy it.
 - `Eq` is satisfied by exactly the types the checker accepts with `==`/`!=`:
@@ -914,7 +918,7 @@ slices, so their helpers stay bit-wise.
 1. **Intrinsics** are compiler-known, reserved names with fixed signatures and a direct backend mapping:
    - I/O: `print`, `eprint`, `panic`, `print_int`, `print_float`, `printf`, `read_file`, `write_file`, `read_stdin`, `read_line`
    - math: `sqrt`, `floor`, `ceil`, `fabs`, `pow`, `fmod`
-   - `len`, `view`, `callback`
+   - `len`, `format`, `view`, `callback`
 
    They cannot be redeclared by user code and are always available (no import).
    `view` is type-directed: its element type comes from the source slice, so it
@@ -1029,8 +1033,8 @@ open flow world_new
     alloc(-> ps, Particle, count)
     for i in 0..count {
         ps[i] = Particle {
-            pos: Vec2[ x: i as f64 / count as f64 * size.x, y: size.y / 2 ],
-            vel: Vec2[ x: i as f64 * 0.1 - 5, y: 0 ],
+            pos: Vec2 { x: i as f64 / count as f64 * size.x, y: size.y / 2 },
+            vel: Vec2 { x: i as f64 * 0.1 - 5, y: 0 },
             mass: 1 + (i % 3) as f64,
         }
     }

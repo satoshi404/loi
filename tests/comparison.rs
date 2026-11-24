@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::PathBuf;
 use std::process::Command;
 
 use loi::{check, generate_c, parse, tokenize};
@@ -278,7 +277,7 @@ fn compile_and_run(name: &str, source: &str, harness: &str) {
         eprintln!("skipping {name}: no C compiler found");
         return;
     }
-    let dir = PathBuf::from("/tmp/opencode").join(format!("loi-cmp-{}-{name}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("loi-cmp-{}-{name}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("test directory should be creatable");
     let generated_path = dir.join("generated.c");

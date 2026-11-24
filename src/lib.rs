@@ -8,6 +8,7 @@ pub mod complete;
 pub mod const_eval;
 pub mod diagnostic;
 pub mod expand;
+pub mod flow;
 pub mod format;
 pub mod ir;
 pub mod lexer;
