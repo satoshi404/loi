@@ -7,7 +7,7 @@
     ],
     "cpus": 8,
     "pinned_to_cpu": "6",
-    "loi": "loi 0.1.0",
+    "loi": "loi 0.2.0",
     "cc": "gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
     "build_flags": {
       "loi": "--release --arena-size 16777216",

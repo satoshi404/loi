@@ -1,12 +1,17 @@
 # Data Flow em Loi — proposta da FASE 1
 
-> **Estado:** FASE 1 aprovada; FASE 2 concluída. A proposta não altera
-> `SINTAXE.md`, `LOI_SPEC.md`, AST, backends, sintaxe, semântica ou ABI. Os
-> primitivos `DataPath`/`FlowSummary`, a migração do checker, o visitante único
-> dos fixpoints e a álgebra de sobreposição estão implementados; o scanner agora
-> infere `READ`/`WRITE`/`INIT`/`MOVE`/`BORROW`/`PRODUCE`/`ESCAPE` e o Teste A de
-> contrato inferido está verde. Status e evidências correntes ficam em
-> `development/PROGRESS.md`.
+> **Estado:** FASE 1 aprovada; FASE 2 reaberta e estabilizada em 2026-11-24;
+> FASE 3 (representação tipada no checker) concluída em 2026-11-25.
+> A proposta não altera `SINTAXE.md`, `LOI_SPEC.md`, AST, backends, sintaxe,
+> semântica ou ABI. `DataPath`/`FlowSummary`, o visitante único, a álgebra de
+> sobreposição e os sete efeitos estão implementados. A reauditoria corrigiu
+> `PRODUCE` como efeito de resultado, `ESCAPE` com origem/slot relativos,
+> `unknown_effects` conservador e a composição de caminhos aninhados. A FASE 3
+> removeu os round-trips por string no fixpoint e migrou moves, taints, loans e
+> conjuntos de scan para `DataPath`; `LvalueInfo`/`place_path` seguem como
+> fronteiras legadas. Recursão com limite/widening, split/join, typestate e
+> pipeline continuam **PROPOSTO**.
+> Evidências: `development/AUDIT_DATA_FLOW.md` e `development/PROGRESS.md`.
 >
 > Fontes canônicas: `SINTAXE.md`, `development/LOI_SPEC.md`,
 > `development/DECISIONS.md`, `development/PROGRESS.md`,
@@ -53,8 +58,7 @@ lexer/token
        resolve_marks_and_choices
        check_interface_value_cycles
        resolve_functions
-       analyze_function_effects
-       analyze_view_returns
+       analyze_flow_summaries
        check_interface_defaults
        declare_globals
        check_functions
@@ -71,10 +75,10 @@ Pontos importantes:
   (`src/ast.rs:355-375`) e, semanticamente, uma saída implícita.
 - A ownership viva está em `VarInfo`, `ControlState` e nas pilhas de regiões
   (`src/checker.rs:205-401`).
-- Os efeitos interprocedurais hoje são quatro fixpoints específicos:
-  alocação não protegida, `clone_allocators`, consumo de parâmetros e leitura
-  de parâmetros (`src/checker.rs:1291-1595`), mais um fixpoint de views
-  (`src/checker.rs:1597-1688`).
+- Os efeitos interprocedurais são calculados por `analyze_flow_summaries`
+  (`src/checker.rs`), que substitui os quatro fixpoints específicos e o
+  fixpoint de views; os mapas duráveis antigos viraram acessores de
+  compatibilidade no único `FlowSummary` (`AUDIT_DATA_FLOW.md`).
 - `src/ir.rs` e `generate_ir` são um rascunho auxiliar: não carregam
   direção, ownership, efeitos, guard, protect, loans ou typestate
   (`src/ir.rs:259-272`, `src/codegen.rs:4473-4523`). O LLVM é gerado
@@ -107,7 +111,7 @@ checker**, com uma estrutura compartilhada — não na IR e não nos backends.
   inteiro (`src/checker.rs:205-227`).
 - `PathComponent::{Field, Index}` e `parse_path` já distinguem campo,
   índice constante e índice dinâmico (`src/checker.rs:5553-5588`).
-- `append_path`, `join_paths`, `path_is_ancestor`, `paths_overlap`,
+- `append_path`, `append_relative_path`, `path_is_ancestor`, `paths_overlap`,
   `path_is_moved` e as funções de inserção de resumo são a base da álgebra de
   caminhos (`src/checker.rs:5530-5687`).
 - Índices constants disjuntos já são tratados como independentes; índice
@@ -146,33 +150,41 @@ incremental**, não uma segunda análise.
 
 ## 3. Limitações reais encontradas
 
-1. **Não há um contrato de efeitos unificado.** READ, MOVE, view e alocação
-   vivem em mapas separados; WRITE, INIT, PRODUCE e ESCAPE não são efeitos de
-   primeira classe nos resumos.
-2. **Caminhos são strings root-relative.** A álgebra funciona, mas
-   `PathComponent` é usada de forma parcial e cada operação reparsa a string.
-   Não há uma estrutura `DataPath` canônica compartilhada por todas as fases.
-3. **Resumos são por parâmetro, mas view summaries são por índice.**
-   `ViewSummary` não registra de qual campo do `<-` veio a view nem em qual
-   campo do `->` ela foi escrita (`src/checker.rs:250-266`,
-   `src/checker.rs:3559-3586`).
+1. **Não havia um contrato de efeitos unificado (corrigido).** READ, MOVE, view
+   e alocação viviam em mapas separados; WRITE, INIT, PRODUCE e ESCAPE não eram
+   efeitos de primeira classe nos resumos. Hoje `FlowSummary` unifica todos;
+   o histórico da correção está em `AUDIT_DATA_FLOW.md`.
+2. **Caminhos root-relative no checker (parcial).** A FASE 3 removeu a segunda
+   álgebra (`PathComponent`, `parse_path`, `render_path`,
+   `components_match_prefix`) e migrou o estado transiente de moves, taints,
+   loans e scan para `DataPath`, compartilhando `may_overlap` com os resumos.
+   `LvalueInfo.path`, `place_path` e as mensagens ainda usam strings como
+   fronteira legada; tornar `DataPath` a representação única de todas as fases
+   continua **IMPLEMENTADO PARCIALMENTE**, com `OwnershipState` ainda **PROPOSTO**.
+3. **Resumos de view eram por índice (corrigido).** `ViewSummary` foi removido;
+   `ViewSource { index, path }` e `ViewOutLoan { slot, source }` registram a
+   origem relativa e o slot do holder (`AUDIT_DATA_FLOW.md` §3.2).
 4. **Inicialização é whole-variable.** `mark_written` marca o `VarInfo`
    inteiro como inicializado (`src/checker.rs:4300-4314`), apesar de moves
    serem path-sensitive.
-5. **Exclusividade é checada no call site, não como efeito propagado.**
-   `check_call_aliasing` compara lugares usados nos argumentos; não existe um
-   `WRITE`/`INIT` summary que viaje pelo grafo de chamadas.
-6. **Externos são conservadores, mas sem contrato explícito.** `<-` extern é
-   tratado como leitura do valor inteiro (`src/checker.rs:1526-1543`); não há
-   forma de declarar "este extern só lê `p.data`".
+5. **Exclusividade ainda é checada no call site (parcial).**
+   `check_call_aliasing` compara lugares usados nos argumentos; `FlowSummary`
+   já carrega `WRITE`/`INIT` pelo grafo de chamadas, mas a decisão de aliases
+   ainda não consulta esses efeitos propagados.
+6. **Externos eram conservadores sem contrato explícito (corrigido).** `<-`
+   extern é tratado como leitura do valor inteiro; `unknown_effects` e
+   `CONTRACT-EFF-002` agora explicitam a regra conservadora
+   (`AUDIT_DATA_FLOW.md` §3.3). Declarar "este extern só lê `p.data`" continua
+   **NÃO SUPORTADO**.
 7. **Loops são aproximados por zero/uma iteração** no checker de corpo; a
    análise de efeitos percorre o corpo uma vez (`src/checker.rs:5369-5401`,
    `src/checker.rs:2005-2128`). Isso é seguro, mas não preciso.
-8. **Coletores duplicados.** `collect_accesses`, `collect_direct_reads`,
-   `collect_value_regions`, `collect_value_views` e `ViewScanCtx::expr`
-   percorrem o mesmo AST com propósitos diferentes
-   (`src/checker.rs:4448-4579`, `src/checker.rs:4635-5166`,
-   `src/checker.rs:5840-5978`).
+8. **Coletores parcialmente unificados (parcial).**
+   `analyze_flow_summaries`/`scan_expr_effects` eliminaram os fixpoints
+   duplicados e o scanner de views; `collect_accesses`,
+   `collect_direct_reads`, `collect_value_regions` e `collect_value_views`
+   ainda percorrem o AST para decisões locais de ownership, região e loan.
+   Unificar esses coletores continua **PROPOSTO**.
 9. **Trait de região díspar.** Taints de `<->` são repassados
    conservadoramente a todas as saídas com slice
    (`src/checker.rs:3505-3557`); não se sabe qual output recebeu o dado.
@@ -180,12 +192,13 @@ incremental**, não uma segunda análise.
     lowering por valor e `clone` profundo não é implementado
     (`src/llvm.rs:504-531`, `src/llvm.rs:953`). Isto não é causado pelo
     Data Flow, mas limita a propagação para esse backend.
-11. **Documento obsoleto.** `development/PROGRESS.md:1043-1044` ainda nega
-    retorno de view de `<-`, contrariando a implementação atual e
-    `SINTAXE.md:728-779`.
-12. **Existe uma pequena inconsistência de scanner.** `StmtKind::Splice`
-    chama `ctx.expr` no scanner de views, mas não `record_reads` no scanner de
-    efeitos (`src/checker.rs:5433` versus `src/checker.rs:5255`).
+11. **Documento obsoleto (corrigido).** `PROGRESS.md` negava retorno de view de
+    `<-`, contrariando `SINTAXE.md` e `tests/views.rs`; a limitação stale foi
+    substituída pelo contrato de loans duráveis.
+12. **Havia uma pequena inconsistência de scanner (corrigida).**
+    `StmtKind::Splice` chamava `ctx.expr` no scanner de views, mas não
+    `record_reads` no scanner de efeitos; o visitante único passou a cobrir os
+    dois caminhos.
 
 ---
 
@@ -223,13 +236,15 @@ Se o corpo não permite determinar um efeito com segurança:
 
 - callee externo/desconhecido: `READ`/`WRITE`/`INIT`/`MOVE` no valor inteiro,
   conforme a direção;
-- índice dinâmico: caminho com `Index::Dynamic`, que sobrepõe qualquer
+- índice dinâmico: caminho com `IndexKey::Dynamic`, que sobrepõe qualquer
   índice constante;
 - caminho opaco: `UnknownTail`, que sobrepõe qualquer extensão;
 - genérico não monomorfizado: efeito no valor inteiro até a instância concreta.
 
 Nunca se infere "nenhum efeito" de silêncio; `unknown_effects: true` é
-propagado.
+propagado. **Implementado:** `extern flow` com corpo vazio e chamada sem resumo
+não intrínseco marcam o flag e gravam efeitos inteiros por direção
+(`AUDIT_DATA_FLOW.md`).
 
 ---
 
@@ -251,7 +266,7 @@ enum PathSegment {
 }
 
 enum IndexKey {
-    Const(u64),
+    Const(i128),  // mantém literais negativos compatíveis com o checker
     Dynamic,      // wildcard conservador nesta fase
     Unknown,      // marca effects desconhecidos
 }
@@ -265,9 +280,9 @@ enum IndexKey {
 Para `p` e `q` com a mesma raiz, compare os segmentos em ordem:
 
 - `Field(a)` vs `Field(b)`: incompatíveis se `a != b`;
-- `Index::Const(a)` vs `Index::Const(b)`: incompatíveis se `a != b`;
-- `Index::Const` vs `Index::Dynamic`/`Unknown`: **pode sobrepor**;
-- `Index::Dynamic` vs `Index::Dynamic`: **pode sobrepor** — `i` e `j` só
+- `IndexKey::Const(a)` vs `IndexKey::Const(b)`: incompatíveis se `a != b`;
+- `IndexKey::Const` vs `IndexKey::Dynamic`/`Unknown`: **pode sobrepor**;
+- `IndexKey::Dynamic` vs `IndexKey::Dynamic`: **pode sobrepor** — `i` e `j` só
   seriam distintos com prova explícita, que não existe nesta fase;
 - `UnknownTail` vs qualquer coisa: **pode sobrepor**.
 
@@ -313,7 +328,7 @@ struct ParamEffects {
 
 struct ResultEffects {
     produces: bool,
-    produced_paths: DataPathSet,
+    paths: DataPathSet, // PRODUCE por lugar entregue ao chamador
     regions: RegionIdSet,
     loans: LoanIdSet,
 }
@@ -325,6 +340,10 @@ struct Borrow {
     escaped: bool,
 }
 ```
+
+Na implementação atual, `borrows`/`result.loans` são representados por
+`ViewSource`/`ViewOutLoan` em `src/flow.rs`; `regions`/`LoanIdSet` continuam
+**PROPOSTO**.
 
 Compatibilidade durante a migração:
 
@@ -351,7 +370,8 @@ Compatibilidade durante a migração:
    parâmetro pelo `DataPath` do argumento.
 5. Unir os efeitos no resumo do chamador. União é monotônica; `unknown_effects`
    e `allocations` só sobem de `false` para `true`.
-6. Repetir até fixpoint, inclusive em ciclos/recursão.
+6. Repetir até fixpoint. Recursão com limite/widening ainda não foi
+   implementada; permanece **PROPOSTO** no status final deste documento.
 7. Widen: se um conjunto crescer sem estabilizar em profundidade/path
    complexity, colapsar para `UnknownTail` nesse raiz.
 
@@ -780,8 +800,8 @@ de diagnóstico existente.
 | Fase | Entrega | Gate |
 |---|---|---|
 | 1 — Design | Este documento; nenhuma mudança de compilador | revisão/aprovação |
-| 2 — Flow Contracts | `DataPath`, `FlowEffect`, `FlowSummary`; unificar resumos existentes; inferir efeitos, sem sintaxe nova | ✅ primitivos + migração do checker + visitante único dos fixpoints + inferência dos sete efeitos + Teste A verdes; evidência em `PROGRESS.md` |
-| 3 — Path Analysis | Generalizar sobreposição a todos os efeitos; testes B | ✅ `may_overlap` compartilhado por `READ`/`WRITE`/`INIT`/`MOVE`/`BORROW`/`PRODUCE`/`ESCAPE`; 2 testes B verdes; gate completo em `PROGRESS.md` |
+| 2 — Flow Contracts | `DataPath`, `FlowEffect`, `FlowSummary`; unificar resumos existentes; inferir efeitos, sem sintaxe nova | ✅ primitivos + migração do checker + visitante único + sete efeitos + `PRODUCE`/`ESCAPE`/`unknown_effects` + 13 testes internos verdes; evidência em `AUDIT_DATA_FLOW.md` |
+| 3 — Path Analysis | Generalizar sobreposição a todos os efeitos; tornar `DataPath` a representação tipada do checker; testes B | ✅ `may_overlap` compartilhado por `READ`/`WRITE`/`INIT`/`MOVE`/`BORROW`/`PRODUCE`/`ESCAPE`; composição aninhada corrigida; accessores tipados e estado transiente migrado; 3 testes failing-first (9 × E0599) e 4 testes de composição verdes; recursão/widening permanecem PROPOSTO |
 | 4 — Split/Join | Só se houver benefício; desugaring + validação; testes C | gate completo + fmt/pretty/LSP |
 | 5 — State Flow | mark como argumento genérico; transições via efeitos; testes E | gate completo + differential |
 | 6 — Pipeline | Açúcar de chamadas unárias; sem `_`; testes D | gate completo + ordem/short-circuit |
@@ -816,36 +836,47 @@ Regras do plano:
 
 ---
 
-## Status da FASE 2 (2026-11-24)
+## Status da FASE 2 (reabertura em 2026-11-24)
 
-Concluído nesta etapa:
+- **IMPLEMENTADO:** `DataPath`/`DataPathSet`, `FlowEffect`, `FlowSummary` e os
+  acessores legados; um único mapa durável no checker; visitante único de scan;
+  inferência e propagação de `READ`/`WRITE`/`INIT`/`MOVE`/`BORROW`/`PRODUCE`/
+  `ESCAPE`; `unknown_effects` conservador; composição de caminhos aninhados via
+  `append_relative_path`.
+- **IMPLEMENTADO PARCIALMENTE:** integração com ownership usa o resumo em
+  consumo/leitura, mas ainda não há uma facade `OwnershipState` nem uso pleno de
+  `PRODUCE`/`ESCAPE` em todas as decisões de região; o flag `unknown_effects`
+  ainda não altera diagnósticos.
+- **DOCUMENTADO:** contratos `CONTRACT-EFF-001`, `CONTRACT-EFF-002`,
+  `CONTRACT-OWN-003` e `CONTRACT-VIEW-001` em `development/CONTRACTS.md`.
+- **PROPOSTO:** recursão com limite/widening, split/join, typestate e pipeline.
+- **NÃO SUPORTADO:** nenhuma sintaxe nova foi aceita; `split`, `join`, `|>` e
+  State Flow declarativo continuam fora da linguagem.
+- **LIMITAÇÃO CONHECIDA:** índice dinâmico é wildcard; taint de `protect` via
+  `<->` permanece conservador (`CONTRACT-PROT-002`); LLVM mantém as lacunas
+  pré-existentes de `->`/`<->` e `clone` profundo.
 
-- `src/flow.rs`: `DataPath`, `PathSegment`, `IndexKey`, `DataPathSet`,
-  `Borrow`, `FlowEffect`, `ParamEffects`, `ResultEffects`, `FlowSummary` e
-  acessores legados (`consumed_paths`, `read_paths`, `view_returns`,
-  `view_out`).
-- `tests/data_path.rs`: 6 testes dos primitivos, verdes.
-- `src/checker.rs`: um único `flow_summaries: HashMap<String, FlowSummary>`;
-  os seis mapas duráveis antigos foram removidos e todas as consultas passam
-  pelos acessores. `FunctionScan` e `ViewSummary` continuam sendo apenas
-  temporários de scan/fixpoint.
-- Teste failing-first de integração no checker:
-  `legacy_effects_are_exposed_by_one_flow_summary` (red E0599 → green).
-- Correção de compatibilidade descoberta pelo teste: `DataPath` passou a
-  aceitar e renderizar a grafia real do checker para caminhos relativos, sem
-  alterar nenhuma string usada por ownership/diagnósticos.
+## Status da FASE 3 (representação tipada, 2026-11-25)
 
-Concluído na ordem aprovada:
+- **IMPLEMENTADO:** `DataPath::append_relative`/`with_root` e accessores tipados
+  de `FlowSummary` (`moves_mut`, `reads_mut`, `escapes_mut`, `move_paths`,
+  `read_paths_typed`, `escape_paths`, `view_returns_data_paths`,
+  `view_out_data_paths`); fixpoint sem round-trip `DataPath → String →
+  DataPath`; `ViewSource.path`, `ViewOutLoan.slot`, `VarInfo.moved`,
+  `RegionTaint.path`, `ViewLoan.path/slot`, `ControlState.moved` e os conjuntos
+  de `FunctionScan` usam `DataPath`; `index_data_path` conserva `IndexKey`.
+- **IMPLEMENTADO PARCIALMENTE:** a eliminação completa de strings no checker;
+  `LvalueInfo.path`, `place_path`, `append_relative_path` e mensagens continuam
+  em fronteiras legadas, sem mudar diagnósticos nem APIs públicas.
+- **DOCUMENTADO:** `CONTRACT-EFF-001`, `CONTRACT-OWN-003` e
+  `CONTRACT-VIEW-001` em `development/CONTRACTS.md`; decisão de 2026-11-25 em
+  `development/DECISIONS.md` e evidências em `AUDIT_DATA_FLOW.md`.
+- **PROPOSTO:** facade `OwnershipState`, recursão com widener para
+  `UnknownTail`, split/join, typestate e pipeline.
+- **NÃO SUPORTADO:** nenhuma sintaxe nova; nenhuma mudança de `<-`, `->`,
+  `<->`, `=>`, `give`, `clone`, `view`, `protect` ou `guard`.
+- **LIMITAÇÃO CONHECIDA:** `unknown_effects` ainda não muda diagnósticos;
+  `CONTRACT-PROT-002` e as lacunas LLVM pré-existentes seguem em aberto.
 
-1. os fixpoints locais de consumo/leitura e o fixpoint de views foram substituídos
-   por `analyze_flow_summaries`, um único visitante que produz `FlowSummary`;
-2. a sobreposição de caminhos foi generalizada para todos os efeitos
-   (READ/WRITE/INIT/MOVE/BORROW/PRODUCE/ESCAPE) via `DataPath::may_overlap`;
-3. o scanner infere os sete efeitos a partir do corpo e propaga escrita,
-   inicialização, escape e produção pelo mesmo fixpoint; o Teste A
-   `inferred_contract_records_writes_inits_production_and_escape` cobre chamadas
-   com caminhos independentes e forwarding;
-4. split/join, typestate e pipeline continuam para fases posteriores, sem
-   inferência mágica, paralelização automática ou mudança de ABI.
-
-O gate final da FASE 2 está registrado em `development/PROGRESS.md`.
+Evidência completa, failing-first e gates em `development/AUDIT_DATA_FLOW.md`;
+estado corrente em `development/PROGRESS.md`.

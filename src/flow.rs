@@ -4,7 +4,7 @@
 //! emitted to either backend. The empty `Vec<PathSegment>` means the whole
 //! root value, matching the historical `""` path string used by the checker.
 //! Field segments render without a leading dot at the start of a relative path
-//! because the checker's `join_paths` supplies separators; subsequent fields
+//! because the checker's `append_path` supplies separators; subsequent fields
 //! keep the checker's `.field` spelling.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -56,6 +56,33 @@ impl DataPath {
 
     pub fn unknown_tail(mut self) -> Self {
         self.segments.push(PathSegment::UnknownTail);
+        self
+    }
+
+    /// Append a root-relative path below this place.
+    ///
+    /// `relative.root` identifies the owner in the source summary and is
+    /// deliberately discarded: only its segments describe the place to reach
+    /// from `self`. This is the typed replacement for the checker's historical
+    /// `append_relative_path(base, relative)` string round-trip.
+    pub fn append_relative(&self, relative: &Self) -> Self {
+        let mut joined = self.clone();
+        if joined.segments.last() == Some(&PathSegment::UnknownTail) {
+            return joined;
+        }
+        for segment in &relative.segments {
+            joined.segments.push(segment.clone());
+            if segment == &PathSegment::UnknownTail {
+                break;
+            }
+        }
+        joined
+    }
+
+    /// Replace the root while keeping the same segments. Useful when a
+    /// root-relative scan path is re-rooted on the caller's parameter name.
+    pub fn with_root(mut self, root: impl Into<String>) -> Self {
+        self.root = root.into();
         self
     }
 
@@ -192,6 +219,11 @@ impl DataPath {
 pub struct DataPathSet {
     paths: BTreeSet<DataPath>,
 }
+
+/// Stable empty set used by read-only summary accessors for missing params.
+static EMPTY_PATHS: DataPathSet = DataPathSet {
+    paths: BTreeSet::new(),
+};
 
 impl DataPathSet {
     pub fn new() -> Self {
@@ -342,6 +374,9 @@ impl ParamEffects {
                 true
             }
             FlowEffect::Escape(path) => self.escapes.insert(path),
+            // `PRODUCE` belongs to `ResultEffects`, never to a parameter.
+            // `FlowSummary::record_result_effect` routes it there; returning
+            // `false` here keeps a direct call from mutating param state.
             FlowEffect::Produce(_) => false,
         }
     }
@@ -436,6 +471,62 @@ impl FlowSummary {
         self.params[index].record(effect)
     }
 
+    /// Record an effect on the value delivered to the caller. `PRODUCE` is the
+    /// result counterpart of `INIT` on a `->` parameter: the destination path
+    /// is kept so a caller can distinguish whole-result production from a
+    /// single produced field. Other effects are not accepted here.
+    pub fn record_result_effect(&mut self, effect: FlowEffect) -> bool {
+        match effect {
+            FlowEffect::Produce(path) => {
+                self.result.produces = true;
+                self.result.paths.insert(path)
+            }
+            _ => false,
+        }
+    }
+
+    /// Mutable typed access to the places moved out of a parameter.
+    pub fn moves_mut(&mut self, index: usize) -> &mut DataPathSet {
+        self.ensure_params(index + 1);
+        &mut self.params[index].moves
+    }
+
+    /// Mutable typed access to the places read from a parameter.
+    pub fn reads_mut(&mut self, index: usize) -> &mut DataPathSet {
+        self.ensure_params(index + 1);
+        &mut self.params[index].reads
+    }
+
+    /// Mutable typed access to the places escaped from a parameter.
+    pub fn escapes_mut(&mut self, index: usize) -> &mut DataPathSet {
+        self.ensure_params(index + 1);
+        &mut self.params[index].escapes
+    }
+
+    /// Typed moved places for a parameter. Missing parameters have no paths.
+    pub fn move_paths(&self, index: usize) -> &DataPathSet {
+        self.params
+            .get(index)
+            .map(|param| &param.moves)
+            .unwrap_or(&EMPTY_PATHS)
+    }
+
+    /// Typed read places for a parameter. Missing parameters have no paths.
+    pub fn read_paths_typed(&self, index: usize) -> &DataPathSet {
+        self.params
+            .get(index)
+            .map(|param| &param.reads)
+            .unwrap_or(&EMPTY_PATHS)
+    }
+
+    /// Typed escaped places for a parameter. Missing parameters have no paths.
+    pub fn escape_paths(&self, index: usize) -> &DataPathSet {
+        self.params
+            .get(index)
+            .map(|param| &param.escapes)
+            .unwrap_or(&EMPTY_PATHS)
+    }
+
     /// Whether `effect` touches a parameter, including loans that escape into
     /// the result. Result loans are filtered by source index so one caller
     /// argument is not confused with another.
@@ -457,48 +548,93 @@ impl FlowSummary {
 
     /// Legacy accessor for `param_consumption`.
     pub fn consumed_paths(&self, index: usize) -> Vec<String> {
-        self.params
-            .get(index)
-            .map(|param| param.moves.relative_strings())
-            .unwrap_or_default()
+        self.move_paths(index).relative_strings()
     }
 
     /// Legacy accessor for `param_reads`.
     pub fn read_paths(&self, index: usize) -> Vec<String> {
-        self.params
-            .get(index)
-            .map(|param| param.reads.relative_strings())
-            .unwrap_or_default()
+        self.read_paths_typed(index).relative_strings()
     }
 
-    /// Legacy accessor for `view_returns`.
-    pub fn view_returns(&self) -> BTreeSet<usize> {
-        self.borrows()
-            .filter(|borrow| {
-                borrow.escaped && matches!(borrow.destination, LoanDestination::Result)
-            })
-            .filter_map(|borrow| match borrow.source {
-                LoanSource::Param { index, .. } => Some(index),
+    /// Every escaped loan in deterministic order, whatever its destination.
+    pub fn escaped_loans(&self) -> Vec<&Borrow> {
+        let mut loans: Vec<&Borrow> = self.borrows().filter(|borrow| borrow.escaped).collect();
+        loans.sort();
+        loans.dedup();
+        loans
+    }
+
+    /// Source parameter indices and typed paths reaching `=>`.
+    pub fn view_returns_data_paths(&self) -> BTreeSet<(usize, DataPath)> {
+        self.escaped_loans()
+            .into_iter()
+            .filter(|borrow| matches!(borrow.destination, LoanDestination::Result))
+            .filter_map(|borrow| match &borrow.source {
+                LoanSource::Param { index, path } => Some((*index, path.clone())),
                 LoanSource::Unknown => None,
             })
             .collect()
     }
 
-    /// Legacy accessor for `view_out`.
-    pub fn view_out(&self) -> BTreeMap<usize, BTreeSet<usize>> {
-        let mut out: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
-        for borrow in self.borrows() {
-            if !borrow.escaped {
-                continue;
-            }
+    /// `->` destination indices and the typed source indices/paths reaching each.
+    pub fn view_out_data_paths(&self) -> BTreeMap<usize, BTreeSet<(usize, DataPath)>> {
+        let mut out: BTreeMap<usize, BTreeSet<(usize, DataPath)>> = BTreeMap::new();
+        for borrow in self.escaped_loans() {
             let LoanDestination::OutParam(destination) = borrow.destination else {
                 continue;
             };
-            if let LoanSource::Param { index: source, .. } = borrow.source {
-                out.entry(destination).or_default().insert(source);
+            if let LoanSource::Param { index, path } = &borrow.source {
+                out.entry(destination)
+                    .or_default()
+                    .insert((*index, path.clone()));
             }
         }
         out
+    }
+
+    /// Legacy string view of [`FlowSummary::view_returns_data_paths`].
+    pub fn view_returns_sources(&self) -> BTreeSet<(usize, String)> {
+        self.view_returns_data_paths()
+            .into_iter()
+            .map(|(index, path)| (index, path.relative_string()))
+            .collect()
+    }
+
+    /// Legacy string view of [`FlowSummary::view_out_data_paths`].
+    pub fn view_out_sources(&self) -> BTreeMap<usize, BTreeSet<(usize, String)>> {
+        self.view_out_data_paths()
+            .into_iter()
+            .map(|(destination, sources)| {
+                (
+                    destination,
+                    sources
+                        .into_iter()
+                        .map(|(index, path)| (index, path.relative_string()))
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
+    /// Legacy accessor for `view_returns`.
+    pub fn view_returns(&self) -> BTreeSet<usize> {
+        self.view_returns_sources()
+            .into_iter()
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    /// Legacy accessor for `view_out`.
+    pub fn view_out(&self) -> BTreeMap<usize, BTreeSet<usize>> {
+        self.view_out_sources()
+            .into_iter()
+            .map(|(destination, sources)| {
+                (
+                    destination,
+                    sources.into_iter().map(|(index, _)| index).collect(),
+                )
+            })
+            .collect()
     }
 
     fn borrows(&self) -> impl Iterator<Item = &Borrow> {

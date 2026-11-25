@@ -1,6 +1,8 @@
+use std::collections::BTreeSet;
+
 use loi::flow::{
     Borrow, BorrowMode, DataPath, DataPathSet, FlowEffect, FlowSummary, IndexKey, LoanDestination,
-    LoanSource,
+    LoanSource, PathSegment,
 };
 #[test]
 fn independent_fields_are_disjoint() {
@@ -54,6 +56,59 @@ fn flow_summary_exposes_legacy_consumption_and_read_paths() {
 }
 
 #[test]
+fn typed_summary_accessors_preserve_nested_and_dynamic_paths() {
+    let mut summary = FlowSummary::with_params(1);
+    summary
+        .moves_mut(0)
+        .insert(DataPath::new("p").field("nested").field("left"));
+    summary
+        .reads_mut(0)
+        .insert(DataPath::new("xs").field("inner").index(IndexKey::Dynamic));
+
+    let moves: Vec<DataPath> = summary.move_paths(0).iter().cloned().collect();
+    let reads: Vec<DataPath> = summary.read_paths_typed(0).iter().cloned().collect();
+    assert_eq!(
+        moves,
+        vec![DataPath::new("p").field("nested").field("left")]
+    );
+    assert_eq!(
+        reads,
+        vec![DataPath::new("xs").field("inner").index(IndexKey::Dynamic)]
+    );
+}
+
+#[test]
+fn appending_typed_relative_paths_keeps_structure() {
+    let base = DataPath::new("arg")
+        .field("nested")
+        .index(IndexKey::Const(0));
+    let nested = DataPath::from_relative("callee", "leaf[1]");
+    let appended = base.append_relative(&nested);
+    assert_eq!(appended.root, "arg");
+    assert_eq!(
+        appended.segments,
+        vec![
+            PathSegment::Field("nested".into()),
+            PathSegment::Index(IndexKey::Const(0)),
+            PathSegment::Field("leaf".into()),
+            PathSegment::Index(IndexKey::Const(1)),
+        ]
+    );
+    assert_eq!(appended.relative_string(), "nested[0].leaf[1]");
+
+    let dynamic = DataPath::from_relative("callee", "part[].tail");
+    assert_eq!(
+        base.append_relative(&dynamic).relative_string(),
+        "nested[0].part[].tail"
+    );
+    assert_eq!(
+        base.append_relative(&DataPath::new("callee"))
+            .relative_string(),
+        "nested[0]"
+    );
+}
+
+#[test]
 fn escaped_borrows_derive_view_summaries() {
     let mut summary = FlowSummary::with_params(2);
     summary.params[0].borrows.push(Borrow {
@@ -84,6 +139,37 @@ fn escaped_borrows_derive_view_summaries() {
             .get(&1)
             .is_some_and(|sources| sources.contains(&0))
     );
+}
+
+#[test]
+fn typed_view_sources_keep_relative_paths() {
+    let mut summary = FlowSummary::with_params(1);
+    let source = DataPath::new("data").field("part").index(IndexKey::Dynamic);
+    summary.params[0].borrows.push(Borrow {
+        source: LoanSource::Param {
+            index: 0,
+            path: source.clone(),
+        },
+        holder: DataPath::new("result"),
+        destination: LoanDestination::Result,
+        mode: BorrowMode::Shared,
+        escaped: true,
+    });
+    summary.params[0].borrows.push(Borrow {
+        source: LoanSource::Param {
+            index: 0,
+            path: source.clone(),
+        },
+        holder: DataPath::new("out"),
+        destination: LoanDestination::OutParam(1),
+        mode: BorrowMode::Shared,
+        escaped: true,
+    });
+
+    let returned: Vec<(usize, DataPath)> = summary.view_returns_data_paths().into_iter().collect();
+    assert_eq!(returned, vec![(0, source.clone())]);
+    let out = summary.view_out_data_paths();
+    assert_eq!(out.get(&1), Some(&BTreeSet::from([(0, source)])));
 }
 
 #[test]

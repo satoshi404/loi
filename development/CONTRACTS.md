@@ -71,8 +71,8 @@ Formato de cada contrato: descrição, fase, pré-condição, permitido, proibid
 - **Fase:** checker.
 - **Permitido:** escrita de qualquer campo de uma saída `->` inicializa o valor inteiro; junção consumido+vivo mantém estado conservador; loops podem executar zero vezes.
 - **Proibido:** uso de valor parcialmente movido em caminho que ainda depende do campo consumido; escape de partially-consumed value via `<-` com leitura sobre campo consumido.
-- **Testes:** `tests/checker.rs` (path-sensitive consumption/read summaries), `tests/views.rs`.
-- **C11/LLVM:** ✓ / parcial. **Spec:** `PROGRESS.md` (limitação documentada), `LOI_SPEC.md` §4.2. **Status:** cobertura existente; ampliação em andamento (ver `AUDIT_ETAPA6.md`).
+- **Testes:** `tests/checker.rs` (path-sensitive consumption/read summaries), `tests/views.rs`, `src/checker.rs::flow_integration_tests::nested_consumption_is_applied_at_the_call_site`, `nested_read_summary_detects_a_moved_field`.
+- **C11/LLVM:** ✓ / parcial. **Spec:** `PROGRESS.md` (limitação documentada), `LOI_SPEC.md` §4.2. **Status:** cobertura existente ampliada para composição de caminhos aninhados (ver `AUDIT_DATA_FLOW.md`); moves, taints e loans do estado transiente usam `DataPath` e a mesma regra `may_overlap` (FASE 3, `DECISIONS.md` 2026-11-25).
 
 ## CONTRACT-DIR-001 — `<-` é leitura
 
@@ -111,16 +111,25 @@ Formato de cada contrato: descrição, fase, pré-condição, permitido, proibid
 - **Fase:** checker / monomorphizer.
 - **Permitido:** propagar caminhos consumidos e leituras por flow; fixpoint em ciclos; especialização genérica.
 - **Proibido:** tratar callee externo desconhecido como leitura parcial; confundir índice dinâmico com caminho fixo.
-- **Testes:** `tests/checker.rs`, `tests/comparison.rs`, `tests/guard.rs`.
-- **C11/LLVM:** ✓ / parcial. **Spec:** `LOI_SPEC.md` §4.2, §5.1a.
+- **Testes:** `tests/checker.rs`, `tests/data_path.rs` (álgebra tipada e accessores), `tests/comparison.rs`, `tests/guard.rs`, `src/checker.rs::flow_integration_tests::legacy_effects_are_exposed_by_one_flow_summary`, `one_visitor_produces_transitive_effects_for_independent_paths`, `nested_consumption_is_applied_at_the_call_site`, `nested_read_summary_detects_a_moved_field`, `produced_paths_record_the_destination_written_by_the_flow`, `produced_paths_propagate_through_calls`, `produced_paths_keep_the_call_site_nested_path`.
+- **C11/LLVM:** ✓ / parcial. **Spec:** `LOI_SPEC.md` §4.2, §5.1a. **Status:** IMPLEMENTADO — o fixpoint compõe `DataPath` tipado sem round-trip por string; strings restantes são fronteiras de leitura/mensagem (`DECISIONS.md` 2026-11-25).
+
+## CONTRACT-EFF-002 — Efeitos desconhecidos são conservadores
+
+- **Fase:** checker / análise de resumos.
+- **Pré-condição:** `extern flow` com corpo vazio, ou chamada cujo callee não é intrínseco conhecido nem tem resumo.
+- **Permitido:** marcar `unknown_effects` e registrar `READ`/`INIT`/`WRITE` no valor inteiro conforme a direção; propagar o flag por chamadas.
+- **Proibido:** inferir "nenhum efeito" do silêncio; contar intrínseco conhecido como desconhecido; transformar isso em warning.
+- **Testes:** `src/checker.rs::flow_integration_tests::extern_flow_marks_unknown_effects_and_propagates_them`, `call_without_summary_marks_unknown_effects`.
+- **C11/LLVM:** n/a (frontend comum). **Spec:** `DATA_FLOW_DESIGN.md` §4; `DECISIONS.md` 2026-11-24.
 
 ## CONTRACT-VIEW-001 — View mantém a origem viva
 
 - **Fase:** checker.
 - **Permitido:** `view(xs, start, end)`, view de view, view em campo, loan de campos disjuntos.
 - **Proibido:** mover/escrever/give a origem enquanto a view está viva; sobreposição parcial; retorno de view de `<-` sem summary.
-- **Testes:** `tests/views.rs` (17), `tests/checker.rs`.
-- **C11/LLVM:** ✓ / n/a. **Spec:** `LOI_SPEC.md` §4.6; `SINTAXE.md` §11.
+- **Testes:** `tests/views.rs` (17), `tests/checker.rs`, `src/checker.rs::flow_integration_tests::escaped_source_keeps_its_relative_path`, `escaped_source_keeps_nested_relative_paths`, `escaped_loan_keeps_the_holder_slot`.
+- **C11/LLVM:** ✓ / n/a. **Spec:** `LOI_SPEC.md` §4.6; `SINTAXE.md` §11. **Status:** IMPLEMENTADO — origem relativa e slot do holder preservados como `DataPath` (`view_returns_data_paths`, `view_out_data_paths`) no resumo e no estado transiente; typestate/split/pipeline são contratos separados e permanecem propostos em `DATA_FLOW_DESIGN.md`.
 
 ## CONTRACT-PROT-001 — `protect` delimita região
 

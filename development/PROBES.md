@@ -1,7 +1,7 @@
 # Phase 0 — Reconnaissance probes (2026-11-18)
 
 All answers below come from tiny programs executed with the freshly built
-`./target/debug/loi` (`loi 0.1.0`). The probe sources live in
+`./target/debug/loi` (`loi 0.2.0`). The probe sources live in
 `/tmp/opencode/loi-phase0/`; **no library or compiler code was added in this
 phase**. Commands use `LOI=/root/loi/target/debug/loi`.
 
@@ -10,7 +10,7 @@ Environment measured with `loi --version`, `rustc --version`, `cargo --version`,
 
 | Item | Measured value |
 |---|---|
-| `loi` | `loi 0.1.0` |
+| `loi` | `loi 0.2.0` |
 | `rustc` | `rustc 1.99.1 (58cf8f9c3 2026-10-13)` |
 | `cargo` | `cargo 1.99.1 (5f94df478 2026-08-27)` |
 | `cc` | `cc (Ubuntu 15.2.0-16ubuntu1) 15.2.0` |

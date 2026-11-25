@@ -2,7 +2,7 @@
   "name": "loi-lsp",
   "displayName": "Loi Language Support",
   "description": "Loi language, syntax highlighting, file icon and LSP client for the Loi language server.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "loi",
   "icon": "icon.png",
   "engines": {

@@ -28,10 +28,10 @@
   const PRESETS = {
     hello: {
       label: "Hello, Loi",
-      code: `shape Greeting [
+      code: `shape Greeting {
     message: [u8]
-    times:   u32
-]
+    times: u32
+}
 
 open flow greet
     <- greeting: Greeting
@@ -44,7 +44,7 @@ open flow greet
 open flow main
     => i32
 {
-    greet(Greeting[ message: "Hello, Loi!\\n", times: 3 ])
+    greet(Greeting { message: "Hello, Loi!\\n", times: 3 })
     print("The playground runs the real compiler.\\n")
     => 0
 }
@@ -52,16 +52,18 @@ open flow main
     },
     directions: {
       label: "Directions & flows",
-      code: `shape Counter [ value: i32 ]
+      code: `shape Counter {
+    value: i32
+}
 
-sealed flow bump
+flow bump
     <-> counter: Counter
     <- amount: i32
 {
     counter.value += amount
 }
 
-sealed flow classify
+flow classify
     <- counter: Counter
     => [u8]
 {
@@ -77,7 +79,7 @@ sealed flow classify
 open flow main
     => i32
 {
-    mut counter: Counter <- Counter[ value: 0 ]
+    mut counter: Counter <- Counter { value: 0 }
     bump(<-> counter, 3)
     print("counter is ")
     print(classify(counter))
@@ -88,12 +90,15 @@ open flow main
     },
     ownership: {
       label: "Ownership & regions",
-      code: `shape Point [ x: i32, y: i32 ]
+      code: `shape Point {
+    x: i32
+    y: i32
+}
 
 open flow make_point
     -> point: Point
 {
-    point = Point[ x: 10, y: 20 ]
+    point = Point { x: 10, y: 20 }
 }
 
 open flow main
@@ -101,10 +106,8 @@ open flow main
 {
     mut point: Point
     make_point(-> point)
-
     // clone is explicit: composite values never copy implicitly.
     copy <- clone(point)
-
     protect {
         mut xs: [i32]
         alloc(-> xs, i32, 4)
@@ -114,7 +117,6 @@ open flow main
         xs[3] = 0
         print("allocated four integers inside a protect region\\n")
     }
-
     => 0
 }
 `,

@@ -6,6 +6,13 @@ Clang 21.1.8, aarch64. Este relatório consolida as ETAPAS 1–6 descritas em
 para revisão ou mesclada; a árvore de trabalho está suja, como esperado para
 uma auditoria em andamento.
 
+A reauditoria específica da infraestrutura de Data Flow está em
+`AUDIT_DATA_FLOW.md`; ela complementa este relatório sem reescrever seu
+histórico. A continuação da FASE 3 (representação tipada de caminhos no
+checker) está no §6 desse relatório, com gate final `./tools/ci.sh` exit 0 em
+`/tmp/opencode/loi-fase3-ci.log`; ela não alterou linguagem, diagnósticos,
+ABI nem backends.
+
 ## 1. Estado inicial (antes de qualquer alteração)
 
 Gate de baseline executado com `RUSTFLAGS="-C linker=/usr/bin/gcc"`:

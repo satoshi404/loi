@@ -18,7 +18,7 @@
       <a class="brand" href="index.html" aria-label="Loi home">
         <span class="brand-mark"><img src="assets/logo.svg" alt="" width="20" height="20"></span>
         <span>Loi</span>
-        <span class="brand-badge">v0.1</span>
+        <span class="brand-badge">v0.2</span>
       </a>
       <nav class="nav-links" aria-label="Primary">
         <a href="docs.html" aria-current="page">Documentation</a>
@@ -194,13 +194,14 @@ shape Particle {
 }
 
 mut p: Particle &lt;- Particle {
-    pos: Vec2[ x: 0, y: 10 ],
-    vel: Vec2[ x: 2, y: -1 ],
+    pos: Vec2 { x: 0, y: 10 },
+    vel: Vec2 { x: 2, y: -1 },
+    mass: 1.0,
 }</code></pre>
           </div>
 
           <p>
-            A literal always carries its shape name and uses brackets. A field with a default may
+            A literal always carries its shape name and uses braces. A field with a default may
             be omitted. <code>shape Name {}</code> is the empty shape.
           </p>
 
@@ -245,15 +246,15 @@ if c == Color.Green and r is Result.Ok {
 
           <div class="doc-code">
             <div class="doc-code-bar"><span>generics.loi</span><button type="button" data-copy>copy</button></div>
-            <pre><code class="language-loi">shape Vec&lt;T&gt; [
+            <pre><code class="language-loi">shape Vec&lt;T&gt; {
     data: [T]
     len:  u64
-]
+}
 
-shape Pair&lt;T, U&gt; [
+shape Pair&lt;T, U&gt; {
     first:  T
     second: U
-]
+}
 
 flow sum&lt;T&gt;
     &lt;- xs: Vec&lt;T&gt;
@@ -269,8 +270,8 @@ flow sum&lt;T&gt;
 flow main
     =&gt; i32
 {
-    numbers &lt;- Vec&lt;i32&gt;[ data: [i32: 1, 2, 3], len: 3 ]
-    pair    &lt;- Pair&lt;i32, bool&gt;[ first: 1, second: true ]
+    numbers &lt;- Vec&lt;i32&gt; { data: [i32: 1, 2, 3], len: 3 }
+    pair    &lt;- Pair&lt;i32, bool&gt; { first: 1, second: true }
     total   &lt;- sum&lt;i32&gt;(numbers)
     print_int(total + pair.first)
     =&gt; 0
@@ -299,9 +300,9 @@ flow main
     =&gt; clone(row)
 }
 
-shape Slot&lt;T: Copy&gt; [
+shape Slot&lt;T: Copy&gt; {
     value: T
-]
+}
 
 flow find&lt;T: Clone + Eq&gt;
     &lt;- xs: [T]
@@ -599,8 +600,8 @@ for &lt;-&gt; item in items {     // mutate each element
             <code>[T: a, b, c]</code>; an inferred literal is <code>[a, b, c]</code>; the empty
             literal is <code>[T:]</code>. <code>len(xs)</code> and <code>xs.len</code> both
             return a <code>u64</code>. Indexing is bounds-checked at runtime.
-            <code>xs.len</code> is also writable through a mutable place, including an
-            out/inout parameter; a <code>&lt;-</code> parameter stays read-only.
+            <code>xs.len</code> is also writable through a mutable place, including a
+            <code>-&gt;</code> or <code>&lt;-&gt;</code> parameter; a <code>&lt;-</code> parameter stays read-only.
           </p>
 
           <div class="doc-code">
@@ -2121,7 +2122,7 @@ export LOI_COMPILER=/absolute/path/to/loi/target/debug/loi
           <p>
             A full client lives in <code>editors/vscode-loi/</code>. Install the VSIX from
             <code>npx --yes @vscode/vsce package</code> with
-            <code>code --install-extension loi-lsp-0.1.0.vsix</code>, or run
+            <code>code --install-extension loi-lsp-0.2.0.vsix</code>, or run
             <code>npm install</code>, open that folder in VS Code and press <code>F5</code> for
             an Extension Development Host. The extension registers the <code>.loi</code>
             language with syntax highlighting, snippets and bracket matching, ships a
@@ -2386,7 +2387,7 @@ sealed flow winning_line
               <tr><td>Choice</td><td><code>choice Result { Ok: i32, Err: i64 }</code></td></tr>
               <tr><td>Choice constructor</td><td><code>Result.Ok(42)</code></td></tr>
               <tr><td>Variant test</td><td><code>result is Result.Ok</code></td></tr>
-              <tr><td>Generic shape</td><td><code>shape Vec&lt;T&gt; [ data: [T], len: u64 ]</code>, bounded as <code>shape Slot&lt;T: Copy&gt; [ value: T ]</code></td></tr>
+              <tr><td>Generic shape</td><td><code>shape Vec&lt;T&gt; { data: [T], len: u64 }</code>, bounded as <code>shape Slot&lt;T: Copy&gt; { value: T }</code></td></tr>
               <tr><td>Flow with result</td><td><code>flow f &lt;- x: i32 =&gt; i32 { =&gt; x }</code></td></tr>
               <tr><td>Generic flow</td><td><code>flow f&lt;T&gt; &lt;- x: T =&gt; T { =&gt; x }</code>, called as <code>f&lt;i32&gt;(x)</code>; bounds: <code>flow f&lt;T: Clone + Eq&gt;</code></td></tr>
               <tr><td>Compile-time flow</td><td><code>comptime flow f &lt;- x: i32 =&gt; i32 { =&gt; x * 2 }</code></td></tr>
@@ -2439,8 +2440,8 @@ sealed flow winning_line
               <code>choice</code>.</li>
             <li>No address-of (<code>&amp;x</code>) or dereference (<code>*p</code>) operators and no
               pointers. <code>&amp;</code> is only bitwise AND.</li>
-            <li>No brace shape literals (<code>Vec2{ ... }</code>) and no <code>[]T{ ... }</code>
-              slice literals.</li>
+            <li>No bracketed shape declarations or literals; shapes use <code>{ ... }</code> and
+              slices use <code>[T: ...]</code>.</li>
             <li>No classes, methods, inheritance, exceptions, macros or implicit prelude.</li>
             <li>No <code>null</code>/<code>nil</code>; use a flag or a sentinel.</li>
           </ul>
@@ -2604,8 +2605,8 @@ cargo test --all-targets</code></pre>
           <ol>
             <li>Read <code>development/LOI_SPEC.md</code> before changing the language.</li>
             <li>Record status in <code>development/PROGRESS.md</code> and one-line decisions in <code>development/DECISIONS.md</code>.</li>
-            <li>Keep the surface canonical: do not reintroduce legacy keywords, brace shape literals,
-              <code>[]T{ ... }</code> literals or <code>&amp;</code>.</li>
+            <li>Keep the surface canonical: do not reintroduce legacy keywords, bracketed shape
+              declarations or literals, obsolete slice spellings or <code>&amp;</code>.</li>
             <li>Add or update tests for every behavior change and retire tests that only covered removed syntax.</li>
             <li>Do not silently rewrite working code. Verify with the compiler before claiming success.</li>
             <li>Keep the specification, examples and this website in sync with the implementation.</li>
@@ -2669,7 +2670,7 @@ cargo test --all-targets</code></pre>
         </div>
       </div>
       <div class="footer-bottom">
-        <span><i></i> Loi 0.1.0 · Flow Syntax</span>
+        <span><i></i> Loi 0.2.0 · Flow Syntax</span>
         <span>MIT OR Apache-2.0 · built with Rust and C11</span>
       </div>
     </div>

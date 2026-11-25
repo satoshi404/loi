@@ -8,7 +8,7 @@ blocked-design details are in `development/FRICTION.md`.
 
 | Item | Measured value |
 |---|---|
-| `loi` | `loi 0.1.0` |
+| `loi` | `loi 0.2.0` |
 | `rustc` | `rustc 1.99.1 (58cf8f9c3 2026-10-13)` |
 | `cargo` | `cargo 1.99.1 (5f94df478 2026-08-27)` |
 | C compiler | `gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0` |
@@ -216,7 +216,7 @@ requirement, and the workaround that was actually implemented.
   exceeds the available user virtual address space.
 - UBSan evidence is from executing the instrumented binaries and checking
   their output and stderr; it is not a proof of absence for all inputs.
-- Benchmarks measure only this aarch64 container, `gcc 15.2.0`, `loi 0.1.0`,
+- Benchmarks measure only this aarch64 container, `gcc 15.2.0`, `loi 0.2.0`,
   `--release`, one pinned core, and the six fixed workloads listed above. No
   other CPU, compiler, optimization level, core count, input distribution, or
   warm/cold cache state was measured.

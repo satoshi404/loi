@@ -89,7 +89,9 @@ public service without adding real sandboxing.
   when the mirror is stale.
 - The docs are hand-written HTML so they work without a build step. Keep them in
   sync with `development/LOI_SPEC.md`, `development/PROGRESS.md` and
-  `development/DECISIONS.md`.
+  `development/DECISIONS.md`. `tests/website.rs` guards the canonical brace
+  syntax in these snippets and presets and checks that the release version is
+  identical in Cargo, the site, the VS Code extension and the benchmark record.
 - `web/` is generated, not mirrored. Rebuild it after changing a web example:
 
   ```sh
