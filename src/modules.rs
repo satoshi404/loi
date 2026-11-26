@@ -109,6 +109,11 @@ impl Resolver<'_> {
     /// elsewhere. An unqualified name shared by several other modules is
     /// ambiguous and must be qualified by the caller.
     fn name(&mut self, name: &str, span: Span) -> String {
+        // The lexer folds `fmt::(` into the intrinsic token `fmt::`. It is a
+        // call spelling, not a module path, so no import alias is required.
+        if name == "fmt::" {
+            return name.to_string();
+        }
         if let Some((alias, item)) = name.split_once("::") {
             if item.contains("::") {
                 self.diagnostics.push(

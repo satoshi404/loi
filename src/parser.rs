@@ -217,20 +217,95 @@ impl Parser {
         }
     }
 
-    fn parse_import(&mut self, span: Span, public: bool) -> ParseResult<Item> {
+    fn parse_import(&mut self, start: Span, public: bool) -> ParseResult<Item> {
         self.expect(TokenKind::Import, "'import'")?;
-        let path = self.expect(TokenKind::String, "an import path string")?;
+        let kind = if self.at(TokenKind::String) {
+            let path = self.expect(TokenKind::String, "an import path string")?;
+            let path_span = token_span(&path);
+            let alias = if self.matches(TokenKind::As) {
+                Some(self.parse_import_name("a module alias")?)
+            } else {
+                None
+            };
+            ImportKind::Path {
+                span: path_span,
+                path: path.lexeme,
+                alias,
+            }
+        } else {
+            self.parse_logical_import_kind()?
+        };
+        Ok(Item::Import(ImportDecl {
+            span: self.through_last(start),
+            public,
+            kind,
+        }))
+    }
+
+    fn parse_import_name(&mut self, expected: &str) -> ParseResult<ImportName> {
+        let token = self.expect(TokenKind::Identifier, expected)?;
+        Ok(ImportName {
+            span: token_span(&token),
+            name: token.lexeme,
+        })
+    }
+
+    fn parse_logical_import_kind(&mut self) -> ParseResult<ImportKind> {
+        // The lexer folds `a::b` into a single identifier when the characters
+        // after `::` start an identifier. Split it back into namespace
+        // segments here; only import paths have hierarchical meaning.
+        let token = self.expect(TokenKind::Identifier, "an import path")?;
+        let mut segments = split_qualified_identifier(&token);
+        while self.at(TokenKind::Colon) && self.peek_kind(1) == TokenKind::Colon {
+            if self.peek_kind(2) == TokenKind::LBrace {
+                self.advance(); // ':'
+                self.advance(); // ':'
+                let items = self.parse_import_group_items()?;
+                return Ok(ImportKind::Group {
+                    base: segments,
+                    items,
+                });
+            }
+            self.advance(); // ':'
+            self.advance(); // ':'
+            let token = self.expect(TokenKind::Identifier, "an import path segment")?;
+            segments.extend(split_qualified_identifier(&token));
+        }
         let alias = if self.matches(TokenKind::As) {
-            Some(self.expect(TokenKind::Identifier, "a module alias")?.lexeme)
+            Some(self.parse_import_name("a module alias")?)
         } else {
             None
         };
-        Ok(Item::Import(ImportDecl {
-            span,
-            path: path.lexeme,
-            alias,
-            public,
-        }))
+        Ok(ImportKind::Logical { segments, alias })
+    }
+
+    fn parse_import_group_items(&mut self) -> ParseResult<Vec<ImportGroupItem>> {
+        self.expect(TokenKind::LBrace, "'{' to open an import group")?;
+        self.skip_newlines();
+        let mut items = Vec::new();
+        while !self.at(TokenKind::RBrace) {
+            if self.at(TokenKind::Eof) {
+                return Err(self.error_current("unterminated import group"));
+            }
+            let name = self.parse_import_name("an import name")?;
+            let alias = if self.matches(TokenKind::As) {
+                Some(self.parse_import_name("a module alias")?)
+            } else {
+                None
+            };
+            items.push(ImportGroupItem { name, alias });
+            self.skip_newlines();
+            if self.matches(TokenKind::Comma) {
+                self.skip_newlines();
+                continue;
+            }
+            break;
+        }
+        self.expect(TokenKind::RBrace, "'}' to close an import group")?;
+        if items.is_empty() {
+            return Err(self.error_current("import group cannot be empty"));
+        }
+        Ok(items)
     }
 
     /// Parse the Flow-Syntax global form: `name <- value`, `mut name: T <- value`.
@@ -575,7 +650,10 @@ impl Parser {
             self.skip_newlines();
             match self.current().kind {
                 TokenKind::LBrace => break,
-                TokenKind::ArrowIn | TokenKind::Arrow | TokenKind::ArrowInOut => {
+                TokenKind::ArrowIn
+                | TokenKind::Arrow
+                | TokenKind::ArrowInOut
+                | TokenKind::Ellipsis => {
                     if return_type.is_some() {
                         return Err(self.error_current(
                             "parameters must appear before the '=>' result clause",
@@ -602,24 +680,32 @@ impl Parser {
 
     fn parse_param(&mut self) -> ParseResult<Param> {
         let span = self.span_here();
-        let direction = match self.current().kind {
-            TokenKind::ArrowIn => {
-                self.advance();
-                Direction::In
-            }
-            TokenKind::Arrow => {
-                self.advance();
-                Direction::Out
-            }
-            TokenKind::ArrowInOut => {
-                self.advance();
-                Direction::Inout
-            }
-            _ => {
-                return Err(self.error_current(format!(
-                    "expected parameter direction '<-', '->' or '<->', found {}",
-                    self.describe_current()
-                )));
+        // `... xs: T` is an input parameter holding every trailing argument.
+        // Its slice form is created by the checker and the backends; the source
+        // spelling deliberately omits `<-` because there is nothing to pass out.
+        let variadic = self.matches(TokenKind::Ellipsis);
+        let direction = if variadic {
+            Direction::In
+        } else {
+            match self.current().kind {
+                TokenKind::ArrowIn => {
+                    self.advance();
+                    Direction::In
+                }
+                TokenKind::Arrow => {
+                    self.advance();
+                    Direction::Out
+                }
+                TokenKind::ArrowInOut => {
+                    self.advance();
+                    Direction::Inout
+                }
+                _ => {
+                    return Err(self.error_current(format!(
+                        "expected parameter direction '<-', '->', '<->' or '...', found {}",
+                        self.describe_current()
+                    )));
+                }
             }
         };
 
@@ -632,6 +718,7 @@ impl Parser {
             direction,
             name,
             ty,
+            variadic,
         })
     }
 
@@ -1792,4 +1879,25 @@ impl Parser {
             self.through_last(span),
         ))
     }
+}
+
+fn token_span(token: &Token) -> Span {
+    Span::new(token.line, token.column).with_lexeme(&token.lexeme)
+}
+
+fn split_qualified_identifier(token: &Token) -> Vec<ImportName> {
+    let mut segments = Vec::new();
+    let mut column = token.column;
+    for part in token.lexeme.split("::") {
+        if part.is_empty() {
+            column += 2;
+            continue;
+        }
+        segments.push(ImportName {
+            span: Span::new(token.line, column).with_end_column(column + part.chars().count()),
+            name: part.to_string(),
+        });
+        column += part.chars().count() + 2;
+    }
+    segments
 }

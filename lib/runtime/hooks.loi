@@ -42,3 +42,36 @@ open flow hooks_wants_shutdown
 {
     => hooks.on_shutdown
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `hooks_none`.
+open flow none
+-> hooks: RuntimeHooks
+{
+    hooks_none(-> hooks)
+}
+
+/// Short alias of `hooks_with_shutdown`.
+open flow with_shutdown
+-> hooks: RuntimeHooks
+{
+    hooks_with_shutdown(-> hooks)
+}
+
+/// Short alias of `hooks_wants_setup`.
+open flow wants_setup
+<- hooks: RuntimeHooks
+=> bool
+{
+    => hooks_wants_setup(hooks)
+}
+
+/// Short alias of `hooks_wants_shutdown`.
+open flow wants_shutdown
+<- hooks: RuntimeHooks
+=> bool
+{
+    => hooks_wants_shutdown(hooks)
+}

@@ -194,3 +194,96 @@ open flow process_exit_code
     }
     => loi_process_exit_code(process.handle)
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `process_release`.
+open flow release
+<-> process: Process
+{
+    process_release(<-> process)
+}
+
+/// Short alias of `process_spawn_args`.
+open flow spawn_args
+<- program: [u8]
+<- args: [[u8]]
+=> Process
+{
+    => process_spawn_args(program, args)
+}
+
+/// Short alias of `process_spawn`.
+open flow spawn
+<- command: [u8]
+=> Process
+{
+    => process_spawn(command)
+}
+
+/// Short alias of `process_ok`.
+open flow ok
+<- process: Process
+=> bool
+{
+    => process_ok(process)
+}
+
+/// Short alias of `process_stdout_len`.
+open flow stdout_len
+<- process: Process
+=> i64
+{
+    => process_stdout_len(process)
+}
+
+/// Short alias of `process_stderr_len`.
+open flow stderr_len
+<- process: Process
+=> i64
+{
+    => process_stderr_len(process)
+}
+
+/// Short alias of `process_read_stdout`.
+open flow read_stdout
+<- process: Process
+<-> data: [u8]
+=> i64
+{
+    => process_read_stdout(process, <-> data)
+}
+
+/// Short alias of `process_read_stderr`.
+open flow read_stderr
+<- process: Process
+<-> data: [u8]
+=> i64
+{
+    => process_read_stderr(process, <-> data)
+}
+
+/// Short alias of `process_stdout`.
+open flow stdout
+<- process: Process
+=> [u8]
+{
+    => process_stdout(process)
+}
+
+/// Short alias of `process_stderr`.
+open flow stderr
+<- process: Process
+=> [u8]
+{
+    => process_stderr(process)
+}
+
+/// Short alias of `process_exit_code`.
+open flow exit_code
+<- process: Process
+=> i32
+{
+    => process_exit_code(process)
+}

@@ -10,6 +10,7 @@ pub mod diagnostic;
 pub mod expand;
 pub mod flow;
 pub mod format;
+pub mod imports;
 pub mod ir;
 pub mod lexer;
 pub mod lint;

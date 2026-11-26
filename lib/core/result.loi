@@ -84,3 +84,55 @@ open flow result_unwrap_err<T, E: Clone>
     }
     => clone(r.error)
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `result_ok`.
+open flow ok<T: Clone, E>
+<- value: T
+-> out: Result<T, E>
+{
+    result_ok<T, E>(value, -> out)
+}
+
+/// Short alias of `result_err`.
+open flow err<T, E: Clone>
+<- error: E
+-> out: Result<T, E>
+{
+    result_err<T, E>(error, -> out)
+}
+
+/// Short alias of `result_is_ok`.
+open flow is_ok<T, E>
+<- r: Result<T, E>
+=> bool
+{
+    => result_is_ok<T, E>(r)
+}
+
+/// Short alias of `result_is_err`.
+open flow is_err<T, E>
+<- r: Result<T, E>
+=> bool
+{
+    => result_is_err<T, E>(r)
+}
+
+/// Short alias of `result_unwrap_or`.
+open flow unwrap_or<T: Clone, E>
+<- r: Result<T, E>
+<- fallback: T
+=> T
+{
+    => result_unwrap_or<T, E>(r, fallback)
+}
+
+/// Short alias of `result_unwrap_err`.
+open flow unwrap_err<T, E: Clone>
+<- r: Result<T, E>
+=> E
+{
+    => result_unwrap_err<T, E>(r)
+}

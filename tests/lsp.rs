@@ -466,9 +466,10 @@ fn lsp_server_clears_diagnostics_for_a_clean_document() {
     }
     let dir = test_dir("publish-empty");
     let (_, json) = compiler_diagnostics(&dir, "flow main => i32 {\n    => 0\n}\n");
-    assert!(
-        json.is_empty(),
-        "clean source should produce no diagnostics: {json}"
+    assert_eq!(
+        json.trim(),
+        "[]",
+        "clean source should produce an empty JSON array: {json}"
     );
     let uri = document_uri(&dir.join("broken.loi"));
 

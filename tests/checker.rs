@@ -2108,6 +2108,13 @@ fn diagnostics_use_source_spelling_for_generic_instantiations() {
 }
 
 #[test]
+fn cstr_supports_content_comparison_and_ordering() {
+    assert_clean(
+        "flow main\n    => bool\n{\n    a: cstr <- \"a\"\n    b: cstr <- \"b\"\n    => a == b or a < b\n}\n",
+    );
+}
+
+#[test]
 fn printf_format_arguments_are_checked() {
     assert_clean("flow main {\n    printf(\"n=%d f=%.2f s=%s pct=%%\\n\", 1, 2.5, \"ok\")\n}\n");
     assert_clean("flow main {\n    title: cstr <- \"hi\"\n    printf(\"%s\\n\", title)\n}\n");
@@ -2135,6 +2142,63 @@ fn printf_format_arguments_are_checked() {
     assert_message(
         "flow main {\n    fmt <- \"%d\"\n    printf(fmt, 1)\n}\n",
         "printf format must be a string literal",
+    );
+}
+
+#[test]
+fn print_fmt_rejects_wrong_placeholder_arity() {
+    assert_clean("flow main {\n    print(fmt::(\"minha idade {}\", 7))\n}\n");
+    assert_message(
+        "flow main {\n    print(fmt::(\"{}\", 1, 2))\n}\n",
+        "format template expects 1 argument(s), found 2",
+    );
+    assert_message(
+        "flow main {\n    print(fmt::(\"{} {}\", 1))\n}\n",
+        "format template expects 2 argument(s), found 1",
+    );
+}
+
+#[test]
+fn fmt_directive_requires_a_direct_output_argument() {
+    assert_clean("flow show {\n    eprint(fmt::(\"n={}\", 1))\n}\n");
+    assert_clean("flow show {\n    panic(fmt::(\"n={}\", 1))\n}\n");
+    assert_message(
+        "flow show {\n    bytes <- fmt::(\"n={}\", 1)\n    print(bytes)\n}\n",
+        "fmt::(...) must be used directly inside print, eprint or panic",
+    );
+    assert_message(
+        "flow show {\n    print(view(fmt::(\"abc\"), 0, 1))\n}\n",
+        "fmt::(...) must be used directly inside print, eprint or panic",
+    );
+}
+
+#[test]
+fn variadic_parameters_expose_their_argument_count() {
+    assert_clean(
+        "flow count(... xs: i32) => u64 {\n    => len(xs)\n}\n\nflow show {\n    print_int(count())\n    print_int(count(1, 2, 3))\n}\n",
+    );
+    assert_clean(
+        "flow sum(<- base: i32, ... xs: i32) => i32 {\n    => base\n}\n\nflow show {\n    print_int(sum(1))\n}\n",
+    );
+    assert_message(
+        "flow sum(<- base: i32, ... xs: i32) => i32 {\n    => base\n}\n\nflow show {\n    print_int(sum())\n}\n",
+        "function 'sum' expects at least 1 argument(s), found 0",
+    );
+}
+
+#[test]
+fn variadic_parameters_have_a_restricted_declaration_form() {
+    assert_message(
+        "flow bad(... xs: i32, <- tail: i32) {\n}\n",
+        "variadic parameter 'xs' must be the last parameter",
+    );
+    assert_message(
+        "flow bad(... xs: [i32]) {\n}\n",
+        "variadic parameter 'xs' must have a scalar or cstr element type",
+    );
+    assert_message(
+        "extern flow bad(... xs: i32) => i32\n",
+        "extern flow 'bad' cannot have a variadic parameter",
     );
 }
 

@@ -82,3 +82,80 @@ open flow math_dot_f64
     }
     => total
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `math_clamp_f64`.
+open flow clamp_f64
+<- value: f64
+<- low: f64
+<- high: f64
+=> f64
+{
+    => math_clamp_f64(value, low, high)
+}
+
+/// Short alias of `math_lerp`.
+open flow lerp
+<- a: f64
+<- b: f64
+<- t: f64
+=> f64
+{
+    => math_lerp(a, b, t)
+}
+
+/// Short alias of `math_smoothstep`.
+open flow smoothstep
+<- edge0: f64
+<- edge1: f64
+<- x: f64
+=> f64
+{
+    => math_smoothstep(edge0, edge1, x)
+}
+
+/// Short alias of `math_deg_to_rad`.
+open flow deg_to_rad
+<- degrees: f64
+=> f64
+{
+    => math_deg_to_rad(degrees)
+}
+
+/// Short alias of `math_rad_to_deg`.
+open flow rad_to_deg
+<- radians: f64
+=> f64
+{
+    => math_rad_to_deg(radians)
+}
+
+/// Short alias of `math_hypot`.
+open flow hypot
+<- x: f64
+<- y: f64
+=> f64
+{
+    => math_hypot(x, y)
+}
+
+/// Short alias of `math_near`.
+open flow near
+<- a: f64
+<- b: f64
+<- epsilon: f64
+=> bool
+{
+    => math_near(a, b, epsilon)
+}
+
+/// Short alias of `math_dot_f64`.
+open flow dot_f64
+<- a: [f64]
+<- b: [f64]
+=> f64
+{
+    => math_dot_f64(a, b)
+}

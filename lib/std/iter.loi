@@ -45,3 +45,31 @@ open flow iter_all_positive_i64
     }
     => true
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `iter_sum_u64`.
+open flow sum_u64
+<- values: [u64]
+=> u64
+{
+    => iter_sum_u64(values)
+}
+
+/// Short alias of `iter_any_i64`.
+open flow any_i64
+<- values: [i64]
+<- target: i64
+=> bool
+{
+    => iter_any_i64(values, target)
+}
+
+/// Short alias of `iter_all_positive_i64`.
+open flow all_positive_i64
+<- values: [i64]
+=> bool
+{
+    => iter_all_positive_i64(values)
+}

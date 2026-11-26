@@ -49,3 +49,42 @@ open flow math_sum<T: Copy>
     }
     => total
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `math_min`.
+open flow min<T: Copy>
+<- a: T
+<- b: T
+=> T
+{
+    => math_min<T>(a, b)
+}
+
+/// Short alias of `math_max`.
+open flow max<T: Copy>
+<- a: T
+<- b: T
+=> T
+{
+    => math_max<T>(a, b)
+}
+
+/// Short alias of `math_clamp`.
+open flow clamp<T: Copy>
+<- value: T
+<- low: T
+<- high: T
+=> T
+{
+    => math_clamp<T>(value, low, high)
+}
+
+/// Short alias of `math_sum`.
+open flow sum<T: Copy>
+<- xs: [T]
+=> T
+{
+    => math_sum<T>(xs)
+}

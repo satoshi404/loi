@@ -40,3 +40,21 @@ open flow os_sleep
     loi_os_sleep_ms(millis)
     => true
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `os_unix_time`.
+open flow unix_time
+=> i64
+{
+    => os_unix_time()
+}
+
+/// Short alias of `os_sleep`.
+open flow sleep
+<- millis: i32
+=> bool
+{
+    => os_sleep(millis)
+}

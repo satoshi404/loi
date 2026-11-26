@@ -31,3 +31,31 @@ open flow fmt_parens
     left <- str_concat("(", value)
     => str_concat(left, ")")
 }
+
+// Short aliases: after `import std::fmt` the module is already the context, so
+// `fmt::line(...)` is the natural spelling. The `fmt_*` names stay for broad
+// `import "lib/std.loi"` builds and for existing programs.
+/// `key: value` as a new byte string. Short alias of `fmt_label`.
+open flow label
+    <- key: [u8]
+    <- value: [u8]
+    => [u8]
+{
+    => fmt_label(key, value)
+}
+
+/// Append a single newline. Short alias of `fmt_line`.
+open flow line
+    <- value: [u8]
+    => [u8]
+{
+    => fmt_line(value)
+}
+
+/// Parenthesise a value for diagnostics. Short alias of `fmt_parens`.
+open flow parens
+    <- value: [u8]
+    => [u8]
+{
+    => fmt_parens(value)
+}

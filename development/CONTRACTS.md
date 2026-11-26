@@ -197,17 +197,17 @@ Formato de cada contrato: descrição, fase, pré-condição, permitido, proibid
 ## CONTRACT-MOD-001 — Import, reexport e visibilidade
 
 - **Fase:** modules.
-- **Permitido:** `import`, `open import`, reexports transitives de `open`, aliases, paths relativos/absolutos, mesmo nome em módulos distintos.
-- **Proibido:** `sealed import`; item `sealed` de outro módulo; ambiguidade sem qualificação; ciclos.
-- **Testes:** `tests/modules.rs`, `tests/mangling.rs`, `tests/packages.rs`.
+- **Permitido:** `import`, `open import`, reexports transitives de `open`, aliases, paths relativos/absolutos, imports lógicos/agrupados resolvidos para arquivos estreitos da `lib/` mais próxima, raízes explícitas via `--lib-dir` (em ordem, após a `lib/` do projeto), mesmo nome em módulos distintos.
+- **Proibido:** `sealed import`; item `sealed` de outro módulo; ambiguidade sem qualificação; ciclos; `import std` isolado; manifesto, cwd implícito ou busca global para nomes lógicos; `--lib-dir` em modos que não resolvem imports.
+- **Testes:** `tests/modules.rs`, `tests/mangling.rs`, `tests/packages.rs`, `tests/namespace_imports.rs`, `tests/lib_dir.rs`.
 - **C11/LLVM:** ✓ / parcial. **Spec:** `SINTAXE.md` §13; `LOI_SPEC.md` §4.8.
 
 ## CONTRACT-FFI-001 — `opaque`, `cstr` e `extern flow`
 
 - **Fase:** checker + codegen + linker.
-- **Permitido:** handles opacos como `Copy`; `cstr` para FFI; `extern flow` com shim explícito (`--c-source`).
-- **Proibido:** dereferenciar ponteiro em Loi; `nil`; shim ausente sem diagnóstico útil.
-- **Testes:** `tests/checker.rs`, `tests/codegen.rs`, `tests/handles.rs`, `tests/process.rs`.
+- **Permitido:** handles opacos como `Copy`; `cstr` para FFI; `extern flow` com shim explícito (`--c-source`) ou descoberto opt-in (`--auto-c-source`) a partir do arquivo importador; `extern flow ... as` ligando diretamente a símbolos libc quando a assinatura cabe.
+- **Proibido:** dereferenciar ponteiro em Loi; `nil`; shim ausente sem diagnóstico útil; selecionar automaticamente um shim fora do pacote importado; linkagem automática no playground ou no backend LLVM.
+- **Testes:** `tests/checker.rs`, `tests/codegen.rs`, `tests/handles.rs`, `tests/process.rs`, `tests/native_dependencies.rs`.
 - **C11/LLVM:** ✓ / parcial. **Spec:** `SINTAXE.md` §12; `LOI_SPEC.md` §4.10; `DECISIONS.md`.
 
 ## CONTRACT-C11-001 — C11 como produção

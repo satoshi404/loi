@@ -29,10 +29,6 @@ typedef struct {
     size_t len;
 } LoiSlice;
 
-int32_t loi_os_pid(void) {
-    return (int32_t)getpid();
-}
-
 int64_t loi_os_unix_time(void) {
     return (int64_t)time(NULL);
 }
@@ -101,10 +97,6 @@ int32_t loi_os_errno(void) {
     return (int32_t)errno;
 }
 
-void loi_os_exit(int32_t code) {
-    exit((int)code);
-}
-
 int32_t loi_io_open(const char* path, uint32_t write) {
     if (path == NULL) {
         return -1;
@@ -112,12 +104,6 @@ int32_t loi_io_open(const char* path, uint32_t write) {
     int flags = write ? (O_WRONLY | O_CREAT | O_TRUNC) : O_RDONLY;
     int fd = open(path, flags, (mode_t)0644);
     return fd < 0 ? -1 : (int32_t)fd;
-}
-
-void loi_io_close(int32_t fd) {
-    if (fd >= 0) {
-        (void)close((int)fd);
-    }
 }
 
 int64_t loi_io_read(int32_t fd, LoiSlice* data) {

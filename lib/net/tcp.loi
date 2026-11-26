@@ -74,3 +74,40 @@ open flow tcp_stream_recv
     }
     => net_recv(stream.fd, <-> data)
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `tcp_stream_release`.
+open flow stream_release
+<-> stream: TcpStream
+{
+    tcp_stream_release(<-> stream)
+}
+
+/// Short alias of `tcp_stream_connect`.
+open flow stream_connect
+<- host: cstr
+<- port: u32
+=> TcpStream
+{
+    => tcp_stream_connect(host, port)
+}
+
+/// Short alias of `tcp_stream_send`.
+open flow stream_send
+<- stream: TcpStream
+<- data: [u8]
+=> bool
+{
+    => tcp_stream_send(stream, data)
+}
+
+/// Short alias of `tcp_stream_recv`.
+open flow stream_recv
+<- stream: TcpStream
+<-> data: [u8]
+=> i64
+{
+    => tcp_stream_recv(stream, <-> data)
+}

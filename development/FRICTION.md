@@ -762,10 +762,14 @@ LLVM backend now uses `%LoiSlice = type { ptr, i64 }` to match C's `LoiSlice`
 ABI, supplies its own bump-arena and checked-index helpers, and lowers
 `protect` by saving and restoring the arena top. `examples/llvm_slices.loi`
 builds with both backends and prints identical output, including the runtime
-diagnostic for an out-of-bounds index. Callbacks, `comptime`, shapes, marks,
-choices, opaque handles, globals and composites with slice elements still have
-no agreed ABI and remain rejected with an `LLVM backend does not support ...`
-diagnostic. C11 is still the production path and the semantic oracle.
+diagnostic for an out-of-bounds index. **Resolved for scalar callbacks:** plain
+`callback` and `callback(T, ...) => R` lower to opaque C function pointers when
+their components are LLVM scalars, and `callback(flow)` passes the flow symbol
+directly; callback slices and non-scalar or nested signatures remain rejected.
+`comptime`, shapes, marks, choices, opaque handles, globals and composites with
+slice elements still have no agreed ABI and remain rejected with an
+`LLVM backend does not support ...` diagnostic. C11 is still the production path
+and the semantic oracle.
 
 ## Block L7 — playground and LSP integration
 
@@ -1001,4 +1005,15 @@ that only parses addresses must link `lib/net_shim.c` even when it never calls
 a socket. The fix is a narrow import such as
 `import "lib/net/address.loi"` and `import "lib/net/udp.loi"`; both live in the
 pure layer. This is a property of textual imports, not a hidden search path,
-and is documented in `SINTAXE.md` alongside the package table.
+and is documented in `SINTAXE.md` alongside the package table. With opt-in
+`--auto-c-source`, the same imported declarations determine which shim files are
+candidates; narrow imports remain the way to avoid pulling those externs into a
+build.
+
+### Library outside the project tree
+
+A source file outside the compiler repository has no `lib/` ancestor, so a
+logical import such as `std::fmt` reports `unknown package`. The explicit fix is
+`--lib-dir /path/to/loi/lib` on `check`, `gen` or `build`; it is repeatable and
+checked after the project's own `lib/`. This was chosen over auto-detection from
+the executable to keep the playground and LSP isolated (see `DECISIONS.md`).

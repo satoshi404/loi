@@ -11,6 +11,352 @@ As entradas abaixo são um arquivo cronológico. O estado atual e as evidências
 
 ## Current Status
 
+- **I/O e variádicos — `fmt::(...)` e `... args` (2026-11-26):** `fmt::(...)` é
+  a grafia imediata de `format(...)` com os mesmos placeholders `{}`/`{{`/`}}`,
+  o mesmo `loi_format` e a mesma checagem de aridade, aceita somente como
+  argumento direto de `print`, `eprint` ou `panic`. Assim o exemplo pedido
+  `print(fmt::("minha idade {}", 7))` funciona sem `protect`, e `print` continua
+  escrevendo bytes exatos, sem `\n` implícito. `... xs: T` é um parâmetro final:
+  o corpo recebe `xs: []T`, então `len(xs)` informa quantos argumentos foram
+  passados (zero permitido). O C11 empacota os valores em `LoiSlice` e marca o
+  slice como usado quando o corpo não o lê, mantendo o código gerado limpo sob
+  `-Wall -Wextra -Werror`; LLVM e `extern flow` variádicos são rejeitados com
+  diagnóstico. Classificação:
+  **IMPLEMENTADO**; **DOCUMENTADO** em `SINTAXE.md` §6/§14,
+  `LOI_SPEC.md` §5.9/§6.2, `website/docs.html` e `DECISIONS.md`.
+- **Verificação — `fmt::(...)` e variádicos (2026-11-26):** failing-first com
+  `cargo test --test codegen --test checker --test parser` registrou **269
+  passed, 6 failed, 0 ignored** (`exit=101`,
+  `/tmp/opencode/loi-print-fmt-variadic-red3.log`): `fmt::(` e `... xs: T` não
+  lexavam/parseavam e a aridade de `{}` não era checada. Após a implementação,
+  os testes focados ampliados passaram com **345 passed, 0 failed, 0 ignored em
+  5 suítes** (`/tmp/opencode/loi-print-fmt-green-targeted4.log`), incluindo
+  stdout exato de `print`, `print-fmt-*`, `variadic-count`, as rejeições LLVM,
+  o caminho do CLI sem importar `fmt` e `assert_strict_c11` nos novos casos. A
+  suíte final reportou **722 passed, 0 failed, 0 ignored em 48 suítes**
+  (`/tmp/opencode/loi-print-fmt-full-tests4.log`).
+- **Gate final — limitações implementadas nesta rodada (2026-11-26):** com
+  `export PATH="/root/.cargo/bin:$PATH"` e
+  `export RUSTFLAGS="-C linker=/usr/bin/gcc"`, `cargo fmt --check` e
+  `cargo clippy --all-targets -- -D warnings` terminaram em `exit=0` (steps do
+  `/tmp/opencode/loi-print-fmt-final-ci3.log`); `cargo test --all-targets`
+  reportou **722 passed, 0 failed, 0 ignored em 48 suítes**
+  (`/tmp/opencode/loi-print-fmt-full-tests4.log`). `python3
+  tools/sync_examples.py --check` informou `website/examples is in sync` e
+  `git diff --check` terminou em `exit=0`. `./tools/ci.sh` terminou em `exit=0`
+  com `selected CI steps passed`
+  (`/tmp/opencode/loi-print-fmt-final-ci3.log`): o step `tests` reportou os
+  mesmos **722 passed, 0 failed, 0 ignored em 48 suítes**,
+  `tools/check_test_output.py` encontrou `no skipped tests detected`, o
+  agregado dos 61 suítes de todos os steps foi **1052 passed, 0 failed, 0
+  ignored**, e passaram goldens, exemplos, sync, diff-check, C11 estrito,
+  UBSan GCC/Clang e ASan+UBSan Clang. Além do gate, os novos casos `fmt::`,
+  `... i32`, `... cstr` e `... bool` foram compilados com `-std=c11
+  -pedantic-errors -Wall -Wextra -Werror -fsyntax-only`. MSRV local pulou porque
+  Rust 1.88 não está instalado (`LOI_REQUIRE_MSRV=1` no CI); GCC ASan continua
+  não validado neste PRoot
+  (`heap size 40000002000 exceeds max user virtual address 7fffffffff`). Nenhum
+  golden foi regenerado, nenhum teste ignorado e nenhum diagnóstico suprimido;
+  `benchmark/run.py` não se aplica porque C11/ABI não mudou. Após o gate, apenas
+  ajustes de documentação foram feitos; `git diff --check`, o sync de exemplos e
+  `cargo test --test website --test parser` passaram novamente
+  (`/tmp/opencode/loi-print-fmt-doc-check.log`). Classificação:
+  **IMPLEMENTADO** para os suportes; **DOCUMENTADO** nas entradas seguintes;
+  **LIMITAÇÃO CONHECIDA** para MSRV/GCC ASan locais.
+- **LLVM — callbacks escalares tipados (2026-11-25):** o backend opt-in agora
+  aceita `callback` fixo e `callback(T, ...) => R` quando todos os parâmetros e
+  o resultado não-`void` são escalares LLVM. `callback(flow)` passa o símbolo da
+  flow diretamente, com ABI de ponteiro opaco igual à do C11; extern flows com
+  parâmetros callback usam `ptr`. Callback slices, assinaturas aninhadas e
+  componentes não escalares continuam rejeitados com diagnóstico. O linker LLVM
+  agora reseta `-x ir` antes das flags do usuário, permitindo passar um `.o`
+  com `--cc-flag`. Classificação: **IMPLEMENTADO**; **DOCUMENTADO** em
+  `SINTAXE.md` §14, `LOI_SPEC.md` §6.2, `website/docs.html` e `DECISIONS.md`.
+- **Verificação — callbacks LLVM (2026-11-25):** failing-first: os três testes
+  novos em `tests/llvm.rs` falharam com `LLVM backend does not support callback
+  values` (`/tmp/opencode/loi-llvm-callbacks-red.log`). Após a mudança em
+  `src/llvm.rs` e `src/main.rs`, um quarto teste de callback fixo/armazenado foi
+  adicionado e a suíte completa reportou **15 passed, 0 failed, 0 ignored**
+  (`/tmp/opencode/loi-llvm-callbacks-green2.log`): IR válido no clang, callback
+  tipado executado com shim C pré-compilado e rejeição de assinatura com slice.
+- **Bibliotecas/namespaces — import de raiz de pacote (2026-11-25):** removida a
+  última limitação de import lógico: `import std` agora resolve para
+  `lib/std.loi` pelo mesmo `resolve_import_with` usado no loader e no coletor de
+  `extern flow`. O alias padrão é `std`, `as` substitui, e os `open import` da
+  raiz definem a superfície exposta; não são criados aliases de submódulos.
+  Classificação: **IMPLEMENTADO**; **DOCUMENTADO** em `SINTAXE.md` §13,
+  `LOI_SPEC.md` §4, `website/docs.html` e `DECISIONS.md`.
+- **Verificação — import de raiz de pacote (2026-11-25):** failing-first:
+  `cargo test --test namespace_imports` teve 5 falhas com
+  `importing package root 'std' is not supported` (`exit=101`,
+  `/tmp/opencode/loi-root-import-red.log`). Após a mudança em `src/imports.rs`,
+  o mesmo comando reportou **19 passed, 0 failed, 0 ignored**
+  (`/tmp/opencode/loi-root-import-green.log`), cobrindo alias, re-export raso,
+  dedup com import path explícito e `--lib-dir`. Gates finais desta rodada
+  registrados no início desta seção.
+- **Dependências nativas — descoberta de shims mais rigorosa (2026-11-25):**
+  `--auto-c-source` continua opt-in, mas agora ignora `#define` e blocos
+  `#if 0`, aceita atributos entre `)` e `{`, e recusa dois pacotes que definem
+  o mesmo símbolo C com um erro sourced que nomeia ambos os shims. Mensagens de
+  rejeição com `--emit obj` ou biblioteca multi-arquivo nomeiam todas as flags
+  que pediram fontes C. Classificação: **IMPLEMENTADO**; **DOCUMENTADO** em
+  `SINTAXE.md` §15.4, `website/docs.html` e `DECISIONS.md`.
+- **Verificação — descoberta de shims (2026-11-25):** failing-first:
+  `cargo test --test native_dependencies` teve 4 falhas cobrindo atributo,
+  macro, `#if 0` e ambiguidade (`/tmp/opencode/loi-native-hardening-red.log`);
+  um quinto teste `red` mostrou que a rejeição com duas flags nomeava apenas
+  `--c-source` (`/tmp/opencode/loi-native-flags-red.log`). Após a mudança em
+  `src/main.rs`, o mesmo arquivo reportou **15 passed, 0 failed, 0 ignored**
+  (`/tmp/opencode/loi-native-hardening-green3.log`).
+- **Diagnósticos — JSON limpo (2026-11-25):** `loi check --error-format json`
+  agora imprime `[]` quando não há diagnósticos; formatos `human` e `short`
+  continuam silenciosos. `lib/lsp.loi` aceita tanto `[]` quanto entrada vazia,
+  então o comportamento do editor não muda. Classificação: **IMPLEMENTADO**;
+  **DOCUMENTADO** em `SINTAXE.md` §10, `website/docs.html`, `DECISIONS.md` e
+  `PROGRESS.md`.
+- **Verificação — JSON limpo (2026-11-25):** failing-first:
+  `cargo test --test cli clean_check_emits_an_empty_json_array` falhou com
+  `left: ""`, `right: "[]\n"` (`/tmp/opencode/loi-json-clean-red.log`). Após a
+  mudança em `src/main.rs`, `cargo test --test cli --test lsp` reportou
+  **49 + 13 passed, 0 failed, 0 ignored**
+  (`/tmp/opencode/loi-json-clean-green.log`).
+- **Verificação — JSON limpo nos avisos (2026-11-25):** o gate final revelou que
+  `tests/warnings.rs` ainda esperava stderr vazio em modo JSON; os três testes
+  de código limpo falharam com `[]` (`exit=101`,
+  `/tmp/opencode/loi-warnings-json-red.log`). O contrato correto é `[]\n`, já
+  documentado em `SINTAXE.md` §10; os testes agora afirmam esse valor e a suíte
+  reportou **5 passed, 0 failed, 0 ignored**
+  (`/tmp/opencode/loi-warnings-json-green.log`).
+- **Bibliotecas/namespaces — aliases curtos em `fmt` (2026-11-25):** começando
+  a remover a redundância `fmt::fmt_*` apontada pelo usuário. `lib/std/fmt.loi`
+  agora oferece `label`, `line` e `parens` como wrappers dos fluxos `fmt_*`, que
+  permanecem intactos. Com `import std::fmt` escreve-se `fmt::line(...)`; com
+  `import "lib/std.loi"` continua `std::fmt_line(...)`. Não houve fallback mágico
+  no resolvedor nem renomeação em massa: dos 237 fluxos abertos em `lib/`, nomes
+  curtos como `len`, `get` e `release` colidem em raízes largas, então a
+  convenção passou a ser estendida módulo a módulo (ver entrada seguinte).
+  Classificação: **IMPLEMENTADO** para `fmt`; **DOCUMENTADO** em `SINTAXE.md`
+  §14, `website/docs.html`, `lib/README.md` e `DECISIONS.md`.
+- **Verificação — aliases curtos em `fmt` (2026-11-25):** failing-first: 3 dos
+  4 testes em `tests/fmt_aliases.rs` falharam com
+  `module 'fmt' has no item 'line'` (`exit=101`,
+  `/tmp/opencode/loi-fmt-aliases-red.log`); o teste de compatibilidade já passava.
+  Após os wrappers, 4/4 passaram (`/tmp/opencode/loi-fmt-aliases-green2.log`),
+  incluindo build+run com stdout `total: 16\n(ok)` e o import largo de
+  `lib/std.loi`. Gates: `cargo fmt --check`,
+  `cargo clippy --all-targets -- -D warnings`, `cargo test --all-targets`,
+  `python3 tools/sync_examples.py --check` e `git diff --check` — todos exit 0.
+  `cargo test --all-targets` reportou **686 passed, 0 failed, 0 ignored em
+  46 suítes** (`/tmp/opencode/loi-fmt-alias-tests.log`). `./tools/ci.sh` exited 0
+  (`/tmp/opencode/loi-fmt-alias-ci.log`): step `tests` com **686 passed,
+  0 failed, 0 ignored**, agregado de **1000 passed, 0 failed, 0 ignored em
+  59 suítes**; goldens limpos, sync OK, C11 estrito, UBSan GCC/Clang e
+  ASan+UBSan Clang. MSRV local pulou (Rust 1.88 não instalado) e GCC ASan
+  permanece não validado neste PRoot. Nenhum golden regenerado, nenhum teste
+  ignorado e nenhum warning escondido.
+- **Bibliotecas/namespaces — aliases curtos nos demais módulos (2026-11-25):**
+  estendida a convenção de `fmt` para os módulos estreitos de `std`, `core`,
+  `os`, `net`, `runtime`, `encoding`, `lsp` e `math`. São **198 aliases** novos,
+  todos wrappers finos: `vec::new`/`vec::size`/`vec::push`, `str::concat`,
+  `option::some`, `result::ok`, `path::is_absolute`, `json::parse`,
+  `generic::sum`, etc. Nenhum fluxo `prefixo_*`, símbolo C, mangling ou regra de
+  `guard` foi renomeado. `tests/vec_aliases.rs` cobre o caso apontado pelo
+  usuário (build+run, nomes longos e import largo); `tests/lib_aliases.rs` cobre
+  inventário, raízes largas, imports estreitos representativos e build+run
+  entre pacotes. Alguns nomes foram deliberadamente omitidos após falhas reais:
+  `len` é intrínseco (`vec::size` no lugar), `view`/`clone` são reservados, e
+  `bytes`, `copy`, `root`, `state`, `crc32::bytes`, `map::str_len`/
+  `str_contains` colidem com locais de outros módulos ou com a raiz larga. Não
+  houve mudança em `src/modules.rs`: aliases continuam no namespace global do
+  programa, por isso o estilo recomendado continua sendo import estreito.
+  Classificação: **IMPLEMENTADO**; **DOCUMENTADO** em `SINTAXE.md` §14,
+  `website/docs.html`, `lib/README.md` e `DECISIONS.md`; **LIMITAÇÃO CONHECIDA**
+  para aliases que entrariam em conflito com identificadores locais.
+- **Verificação — aliases curtos nos demais módulos (2026-11-25):** failing-first:
+  `tests/vec_aliases.rs` teve 3/4 falhas com `module 'vec' has no item 'new'`
+  (`/tmp/opencode/loi-vec-aliases-red.log`) e `tests/lib_aliases.rs` teve 3/4
+  falhas com aliases ausentes (`/tmp/opencode/loi-lib-aliases-red.log`). Após os
+  wrappers e exclusão das colisões reais, 4/4 passaram em cada arquivo
+  (`/tmp/opencode/loi-vec-aliases-green3.log`,
+  `/tmp/opencode/loi-lib-aliases-green8.log`). Gates finais: `cargo fmt --check`,
+  `cargo clippy --all-targets -- -D warnings`, `cargo test --all-targets`,
+  `python3 tools/sync_examples.py --check` e `git diff --check` — todos exit 0.
+  `cargo test --all-targets` reportou **694 passed, 0 failed, 0 ignored em
+  48 suítes** (`/tmp/opencode/loi-alias-final-tests.log`). `./tools/ci.sh` exited
+  0 (`/tmp/opencode/loi-alias-final-ci.log`): step `tests` com **694 passed,
+  0 failed, 0 ignored**, agregado de **1008 passed, 0 failed, 0 ignored em
+  61 suítes**; goldens limpos, sync OK, C11 estrito, UBSan GCC/Clang e
+  ASan+UBSan Clang. MSRV local pulou (Rust 1.88 não instalado) e GCC ASan
+  permanece não validado neste PRoot. Nenhum golden regenerado, nenhum teste
+  ignorado e nenhum warning escondido.
+- **Bibliotecas/namespaces — `--lib-dir` (2026-11-25):** raízes explícitas de
+  biblioteca para projetos fora do repositório. O resolvedor único
+  (`src/imports.rs`) ganhou `resolve_import_with()`; raízes extras são verificadas
+  **depois** dos ancestrais do arquivo importador, na ordem em que foram dadas,
+  então a `lib/` do projeto sempre prevalece. `shim_candidates_with()` estende a
+  mesma regra para `--auto-c-source`, inclusive quando a raiz não se chama
+  `lib`. A flag é repetível e aceita por `check`, `gen` e `build`; outros modos
+  saem com exit 2, e um valor ausente ou que não é diretório também é rejeitado.
+  Classificação: **IMPLEMENTADO** para resolução, precedência, diagnóstico e
+  descoberta de shims; **DOCUMENTADO** em `SINTAXE.md` §13/§15.4,
+  `LOI_SPEC.md` §4.8/§4.10, `website/docs.html`, `lib/README.md`,
+  `CONTRACTS.md`, `AGENTS.md` e `FRICTION.md`; **NÃO SUPPORTADO** para detecção
+  automática a partir do executável (decisão em `DECISIONS.md`, para manter
+  playground e LSP isolados).
+- **Verificação — `--lib-dir` (2026-11-25):** failing-first: os 9 testes em
+  `tests/lib_dir.rs` falharam com `unknown option '--lib-dir'` (`exit=101`,
+  `/tmp/opencode/loi-lib-dir-red.log`); após a implementação, 9/9 passaram
+  (`/tmp/opencode/loi-lib-dir-green2.log`). Cenário real em `/root/`:
+  `./loi/target/debug/loi check main.loi --lib-dir /root/loi/lib` e
+  `./loi/target/debug/loi build main.loi -o main --lib-dir /root/loi/lib` —
+  ambos exit 0; `./main` imprimiu `ola` e `(x)`.
+  `export PATH="/root/.cargo/bin:$PATH";
+  export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check &&
+  cargo clippy --all-targets -- -D warnings && cargo test --all-targets &&
+  python3 tools/sync_examples.py --check && git diff --check` — todos exit 0.
+  `cargo test --all-targets` reportou **682 passed, 0 failed, 0 ignored em
+  45 suítes** (`/tmp/opencode/loi-lib-dir-tests.log`). `./tools/ci.sh` exited 0
+  com `selected CI steps passed` (`/tmp/opencode/loi-lib-dir-ci.log`): step
+  `tests` com **682 passed, 0 failed, 0 ignored**, agregado de **996 passed,
+  0 failed, 0 ignored em 58 suítes**; goldens limpos, sync OK, C11 estrito,
+  UBSan GCC/Clang e ASan+UBSan Clang. MSRV local pulou (Rust 1.88 não
+  instalado) e GCC ASan permanece não validado neste PRoot. Nenhum golden foi
+  regenerado, nenhum teste ignorado e nenhum warning escondido.
+- **Bibliotecas/namespaces — FASE 4 (2026-11-25):** dependências nativas e
+  linkagem automática opt-in, preservando o resolvedor da FASE 3.
+  `src/imports.rs` agora também expõe `package_layout()` e
+  `shim_candidates()`: a raiz `lib/` mais próxima e o pacote imediatamente abaixo
+  dela são encontrados a partir do arquivo importador, sem cwd implícito.
+  `src/main.rs` adiciona `--auto-c-source`, que usa o mesmo coletor de
+  `extern flow` para linkar apenas shims que realmente definem o símbolo C
+  ausente; o candidato ao lado do módulo declarante vem antes do shim
+  `lib/<pacote>_shim.c`, a varredura ignora comentários e literais C, fontes
+  explícitas mantêm a ordem e caminhos canônicos repetidos são linkados uma vez.
+  O fingerprint incremental inclui as fontes descobertas. `--emit obj` e
+  `--backend llvm` rejeitam a flag; o playground e o LSP continuam passando
+  listas explícitas, então `process_shim.c`/`lsp_shim.c` não são linkados por
+  padrão. Como eliminação provada, `os_pid`/`os_exit`/`io_close`/`net_close`
+  passaram a usar `extern flow ... as getpid/exit/close` e os quatro wrappers
+  redundantes foram removidos de `os_shim.c`/`net_shim.c`; nenhum arquivo
+  `_shim.c` inteiro foi removido porque o restante faz conversão de ABI,
+  posse de estado ou trabalho de processo. Classificação: **IMPLEMENTADO** para
+  descoberta/linkagem e para a eliminação por função; **DOCUMENTADO** em
+  `SINTAXE.md` §15.4, `LOI_SPEC.md` §4.10, `website/docs.html`, `lib/README.md`,
+  `CONTRACTS.md` e `AGENTS.md`; **PROPOSTO** para visibilidade/ABI, fora deste
+  escopo; **NÃO SUPPORTADO** para linkagem automática por padrão, no playground
+  e no LLVM.
+- **Verificação — FASE 4 (2026-11-25):** failing-first: 7 dos 8 testes iniciais
+  em `tests/native_dependencies.rs` falharam com
+  `unknown option '--auto-c-source'` (`exit=101`,
+  `/tmp/opencode/loi-fase4-red.log`); o oitavo confirmou que o erro de link
+  explícito continua sem a flag. Dois testes de alias direto para libc foram
+  acrescentados após a prova com `nm` e um build sem shim.
+  `export PATH="/root/.cargo/bin:$PATH";
+  export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check &&
+  cargo clippy --all-targets -- -D warnings && cargo test --all-targets &&
+  python3 tools/sync_examples.py --check && git diff --check` — todos exit 0.
+  `cargo test --all-targets` reportou **673 passed, 0 failed, 0 ignored em
+  44 suítes** (`/tmp/opencode/loi-fase4-tests-final.log`), incluindo os 10
+  testes novos e os testes existentes de CLI/link, shims, handles, processos,
+  LSP e JSON-RPC. `./tools/ci.sh` exited 0 com
+  `selected CI steps passed` (`/tmp/opencode/loi-fase4-ci-final.log`): step
+  `tests` com `no skipped tests detected`, **673 passed, 0 failed, 0 ignored**,
+  agregado de **987 passed, 0 failed, 0 ignored em 57 suítes**; goldens limpos,
+  sync OK, C11 estrito, UBSan GCC/Clang e ASan+UBSan Clang. MSRV local pulou
+  (Rust 1.88 não instalado) e GCC ASan permanece não validado neste PRoot.
+  Nenhum golden foi regenerado, nenhum teste ignorado e nenhum warning escondido.
+- **Bibliotecas/namespaces — FASE 3 (2026-11-25):** resolução lógica de
+  imports com uma única implementação. `src/imports.rs` é agora a única
+  tradução de `ImportDecl` para arquivos-fonte: `resolve_import()` devolve
+  `ResolvedImport { path, alias, alias_span, declaration_span, public }` e
+  distingue `UnknownPackage`, `UnknownModule` e `PackageRoot`, convertidos em
+  `Diagnostic` com o span do segmento/alias correspondente. Tanto
+  `load_module()` quanto `collect_extern_flows_from()` em `src/main.rs`
+  chamam essa mesma função; o segundo walker deixou de ignorar imports
+  lógicos. Regras: `std::fmt` → `lib/std/fmt.loi`, `std::fmt::detail` →
+  `lib/std/fmt/detail.loi`, `std::{fmt, vec}` → os dois arquivos estreitos,
+  nomes locais = último segmento/item ou `as`, com as regras existentes de
+  dedup por caminho canônico, ciclo e colisão de alias. A raiz `lib/` é a mais
+  próxima encontrada subindo pelos ancestrais do arquivo importador
+  (determinística, sem cwd implícito, manifesto, download ou índice gerado);
+  path imports mantêm a grafia relativa de antes para não mudar diagnósticos
+  antigos. `import std` isolado continua `NÃO SUPPORTADO`, com diagnóstico
+  explícito. Nenhuma mudança em visibilidade/`sealed`, mangling/ABI,
+  identidade da declaração, C11/LLVM lowering, `extern flow ... as`, shims ou
+  dependências. A FASE 4 de dependências nativas foi executada na entrada seguinte; visibilidade/ABI segue proposta. Decisão de precedência registrada em
+  `DECISIONS.md` e na seção Open Design Questions abaixo. Classificação:
+  **IMPLEMENTADO** para resolução lógica/agrupada, aliases, ciclos,
+  diagnósticos e coletor de `extern flow`; **DOCUMENTADO** em `SINTAXE.md` §13,
+  `LOI_SPEC.md` §4.8 e `website/docs.html`; **NÃO SUPPORTADO** para
+  `import std` isolado;
+  **PROPOSTO** para visibilidade/ABI, fora do escopo da FASE 4 executada.
+- **Verificação — FASE 3 (2026-11-25):** failing-first: 13 testes em
+  `tests/namespace_imports.rs` falharam primeiro com
+  `logical import '...' is parsed but not supported yet` e
+  `grouped import '...::{...}' is parsed but not supported yet`, `exit=101`,
+  log `/tmp/opencode/loi-fase3-red.log`; após duas correções de fixture
+  (diagnóstico com `lib/<pkg>.loi` no texto e ciclo de dois módulos, em vez de
+  autoimport) ficaram verdes em `/tmp/opencode/loi-fase3-green3.log`, e dois
+  testes de caminhos aninhados foram acrescentados. `export PATH="/root/.cargo/bin:$PATH";
+  export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check &&
+  cargo clippy --all-targets -- -D warnings && cargo test --all-targets &&
+  python3 tools/sync_examples.py --check && git diff --check` — todos exit 0.
+  `cargo test --all-targets` reportou **663 passed, 0 failed, 0 ignored em
+  43 suítes** (`/tmp/opencode/loi-fase3-tests-final.log`), incluindo os
+  15 testes novos e o teste CLI convertido para o diagnóstico de pacote
+  desconhecido ancorado no arquivo. `./tools/ci.sh` exited 0 com
+  `selected CI steps passed` (`/tmp/opencode/loi-fase3-ci-final.log`): step `tests`
+  com `no skipped tests detected`, **663 passed, 0 failed, 0 ignored**,
+  agregado de **977 passed, 0 failed, 0 ignored em 56 suítes**; goldens limpos,
+  sync OK, exemplos, diff-check, C11 estrito, UBSan GCC/Clang e ASan+UBSan
+  Clang. MSRV local pulou (Rust 1.88 não instalado; `LOI_REQUIRE_MSRV=1` no
+  CI) e GCC ASan permanece não validado neste PRoot. Nenhum golden foi
+  regenerado, nenhum teste ignorado e nenhum warning escondido. Nenhum
+  C/header/ABI mudou, então `benchmark/run.py` não se aplica.
+- **Bibliotecas/namespaces — FASE 2 (2026-11-25):** o frontend passa a modelar
+  imports lógicos e agrupados sem lhes dar semântica. `src/ast.rs` troca
+  `ImportDecl::{path, alias}` por `ImportKind::{Path, Logical, Group}` e
+  `ImportName { span, name }`, com um span por segmento, alias e item de grupo
+  (além do span da declaração inteira). `src/parser.rs` aceita
+  `import std::fmt`, `import std::fmt as format`, `import std::{fmt, vec}`,
+  `import std::{fmt as f, vec as v, str as string}`, bases com mais de um
+  segmento (`std::fmt::{print as put}`), `open import os::{file, path}`, grupos
+  multilinha com vírgula final e rejeita grupos vazios/malformados.
+  `src/pretty.rs` emite a forma canônica de todos os casos e mantém a saída do
+  `import "arquivo.loi"` byte a byte idêntica. `src/main.rs` preserva o loader
+  atual para `Path` (incluindo dedup por caminho canônico, aliases, ciclos,
+  `open import` e re-export) e transforma apenas a recursão de `extern flow` em
+  imports `Path`; `Logical`/`Group` recebem diagnóstico fatal explícito
+  (`logical import '...' is parsed but not supported yet` /
+  `grouped import '...::{...}' is parsed but not supported yet`) com help para
+  usar path explícito. Nenhum namespace é criado, nenhuma busca implícita é
+  feita e `import std` sozinho continua sem semântica. Nenhuma mudança de
+  mangling/ABI, `open`/`sealed`, identidade da declaração original, C11/LLVM
+  lowering, `extern flow ... as`, dependências ou shims; `--c-source` segue como
+  compatibilidade. A superfície nova está registrada como *staged* em
+  `SINTAXE.md` §13 e `development/LOI_SPEC.md` §4.8, e a decisão em
+  `development/DECISIONS.md`. Classificação: **IMPLEMENTADO** para AST/parser/
+  pretty/spans e diagnóstico de não-suporte; **DOCUMENTADO** para os limites;
+  **NÃO SUPPORTADO** para resolução lógica/agrupada e `import std` isolado;
+  **PROPOSTO** para o resolvedor único da FASE 3, que foi iniciado e fechado
+  na entrada seguinte.
+- **Verificação — FASE 2 (2026-11-25):** `export PATH="/root/.cargo/bin:$PATH";
+  export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt && cargo fmt --check &&
+  cargo clippy --all-targets -- -D warnings && cargo test --all-targets &&
+  python3 tools/sync_examples.py --check && git diff --check` — todos exit 0.
+  `cargo test --all-targets` reportou **648 passed, 0 failed, 0 ignored em
+  42 suítes** (`/tmp/opencode/loi-imports-tests-final.log`); as suítes focadas
+  `parser` (35), `pretty` (24) e `cli` (48) passaram, incluindo os novos testes
+  de spans, grupos malformados, idempotência do pretty e do diagnóstico CLI.
+  `./tools/ci.sh` exited 0 com `selected CI steps passed`
+  (`/tmp/opencode/loi-imports-ci-final.log`): step `tests` com
+  `no skipped tests detected`, **648 passed, 0 failed, 0 ignored**, agregado de
+  **962 passed, 0 failed, 0 ignored em 55 suítes**; goldens limpos,
+  `website/examples is in sync`, exemplos, diff-check, C11 estrito, UBSan
+  GCC/Clang e ASan+UBSan Clang. MSRV local pulou porque Rust 1.88 não está
+  instalado (`LOI_REQUIRE_MSRV=1` no CI); GCC ASan permanece não validado neste
+  PRoot. Nenhum golden foi regenerado, nenhum teste ignorado e nenhum warning
+  escondido. Nenhum C/header/ABI mudou, então `benchmark/run.py` não se aplica.
 - **Website canônico e release `0.2.0` (2026-11-25):** o site não descreve mais a sintaxe legada de colchetes. `website/index.html`, `website/docs.html` e os três presets de `website/assets/playground.js` agora usam `shape Nome { ... }` e literais `Nome { ... }`; a prosa diz que literais usam chaves, troca “out/inout parameter” por `->`/`<->`, remove a afirmação falsa “No brace shape literals” e o exemplo de shapes passa a incluir `mass: 1.0` (antes não compilava: `missing field 'mass'`). Os presets foram normalizados com `loi fmt`: `sealed` explícito virou `flow` porque `sealed` é o padrão aceito pelo parser — sem mudança de visibilidade, direção ou ownership. A versão foi elevada para `0.2.0` em `Cargo.toml`, `Cargo.lock`, CLI (`CARGO_PKG_VERSION`), `website/package.json`, badges/rodapés/VSIX do site, `editors/vscode-loi` e `benchmark/results.json`; `FINAL_REPORT.md`, `PROBES.md` e `PROGRESS.md` acompanham a versão corrente. Failing-first: `tests/website.rs` foi escrito primeiro e falhou com 3 testes (`release_version_is_0_2_0_everywhere`, `website_snippets_use_canonical_shape_syntax`, `playground_presets_are_canonical_and_clean` — `left: "... { ... }"` vs `right: "...[ ... ]"`), `exit=101`, `/tmp/opencode/loi-website-red.log`; green: **3 passed, 0 failed**, `/tmp/opencode/loi-website-green.log`. O teste também impede regressão de `v0.1`, da VSIX antiga e de divergência entre Cargo/site/extensão/benchmark; `website/README.md` documenta essa guarda. `SINTAXE.md` continua como superfície canônica e `website/examples/` não foi alterado. Nenhuma sintaxe da linguagem, direção, ownership, diagnóstico, ABI, C11/LLVM lowering ou dependência mudou.
 - **Verificação — website/release (2026-11-25):** `export PATH="/root/.cargo/bin:$PATH"; export RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` e `cargo test --all-targets` terminaram em `exit=0`; o último reportou **642 passed, 0 failed, 0 ignored em 42 suítes** (`/tmp/opencode/loi-website-tests.log`). `node --test website/tests/server.test.mjs` passou **10/10** (`/tmp/opencode/loi-website-node.log`); `python3 tools/sync_examples.py --check` reportou `website/examples is in sync` e `git diff --check` exit 0. `./tools/ci.sh` exited 0 com `selected CI steps passed` (`/tmp/opencode/loi-website-ci.log`): step `tests` com `no skipped tests detected`, goldens limpos, exemplos, sync, diff-check, C11 estrito, UBSan GCC/Clang e ASan+UBSan Clang; agregado de **956 passed, 0 failed em 55 suítes**. MSRV local pulou porque Rust 1.88 não está instalado (`LOI_REQUIRE_MSRV=1` no CI); GCC ASan continua não validado neste PRoot (`heap size 40000002000 exceeds max user virtual address 7fffffffff`). Nenhum golden foi regenerado, nenhum teste ignorado e nenhum warning escondido. Classificação: **IMPLEMENTADO** para a documentação canônica, o bump e a regressão; **DOCUMENTADO** no `website/README.md` e em `DECISIONS.md`; **LIMITAÇÃO CONHECIDA** para MSRV/GCC ASan locais; **PROPOSTO** e **NÃO SUPPORTADO** não se aplicam a esta missão (nenhuma sintaxe ou backend novo foi introduzido).
 
@@ -1121,13 +1467,18 @@ for f in lib/std.loi lib/math.loi lib/ctype.loi lib/os.loi lib/net.loi; do ./tar
   after a runtime abort.
 - Strings are decoded UTF-8 `[u8]` values; the C backing array has a trailing
   NUL that is not part of the Loi length. `\xNN` escapes are ASCII-only.
-- `cstr` and `opaque` are FFI-only handles. They can be stored, passed,
-  returned and compared by identity but not indexed, measured, printed or
-  dereferenced. Byte access requires a hand-written shim.
-- `callback` is an FFI-only function pointer with one fixed signature, built by
-  `callback(flow)` from an exact-signature Loi flow. It is copyable and storable
-  but not callable, comparable or dereferenceable from Loi; C uses the flow
-  symbol directly. C function pointers with other signatures remain unsupported.
+- `cstr` is an FFI-only handle to a NUL-terminated C string. It can be stored,
+  passed, returned, compared with `==`/`!=` and ordering via `strcmp`, and
+  printed with `%s` or `{}`; it cannot be indexed or measured. `opaque` is a
+  distinct FFI-only handle, comparable by identity but not printable,
+  orderable, indexable or dereferenceable. Byte access requires a hand-written
+  shim.
+- `callback` is an FFI-only function pointer built by `callback(flow)` from an
+  exact-signature Loi flow. Plain `callback` keeps the historical
+  `i32(i32, i32) => i32` ABI; `callback(T, ...) => R` spells other scalar
+  signatures, including a `void` result. A value is copyable and storable but
+  not callable, comparable or dereferenceable from Loi; C uses the flow symbol
+  directly.
 - Globals may use any compile-time constant: scalars, strings, slices and
   nested shapes. The backend folds them once and emits strict C11 static
   initializers: brace/designated initializers for shapes and named `static`
@@ -1211,6 +1562,13 @@ Remaining implementation or secondary choices:
 - Add an FFI-safe string-array type so `process_spawn_args` can call `execvp`
   directly instead of building a `/bin/sh -c` command; the current shell path
   adds one process per spawn and requires careful quoting in pure Loi.
+- Logical import precedence was undecided (root `lib/<pkg>.loi` versus narrow
+  `lib/<pkg>/<mod>.loi`). **Temporary behavior chosen for FASE 3:** a logical
+  path names the narrow file only; the package root is validated for package
+  existence but is never bound by `import <pkg>`. This keeps one deterministic
+  file per spelling and avoids a silent collision between two resolvers; it is
+  recorded in `DECISIONS.md` and can be revisited in FASE 4 if package-wide
+  visibility is introduced.
 
 - Decide whether resources need an explicit `resource` declaration instead of
   the `<shape>_release` naming convention. B2/B3 keep the convention to avoid a
@@ -1227,12 +1585,13 @@ Remaining implementation or secondary choices:
   read-only use.
 - Finish or remove the IR/ASM drafts. Until then `--emit-ir` stays diagnostic
   and `--emit-asm` stays rejected.
-- `--error-format json` still emits no `[]` for a clean check, so
-  `lib/lsp.loi` treats an empty snapshot as cleared markers.
-- Define an LLVM ABI for composite and nested-slice elements, callback values
-  and `comptime` before extending the opt-in backend further. Scalar slices
-  and `protect` regions now have a C-compatible ABI; C11 remains the permanent
-  semantic oracle and no language syntax is involved.
+- ~~`--error-format json` emits no `[]` for a clean check.~~ **Resolved on
+  2026-11-25:** a clean JSON check now emits `[]`; `lib/lsp.loi` still treats an
+  empty snapshot as cleared markers so older compiler builds keep working.
+- Define an LLVM ABI for composite and nested-slice elements and `comptime`
+  before extending the opt-in backend further. Scalar slices, `protect` regions
+  and scalar callback signatures now have a C-compatible ABI; C11 remains the
+  permanent semantic oracle and no language syntax is involved.
 
 ## Next Steps
 
@@ -1262,10 +1621,11 @@ Remaining implementation or secondary choices:
     C symbols; unique names keep their ABI.
 12. Typed callbacks: done — `callback(T, ...) => R` infers a signature from an
     all-`<-` Loi flow and passes the symbol directly to C.
-13. Opt-in LLVM backend: done for scalars and scalar slices with `clang`
-    compiled IR, C11 output/diagnostic parity and a C-compatible region ABI.
-    Later: the IR/ASM drafts and LLVM ABIs for composites, callbacks and
-    `comptime`; keep the C11 backend as the production oracle.
+13. Opt-in LLVM backend: done for scalars, scalar slices and scalar callback
+    signatures with `clang` compiled IR, C11 output/diagnostic parity and a
+    C-compatible region ABI. Later: the IR/ASM drafts and LLVM ABIs for
+    composites, nested slices and `comptime`; keep the C11 backend as the
+    production oracle.
 14. Keep the docs in sync: `SINTAXE.md` is canonical, `website/docs.html`
     mirrors it, and `python3 tools/sync_examples.py --check` guards the example
     mirror.

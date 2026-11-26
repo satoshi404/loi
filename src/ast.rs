@@ -257,17 +257,54 @@ impl Item {
     }
 }
 
+/// A name or alias in an import, with the span of its own lexeme.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportName {
+    pub span: Span,
+    pub name: String,
+}
+
+/// One item inside a grouped import: `fmt`, or `fmt as f`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportGroupItem {
+    pub name: ImportName,
+    pub alias: Option<ImportName>,
+}
+
+/// Import form.
+///
+/// - `Path`: legacy/explicit file path import, e.g. `import "lib/std.loi"`.
+/// - `Logical`: logical namespace path, e.g. `import std::fmt`.
+/// - `Group`: grouped logical import, e.g. `import std::{fmt, vec as v}`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportKind {
+    Path {
+        span: Span,
+        path: String,
+        alias: Option<ImportName>,
+    },
+    Logical {
+        segments: Vec<ImportName>,
+        alias: Option<ImportName>,
+    },
+    Group {
+        base: Vec<ImportName>,
+        items: Vec<ImportGroupItem>,
+    },
+}
+
 /// `import "path.loi" [as name]` loads another source file into the
 /// compilation unit and binds it under `alias`, or its file stem when absent.
-/// `open import "path.loi"` additionally re-exports that module's `open`
-/// declarations through this module, so `package::item` works without copying
-/// declarations into the package root.
+/// `open import ...` additionally re-exports that module's `open`
+/// declarations through this module, so package roots can expose them without
+/// copying declarations. Logical and grouped forms are parsed by the frontend;
+/// resolution support is staged by the module resolver.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportDecl {
+    /// Span of the whole declaration, from `import`/`open` to the last token.
     pub span: Span,
-    pub path: String,
-    pub alias: Option<String>,
     pub public: bool,
+    pub kind: ImportKind,
 }
 
 /// A top-level `let`/`var` declaration. Globals are initialized once, before
@@ -380,6 +417,9 @@ pub struct Param {
     pub direction: Direction,
     pub name: String,
     pub ty: Type,
+    /// True for `... name: T`. The declared type is the element type; the flow
+    /// sees the collected arguments as a `[]T` slice.
+    pub variadic: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

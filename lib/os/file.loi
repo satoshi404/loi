@@ -24,8 +24,9 @@ extern flow loi_io_open
     <- write: i32
     => i32
 
-extern flow loi_io_close
+extern flow loi_io_close as close
     <- fd: i32
+    => i32
 
 extern flow loi_io_read
     <- fd: i32
@@ -48,7 +49,7 @@ open flow file_release
     <-> file: File
 {
     if file.fd >= 0 {
-        loi_io_close(file.fd)
+        _ <- loi_io_close(file.fd)
         file.fd = -1
     }
 }
@@ -92,4 +93,48 @@ open flow file_write
         => -1
     }
     => loi_io_write(file.fd, data)
+}
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `file_release`.
+open flow release
+<-> file: File
+{
+    file_release(<-> file)
+}
+
+/// Short alias of `file_open_read`.
+open flow open_read
+<- path: cstr
+=> File
+{
+    => file_open_read(path)
+}
+
+/// Short alias of `file_open_write`.
+open flow open_write
+<- path: cstr
+=> File
+{
+    => file_open_write(path)
+}
+
+/// Short alias of `file_read`.
+open flow read
+<- file: File
+<-> data: [u8]
+=> i64
+{
+    => file_read(file, <-> data)
+}
+
+/// Short alias of `file_write`.
+open flow write
+<- file: File
+<- data: [u8]
+=> i64
+{
+    => file_write(file, data)
 }

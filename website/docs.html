@@ -670,6 +670,19 @@ open flow main
             <code>sealed import</code> is invalid. This is how a package root exposes
             its internal files; it is not a nested module namespace.
           </p>
+          <p>
+            Logical imports are also available: <code>import std::fmt</code> loads
+            <code>lib/std/fmt.loi</code>, <code>import std::fmt as format</code>
+            binds <code>format</code>, and <code>import std::{fmt, vec}</code>
+            loads both narrow files (each item accepts <code>as</code>). The
+            <code>lib/</code> directory is the nearest one found by walking
+            ancestors of the importing file: no global search path, manifest,
+            cwd lookup or download. <code>import std</code> loads
+            <code>lib/std.loi</code> and binds <code>std</code> (or the <code>as</code>
+            alias); its <code>open import</code> declarations define the exposed
+            surface. It does not create submodule aliases, so <code>std::fmt</code>
+            still needs its own import.
+          </p>
 
           <div class="doc-code">
             <div class="doc-code-bar"><span>main.loi</span><button type="button" data-copy>copy</button></div>
@@ -979,6 +992,7 @@ flow exchange
               <tr><td><code>print_float</code></td><td><code>&lt;- f32 | f64</code></td><td>Writes the shortest round-tripping decimal; no newline.</td></tr>
               <tr><td><code>printf</code></td><td><code>&lt;- [u8], ...</code></td><td>Formatted output; literal format string plus typed varargs.</td></tr>
               <tr><td><code>format</code></td><td><code>&lt;- [u8], ... =&gt; [u8]</code></td><td>Builds a string with <code>{}</code> placeholders; a <code>[u8]</code> argument inserts its bytes; allocates in the caller's <code>protect</code> region.</td></tr>
+              <tr><td><code>fmt::</code></td><td><code>&lt;- [u8], ... =&gt; [u8]</code></td><td>Immediate <code>fmt::(...)</code> spelling of <code>format(...)</code>, allowed only as the direct argument of <code>print</code>, <code>eprint</code> or <code>panic</code>.</td></tr>
               <tr><td><code>read_file</code></td><td><code>&lt;- [u8] =&gt; [u8]</code></td><td>Reads a whole file into the current <code>protect</code> region; traps on failure.</td></tr>
               <tr><td><code>write_file</code></td><td><code>&lt;- [u8], &lt;- [u8] =&gt; bool</code></td><td>Writes exact bytes; returns whether write and close succeeded.</td></tr>
               <tr><td><code>read_stdin</code></td><td><code>=> [u8]</code></td><td>Reads the rest of standard input into the current <code>protect</code> region.</td></tr>
@@ -1001,7 +1015,7 @@ flow exchange
             <code>callback</code> takes a non-<code>extern</code> flow whose parameters all use
             <code>&lt;-</code>; its signature is inferred from that flow and checked at each use.
             The generated C passes the flow's symbol directly, with no thunk.
-            <code>printf</code> is the only variadic intrinsic: its first argument must be a string
+            <code>printf</code> is a variadic intrinsic: its first argument must be a string
             literal, whose conversions (<code>d i u x X o f F e E g G a A s c</code> and
             <code>%%</code>) decide how many values follow and of which kind. Flags, numeric width,
             precision and length modifiers are forwarded to C; dynamic <code>*</code> widths are
@@ -1009,6 +1023,10 @@ flow exchange
             <code>format</code> is the string-building counterpart: its first argument is a
             literal template using <code>{}</code> placeholders, and a <code>[u8]</code>
             argument contributes its byte contents rather than its slice header.
+            <code>fmt::(...)</code> has the same template and arity checks, but writes the bytes
+            immediately and is legal only as the direct argument of <code>print</code>,
+            <code>eprint</code> or <code>panic</code>; it needs no <code>protect</code>. Neither
+            <code>print</code> nor <code>eprint</code> appends a newline.
             <code>read_file</code>, <code>read_stdin</code> and <code>read_line</code> allocate,
             so call them inside a <code>protect</code> block and do not let their result escape it.
             <code>read_stdin</code> waits for EOF; use <code>lib/stdio.loi</code> when a
@@ -1024,6 +1042,27 @@ flow exchange
 }
 // n=42 big=9000000000 f=0.10 s=ok pct=100%</code></pre>
           </div>
+
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>immediate.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code class="language-loi">flow show {
+    print(fmt::("minha idade {}", 7))  // minha idade 7, sem newline
+}
+
+flow count(... xs: i32) =&gt; u64 {
+    =&gt; len(xs)  // quantidade de argumentos finais
+}</code></pre>
+          </div>
+
+          <p>
+            A Loi flow may also declare one provisional final <code>... xs: T</code> parameter
+            (C11 backend only). The body sees
+            <code>xs</code> as <code>[]T</code>, so <code>len(xs)</code> is the number of trailing
+            arguments and a call with none gives an empty slice. The C11 backend packs them into a
+            <code>LoiSlice</code>; there is no C varargs ABI. Element types are limited to numeric
+            scalars, <code>bool</code>, <code>cstr</code> and opaque handles. Variadic
+            <code>extern flow</code>s, callbacks and the LLVM backend reject this form.
+          </p>
 
           <h3>Library modules</h3>
           <p>Every library file is imported explicitly, for example
@@ -1176,8 +1215,8 @@ flow exchange
               </tr>
               <tr>
                 <td><code>lib/std.loi</code> (fmt/debug/iter)</td>
-                <td><code>fmt_label</code>, <code>fmt_line</code>,
-                  <code>fmt_parens</code>, <code>debug_assert</code>,
+                <td><code>fmt_label</code>/<code>label</code>, <code>fmt_line</code>/<code>line</code>,
+                  <code>fmt_parens</code>/<code>parens</code>, <code>debug_assert</code>,
                   <code>debug_expect_i64_eq</code>, <code>debug_expect_u64_lt</code>,
                   <code>iter_len&lt;T&gt;</code>, <code>iter_sum_u64</code>,
                   <code>iter_any_i64</code>, <code>iter_all_positive_i64</code></td>
@@ -1364,6 +1403,24 @@ flow exchange
               </tr>
             </tbody>
           </table>
+
+          <p><code>lib/std/fmt.loi</code> also exposes short aliases
+            <code>label</code>, <code>line</code> and <code>parens</code>, so a
+            narrow import reads <code>fmt::line(...)</code>. The
+            <code>fmt_*</code> names remain for broad imports and existing
+            programs. The convention now extends module by module:
+            <code>import std::vec</code> offers <code>vec::new</code>,
+            <code>vec::size</code> and <code>vec::push</code>;
+            <code>import core::option</code> offers <code>option::some</code>;
+            <code>import math::generic</code> offers <code>generic::min</code>.
+            Aliases are thin wrappers, so C symbols and prefixed names are
+            unchanged. <code>len</code> stays a compiler intrinsic (use
+            <code>vec::size</code>); <code>view</code>, <code>clone</code>,
+            <code>bytes</code>, <code>copy</code>, <code>root</code>,
+            <code>state</code>, <code>crc32::bytes</code> and
+            <code>map::str_len</code>/<code>str_contains</code> are omitted to
+            avoid intrinsic, keyword and cross-module collisions. Imported
+            aliases join the program-wide namespace, so prefer narrow imports.</p>
 
           <p><code>lib/math.loi</code> and <code>lib/ctype.loi</code> are pure
             Loi; the math module uses generic flows and a
@@ -1926,6 +1983,8 @@ python3 -m http.server -d web 8000   # abra http://localhost:8000</code></pre>
               <tr><td><code>--arena-size BYTES</code></td><td>Sets the initial <code>protect</code> arena chunk size (default 64 MiB); the arena still grows as needed.</td></tr>
               <tr><td><code>--cc-flag FLAG</code></td><td>Passes an extra flag to <code>cc</code>; repeatable. Link flags follow the objects.</td></tr>
               <tr><td><code>--c-source FILE</code></td><td>Compiles and links an extra C file, such as a vendored FFI shim; repeatable.</td></tr>
+              <tr><td><code>--auto-c-source</code></td><td>Links shims discovered from imported packages: the shim beside the declaring module, or the nearest <code>lib/&lt;package&gt;_shim.c</code>. Only a real C definition counts: <code>#define</code> lines and <code>#if 0</code> branches are ignored, while attributes between the parameter list and the body are accepted. Two packages claiming one symbol report an ambiguity error naming both shims. Discovery is anchored at the importing file, never the cwd. Opt-in; rejected with <code>--emit obj</code> and <code>--backend llvm</code>.</td></tr>
+              <tr><td><code>--lib-dir DIR</code></td><td>Adds a library root for logical imports, checked after any nearer project <code>lib/</code> and in the order given; repeatable. Supported by <code>check</code>, <code>gen</code> and <code>build</code>. Use it for sources outside the compiler repository, e.g. <code>loi build main.loi -o main --lib-dir /path/to/loi/lib</code>; <code>--auto-c-source</code> also finds shims there.</td></tr>
             </tbody>
           </table>
 
@@ -1956,6 +2015,12 @@ loi build examples/llvm_slices.loi -o llvm_slices_c</code></pre>
             checked indexing and index assignment, <code>alloc(-&gt; x, T, n)</code> inside
             <code>protect</code>, byte-slice <code>print</code> / <code>eprint</code> /
             <code>panic</code>, <code>view</code> and <code>==</code> / <code>!=</code>.
+            Callback values are also supported: plain <code>callback</code> and
+            <code>callback(T, ...) =&gt; R</code> lower to opaque C function pointers when every
+            parameter and the non-<code>void</code> result is an integer, float or boolean scalar.
+            <code>callback(flow)</code> passes the flow symbol directly, as in C11. Since
+            <code>--c-source</code> is not accepted here, a C implementation of an extern flow
+            can be supplied as a precompiled object with <code>--cc-flag FILE.o</code>.
             Both backends print the same values for
             <a href="examples/llvm_scalars.loi"><code>examples/llvm_scalars.loi</code></a> and
             <a href="examples/llvm_slices.loi"><code>examples/llvm_slices.loi</code></a>.
@@ -1963,9 +2028,10 @@ loi build examples/llvm_slices.loi -o llvm_slices_c</code></pre>
           <p>
             Everything else is rejected with an <code>LLVM backend does not support ...</code>
             diagnostic instead of being lowered approximately: <code>guard</code>, shapes,
-            marks, choices, opaque handles, globals, callbacks, <code>cstr</code>,
-            <code>comptime</code>, <code>foreach</code>, indirect calls, field access other than
-            <code>len</code>, and slices whose element is a composite or another slice.
+            marks, choices, opaque handles, globals, <code>cstr</code>, <code>comptime</code>,
+            <code>foreach</code>, indirect calls, field access other than <code>len</code>,
+            callback slices, nested or non-scalar callback signatures, and slices whose element
+            is a composite or another slice.
             <code>--backend llvm</code> is build-only and cannot be combined with
             <code>--emit obj|lib</code>, <code>--c-source</code>, <code>--emit-c</code>,
             <code>--emit-h</code>, <code>--emit-ir</code>, <code>--emit-llvm-ir</code>,
@@ -2173,9 +2239,10 @@ dofile("/absolute/path/to/loi/editors/nvim/loi.lua")</code></pre>
           </div>
 
           <p>
-            In all three editors, diagnostics come from the real compiler. A clean check emits
-            no JSON, which the server turns into an empty diagnostic list so old markers
-            disappear. The server is stdio-only; <code>tools/build_lsp_server.sh</code> can also
+            In all three editors, diagnostics come from the real compiler. A clean JSON check emits
+            <code>[]</code>, which the server turns into an empty diagnostic list so old markers
+            disappear; an empty snapshot from an older compiler is still accepted. The server is
+            stdio-only; <code>tools/build_lsp_server.sh</code> can also
             build a plain server binary from a source checkout without the Cargo launcher.
           </p>
         </section>
@@ -2467,7 +2534,7 @@ sealed flow winning_line
               <tr><td>Diagnostics</td><td>Colored by default in the human format; <code>--color never</code> and <code>NO_COLOR</code> opt out. Locations and <code>help</code> text remain in human, short, JSON and LSP output.</td></tr>
               <tr><td>Ownership analysis</td><td>Working: give liveness, definite assignment, exclusive <code>&lt;-&gt;</code>, region escape checks, allocating read intrinsics, lexical slice-view loans, and linear-resource <code>guard</code> validation.</td></tr>
               <tr><td>C backend</td><td>Working: one C11 translation unit, bounds checks, regions, checked arithmetic, bitwise/shift helpers, file/stdin I/O, numeric and formatted printing, source maps, headers, multi-file objects. This is the default production backend.</td></tr>
-              <tr><td>LLVM backend</td><td>Opt-in for scalars and scalar slices: real textual IR with opaque pointers, a C-compatible slice header and region ABI, and <code>clang</code> linking. Composite features are rejected with explicit diagnostics; C11 stays the production path.</td></tr>
+              <tr><td>LLVM backend</td><td>Opt-in for scalars, scalar slices and scalar callback signatures: real textual IR with opaque pointers, a C-compatible slice header and region ABI, and <code>clang</code> linking. Composite features are rejected with explicit diagnostics; C11 stays the production path.</td></tr>
               <tr><td>C interop</td><td>Working: <code>opaque</code>, <code>cstr</code>, fixed and explicit <code>callback</code> signatures, <code>extern flow</code>, <code>--c-source</code>, and a header-to-Loi binding generator.</td></tr>
               <tr><td>IR and assembly</td><td>Draft: <code>--emit-ir</code> emits IR text; <code>--emit-asm</code> is rejected because the assembly backend cannot generate runnable code yet. The C backend is the production path.</td></tr>
               <tr><td><code>comptime</code></td><td>Working for pure flows, expressions, globals and shape defaults. Recursive or runaway evaluation is rejected by step/depth limits.</td></tr>
@@ -2477,7 +2544,7 @@ sealed flow winning_line
 
           <h3>Known limitations</h3>
           <ul>
-            <li>I/O intrinsics are limited to whole-file and whole-stdin reads/writes plus numeric and <code>printf</code> formatting. There is no directory or seek API; <code>lib/os.loi</code> covers environment/process queries and <code>lib/net.loi</code> covers TCP streams. User-declared variadic flows are not supported. <code>read_file</code>, <code>read_stdin</code> and <code>read_line</code> allocate in the current <code>protect</code> region and cannot escape it.</li>
+            <li>I/O intrinsics are limited to whole-file and whole-stdin reads/writes plus numeric, <code>printf</code>, <code>format</code> and immediate <code>fmt::</code> formatting. There is no directory or seek API; <code>lib/os.loi</code> covers environment/process queries and <code>lib/net.loi</code> covers TCP streams. User-declared variadic flows are final-parameter only, with scalar/<code>cstr</code>/opaque elements; variadic <code>extern flow</code>s are still rejected. <code>read_file</code>, <code>read_stdin</code> and <code>read_line</code> allocate in the current <code>protect</code> region and cannot escape it.</li>
             <li><code>guard</code> derives the release flow name from the shape, so shapes whose snake-case name would collide need hand-written release flows with distinct names. A release flow called by a <code>guard</code> in another module must be <code>open</code>.</li>
             <li>Modules resolve qualified names, enforce <code>sealed</code> across files, and mangle declaration names shared by several modules into distinct C symbols. Unique names keep their symbols, so single-module ABIs are unchanged. Multi-file builds give non-entry functions external linkage so the first unit that loads a module defines its symbols.</li>
             <li>Globals accept any compile-time constant, including nested shapes, slices and strings; the backend folds them into strict C11 static initializers (named arrays back slice data, with no compound literals). Growable collections (<code>Vec&lt;T&gt;</code>, maps) remain library work even though generics are available.</li>
@@ -2486,7 +2553,7 @@ sealed flow winning_line
             <li><code>loi fmt</code> preserves <code>//</code> comments and is idempotent; comments inside multi-line expressions may move to the next statement boundary. Shape literals stay on one line.</li>
             <li>Binding generation is conservative: C function pointers, variadics, unions, bitfields, inline arrays, pointer-to-pointer, wide strings, pointer results and pointers to unsafe records need a hand-written shim. Read-only <code>const T *</code> and mutable <code>char *</code> parameters bind as slices; other callback signatures than the fixed <code>callback</code> ABI also need a hand-written <code>extern flow</code>.</li>
             <li>The SDL2 and raylib 5.5 bindings and their shims are syntax-verified, but full link/run tests need a machine with those runtimes installed.</li>
-            <li>The opt-in LLVM backend covers scalars, scalar slices, <code>protect</code> regions and the print/math intrinsics; shapes, choices, callbacks, composites and the remaining intrinsics are rejected with a clear diagnostic. Use the C11 backend for those programs.</li>
+            <li>The opt-in LLVM backend covers scalars, scalar slices, scalar callback signatures, <code>protect</code> regions and the print/math intrinsics; shapes, choices, composites, callback slices, <code>fmt::(...)</code>, variadic flows and the remaining intrinsics are rejected with a clear diagnostic. Use the C11 backend for those programs.</li>
             <li><code>Code</code> templates are compile-time only: <code>unquote</code> accepts scalar literals, quoted names resolve at the splice site, and a <code>splice</code> expression cannot depend on runtime values. There is no expression-level AST splicing or hygiene.</li>
             <li>The playground executes code on the machine running the server. Run it locally and do not expose it as a public service.</li>
           </ul>
@@ -2570,7 +2637,7 @@ cargo test --all-targets</code></pre>
             <li>Shapes, flows, directions, bindings, control flow, casts, literals, globals and imports.</li>
             <li>Ownership checks, definite assignment, exclusive directions and region escape analysis.</li>
             <li>C11 code generation, runtime bounds checks, <code>protect</code> arenas, headers and source maps.</li>
-            <li>Opt-in LLVM backend for scalars and scalar slices, with C11 output and diagnostic parity tests.</li>
+            <li>Opt-in LLVM backend for scalars, scalar slices and scalar callback signatures, with C11 output and diagnostic parity tests.</li>
             <li>Multi-file builds, incremental stamps and the <code>clean</code> command.</li>
             <li>Bitwise/shift operators, file/stdin I/O, numeric printing and comment-preserving <code>fmt</code>.</li>
             <li>Canonical Flow Syntax migration and legacy cleanup.</li>
@@ -2591,7 +2658,7 @@ cargo test --all-targets</code></pre>
           <h3>Next</h3>
           <ul>
             <li>Richer I/O: directory and seek APIs, plus binding-generator gaps.</li>
-            <li>Extend LLVM lowering to composites, callback values and <code>comptime</code> with agreed ABIs; C11 remains the semantic oracle.</li>
+            <li>Extend LLVM lowering to composites, nested slices and <code>comptime</code> with agreed ABIs; C11 remains the semantic oracle.</li>
             <li>An interactive example that reads stdin; the deterministic tic-tac-toe example stays for reproducible tests.</li>
           </ul>
         </section>

@@ -84,3 +84,42 @@ open flow net_parse_ipv4
     addr = addr << 8 | value
     => NetIpv4Result { ok: true, addr: addr }
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `net_ipv4`.
+open flow ipv4
+<- a: u8
+<- b: u8
+<- c: u8
+<- d: u8
+=> u32
+{
+    => net_ipv4(a, b, c, d)
+}
+
+/// Short alias of `net_ipv4_octet`.
+open flow ipv4_octet
+<- addr: u32
+<- index: u32
+=> u8
+{
+    => net_ipv4_octet(addr, index)
+}
+
+/// Short alias of `net_port_is_valid`.
+open flow port_is_valid
+<- port: u32
+=> bool
+{
+    => net_port_is_valid(port)
+}
+
+/// Short alias of `net_parse_ipv4`.
+open flow parse_ipv4
+<- text: [u8]
+=> NetIpv4Result
+{
+    => net_parse_ipv4(text)
+}

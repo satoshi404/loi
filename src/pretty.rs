@@ -224,16 +224,45 @@ impl PrettyPrinter {
     fn item(&mut self, item: &Item) {
         match item {
             Item::Import(import) => {
-                let alias = import
-                    .alias
-                    .as_ref()
-                    .map(|name| format!(" as {name}"))
-                    .unwrap_or_default();
                 let prefix = if import.public { "open " } else { "" };
-                self.line_at(
-                    import.span.line,
-                    format!("{prefix}import \"{}\"{alias}", escape_string(&import.path)),
-                )
+                let rendered = match &import.kind {
+                    ImportKind::Path { path, alias, .. } => {
+                        let alias = alias
+                            .as_ref()
+                            .map(|name| format!(" as {}", name.name))
+                            .unwrap_or_default();
+                        format!("{prefix}import \"{}\"{alias}", escape_string(path))
+                    }
+                    ImportKind::Logical { segments, alias } => {
+                        let alias = alias
+                            .as_ref()
+                            .map(|name| format!(" as {}", name.name))
+                            .unwrap_or_default();
+                        let path = segments
+                            .iter()
+                            .map(|segment| segment.name.as_str())
+                            .collect::<Vec<_>>()
+                            .join("::");
+                        format!("{prefix}import {path}{alias}")
+                    }
+                    ImportKind::Group { base, items } => {
+                        let base = base
+                            .iter()
+                            .map(|segment| segment.name.as_str())
+                            .collect::<Vec<_>>()
+                            .join("::");
+                        let mut parts = Vec::with_capacity(items.len());
+                        for item in items {
+                            if let Some(alias) = &item.alias {
+                                parts.push(format!("{} as {}", item.name.name, alias.name));
+                            } else {
+                                parts.push(item.name.name.clone());
+                            }
+                        }
+                        format!("{prefix}import {base}::{{{}}}", parts.join(", "))
+                    }
+                };
+                self.line_at(import.span.line, rendered)
             }
             Item::Interface(interface) => self.interface(interface),
             Item::Mark(mark) => self.mark(mark),
@@ -413,15 +442,7 @@ impl PrettyPrinter {
         self.line_at(function.span.line, header);
         self.indent += 1;
         for param in &function.params {
-            self.line_at(
-                param.span.line,
-                format!(
-                    "{} {}: {}",
-                    direction_glyph(param.direction),
-                    param.name,
-                    format_type(&param.ty)
-                ),
-            );
+            self.line_at(param.span.line, param_text(param));
         }
         if let Some(return_type) = &function.return_type {
             self.line_at(
@@ -446,15 +467,7 @@ impl PrettyPrinter {
         self.line_at(function.span.line, header);
         self.indent += 1;
         for param in &function.params {
-            self.line_at(
-                param.span.line,
-                format!(
-                    "{} {}: {}",
-                    direction_glyph(param.direction),
-                    param.name,
-                    format_type(&param.ty)
-                ),
-            );
+            self.line_at(param.span.line, param_text(param));
         }
         if let Some(return_type) = &function.return_type {
             self.line_at(
@@ -678,6 +691,19 @@ fn direction_glyph(direction: Direction) -> &'static str {
         Direction::In => "<-",
         Direction::Out => "->",
         Direction::Inout => "<->",
+    }
+}
+
+fn param_text(param: &Param) -> String {
+    if param.variadic {
+        format!("... {}: {}", param.name, format_type(&param.ty))
+    } else {
+        format!(
+            "{} {}: {}",
+            direction_glyph(param.direction),
+            param.name,
+            format_type(&param.ty)
+        )
     }
 }
 

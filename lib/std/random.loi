@@ -105,3 +105,48 @@ open flow rng_shuffle<T: Clone>
         i -= 1
     }
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `rng_next_u64`.
+open flow next_u64
+<-> rng: Rng
+=> u64
+{
+    => rng_next_u64(<-> rng)
+}
+
+/// Short alias of `rng_next_u32`.
+open flow next_u32
+<-> rng: Rng
+=> u32
+{
+    => rng_next_u32(<-> rng)
+}
+
+/// Short alias of `rng_below_u64`.
+open flow below_u64
+<-> rng: Rng
+<- bound: u64
+=> u64
+{
+    => rng_below_u64(<-> rng, bound)
+}
+
+/// Short alias of `rng_pick`.
+open flow pick<T: Clone>
+<-> rng: Rng
+<- values: [T]
+=> T
+{
+    => rng_pick<T>(<-> rng, values)
+}
+
+/// Short alias of `rng_shuffle`.
+open flow shuffle<T: Clone>
+<-> rng: Rng
+<-> values: [T]
+{
+    rng_shuffle<T>(<-> rng, <-> values)
+}

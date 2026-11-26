@@ -92,3 +92,24 @@ open flow crc32_bytes
 {
     => crc32_update(CRC32_INIT, data) ^ CRC32_XOROUT
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `crc32_update`.
+open flow update
+<- state: u32
+<- data: [u8]
+=> u32
+{
+    => crc32_update(state, data)
+}
+
+/// Short alias of `crc32_extend`.
+open flow extend
+<- crc: u32
+<- data: [u8]
+=> u32
+{
+    => crc32_extend(crc, data)
+}

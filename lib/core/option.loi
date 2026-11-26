@@ -69,3 +69,54 @@ open flow option_unwrap<T: Clone>
     }
     => clone(opt.value)
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `option_none`.
+open flow none<T>
+-> out: Option<T>
+{
+    option_none<T>(-> out)
+}
+
+/// Short alias of `option_some`.
+open flow some<T: Clone>
+<- value: T
+-> out: Option<T>
+{
+    option_some<T>(value, -> out)
+}
+
+/// Short alias of `option_is_some`.
+open flow is_some<T>
+<- opt: Option<T>
+=> bool
+{
+    => option_is_some<T>(opt)
+}
+
+/// Short alias of `option_is_none`.
+open flow is_none<T>
+<- opt: Option<T>
+=> bool
+{
+    => option_is_none<T>(opt)
+}
+
+/// Short alias of `option_get_or`.
+open flow get_or<T: Clone>
+<- opt: Option<T>
+<- fallback: T
+=> T
+{
+    => option_get_or<T>(opt, fallback)
+}
+
+/// Short alias of `option_unwrap`.
+open flow unwrap<T: Clone>
+<- opt: Option<T>
+=> T
+{
+    => option_unwrap<T>(opt)
+}

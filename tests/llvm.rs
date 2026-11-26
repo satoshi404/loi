@@ -616,3 +616,305 @@ fn llvm_matches_c11_for_large_negative_i64_literal() {
         "-9223372036854775808"
     );
 }
+
+const CALLBACK_SOURCE: &str = r#"open extern flow apply_one as loi_apply_one
+    <- value: i32
+    <- f: callback(i32) => i32
+    => i32
+
+flow inc
+    <- value: i32
+    => i32
+{
+    => value + 1
+}
+
+open flow main
+    => i32
+{
+    print_int(apply_one(41, callback(inc)))
+    print("\n")
+    => 0
+}
+"#;
+
+#[test]
+fn llvm_backend_emits_typed_scalar_callback_values() {
+    let dir = test_dir("typed-callback-ir");
+    let input = write_program(&dir, CALLBACK_SOURCE);
+    let ir_path = dir.join("program.ll");
+    let output = Command::new(loi())
+        .arg("gen")
+        .arg(&input)
+        .arg("-o")
+        .arg(dir.join("program.c"))
+        .arg("--emit-llvm-ir")
+        .arg(&ir_path)
+        .output()
+        .expect("loi should run");
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        output.status.success(),
+        "typed callback IR failed: {stderr}"
+    );
+    let ir = fs::read_to_string(&ir_path).expect("LLVM IR file should be written");
+    assert!(
+        ir.contains("declare i32 @loi_apply_one(i32, ptr)"),
+        "callback parameter must use the opaque-pointer ABI:\n{ir}"
+    );
+    assert!(
+        ir.contains("define i32 @loi_fn_inc(i32"),
+        "callback target flow must be emitted:\n{ir}"
+    );
+    assert!(
+        ir.contains("ptr @loi_fn_inc"),
+        "callback(inc) must reference the flow symbol:\n{ir}"
+    );
+    if has_tool("clang") {
+        let check = Command::new("clang")
+            .arg("-c")
+            .arg("-Wno-override-module")
+            .arg("-x")
+            .arg("ir")
+            .arg(&ir_path)
+            .arg("-o")
+            .arg(dir.join("probe.o"))
+            .output()
+            .expect("clang should run");
+        assert!(
+            check.status.success(),
+            "clang rejected callback IR: {}",
+            String::from_utf8_lossy(&check.stderr)
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn llvm_backend_runs_typed_scalar_callbacks_with_a_c_shim() {
+    if !has_tool("cc") || !has_tool("clang") {
+        eprintln!("skipping llvm_backend_runs_typed_scalar_callbacks_with_a_c_shim");
+        return;
+    }
+    let dir = test_dir("typed-callback-run");
+    let input = write_program(&dir, CALLBACK_SOURCE);
+    let shim = dir.join("shim.c");
+    let object = dir.join("shim.o");
+    fs::write(
+        &shim,
+        "#include <stdint.h>\nint32_t loi_apply_one(int32_t value, int32_t (*f)(int32_t)) { return f(value); }\n",
+    )
+    .expect("shim should be writable");
+    let compiled = Command::new("cc")
+        .arg("-std=c11")
+        .arg("-c")
+        .arg(&shim)
+        .arg("-o")
+        .arg(&object)
+        .output()
+        .expect("cc should run");
+    assert!(
+        compiled.status.success(),
+        "shim failed to compile: {}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let exe = dir.join("program");
+    let build = Command::new(loi())
+        .arg("build")
+        .arg(&input)
+        .arg("--backend")
+        .arg("llvm")
+        .arg("-o")
+        .arg(&exe)
+        .arg("--cc-flag")
+        .arg(&object)
+        .output()
+        .expect("loi should run");
+    let stderr = String::from_utf8_lossy(&build.stderr).to_string();
+    assert!(
+        build.status.success(),
+        "LLVM callback build failed: {stderr}"
+    );
+    let run = Command::new(&exe)
+        .output()
+        .expect("built program should run");
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(run.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "42\n");
+}
+
+#[test]
+fn llvm_backend_emits_stored_and_fixed_callback_values() {
+    let dir = test_dir("stored-callback-ir");
+    let input = write_program(
+        &dir,
+        r#"open extern flow apply as loi_apply
+    <- a: i32
+    <- b: i32
+    <- f: callback
+    => i32
+
+flow add
+    <- a: i32
+    <- b: i32
+    => i32
+{
+    => a + b
+}
+
+open flow main
+    => i32
+{
+    f <- callback(add)
+    print_int(apply(1, 2, f))
+    print_int(apply(3, 4, callback(add)))
+    => 0
+}
+"#,
+    );
+    let output = Command::new(loi())
+        .arg("gen")
+        .arg(&input)
+        .arg("-o")
+        .arg(dir.join("program.c"))
+        .arg("--emit-llvm-ir")
+        .arg(dir.join("program.ll"))
+        .output()
+        .expect("loi should run");
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        output.status.success(),
+        "fixed callback IR failed: {stderr}"
+    );
+    let ir = fs::read_to_string(dir.join("program.ll")).expect("LLVM IR should be written");
+    assert!(
+        ir.contains("declare i32 @loi_apply(i32, i32, ptr)"),
+        "fixed callback must use the opaque-pointer ABI:\n{ir}"
+    );
+    assert!(
+        ir.contains("alloca ptr") && ir.contains("store ptr @loi_fn_add, ptr"),
+        "stored callback value should be a pointer:\n{ir}"
+    );
+    if has_tool("clang") {
+        let check = Command::new("clang")
+            .arg("-c")
+            .arg("-Wno-override-module")
+            .arg("-x")
+            .arg("ir")
+            .arg(dir.join("program.ll"))
+            .arg("-o")
+            .arg(dir.join("probe.o"))
+            .output()
+            .expect("clang should run");
+        assert!(
+            check.status.success(),
+            "clang rejected fixed callback IR: {}",
+            String::from_utf8_lossy(&check.stderr)
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn llvm_backend_rejects_non_scalar_callback_signatures() {
+    let dir = test_dir("callback-non-scalar");
+    let input = write_program(
+        &dir,
+        r#"open extern flow apply_slice as loi_apply_slice
+    <- f: callback([i32]) => i32
+    => i32
+
+flow main
+    => i32
+{
+    => 0
+}
+"#,
+    );
+    let output = Command::new(loi())
+        .arg("gen")
+        .arg(&input)
+        .arg("-o")
+        .arg(dir.join("program.c"))
+        .arg("--emit-llvm-ir")
+        .arg(dir.join("program.ll"))
+        .output()
+        .expect("loi should run");
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let _ = fs::remove_dir_all(&dir);
+    assert!(!output.status.success(), "non-scalar callback was accepted");
+    assert!(
+        stderr.contains("LLVM backend does not support callback signature"),
+        "unexpected diagnostic: {stderr}"
+    );
+}
+
+#[test]
+fn llvm_backend_rejects_fmt_directive() {
+    let dir = test_dir("fmt-directive");
+    let input = write_program(
+        &dir,
+        r#"open flow main
+    => i32
+{
+    print(fmt::("minha idade {}", 7))
+    => 0
+}
+"#,
+    );
+    let output = Command::new(loi())
+        .arg("gen")
+        .arg(&input)
+        .arg("-o")
+        .arg(dir.join("program.c"))
+        .arg("--emit-llvm-ir")
+        .arg(dir.join("program.ll"))
+        .output()
+        .expect("loi should run");
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let _ = fs::remove_dir_all(&dir);
+    assert!(!output.status.success(), "fmt::(...) was accepted by LLVM");
+    assert!(
+        stderr.contains("LLVM backend does not support 'fmt::(...)' yet; use the C backend"),
+        "unexpected diagnostic: {stderr}"
+    );
+}
+
+#[test]
+fn llvm_backend_rejects_variadic_flows() {
+    let dir = test_dir("variadic-flow");
+    let input = write_program(
+        &dir,
+        r#"flow count(... xs: i32) => u64 {
+    => len(xs)
+}
+
+open flow main
+    => i32
+{
+    print_int(count(1, 2, 3))
+    => 0
+}
+"#,
+    );
+    let output = Command::new(loi())
+        .arg("gen")
+        .arg(&input)
+        .arg("-o")
+        .arg(dir.join("program.c"))
+        .arg("--emit-llvm-ir")
+        .arg(dir.join("program.ll"))
+        .output()
+        .expect("loi should run");
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let _ = fs::remove_dir_all(&dir);
+    assert!(
+        !output.status.success(),
+        "variadic flow was accepted by LLVM"
+    );
+    assert!(
+        stderr
+            .contains("LLVM backend does not support variadic flow parameters; use the C backend"),
+        "unexpected diagnostic: {stderr}"
+    );
+}

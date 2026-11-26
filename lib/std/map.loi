@@ -390,3 +390,163 @@ open flow map_str_clear<V>
     m.len = 0
     m.key_bytes = 0
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `map_int_new`.
+open flow int_new<V>
+-> m: IntMap<V>
+{
+    map_int_new<V>(-> m)
+}
+
+/// Short alias of `map_int_len`.
+open flow int_len<V>
+<- m: IntMap<V>
+=> u64
+{
+    => map_int_len<V>(m)
+}
+
+/// Short alias of `map_int_capacity`.
+open flow int_capacity<V>
+<- m: IntMap<V>
+=> u64
+{
+    => map_int_capacity<V>(m)
+}
+
+/// Short alias of `map_int_contains`.
+open flow int_contains<V>
+<- m: IntMap<V>
+<- key: u64
+=> bool
+{
+    => map_int_contains<V>(m, key)
+}
+
+/// Short alias of `map_int_get`.
+open flow int_get<V: Clone>
+<- m: IntMap<V>
+<- key: u64
+=> V
+{
+    => map_int_get<V>(m, key)
+}
+
+/// Short alias of `map_int_get_or`.
+open flow int_get_or<V: Clone>
+<- m: IntMap<V>
+<- key: u64
+<- fallback: V
+=> V
+{
+    => map_int_get_or<V>(m, key, fallback)
+}
+
+/// Short alias of `map_int_lookup`.
+open flow int_lookup<V: Clone>
+<- m: IntMap<V>
+<- key: u64
+<- fallback: V
+-> found: bool
+-> value: V
+{
+    map_int_lookup<V>(m, key, fallback, -> found, -> value)
+}
+
+/// Short alias of `map_int_set`.
+open flow int_set<V: Clone>
+<-> m: IntMap<V>
+<- key: u64
+<- value: V
+{
+    map_int_set<V>(<-> m, key, value)
+}
+
+/// Short alias of `map_int_remove`.
+open flow int_remove<V: Clone>
+<-> m: IntMap<V>
+<- key: u64
+=> bool
+{
+    => map_int_remove<V>(<-> m, key)
+}
+
+/// Short alias of `map_int_clear`.
+open flow int_clear<V>
+<-> m: IntMap<V>
+{
+    map_int_clear<V>(<-> m)
+}
+
+/// Short alias of `map_str_new`.
+open flow str_new<V>
+-> m: StrMap<V>
+{
+    map_str_new<V>(-> m)
+}
+
+/// Short alias of `map_str_capacity`.
+open flow str_capacity<V>
+<- m: StrMap<V>
+=> u64
+{
+    => map_str_capacity<V>(m)
+}
+
+/// Short alias of `map_str_get`.
+open flow str_get<V: Clone>
+<- m: StrMap<V>
+<- key: [u8]
+=> V
+{
+    => map_str_get<V>(m, key)
+}
+
+/// Short alias of `map_str_get_or`.
+open flow str_get_or<V: Clone>
+<- m: StrMap<V>
+<- key: [u8]
+<- fallback: V
+=> V
+{
+    => map_str_get_or<V>(m, key, fallback)
+}
+
+/// Short alias of `map_str_lookup`.
+open flow str_lookup<V: Clone>
+<- m: StrMap<V>
+<- key: [u8]
+<- fallback: V
+-> found: bool
+-> value: V
+{
+    map_str_lookup<V>(m, key, fallback, -> found, -> value)
+}
+
+/// Short alias of `map_str_set`.
+open flow str_set<V: Clone>
+<-> m: StrMap<V>
+<- key: [u8]
+<- value: V
+{
+    map_str_set<V>(<-> m, key, value)
+}
+
+/// Short alias of `map_str_remove`.
+open flow str_remove<V: Clone>
+<-> m: StrMap<V>
+<- key: [u8]
+=> bool
+{
+    => map_str_remove<V>(<-> m, key)
+}
+
+/// Short alias of `map_str_clear`.
+open flow str_clear<V>
+<-> m: StrMap<V>
+{
+    map_str_clear<V>(<-> m)
+}

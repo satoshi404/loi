@@ -221,3 +221,48 @@ open flow jsonrpc_send_error
     jsonrpc_append_bytes(<-> out, "\"}}")
     jsonrpc_send_bytes(vec_view<u8>(out, 0, out.len))
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `jsonrpc_read_frame`.
+open flow read_frame
+-> body: [u8]
+=> bool
+{
+    => jsonrpc_read_frame(-> body)
+}
+
+/// Short alias of `jsonrpc_parse_request`.
+open flow parse_request
+<- body: [u8]
+-> request: JsonRpcRequest
+=> bool
+{
+    => jsonrpc_parse_request(body, -> request)
+}
+
+/// Short alias of `jsonrpc_send_result`.
+open flow send_result
+<- id: i64
+<- result: [u8]
+{
+    jsonrpc_send_result(id, result)
+}
+
+/// Short alias of `jsonrpc_send_notification`.
+open flow send_notification
+<- method: [u8]
+<- params: [u8]
+{
+    jsonrpc_send_notification(method, params)
+}
+
+/// Short alias of `jsonrpc_send_error`.
+open flow send_error
+<- id: i64
+<- code: i64
+<- message: [u8]
+{
+    jsonrpc_send_error(id, code, message)
+}

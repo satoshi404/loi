@@ -59,6 +59,32 @@ fn gen_prints_c_to_stdout() {
 }
 
 #[test]
+fn gen_accepts_fmt_directive_without_an_import() {
+    let dir = test_dir("gen-fmt-directive");
+    let input = dir.join("program.loi");
+    fs::write(
+        &input,
+        "open flow main\n    => i32\n{\n    print(fmt::(\"minha idade {}\", 7))\n    => 0\n}\n",
+    )
+    .expect("input should be writable");
+
+    let output = Command::new(loi())
+        .arg("gen")
+        .arg(&input)
+        .output()
+        .expect("loi should run");
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let c = String::from_utf8_lossy(&output.stdout).to_string();
+    let _ = fs::remove_dir_all(&dir);
+
+    assert!(output.status.success(), "loi gen failed: {stderr}");
+    assert!(
+        c.contains("loi_format("),
+        "fmt::(...) should lower to loi_format:\n{c}"
+    );
+}
+
+#[test]
 fn gen_writes_the_requested_output_file() {
     let dir = test_dir("gen-file");
     let input = dir.join("program.loi");
@@ -1735,6 +1761,26 @@ fn emit_asm_is_rejected_with_a_clear_message() {
 }
 
 #[test]
+fn clean_check_emits_an_empty_json_array() {
+    let dir = test_dir("clean-json");
+    let input = dir.join("program.loi");
+    fs::write(&input, "flow main => i32 {\n    => 0\n}\n").expect("input should be writable");
+    let output = Command::new(loi())
+        .arg("check")
+        .arg(&input)
+        .args(["--error-format=json", "--color=never"])
+        .output()
+        .expect("loi should run");
+    assert!(output.status.success(), "clean check failed");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "[]\n",
+        "clean JSON check should emit an empty array"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn check_supports_human_short_and_json_error_formats() {
     let dir = test_dir("error-formats");
     let input = dir.join("program.loi");
@@ -2211,6 +2257,33 @@ fn link_error_without_a_shim_suggests_c_source_file() {
         assert!(
             stderr.contains(help),
             "{format} output should carry the generic help: {stderr}"
+        );
+    }
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn namespace_import_diagnostics_are_anchored_to_the_importing_file() {
+    let dir = test_dir("namespace-import-diagnostic");
+    let file = dir.join("program.loi");
+    for source in [
+        "import std::fmt\nflow main {\n    => 0\n}\n",
+        "import std::{fmt as f, vec}\nflow main {\n    => 0\n}\n",
+    ] {
+        fs::write(&file, source).expect("input should be writable");
+        let output = Command::new(loi())
+            .arg("check")
+            .arg(&file)
+            .args(["--error-format=short", "--color=never"])
+            .output()
+            .expect("loi should run");
+        assert_eq!(output.status.code(), Some(1));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            stderr,
+            format!("{}:1:8: unknown package 'std'\n", file.display()),
+            "unexpected diagnostic for {source}"
         );
     }
 

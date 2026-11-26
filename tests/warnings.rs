@@ -56,10 +56,10 @@ fn used_local_has_no_warning() {
         "clean source should pass: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(
-        output.stderr.is_empty(),
-        "clean source should emit no diagnostics: {}",
-        String::from_utf8_lossy(&output.stderr)
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "[]\n",
+        "clean JSON check should emit an empty array"
     );
 }
 
@@ -67,10 +67,10 @@ fn used_local_has_no_warning() {
 fn discard_binding_has_no_warning() {
     let output = check("flow main => i32 {\n    _ <- 1\n    => 0\n}\n");
     assert!(output.status.success());
-    assert!(
-        output.stderr.is_empty(),
-        "`_` is a deliberate discard: {}",
-        String::from_utf8_lossy(&output.stderr)
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "[]\n",
+        "`_` is a deliberate discard and JSON still reports an empty array"
     );
 }
 
@@ -106,10 +106,10 @@ fn imported_modules_do_not_produce_warnings_in_the_checked_file() {
         "clean imports should pass: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(
-        output.stderr.is_empty(),
-        "warnings must point at the checked source, not an imported module: {}",
-        String::from_utf8_lossy(&output.stderr)
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "[]\n",
+        "imported modules must not add warnings to the checked JSON result"
     );
 }
 

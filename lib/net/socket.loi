@@ -19,8 +19,9 @@ extern flow loi_net_tcp_connect
     <- port: u32
     => i32
 
-extern flow loi_net_close
+extern flow loi_net_close as close
     <- fd: i32
+    => i32
 
 extern flow loi_net_send
     <- fd: i32
@@ -48,7 +49,7 @@ open flow net_close
     <- fd: i32
 {
     if fd >= 0 {
-        loi_net_close(fd)
+        _ <- loi_net_close(fd)
     }
 }
 
@@ -76,4 +77,41 @@ open flow net_recv
         => 0
     }
     => loi_net_recv(fd, <-> data)
+}
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `net_tcp_connect`.
+open flow tcp_connect
+<- host: cstr
+<- port: u32
+=> i32
+{
+    => net_tcp_connect(host, port)
+}
+
+/// Short alias of `net_close`.
+open flow close
+<- fd: i32
+{
+    net_close(fd)
+}
+
+/// Short alias of `net_send`.
+open flow send
+<- fd: i32
+<- data: [u8]
+=> bool
+{
+    => net_send(fd, data)
+}
+
+/// Short alias of `net_recv`.
+open flow recv
+<- fd: i32
+<-> data: [u8]
+=> i64
+{
+    => net_recv(fd, <-> data)
 }

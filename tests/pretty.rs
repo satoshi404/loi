@@ -37,6 +37,30 @@ fn formats_open_imports_stably() {
 }
 
 #[test]
+fn formats_logical_and_grouped_imports_stably() {
+    let source = "import std::fmt\n\
+                  import std::fmt as format\n\
+                  import std::{fmt, vec}\n\
+                  import std::{fmt as f, vec as v, str as string}\n\
+                  open import os::{file, path}\n";
+    let expected = "import std::fmt\n\n\
+                    import std::fmt as format\n\n\
+                    import std::{fmt, vec}\n\n\
+                    import std::{fmt as f, vec as v, str as string}\n\n\
+                    open import os::{file, path}\n";
+    assert_eq!(assert_format_stable(source), expected);
+}
+
+#[test]
+fn canonicalizes_multiline_import_groups() {
+    let source = "import std::{\n    fmt,\n    vec as v,\n}\n";
+    assert_eq!(
+        assert_format_stable(source),
+        "import std::{fmt, vec as v}\n"
+    );
+}
+
+#[test]
 fn formats_mark_choice_and_is_stably() {
     let source = "mark Color { Red, Green, Blue }\nchoice Result { Ok: i32, Err: i64 }\nflow main {\n    c <- Color.Green\n    r <- Result.Ok(42)\n    if r is Result.Ok {\n        print_int(r.Ok)\n    }\n}\n";
     let formatted = assert_format_stable(source);

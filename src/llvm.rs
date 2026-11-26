@@ -14,7 +14,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{self, *};
-use crate::types::{self, Ty};
+use crate::types::{self, CallbackSig, Ty};
 
 /// Generate textual LLVM IR for a checked program.
 ///
@@ -181,6 +181,12 @@ impl<'a> Emitter<'a> {
                                 .to_string(),
                         );
                     }
+                    if decl.params.iter().any(|param| param.variadic) {
+                        return Err(
+                            "LLVM backend does not support variadic flow parameters; use the C backend"
+                                .to_string(),
+                        );
+                    }
                     for param in &decl.params {
                         self.validate_type(&param.ty)?;
                     }
@@ -202,7 +208,7 @@ impl<'a> Emitter<'a> {
                 if name == "void" || Ty::from_name(name).is_some() {
                     Ok(())
                 } else if name == "callback" {
-                    Err("LLVM backend does not support callback values".to_string())
+                    self.validate_callback_signature(&CallbackSig::fixed())
                 } else if name == "cstr" {
                     Err("LLVM backend does not support cstr handles".to_string())
                 } else if self.marks.contains(name) {
@@ -222,10 +228,105 @@ impl<'a> Emitter<'a> {
             Type::Generic(_, _, _) => {
                 Err("LLVM backend does not support unresolved generic declarations".to_string())
             }
-            Type::Callback { .. } => {
-                Err("LLVM backend does not support callback values".to_string())
+            Type::Callback { params, result, .. } => {
+                let sig = self.callback_sig(params, result.as_deref())?;
+                self.validate_callback_signature(&sig)
             }
         }
+    }
+
+    /// Callback values use the opaque-pointer ABI, but their signature must be
+    /// expressible with LLVM scalar types. Composites, slices, `cstr` and nested
+    /// callbacks still need an agreed C/LLVM ABI and stay on the C11 path.
+    fn validate_callback_signature(&self, sig: &CallbackSig) -> Result<(), String> {
+        for ty in &sig.params {
+            if ty == &Ty::Void || !Self::is_scalar_llvm_type(ty) {
+                return Err(format!(
+                    "LLVM backend does not support callback signature '{}': parameter type '{}'",
+                    sig.display(),
+                    ty
+                ));
+            }
+        }
+        if *sig.result != Ty::Void && !Self::is_scalar_llvm_type(&sig.result) {
+            return Err(format!(
+                "LLVM backend does not support callback signature '{}': result type '{}'",
+                sig.display(),
+                sig.result
+            ));
+        }
+        Ok(())
+    }
+
+    fn is_scalar_llvm_type(ty: &Ty) -> bool {
+        matches!(
+            ty,
+            Ty::I8
+                | Ty::U8
+                | Ty::I16
+                | Ty::U16
+                | Ty::I32
+                | Ty::U32
+                | Ty::I64
+                | Ty::U64
+                | Ty::Bool
+                | Ty::F32
+                | Ty::F64
+                | Ty::IntLiteral
+                | Ty::FloatLiteral
+        )
+    }
+
+    /// Convert a syntactic callback signature into its semantic type.
+    fn callback_sig(&self, params: &[Type], result: Option<&Type>) -> Result<CallbackSig, String> {
+        let params = params
+            .iter()
+            .map(|param| self.ast_type(param))
+            .collect::<Result<Vec<_>, _>>()?;
+        let result = match result {
+            Some(ty) => self.ast_type(ty)?,
+            None => Ty::Void,
+        };
+        Ok(CallbackSig {
+            params,
+            result: Box::new(result),
+        })
+    }
+
+    /// Resolve `callback(flow)` to the flow's C-compatible signature. The flow
+    /// itself must be a local flow with input-only parameters; the C11 backend
+    /// passes its symbol directly, and the LLVM backend does the same.
+    fn callback_target(&self, args: &[CallArg]) -> Result<(&'a FunctionDecl, CallbackSig), String> {
+        let [arg] = args else {
+            return Err("LLVM backend: 'callback' requires exactly one flow argument".to_string());
+        };
+        let ExprKind::Ident(flow) = &arg.value.kind else {
+            return Err("LLVM backend: 'callback' requires a named flow".to_string());
+        };
+        let decl = *self
+            .functions
+            .get(flow)
+            .ok_or_else(|| format!("LLVM backend could not resolve flow '{flow}'"))?;
+        if decl.external {
+            return Err("LLVM backend: 'callback' requires a non-extern flow".to_string());
+        }
+        if decl
+            .params
+            .iter()
+            .any(|param| param.direction != Direction::In)
+        {
+            return Err(
+                "LLVM backend: 'callback' requires a flow with input parameters only".to_string(),
+            );
+        }
+        let param_types = decl
+            .params
+            .iter()
+            .map(|param| param.ty.clone())
+            .collect::<Vec<_>>();
+        let sig = self.callback_sig(&param_types, decl.return_type.as_ref())?;
+        self.validate_callback_signature(&sig)?;
+        Ok((decl, sig))
     }
 
     /// Slice elements are restricted to scalar values whose size is known at
@@ -235,6 +336,9 @@ impl<'a> Emitter<'a> {
         match element {
             Type::Named(name, _) if name == "void" => {
                 Err("LLVM backend does not support void slice elements".to_string())
+            }
+            Type::Named(name, _) if name == "callback" => {
+                Err("LLVM backend does not support callback values".to_string())
             }
             Type::Named(name, _) if Ty::from_name(name).is_some() => Ok(()),
             Type::Named(_, _) => self.validate_type(element),
@@ -353,7 +457,15 @@ impl<'a> Emitter<'a> {
                             .to_string(),
                     );
                 };
-                if !SUPPORTED_INTRINSICS.contains(&name.as_str())
+                if name == "fmt::" {
+                    return Err(
+                        "LLVM backend does not support 'fmt::(...)' yet; use the C backend"
+                            .to_string(),
+                    );
+                }
+                if name == "callback" {
+                    self.callback_target(args)?;
+                } else if !SUPPORTED_INTRINSICS.contains(&name.as_str())
                     && !self.functions.contains_key(name)
                 {
                     return Err(format!("LLVM backend does not support intrinsic '{name}'"));
@@ -1084,6 +1196,12 @@ impl<'a> Emitter<'a> {
 
     fn gen_intrinsic(&mut self, name: &str, args: &[CallArg]) -> Result<String, String> {
         match name {
+            "callback" => {
+                let (decl, _) = self.callback_target(args)?;
+                // With opaque pointers, referencing the function symbol is the
+                // function pointer value; no bitcast or thunk is needed.
+                Ok(format!("@{}", self.function_name(decl)))
+            }
             "print" | "eprint" => {
                 let arg = args
                     .first()
@@ -1217,6 +1335,9 @@ impl<'a> Emitter<'a> {
                     Ok(Ty::Void)
                 } else if let Some(ty) = Ty::from_name(name) {
                     Ok(ty)
+                } else if name == "callback" {
+                    self.validate_type(ty)?;
+                    Ok(Ty::Callback(CallbackSig::fixed()))
                 } else {
                     self.validate_type(ty)?;
                     Ok(Ty::Error)
@@ -1227,7 +1348,11 @@ impl<'a> Emitter<'a> {
                 Ok(Ty::Slice(Box::new(self.ast_type(element)?)))
             }
             Type::Generic(_, _, _) => self.validate_type(ty).map(|()| Ty::Error),
-            Type::Callback { .. } => self.validate_type(ty).map(|()| Ty::Error),
+            Type::Callback { params, result, .. } => {
+                let sig = self.callback_sig(params, result.as_deref())?;
+                self.validate_callback_signature(&sig)?;
+                Ok(Ty::Callback(sig))
+            }
         }
     }
 
@@ -1242,6 +1367,9 @@ impl<'a> Emitter<'a> {
             Ty::F64 | Ty::FloatLiteral => Ok("double".to_string()),
             Ty::Void => Ok("void".to_string()),
             Ty::Slice(_) => Ok("%LoiSlice".to_string()),
+            // Callback signatures are checked separately; the LLVM ABI is the
+            // same opaque function pointer used by the C11 backend.
+            Ty::Callback(_) => Ok("ptr".to_string()),
             other => Err(format!("LLVM backend does not support type '{other}'")),
         }
     }
@@ -1251,6 +1379,7 @@ impl<'a> Emitter<'a> {
             Ty::Bool => Ok("false".to_string()),
             Ty::F32 | Ty::F64 | Ty::FloatLiteral => Ok("0.0".to_string()),
             Ty::Slice(_) => Ok("{ ptr null, i64 0 }".to_string()),
+            Ty::Callback(_) => Ok("null".to_string()),
             _ if ty.is_integer() => Ok("0".to_string()),
             other => Err(format!(
                 "LLVM backend cannot make a zero value for '{other}'"
@@ -1314,6 +1443,9 @@ impl<'a> Emitter<'a> {
         ty: &Ty,
         span: Span,
     ) -> Result<String, String> {
+        if matches!(ty, Ty::Callback(_)) {
+            return Err("LLVM backend does not support operations on callback values".to_string());
+        }
         if matches!(ty, Ty::Slice(_)) {
             if !matches!(op, BinaryOp::Eq | BinaryOp::Neq) {
                 return Err(format!(
@@ -1464,6 +1596,15 @@ impl<'a> Emitter<'a> {
         if from == to || to == Ty::Error || from == Ty::Error {
             return Ok(value.to_string());
         }
+        // Callback values all lower to opaque `ptr`; keep signature mismatches
+        // as a backend error instead of silently erasing them in the IR.
+        if let (Ty::Callback(from_sig), Ty::Callback(to_sig)) = (&from, &to) {
+            return Err(format!(
+                "LLVM backend cannot convert callback '{}' to '{}'",
+                from_sig.display(),
+                to_sig.display()
+            ));
+        }
         let result = self.fresh("%cast");
         let from_llvm = self.llvm_type(&from)?;
         let to_llvm = self.llvm_type(&to)?;
@@ -1567,6 +1708,9 @@ impl<'a> Emitter<'a> {
                 let ExprKind::Ident(name) = &callee.kind else {
                     return Err("LLVM backend cannot infer an indirect call".to_string());
                 };
+                if name == "callback" {
+                    return Ok(Ty::Callback(self.callback_target(args)?.1));
+                }
                 if SUPPORTED_INTRINSICS.contains(&name.as_str()) {
                     Ok(match name.as_str() {
                         "sqrt" | "floor" | "ceil" | "fabs" | "pow" => Ty::F64,
@@ -1767,6 +1911,7 @@ impl<'a> Emitter<'a> {
 }
 
 const SUPPORTED_INTRINSICS: &[&str] = &[
+    "callback",
     "print",
     "eprint",
     "panic",

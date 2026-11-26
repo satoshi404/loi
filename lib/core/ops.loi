@@ -38,3 +38,31 @@ open flow ops_saturating_sub_u64
     }
     => left - right
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `ops_is_power_of_two_u64`.
+open flow is_power_of_two_u64
+<- value: u64
+=> bool
+{
+    => ops_is_power_of_two_u64(value)
+}
+
+/// Short alias of `ops_next_power_of_two_u64`.
+open flow next_power_of_two_u64
+<- value: u64
+=> u64
+{
+    => ops_next_power_of_two_u64(value)
+}
+
+/// Short alias of `ops_saturating_sub_u64`.
+open flow saturating_sub_u64
+<- left: u64
+<- right: u64
+=> u64
+{
+    => ops_saturating_sub_u64(left, right)
+}

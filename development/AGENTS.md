@@ -40,12 +40,14 @@ surface disagree, fix the compiler or record the change explicitly.
 
 ### CLI
 
-- `loi <lex|parse|fmt|check> FILE`
+- `loi <lex|parse|fmt> FILE`
+- `loi check FILE [--lib-dir DIR]...`
 - `loi complete FILE --line N --column N`
-- `loi gen FILE [-o out.c] [--emit-h header.h] [--emit-ir ir] [--source-map map.json]`
+- `loi gen FILE [-o out.c] [--emit-h header.h] [--emit-ir ir] [--source-map map.json] [--lib-dir DIR]...`
 - `loi build FILE... [-o out] [--emit exe|obj|lib] [--debug|--release] [--rebuild]`
-  `[--emit-c c] [--emit-h header.h] [--emit-ir ir] [--arena-size BYTES]`
-  `[--source-map map.json] [--cc-flag F]... [--c-source FILE]...`
+  `[--emit-c c] [--emit-h header.h] [--emit-ir ir] [--emit-llvm-ir ir]`
+  `[--arena-size BYTES] [--source-map map.json] [--cc-flag F]...`
+  `[--c-source FILE]... [--auto-c-source] [--backend c|llvm] [--lib-dir DIR]...`
 - `loi clean FILE [-o out]`
 - `--help` / `--version`
 - `--emit-asm` is **disabled**: the x86-64 assembly backend is an unfinished

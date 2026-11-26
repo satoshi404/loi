@@ -1079,3 +1079,182 @@ open flow json_set_root
 {
     doc.root = node
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `json_parse`.
+open flow parse
+<- text: [u8]
+-> doc: JsonDoc
+=> bool
+{
+    => json_parse(text, -> doc)
+}
+
+/// Short alias of `json_kind`.
+open flow kind
+<- doc: JsonDoc
+<- node: i64
+=> JsonKind
+{
+    => json_kind(doc, node)
+}
+
+/// Short alias of `json_number_text`.
+open flow number_text
+<- doc: JsonDoc
+<- node: i64
+=> [u8]
+{
+    => json_number_text(doc, node)
+}
+
+/// Short alias of `json_number_i64`.
+open flow number_i64
+<- doc: JsonDoc
+<- node: i64
+=> i64
+{
+    => json_number_i64(doc, node)
+}
+
+/// Short alias of `json_array_len`.
+open flow array_len
+<- doc: JsonDoc
+<- node: i64
+=> u64
+{
+    => json_array_len(doc, node)
+}
+
+/// Short alias of `json_array_get`.
+open flow array_get
+<- doc: JsonDoc
+<- node: i64
+<- index: u64
+=> i64
+{
+    => json_array_get(doc, node, index)
+}
+
+/// Short alias of `json_object_get`.
+open flow object_get
+<- doc: JsonDoc
+<- node: i64
+<- key: [u8]
+=> i64
+{
+    => json_object_get(doc, node, key)
+}
+
+/// Short alias of `json_stringify`.
+open flow stringify
+<- doc: JsonDoc
+=> [u8]
+{
+    => json_stringify(doc)
+}
+
+/// Short alias of `json_new`.
+open flow new
+-> doc: JsonDoc
+{
+    json_new(-> doc)
+}
+
+/// Short alias of `json_new_null`.
+open flow new_null
+<-> doc: JsonDoc
+=> i64
+{
+    => json_new_null(<-> doc)
+}
+
+/// Short alias of `json_new_bool`.
+open flow new_bool
+<-> doc: JsonDoc
+<- value: bool
+=> i64
+{
+    => json_new_bool(<-> doc, value)
+}
+
+/// Short alias of `json_new_number`.
+open flow new_number
+<-> doc: JsonDoc
+<- text: [u8]
+=> i64
+{
+    => json_new_number(<-> doc, text)
+}
+
+/// Short alias of `json_new_i64`.
+open flow new_i64
+<-> doc: JsonDoc
+<- value: i64
+=> i64
+{
+    => json_new_i64(<-> doc, value)
+}
+
+/// Short alias of `json_new_u64`.
+open flow new_u64
+<-> doc: JsonDoc
+<- value: u64
+=> i64
+{
+    => json_new_u64(<-> doc, value)
+}
+
+/// Short alias of `json_new_string`.
+open flow new_string
+<-> doc: JsonDoc
+<- text: [u8]
+=> i64
+{
+    => json_new_string(<-> doc, text)
+}
+
+/// Short alias of `json_new_array`.
+open flow new_array
+<-> doc: JsonDoc
+=> i64
+{
+    => json_new_array(<-> doc)
+}
+
+/// Short alias of `json_new_object`.
+open flow new_object
+<-> doc: JsonDoc
+=> i64
+{
+    => json_new_object(<-> doc)
+}
+
+/// Short alias of `json_array_push`.
+open flow array_push
+<-> doc: JsonDoc
+<- array: i64
+<- value: i64
+{
+    json_array_push(<-> doc, array, value)
+}
+
+/// Short alias of `json_object_set`.
+open flow object_set
+<-> doc: JsonDoc
+<- object: i64
+<- key: [u8]
+<- value: i64
+{
+    json_object_set(<-> doc, object, key, value)
+}
+
+/// Short alias of `json_set_root`.
+open flow set_root
+<-> doc: JsonDoc
+<- node: i64
+{
+    json_set_root(<-> doc, node)
+}

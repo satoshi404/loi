@@ -48,12 +48,6 @@ int32_t loi_net_tcp_connect(const char* host, uint32_t port) {
     return (int32_t)fd;
 }
 
-void loi_net_close(int32_t fd) {
-    if (fd >= 0) {
-        close((int)fd);
-    }
-}
-
 int64_t loi_net_send(int32_t fd, LoiSlice data) {
     if (fd < 0 || (data.len > 0 && data.data == NULL)) {
         return -1;

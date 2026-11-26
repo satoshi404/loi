@@ -47,3 +47,43 @@ open flow cmp_max_u64
     }
     => right
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `cmp_eq`.
+open flow eq<T: Eq>
+<- left: T
+<- right: T
+=> bool
+{
+    => cmp_eq<T>(left, right)
+}
+
+/// Short alias of `cmp_lt`.
+open flow lt<T: Ord>
+<- left: T
+<- right: T
+=> bool
+{
+    => cmp_lt<T>(left, right)
+}
+
+/// Short alias of `cmp_clamp_u64`.
+open flow clamp_u64
+<- value: u64
+<- low: u64
+<- high: u64
+=> u64
+{
+    => cmp_clamp_u64(value, low, high)
+}
+
+/// Short alias of `cmp_max_u64`.
+open flow max_u64
+<- left: u64
+<- right: u64
+=> u64
+{
+    => cmp_max_u64(left, right)
+}

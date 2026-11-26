@@ -194,7 +194,9 @@ struct ChoiceVariantInfo {
 struct ParamSig {
     name: String,
     direction: Direction,
+    /// For a variadic parameter this is the slice `[]T` seen by the flow body.
     ty: Ty,
+    variadic: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -430,6 +432,11 @@ struct Checker {
     region_origins: Vec<Option<Span>>,
     /// Regions currently active, innermost last.
     region_stack: Vec<usize>,
+    /// True while checking the argument expression of `print`, `eprint` or
+    /// `panic`. Only the root call may be `fmt::(...)`: it allocates through
+    /// the same runtime helper but never escapes there, so it does not require
+    /// a caller `protect` region.
+    fmt_direct_arg: bool,
 }
 
 impl ComparisonEnv for Checker {
@@ -472,6 +479,7 @@ impl Checker {
             region_kinds: Vec::new(),
             region_origins: Vec::new(),
             region_stack: Vec::new(),
+            fmt_direct_arg: false,
         }
     }
 
@@ -819,6 +827,7 @@ impl Checker {
                 name: name.to_string(),
                 direction,
                 ty,
+                variadic: false,
             })
             .collect();
         self.functions.insert(
@@ -1040,6 +1049,28 @@ impl Checker {
 
             let mut params = Vec::new();
             let mut seen = HashSet::new();
+            let variadic_count = decl.params.iter().filter(|param| param.variadic).count();
+            let variadic_index = decl.params.iter().position(|param| param.variadic);
+            if variadic_count > 1 {
+                self.error(
+                    decl.span,
+                    format!(
+                        "function '{}' has more than one variadic parameter",
+                        decl.name
+                    ),
+                );
+            }
+            if let Some(index) = variadic_index
+                && index + 1 != decl.params.len()
+            {
+                self.error(
+                    decl.params[index].span,
+                    format!(
+                        "variadic parameter '{}' must be the last parameter",
+                        decl.params[index].name
+                    ),
+                );
+            }
             for param in &decl.params {
                 let ty = self.resolve_type(&param.ty);
                 if matches!(ty, Ty::Callback(_)) && param.direction != Direction::In {
@@ -1050,6 +1081,37 @@ impl Checker {
                             param.name
                         ),
                     );
+                }
+                if param.variadic {
+                    if param.direction != Direction::In {
+                        self.error(
+                            param.span,
+                            format!(
+                                "variadic parameter '{}' must use '...', not a direction",
+                                param.name
+                            ),
+                        );
+                    }
+                    if decl.external {
+                        self.error(
+                            param.span,
+                            format!(
+                                "extern flow '{}' cannot have a variadic parameter",
+                                decl.name
+                            ),
+                        );
+                    }
+                    let scalar = ty.is_numeric()
+                        || matches!(ty, Ty::Bool | Ty::CStr | Ty::Opaque(_) | Ty::Error);
+                    if !scalar {
+                        self.error(
+                            param.span,
+                            format!(
+                                "variadic parameter '{}' must have a scalar or cstr element type, found {ty}",
+                                param.name
+                            ),
+                        );
+                    }
                 }
                 if !seen.insert(param.name.clone()) {
                     self.error(
@@ -1064,7 +1126,12 @@ impl Checker {
                 params.push(ParamSig {
                     name: param.name.clone(),
                     direction: param.direction,
-                    ty,
+                    ty: if param.variadic {
+                        Ty::Slice(Box::new(ty))
+                    } else {
+                        ty
+                    },
+                    variadic: param.variadic,
                 });
             }
 
@@ -2731,6 +2798,11 @@ impl Checker {
     // Expressions
     // ------------------------------------------------------------------
     fn check_expr(&mut self, expr: &Expr) -> Ty {
+        // The immediate `fmt::(...)` directive is only legal as the root call
+        // of an output argument. Any wrapper expression consumes that slot.
+        if !matches!(expr.kind, ExprKind::Call { .. }) {
+            self.fmt_direct_arg = false;
+        }
         match &expr.kind {
             ExprKind::Int(_) => Ty::IntLiteral,
             ExprKind::Float(_) => Ty::FloatLiteral,
@@ -3259,6 +3331,10 @@ impl Checker {
             }
             return Ty::Error;
         };
+        // Only the outermost call of an output argument may be `fmt::(...)`.
+        // Clear the slot before any nested call is checked.
+        let direct_fmt = self.fmt_direct_arg;
+        self.fmt_direct_arg = false;
 
         // `len(xs)` is a compiler intrinsic: slices carry their length, so no
         // library function is needed. The name is reserved (`LOI_SPEC.md` 5.9).
@@ -3332,6 +3408,17 @@ impl Checker {
         if name == "printf" {
             return self.check_printf_call(args, span);
         }
+        // `fmt::(...)` is the immediate spelling of `format(...)`, allowed only
+        // where the produced bytes are consumed at once by an output intrinsic.
+        if name == "fmt::" {
+            if !direct_fmt {
+                self.error(
+                    callee.span,
+                    "fmt::(...) must be used directly inside print, eprint or panic",
+                );
+            }
+            return self.check_format_call(args, span);
+        }
         if name == "format" {
             return self.check_format_call(args, span);
         }
@@ -3360,7 +3447,21 @@ impl Checker {
             );
         }
 
-        if args.len() != signature.params.len() {
+        let variadic_index = signature.params.iter().position(|param| param.variadic);
+        let required = variadic_index.unwrap_or(signature.params.len());
+        if variadic_index.is_some() {
+            if args.len() < required {
+                self.error(
+                    span,
+                    format!(
+                        "function '{}' expects at least {} argument(s), found {}",
+                        name,
+                        required,
+                        args.len()
+                    ),
+                );
+            }
+        } else if args.len() != signature.params.len() {
             self.error(
                 span,
                 format!(
@@ -3376,10 +3477,36 @@ impl Checker {
             .summary(name)
             .is_some_and(|summary| summary.unguarded_allocations);
         let mut out_targets = Vec::new();
+        let output_arg = matches!(name.as_str(), "print" | "eprint" | "panic");
+        // A variadic parameter is seen by the body as `[]T`, but each call-site
+        // argument is checked against `T` so literals get the right range and
+        // coercion diagnostics.
+        let vararg_param = variadic_index.map(|index| {
+            let mut param = signature.params[index].clone();
+            if let Ty::Slice(element) = &param.ty {
+                param.ty = (**element).clone();
+            }
+            param.variadic = false;
+            param
+        });
         for (index, arg) in args.iter().enumerate() {
+            if let Some(param) = vararg_param.as_ref()
+                && index >= required
+            {
+                self.fmt_direct_arg = output_arg;
+                let info = self.check_call_arg(arg, param, may_allocate, name, index);
+                self.fmt_direct_arg = false;
+                if let Some(info) = info {
+                    out_targets.push((index, info));
+                }
+                continue;
+            }
             match signature.params.get(index) {
                 Some(param) => {
-                    if let Some(info) = self.check_call_arg(arg, param, may_allocate, name, index) {
+                    self.fmt_direct_arg = output_arg;
+                    let info = self.check_call_arg(arg, param, may_allocate, name, index);
+                    self.fmt_direct_arg = false;
+                    if let Some(info) = info {
                         out_targets.push((index, info));
                     }
                 }
@@ -3387,9 +3514,19 @@ impl Checker {
             }
         }
 
-        self.check_call_aliasing(name, args, &signature);
-        self.apply_parameter_consumption(name, args, &signature);
-        self.propagate_call_regions(name, args, &signature, &out_targets);
+        // Ownership summaries are indexed by declared parameter. Trailing
+        // arguments have no declared slot, so the region passes only see the
+        // fixed prefix.
+        let fixed_signature = match variadic_index {
+            Some(index) => FunctionSig {
+                params: signature.params[..index].to_vec(),
+                ..signature.clone()
+            },
+            None => signature.clone(),
+        };
+        self.check_call_aliasing(name, args, &fixed_signature);
+        self.apply_parameter_consumption(name, args, &fixed_signature);
+        self.propagate_call_regions(name, args, &fixed_signature, &out_targets);
         self.propagate_call_views(name, args, &out_targets);
 
         signature.return_type
@@ -3468,6 +3605,13 @@ impl Checker {
             );
             return Ty::Error;
         };
+        if signature.params.iter().any(|param| param.variadic) {
+            self.error(
+                arg.value.span,
+                format!("variadic flow '{flow}' cannot be used as a callback"),
+            );
+            return Ty::Error;
+        }
         let callback_sig = CallbackSig {
             params: signature
                 .params
@@ -4229,7 +4373,7 @@ impl Checker {
             },
             ExprKind::Call { callee, .. } => match &callee.kind {
                 ExprKind::Ident(name) => {
-                    if name == "format" {
+                    if matches!(name.as_str(), "format" | "fmt::") {
                         Ty::Slice(Box::new(Ty::U8))
                     } else if name == "printf" {
                         Ty::Void
@@ -4727,7 +4871,7 @@ impl Checker {
                 if let ExprKind::Ident(name) = &callee.kind
                     && matches!(
                         name.as_str(),
-                        "read_file" | "read_stdin" | "read_line" | "format"
+                        "read_file" | "read_stdin" | "read_line" | "format" | "fmt::"
                     )
                     && let Some(region) = self.current_protect_region()
                 {
@@ -5414,6 +5558,7 @@ pub fn intrinsic_names() -> &'static [&'static str] {
         "print_float",
         "printf",
         "format",
+        "fmt::",
     ]
 }
 

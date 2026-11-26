@@ -200,7 +200,10 @@ fn parses_imports_globals_strings_and_slice_literals() {
             _ => None,
         })
         .expect("import should parse");
-    assert_eq!(import.path, "lib/std.loi");
+    let loi::ImportKind::Path { path, .. } = &import.kind else {
+        panic!("expected path import");
+    };
+    assert_eq!(path, "lib/std.loi");
 
     let global = program
         .items
@@ -1047,8 +1050,145 @@ fn parses_open_import_reexports() {
         panic!("expected an import");
     };
     assert!(import.public);
-    assert_eq!(import.path, "lib/core/option.loi");
-    assert_eq!(import.alias.as_deref(), Some("core"));
+    let loi::ImportKind::Path { path, alias, .. } = &import.kind else {
+        panic!("expected path import");
+    };
+    assert_eq!(path, "lib/core/option.loi");
+    assert_eq!(alias.as_ref().map(|name| name.name.as_str()), Some("core"));
+}
+
+fn import_names(names: &[loi::ImportName]) -> Vec<&str> {
+    names.iter().map(|name| name.name.as_str()).collect()
+}
+
+#[test]
+fn parses_logical_and_grouped_imports() {
+    let program = parse_source(
+        "import std::fmt\nimport std::fmt as format\nimport std::{fmt, vec}\nimport std::{fmt as f, vec as v, str as string}\nopen import os::{file, path}\nimport std::fmt::{print as put}\n",
+    );
+    let Item::Import(a) = &program.items[0] else {
+        panic!("expected import");
+    };
+    let loi::ImportKind::Logical { segments, alias } = &a.kind else {
+        panic!("expected logical");
+    };
+    assert_eq!(import_names(segments), ["std", "fmt"]);
+    assert_eq!(alias, &None);
+    assert!(!a.public);
+
+    let Item::Import(b) = &program.items[1] else {
+        panic!("expected import");
+    };
+    let loi::ImportKind::Logical { segments, alias } = &b.kind else {
+        panic!("expected logical");
+    };
+    assert_eq!(import_names(segments), ["std", "fmt"]);
+    assert_eq!(
+        alias.as_ref().map(|name| name.name.as_str()),
+        Some("format")
+    );
+
+    let Item::Import(c) = &program.items[2] else {
+        panic!("expected import");
+    };
+    let loi::ImportKind::Group { base, items } = &c.kind else {
+        panic!("expected group");
+    };
+    assert_eq!(import_names(base), ["std"]);
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0].name.name, "fmt");
+    assert_eq!(items[0].alias, None);
+    assert_eq!(items[1].name.name, "vec");
+
+    let Item::Import(d) = &program.items[3] else {
+        panic!("expected import");
+    };
+    let loi::ImportKind::Group { base, items } = &d.kind else {
+        panic!("expected group");
+    };
+    assert_eq!(import_names(base), ["std"]);
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| item.alias.as_ref().map(|name| name.name.as_str()))
+            .collect::<Vec<_>>(),
+        [Some("f"), Some("v"), Some("string")]
+    );
+    assert_eq!(items[2].name.name, "str");
+
+    let Item::Import(e) = &program.items[4] else {
+        panic!("expected import");
+    };
+    assert!(e.public);
+    let loi::ImportKind::Group { base, items } = &e.kind else {
+        panic!("expected group");
+    };
+    assert_eq!(import_names(base), ["os"]);
+    assert_eq!(items[0].name.name, "file");
+    assert_eq!(items[1].name.name, "path");
+
+    let Item::Import(f) = &program.items[5] else {
+        panic!("expected import");
+    };
+    let loi::ImportKind::Group { base, items } = &f.kind else {
+        panic!("expected group");
+    };
+    assert_eq!(import_names(base), ["std", "fmt"]);
+    assert_eq!(items[0].name.name, "print");
+    assert_eq!(
+        items[0].alias.as_ref().map(|name| name.name.as_str()),
+        Some("put")
+    );
+}
+
+#[test]
+fn import_names_and_declaration_spans_are_precise() {
+    let program = parse_source("import std::fmt as format\nimport std::{fmt as f, vec}\n");
+
+    let Item::Import(first) = &program.items[0] else {
+        panic!("expected the first import");
+    };
+    let loi::ImportKind::Logical { segments, alias } = &first.kind else {
+        panic!("expected a logical import");
+    };
+    assert_eq!(segments[0].name, "std");
+    assert_eq!(segments[0].span.column, 8);
+    assert_eq!(segments[0].span.end_column, Some(11));
+    assert_eq!(segments[1].name, "fmt");
+    assert_eq!(segments[1].span.column, 13);
+    assert_eq!(segments[1].span.end_column, Some(16));
+    let alias = alias.as_ref().expect("the first import has an alias");
+    assert_eq!(alias.name, "format");
+    assert_eq!(alias.span.column, 20);
+    assert_eq!(alias.span.end_column, Some(26));
+    assert_eq!(first.span.end_column, Some(26));
+
+    let Item::Import(second) = &program.items[1] else {
+        panic!("expected the second import");
+    };
+    let loi::ImportKind::Group { base, items } = &second.kind else {
+        panic!("expected a grouped import");
+    };
+    assert_eq!(base[0].span.column, 8);
+    assert_eq!(items[0].name.span.column, 14);
+    assert_eq!(items[0].alias.as_ref().expect("alias").span.column, 21);
+    assert_eq!(second.span.end_column, Some(28));
+}
+
+#[test]
+fn rejects_malformed_grouped_imports() {
+    for source in [
+        "import std::{}\n",
+        "import std::{fmt\n",
+        "import std::{fmt vec}\n",
+        "import std::{fmt as}\n",
+    ] {
+        let tokens = tokenize(source, "<test>").expect("source should lex");
+        assert!(
+            parse(tokens).is_err(),
+            "malformed import accepted: {source}"
+        );
+    }
 }
 
 #[test]
@@ -1072,14 +1212,20 @@ flow main
     let Item::Import(first) = &program.items[0] else {
         panic!("expected an import");
     };
-    assert_eq!(first.path, "lib/math.loi");
-    assert_eq!(first.alias.as_deref(), Some("m"));
+    let loi::ImportKind::Path { path, alias, .. } = &first.kind else {
+        panic!("expected path import");
+    };
+    assert_eq!(path, "lib/math.loi");
+    assert_eq!(alias.as_ref().map(|name| name.name.as_str()), Some("m"));
 
     let Item::Import(second) = &program.items[1] else {
         panic!("expected a second import");
     };
-    assert_eq!(second.path, "lib/geo.loi");
-    assert_eq!(second.alias, None);
+    let loi::ImportKind::Path { path, alias, .. } = &second.kind else {
+        panic!("expected path import");
+    };
+    assert_eq!(path, "lib/geo.loi");
+    assert_eq!(alias, &None);
 
     let Item::Function(main) = &program.items[2] else {
         panic!("expected main");
@@ -1145,4 +1291,18 @@ fn parses_quote_unquote_and_splice() {
         panic!("expected main flow");
     };
     assert!(matches!(main.body.statements[1].kind, StmtKind::Splice(_)));
+}
+
+#[test]
+fn fmt_call_and_variadic_param_round_trip() {
+    let source = "flow count(... xs: i32) => u64 {\n    => len(xs)\n}\n\nflow show {\n    print(fmt::(\"n={}\", count(1, 2)))\n}\n";
+    let formatted = format_program(&parse_source(source));
+    assert!(
+        formatted.contains("... xs: i32"),
+        "variadic parameters should round-trip canonically:\n{formatted}"
+    );
+    assert!(
+        formatted.contains("fmt::(\"n={}\", count(1, 2))"),
+        "fmt::(...) should round-trip canonically:\n{formatted}"
+    );
 }

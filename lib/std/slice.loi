@@ -229,3 +229,31 @@ open flow slice_reverse<T: Clone>
         slice_swap<T>(<-> values, i, j)
     }
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `slice_first`.
+open flow first<T: Clone>
+<- values: [T]
+=> T
+{
+    => slice_first<T>(values)
+}
+
+/// Short alias of `slice_last`.
+open flow last<T: Clone>
+<- values: [T]
+=> T
+{
+    => slice_last<T>(values)
+}
+
+/// Short alias of `slice_equals_u8`.
+open flow equals_u8
+<- left: [u8]
+<- right: [u8]
+=> bool
+{
+    => slice_equals_u8(left, right)
+}

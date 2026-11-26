@@ -212,3 +212,85 @@ open flow str_find
     }
     => -1
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `str_is_ascii_space`.
+open flow is_ascii_space
+<- byte: u8
+=> bool
+{
+    => str_is_ascii_space(byte)
+}
+
+/// Short alias of `str_trim`.
+open flow trim
+<- text: [u8]
+=> [u8]
+{
+    => str_trim(text)
+}
+
+/// Short alias of `str_concat`.
+open flow concat
+<- left: [u8]
+<- right: [u8]
+=> [u8]
+{
+    => str_concat(left, right)
+}
+
+/// Short alias of `str_repeat`.
+open flow repeat
+<- text: [u8]
+<- count: u64
+=> [u8]
+{
+    => str_repeat(text, count)
+}
+
+/// Short alias of `str_count`.
+open flow count
+<- text: [u8]
+<- byte: u8
+=> u64
+{
+    => str_count(text, byte)
+}
+
+/// Short alias of `str_index_of`.
+open flow index_of
+<- text: [u8]
+<- needle: [u8]
+=> i64
+{
+    => str_index_of(text, needle)
+}
+
+/// Short alias of `str_contains`.
+open flow contains
+<- text: [u8]
+<- needle: [u8]
+=> bool
+{
+    => str_contains(text, needle)
+}
+
+/// Short alias of `str_eq`.
+open flow eq
+<- left: [u8]
+<- right: [u8]
+=> bool
+{
+    => str_eq(left, right)
+}
+
+/// Short alias of `str_starts_with`.
+open flow starts_with
+<- text: [u8]
+<- prefix: [u8]
+=> bool
+{
+    => str_starts_with(text, prefix)
+}

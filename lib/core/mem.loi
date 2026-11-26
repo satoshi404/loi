@@ -46,3 +46,31 @@ open flow mem_copy_u8
         target[i] = source[i]
     }
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `mem_zeroed_bytes`.
+open flow zeroed_bytes
+-> out: [u8]
+<- count: u64
+{
+    mem_zeroed_bytes(-> out, count)
+}
+
+/// Short alias of `mem_fill_u8`.
+open flow fill_u8
+<-> data: [u8]
+<- byte: u8
+{
+    mem_fill_u8(<-> data, byte)
+}
+
+/// Short alias of `mem_copy_u8`.
+open flow copy_u8
+<- source: [u8]
+<-> target: [u8]
+<- count: u64
+{
+    mem_copy_u8(source, <-> target, count)
+}

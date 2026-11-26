@@ -147,3 +147,22 @@ open flow lsp_send_completion
     json_set_root(<-> out, result)
     jsonrpc_send_result(id, json_stringify(out))
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `lsp_publish_diagnostics`.
+open flow publish_diagnostics
+<- uri: [u8]
+<- diagnostics_json: [u8]
+{
+    lsp_publish_diagnostics(uri, diagnostics_json)
+}
+
+/// Short alias of `lsp_send_completion`.
+open flow send_completion
+<- id: i64
+<- completion_json: [u8]
+{
+    lsp_send_completion(id, completion_json)
+}

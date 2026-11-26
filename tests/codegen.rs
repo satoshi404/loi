@@ -1097,6 +1097,100 @@ int main(void) {
 }
 
 #[test]
+fn print_has_no_implicit_trailing_newline() {
+    let source = "flow show {\n    print(\"oi\")\n}\n";
+    let c = generated(source);
+    let harness = r#"
+int main(void) {
+    loi_fn_show();
+    return 0;
+}
+"#;
+    let Some(run) = compile_and_run_output("print-no-newline", &c, harness) else {
+        return;
+    };
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "oi",
+        "print must not add a newline:\n{c}"
+    );
+}
+
+#[test]
+fn print_fmt_smoke() {
+    let source = "flow show {\n    print(fmt::(\"minha idade {}\", 7))\n}\n";
+    let c = generated(source);
+    let harness = r#"
+int main(void) {
+    loi_fn_show();
+    return 0;
+}
+"#;
+    assert_strict_c11("print-fmt-smoke", &c);
+    let Some(run) = compile_and_run_output("print-fmt-smoke", &c, harness) else {
+        return;
+    };
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "minha idade 7",
+        "fmt::(...) inside print must format without a newline:\n{c}"
+    );
+}
+
+#[test]
+fn print_fmt_accepts_u8_value() {
+    let source = "flow show {\n    n: u8 <- 7\n    print(fmt::(\"value={}\", n))\n}\n";
+    let c = generated(source);
+    let harness = r#"
+int main(void) {
+    loi_fn_show();
+    return 0;
+}
+"#;
+    let Some(run) = compile_and_run_output("print-fmt-u8", &c, harness) else {
+        return;
+    };
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "value=7");
+}
+
+#[test]
+fn print_fmt_accepts_multiple_placeholders() {
+    let source = "flow show {\n    print(fmt::(\"a={} b={}\", 1, 2))\n}\n";
+    let c = generated(source);
+    let harness = r#"
+int main(void) {
+    loi_fn_show();
+    return 0;
+}
+"#;
+    let Some(run) = compile_and_run_output("print-fmt-multiple", &c, harness) else {
+        return;
+    };
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "a=1 b=2");
+}
+
+#[test]
+fn variadic_count_is_available_to_flows() {
+    let source = "flow count(... xs: i32) => u64 {\n    => len(xs)\n}\n\nflow show {\n    print_int(count(1, 2, 3))\n    print(\"\\n\")\n    print_int(count())\n    print(\"\\n\")\n}\n";
+    let c = generated(source);
+    let harness = r#"
+int main(void) {
+    loi_fn_show();
+    return 0;
+}
+"#;
+    assert_strict_c11("variadic-count", &c);
+    let Some(run) = compile_and_run_output("variadic-count", &c, harness) else {
+        return;
+    };
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "3\n0\n",
+        "a variadic parameter must expose the number of arguments through len:\n{c}"
+    );
+}
+
+#[test]
 fn mark_and_choice_generate_c_representations() {
     let c = generated(MARK_CHOICE_SOURCE);
 

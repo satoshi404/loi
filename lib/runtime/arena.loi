@@ -27,3 +27,15 @@ open flow arena_filled_bytes
         out[i] = byte
     }
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `arena_filled_bytes`.
+open flow filled_bytes
+-> out: [u8]
+<- count: u64
+<- byte: u8
+{
+    arena_filled_bytes(-> out, count, byte)
+}

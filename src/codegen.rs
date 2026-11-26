@@ -940,7 +940,9 @@ impl<'a> Generator<'a> {
         intrinsic_return_ty.insert("print_int".to_string(), Ty::Void);
         intrinsic_return_ty.insert("print_float".to_string(), Ty::Void);
         intrinsic_return_ty.insert("printf".to_string(), Ty::Void);
-        intrinsic_return_ty.insert("format".to_string(), Ty::Slice(Box::new(Ty::U8)));
+        let bytes = Ty::Slice(Box::new(Ty::U8));
+        intrinsic_return_ty.insert("format".to_string(), bytes.clone());
+        intrinsic_return_ty.insert("fmt::".to_string(), bytes);
 
         for item in &program.items {
             match item {
@@ -1425,6 +1427,15 @@ impl<'a> Generator<'a> {
         params: &[(Direction, Ty)],
     ) -> (Vec<String>, Vec<String>) {
         let snapshot = args.iter().any(|arg| self.expr_has_side_effect(&arg.value));
+        self.order_call_args_with_snapshot(args, params, snapshot)
+    }
+
+    fn order_call_args_with_snapshot(
+        &mut self,
+        args: &[CallArg],
+        params: &[(Direction, Ty)],
+        snapshot: bool,
+    ) -> (Vec<String>, Vec<String>) {
         let mut steps = Vec::new();
         let mut values = Vec::new();
         for (index, arg) in args.iter().enumerate() {
@@ -2545,9 +2556,19 @@ impl<'a> Generator<'a> {
         }
     }
 
-    fn param_decl(&self, param: &Param) -> String {
+    /// A variadic parameter is declared as the element type in source, but its
+    /// flow body receives the collected arguments as a `LoiSlice`.
+    fn param_ty(&self, param: &Param) -> Ty {
         let ty = self.resolve_type(&param.ty);
-        let c_type = self.c_type(&ty);
+        if param.variadic {
+            Ty::Slice(Box::new(ty))
+        } else {
+            ty
+        }
+    }
+
+    fn param_decl(&self, param: &Param) -> String {
+        let c_type = self.c_type(&self.param_ty(param));
         let name = self.c_local(&param.name);
         match param.direction {
             Direction::In => format!("{c_type} {name}"),
@@ -2669,7 +2690,7 @@ impl<'a> Generator<'a> {
         self.current_function = name.to_string();
 
         for param in &decl.params {
-            let ty = self.resolve_type(&param.ty);
+            let ty = self.param_ty(param);
             let repr = match param.direction {
                 Direction::In => Repr::Value,
                 Direction::Out | Direction::Inout => Repr::Pointer,
@@ -2694,6 +2715,14 @@ impl<'a> Generator<'a> {
             "function",
         );
         self.emit_open("");
+        // A variadic slice may be unused in the body (only its count matters at
+        // the call site). Mark it used so generated C stays warning-clean under
+        // `-Wall -Wextra -Werror`.
+        for param in &decl.params {
+            if param.variadic {
+                self.emit(format!("(void){};", self.c_local(&param.name)));
+            }
+        }
         self.emit_out_defaults(decl);
         self.gen_block(&decl.body);
         if name == "main" {
@@ -2716,7 +2745,7 @@ impl<'a> Generator<'a> {
     /// defaults makes that behavior explicit.
     fn emit_out_defaults(&mut self, decl: &'a FunctionDecl) {
         for param in &decl.params {
-            if param.direction != Direction::Out {
+            if param.variadic || param.direction != Direction::Out {
                 continue;
             }
             let ty = self.resolve_type(&param.ty);
@@ -3679,16 +3708,49 @@ impl<'a> Generator<'a> {
             return c_code;
         }
 
-        let params = self
-            .functions
-            .get(name)
+        let decl = self.functions.get(name).copied();
+        let params = decl
             .map(|decl| {
                 decl.params
                     .iter()
-                    .map(|param| (param.direction, self.resolve_type(&param.ty)))
+                    .map(|param| (param.direction, self.param_ty(param)))
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+
+        // Trailing arguments are packed into the slice the callee sees. The
+        // count is therefore the slice length; no C varargs ABI is involved.
+        if let Some(decl) = decl
+            && let Some(index) = decl.params.iter().position(|param| param.variadic)
+        {
+            let snapshot = args.iter().any(|arg| self.expr_has_side_effect(&arg.value));
+            let (mut steps, mut lowered) = self.order_call_args_with_snapshot(
+                &args[..index.min(args.len())],
+                &params,
+                snapshot,
+            );
+            let element_ty = self.resolve_type(&decl.params[index].ty).concretize();
+            let mut varargs = Vec::new();
+            for arg in args.iter().skip(index) {
+                let (mut arg_steps, value) =
+                    self.ordered_expr(&arg.value, Some(&element_ty), snapshot);
+                steps.append(&mut arg_steps);
+                varargs.push(value);
+            }
+            let slice = if varargs.is_empty() {
+                "(LoiSlice){ NULL, 0 }".to_string()
+            } else {
+                format!(
+                    "(LoiSlice){{ (void*)({}[]){{ {} }}, {} }}",
+                    self.c_type(&element_ty),
+                    varargs.join(", "),
+                    varargs.len()
+                )
+            };
+            lowered.push(slice);
+            let call = format!("{}({})", self.c_func(name), lowered.join(", "));
+            return Self::with_order(steps, call);
+        }
 
         let (steps, lowered) = self.order_call_args(args, &params);
         let call = format!("{}({})", self.c_func(name), lowered.join(", "));
@@ -3867,7 +3929,7 @@ impl<'a> Generator<'a> {
                 let call = format!("printf({})", lowered.join(", "));
                 Some(Self::with_order(steps, call))
             }
-            "format" => {
+            "format" | "fmt::" => {
                 let fmt = args.first()?;
                 let ExprKind::String(text) = &fmt.value.kind else {
                     return None;

@@ -393,10 +393,31 @@ These rules were added to unblock real programs and are implemented and tested. 
   declaration, change the owning module, or change the generated C symbol.
   `sealed` declarations are never re-exported, `sealed import` is rejected, and
   both import forms participate in the same cycle check.
-- Qualified names support one level (`module::item`) in this version. There are
-  no nested module paths, module-wide visibility or global search paths: paths
-  are relative to the importing file (or absolute), and a re-export is a
-  declaration-level view, not a namespace.
+- Qualified declaration names support one level (`module::item`) in this version.
+  There is no module-wide visibility or global search path: path imports are
+  relative to the importing file (or absolute), and a re-export is a
+  declaration-level view, not a namespace. Logical import paths may contain
+  several segments, but they name files rather than nested declaration
+  namespaces.
+- **Logical imports (FASE 3):** logical (`std::fmt`, optionally `as name`) and
+  grouped (`std::{fmt, vec as v}`) spellings resolve to the narrow module file
+  `lib/<package>/<module>.loi` (deeper paths append segments before the file
+  name). The `lib/` root is the nearest one found by walking ancestors of the
+  importing file, so resolution is deterministic and independent of the process
+  cwd; there is no manifest, global search path, download or generated index.
+  The local module name is the last path segment or group item, overridden by
+  `as`. Alias collisions, cycles and missing modules are errors, and explicit
+  path imports keep the rules above. A bare package root (`import std`) resolves
+  to `lib/std.loi`, binds the package name (overridable with `as`), and exposes
+  the root's `open import` declarations; it does not create submodule aliases.
+  Declaration visibility, ABI and mangling are unchanged here.
+- **Explicit library roots:** `--lib-dir DIR` adds a root checked after the
+  ancestors of the importing file, in the order given. A root contains
+  `<package>.loi` or `<package>/`; it lets a project outside the compiler tree
+  use the shipped library without copying it or relying on the process cwd.
+  Project-local `lib/` directories always take precedence. The flag is
+  repeatable and supported by `check`, `gen` and `build`; the linker's
+  `extern flow` collector and `--auto-c-source` use the same roots.
 - **Same names in several modules:** a declaration name may repeat in different
   modules. All contributions with that source name receive the internal name
   `<module>::<name>`; the C backend sanitizes `::` to `__`, so `a::helper`
@@ -425,13 +446,23 @@ These rules were added to unblock real programs and are implemented and tested. 
 
 **Builtin intrinsics and standard library**
 
-- Intrinsics: `print(<- [u8])`, `eprint(<- [u8])`, `panic(<- [u8])`, `print_int(<- integer)`, `print_float(<- f64)`, `printf(<- [u8], ...)` (literal format string plus typed varargs), `sqrt/floor/ceil/fabs(<- f64) => f64`, `pow/fmod(<- f64, <- f64) => f64`, `len([T]) => u64`, `format(<- [u8], ...) => [u8]` and
+- Intrinsics: `print(<- [u8])`, `eprint(<- [u8])`, `panic(<- [u8])`, `print_int(<- integer)`, `print_float(<- f64)`, `printf(<- [u8], ...)` (literal format string plus typed varargs), `sqrt/floor/ceil/fabs(<- f64) => f64`, `pow/fmod(<- f64, <- f64) => f64`, `len([T]) => u64`, `format(<- [u8], ...) => [u8]`, `fmt::(<- [u8], ...) => [u8]` and
 `callback(<- flow) => callback`.
 - `format` consumes a literal template with `{}` placeholders and returns a
   byte slice allocated in the caller's `protect` region. A `[u8]` argument is
   inserted by its byte contents, not by its `(data, len)` header; `cstr` keeps
-  NUL-terminated insertion.
-- The library is a set of explicitly imported files: `lib/std.loi` (integer/float and byte-string helpers, including integer-to-decimal conversion), `lib/math.loi` (generic and `comptime` math), `lib/ctype.loi` (ASCII byte helpers), `lib/option.loi` and `lib/result.loi` (optional and error-carrying values), `lib/json.loi` (JSON documents), `lib/jsonrpc.loi` (JSON-RPC 2.0 transport), `lib/lsp.loi` (LSP diagnostics and completion bridge), `lib/process.loi` (process spawning with captured output), `lib/os.loi` and `lib/net.loi` (thin POSIX bindings with C shims), and `lib/stdio.loi` (deterministic byte I/O on the standard streams, also via a C shim). The pure files use only the features above; the five shim-backed files (`os`, `net`, `stdio`, `process`, `lsp`) use `extern flow` declarations and must be linked with their shims.
+  NUL-terminated insertion. `fmt::(...)` is the immediate spelling of the same
+  operation, allowed only as the direct argument of `print`, `eprint` or
+  `panic`; the produced bytes are consumed at once, so no caller `protect` is
+  required. `print` and `eprint` never append a newline.
+- **Provisional user variadics (C11 only):** a flow may declare one final
+  `... xs: T`. The body sees `xs` as `[]T`, so `len(xs)` is the number of
+  trailing arguments and a call with none gives an empty slice. The C11 backend
+  packs the trailing values into a `LoiSlice`; there is no C varargs ABI. The
+  element type is restricted to numeric scalars, `bool`, `cstr` and opaque
+  handles. `extern flow`, callbacks and the LLVM backend reject variadics with
+  a diagnostic. The canonical spelling is in `SINTAXE.md` §6.
+- The library is a set of explicitly imported files: `lib/std.loi` (integer/float and byte-string helpers, including integer-to-decimal conversion), `lib/math.loi` (generic and `comptime` math), `lib/ctype.loi` (ASCII byte helpers), `lib/option.loi` and `lib/result.loi` (optional and error-carrying values), `lib/json.loi` (JSON documents), `lib/jsonrpc.loi` (JSON-RPC 2.0 transport), `lib/lsp.loi` (LSP diagnostics and completion bridge), `lib/process.loi` (process spawning with captured output), `lib/os.loi` and `lib/net.loi` (thin POSIX bindings with C shims), and `lib/stdio.loi` (deterministic byte I/O on the standard streams, also via a C shim). The pure files use only the features above; the five shim-backed files (`os`, `net`, `stdio`, `process`, `lsp`) use `extern flow` declarations and must be linked with their shims in native/trusted builds. Browser-submitted playground programs never link `process_shim.c` or `lsp_shim.c` (see `DECISIONS.md`).
 
 **Optional and error values (Block A6).**
 
@@ -471,8 +502,9 @@ files; application code imports them.
 - A string literal may initialize a `cstr` or be passed to a `cstr` parameter.
   An arbitrary `[u8]` value may not, because it is not guaranteed to be
   NUL-terminated.
-- `cstr` is copyable but cannot be indexed, measured, compared or printed in
-  Loi. Convert it in a vendored shim when byte access is needed.
+- `cstr` is copyable and supports `==`/`!=` and ordering via `strcmp`, plus `%s`
+  and `{}` printing. It cannot be indexed or measured; convert it in a vendored
+  shim when byte access is needed.
 
 **Extern flows**
 
@@ -508,8 +540,14 @@ files; application code imports them.
   declare those `extern flow`s by hand. `examples/callback_signatures.loi` with
   `examples/callback_signatures_shim.c` is the complete worked program.
 - `loi build ... --c-source FILE` compiles and links extra C sources.
-  `--cc-flag FLAG` forwards a flag to the C compiler; on link steps the flags
-  follow the objects so `-l` libraries resolve normally.
+  `--auto-c-source` is an opt-in alternative that discovers shim files from
+  imported packages using the same filesystem layout as logical imports; only
+  shims defining a missing extern symbol are linked, anchored at the importing
+  file and deduplicated with explicit sources. It is rejected by `--emit obj`
+  and the LLVM backend. `--lib-dir DIR` extends the import resolver with an
+  explicit library root (§4.8), including shim discovery. `--cc-flag FLAG`
+  forwards a flag to the C compiler; on link steps the flags follow the objects
+  so `-l` libraries resolve normally.
 
 **Binding generation**
 
@@ -943,7 +981,7 @@ New functionality goes into the library by default; an intrinsic is added only w
 
 **Why:** a tiny closed intrinsic set keeps the compiler small and portable; a Loi-written library exercises the language and can grow without changing the compiler.
 
-**Status:** implemented. `len`, `view` and `callback` are reserved in the checker; the old "user-defined `len` wins" exception is gone. `printf` is the only variadic intrinsic: its first argument must be a string literal, and the conversions in that literal determine the number and kind of the remaining arguments. User-declared variadic flows remain out of scope.
+**Status:** implemented. `len`, `view`, `callback` and `fmt::` are reserved in the checker; the old "user-defined `len` wins" exception is gone. The variadic intrinsics are `printf` (first argument is a literal whose conversions determine the remaining arguments), `format` and its immediate `fmt::` spelling (literal `{}` template with checked arity). User-declared variadic flows are supported provisionally on the C11 path with the restrictions above.
 
 ### 5.10 Syntax identity — Loi Flow Syntax (adopted, complete)
 
@@ -1157,15 +1195,21 @@ The supported slice expressions are slice literals, `<- [T]` parameters,
 `len(x)` / `x.len`, indexing and index assignment, `alloc(-> x, T, n)`,
 `view(x, a, b)`, byte-wise `print` / `eprint` / `panic` and `==` / `!=`.
 Element types are restricted to scalars with a static byte size; nested slices
-and composite elements are rejected.
+and composite elements are rejected. Callback values use the same opaque C
+function pointer ABI as the C11 backend: `callback(flow)` emits the flow symbol
+directly, and plain `callback` plus `callback(T, ...) => R` are accepted when
+every parameter and the non-`void` result is an integer, float or boolean
+scalar. Callback slices and nested or non-scalar callback signatures are
+rejected. `fmt::(...)` and user-declared variadic flows are also rejected with
+a diagnostic that points to the C11 backend.
 
 Every other construct is rejected before emission with an `LLVM backend does
 not support ...` diagnostic rather than lowered approximately: `guard`,
-shapes, marks, choices, opaque handles, globals, callback values, `cstr`,
-`comptime`, `foreach`, indirect calls, field access other than `len` and the
-remaining intrinsics. `build --backend llvm` is restricted to a single source
-file and an executable; C-only build options are rejected with exit 2. The
-canonical CLI spelling and the full rejection list are in `SINTAXE.md` §14;
+shapes, marks, choices, opaque handles, globals, `cstr`, `comptime`, `foreach`,
+indirect calls, field access other than `len` and the remaining intrinsics.
+`build --backend llvm` is restricted to a single source file and an
+executable; C-only build options are rejected with exit 2. The canonical CLI
+spelling and the full rejection list are in `SINTAXE.md` §14;
 `examples/llvm_scalars.loi` and `examples/llvm_slices.loi` are reference
 programs for both backends.
 

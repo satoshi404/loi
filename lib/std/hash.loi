@@ -81,3 +81,41 @@ open flow hash_pair_u64
     }
     => hash
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `hash_bytes_seeded`.
+open flow bytes_seeded
+<- data: [u8]
+<- seed: u64
+=> u64
+{
+    => hash_bytes_seeded(data, seed)
+}
+
+/// Short alias of `hash_bytes`.
+open flow bytes
+<- data: [u8]
+=> u64
+{
+    => hash_bytes(data)
+}
+
+/// Short alias of `hash_u64_seeded`.
+open flow u64_seeded
+<- value: u64
+<- seed: u64
+=> u64
+{
+    => hash_u64_seeded(value, seed)
+}
+
+/// Short alias of `hash_pair_u64`.
+open flow pair_u64
+<- left: u64
+<- right: u64
+=> u64
+{
+    => hash_pair_u64(left, right)
+}

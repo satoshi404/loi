@@ -367,3 +367,138 @@ open flow vec_binary_search<T: Clone + Ord>
     }
     => -1
 }
+
+// Short aliases: `std::vec` is already the namespace, so the `vec_` prefix
+// is redundant here. The original names remain public for broad imports and
+// existing programs.
+/// Short alias of `vec_new`.
+open flow new<T>
+-> v: Vec<T>
+{
+    vec_new<T>(-> v)
+}
+
+// `view` is a built-in flow, so `vec_view` has no unprefixed alias: adding one
+// would shadow the built-in call used by this module.
+
+/// Short alias of `vec_len`. `len` itself is a compiler intrinsic, so the
+/// unprefixed spelling here is `size` to keep `len(slice)` working everywhere.
+open flow size<T>
+<- v: Vec<T>
+=> u64
+{
+    => vec_len<T>(v)
+}
+
+/// Short alias of `vec_capacity`.
+open flow capacity<T>
+<- v: Vec<T>
+=> u64
+{
+    => vec_capacity<T>(v)
+}
+
+/// Short alias of `vec_is_empty`.
+open flow is_empty<T>
+<- v: Vec<T>
+=> bool
+{
+    => vec_is_empty<T>(v)
+}
+
+/// Short alias of `vec_reserve`.
+open flow reserve<T: Clone>
+<-> v: Vec<T>
+<- capacity: u64
+{
+    vec_reserve<T>(<-> v, capacity)
+}
+
+/// Short alias of `vec_clear`.
+open flow clear<T>
+<-> v: Vec<T>
+{
+    vec_clear<T>(<-> v)
+}
+
+/// Short alias of `vec_get`.
+open flow get<T: Clone>
+<- v: Vec<T>
+<- index: u64
+=> T
+{
+    => vec_get<T>(v, index)
+}
+
+/// Short alias of `vec_set`.
+open flow set<T: Clone>
+<-> v: Vec<T>
+<- index: u64
+<- value: T
+{
+    vec_set<T>(<-> v, index, value)
+}
+
+/// Short alias of `vec_push`.
+open flow push<T: Clone>
+<-> v: Vec<T>
+<- value: T
+{
+    vec_push<T>(<-> v, value)
+}
+
+/// Short alias of `vec_pop`.
+open flow pop<T: Clone>
+<-> v: Vec<T>
+=> T
+{
+    => vec_pop<T>(<-> v)
+}
+
+/// Short alias of `vec_find`.
+open flow find<T: Eq>
+<- v: Vec<T>
+<- value: T
+=> i64
+{
+    => vec_find<T>(v, value)
+}
+
+/// Short alias of `vec_from_slice`.
+open flow from_slice<T: Clone>
+<- values: [T]
+-> v: Vec<T>
+{
+    vec_from_slice<T>(values, -> v)
+}
+
+/// Short alias of `vec_as_slice`.
+open flow as_slice<T: Clone>
+<- v: Vec<T>
+=> [T]
+{
+    => vec_as_slice<T>(v)
+}
+
+/// Short alias of `vec_reverse`.
+open flow reverse<T: Clone>
+<-> v: Vec<T>
+{
+    vec_reverse<T>(<-> v)
+}
+
+/// Short alias of `vec_sort`.
+open flow sort<T: Clone + Ord>
+<-> v: Vec<T>
+{
+    vec_sort<T>(<-> v)
+}
+
+/// Short alias of `vec_binary_search`.
+open flow binary_search<T: Clone + Ord>
+<- v: Vec<T>
+<- value: T
+=> i64
+{
+    => vec_binary_search<T>(v, value)
+}

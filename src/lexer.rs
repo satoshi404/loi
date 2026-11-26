@@ -203,11 +203,16 @@ impl Lexer {
             }
             // `module::item` is one identifier token. A trailing or malformed
             // `::` is left for the operator scanner so the parser reports it.
+            // `fmt::(` is the one call-shaped exception: it is the canonical
+            // spelling of the immediate formatting directive accepted by
+            // `print`/`eprint`/`panic`.
+            let is_fmt = self.source[start..self.offset].iter().collect::<String>() == "fmt";
             if self.peek() == Some(':')
                 && self.peek_at(1) == Some(':')
-                && self
+                && (self
                     .peek_at(2)
                     .is_some_and(|ch| ch.is_alphabetic() || ch == '_')
+                    || (is_fmt && self.peek_at(2) == Some('(')))
             {
                 self.advance();
                 self.advance();
@@ -428,6 +433,7 @@ impl Lexer {
                 "<->" => Some(TokenKind::ArrowInOut),
                 "<<=" => Some(TokenKind::ShlEq),
                 ">>=" => Some(TokenKind::ShrEq),
+                "..." => Some(TokenKind::Ellipsis),
                 _ => None,
             };
             if let Some(kind) = kind {

@@ -62,3 +62,38 @@ open flow path_extension
     }
     => view(name, dot, name.len)
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `path_is_absolute`.
+open flow is_absolute
+<- path: [u8]
+=> bool
+{
+    => path_is_absolute(path)
+}
+
+/// Short alias of `path_file_name`.
+open flow file_name
+<- path: [u8]
+=> [u8]
+{
+    => path_file_name(path)
+}
+
+/// Short alias of `path_parent`.
+open flow parent
+<- path: [u8]
+=> [u8]
+{
+    => path_parent(path)
+}
+
+/// Short alias of `path_extension`.
+open flow extension
+<- path: [u8]
+=> [u8]
+{
+    => path_extension(path)
+}

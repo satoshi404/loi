@@ -63,3 +63,31 @@ open flow lsp_read_document
     }
     => data
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `lsp_write_document`.
+open flow write_document
+<- path: [u8]
+<- text: [u8]
+=> bool
+{
+    => lsp_write_document(path, text)
+}
+
+/// Short alias of `lsp_remove_document`.
+open flow remove_document
+<- path: [u8]
+=> bool
+{
+    => lsp_remove_document(path)
+}
+
+/// Short alias of `lsp_read_document`.
+open flow read_document
+<- path: [u8]
+=> [u8]
+{
+    => lsp_read_document(path)
+}

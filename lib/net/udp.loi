@@ -44,3 +44,39 @@ open flow udp_endpoint_is_loopback
     first <- net_ipv4_octet(endpoint.addr, 0)
     => first == 127
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `udp_endpoint`.
+open flow endpoint
+<- addr: u32
+<- port: u32
+=> UdpEndpoint
+{
+    => udp_endpoint(addr, port)
+}
+
+/// Short alias of `udp_endpoint_port`.
+open flow endpoint_port
+<- endpoint: UdpEndpoint
+=> u32
+{
+    => udp_endpoint_port(endpoint)
+}
+
+/// Short alias of `udp_endpoint_is_broadcast`.
+open flow endpoint_is_broadcast
+<- endpoint: UdpEndpoint
+=> bool
+{
+    => udp_endpoint_is_broadcast(endpoint)
+}
+
+/// Short alias of `udp_endpoint_is_loopback`.
+open flow endpoint_is_loopback
+<- endpoint: UdpEndpoint
+=> bool
+{
+    => udp_endpoint_is_loopback(endpoint)
+}

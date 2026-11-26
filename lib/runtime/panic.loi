@@ -27,3 +27,23 @@ open flow runtime_assert_i64_eq
         panic(message)
     }
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `runtime_assert`.
+open flow assert
+<- condition: bool
+<- message: [u8]
+{
+    runtime_assert(condition, message)
+}
+
+/// Short alias of `runtime_assert_i64_eq`.
+open flow assert_i64_eq
+<- actual: i64
+<- expected: i64
+<- message: [u8]
+{
+    runtime_assert_i64_eq(actual, expected, message)
+}

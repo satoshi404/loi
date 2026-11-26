@@ -30,3 +30,32 @@ open flow debug_expect_u64_lt
         panic(message)
     }
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `debug_assert`.
+open flow assert
+<- condition: bool
+<- message: [u8]
+{
+    debug_assert(condition, message)
+}
+
+/// Short alias of `debug_expect_i64_eq`.
+open flow expect_i64_eq
+<- actual: i64
+<- expected: i64
+<- message: [u8]
+{
+    debug_expect_i64_eq(actual, expected, message)
+}
+
+/// Short alias of `debug_expect_u64_lt`.
+open flow expect_u64_lt
+<- left: u64
+<- right: u64
+<- message: [u8]
+{
+    debug_expect_u64_lt(left, right, message)
+}

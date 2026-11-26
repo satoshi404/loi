@@ -162,3 +162,119 @@ open flow ctype_equals_ignore_case
     }
     => true
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `ctype_is_digit`.
+open flow is_digit
+<- byte: u8
+=> bool
+{
+    => ctype_is_digit(byte)
+}
+
+/// Short alias of `ctype_is_upper`.
+open flow is_upper
+<- byte: u8
+=> bool
+{
+    => ctype_is_upper(byte)
+}
+
+/// Short alias of `ctype_is_lower`.
+open flow is_lower
+<- byte: u8
+=> bool
+{
+    => ctype_is_lower(byte)
+}
+
+/// Short alias of `ctype_is_alpha`.
+open flow is_alpha
+<- byte: u8
+=> bool
+{
+    => ctype_is_alpha(byte)
+}
+
+/// Short alias of `ctype_is_alnum`.
+open flow is_alnum
+<- byte: u8
+=> bool
+{
+    => ctype_is_alnum(byte)
+}
+
+/// Short alias of `ctype_is_hex_digit`.
+open flow is_hex_digit
+<- byte: u8
+=> bool
+{
+    => ctype_is_hex_digit(byte)
+}
+
+/// Short alias of `ctype_is_space`.
+open flow is_space
+<- byte: u8
+=> bool
+{
+    => ctype_is_space(byte)
+}
+
+/// Short alias of `ctype_is_ascii`.
+open flow is_ascii
+<- byte: u8
+=> bool
+{
+    => ctype_is_ascii(byte)
+}
+
+/// Short alias of `ctype_to_lower`.
+open flow to_lower
+<- byte: u8
+=> u8
+{
+    => ctype_to_lower(byte)
+}
+
+/// Short alias of `ctype_to_upper`.
+open flow to_upper
+<- byte: u8
+=> u8
+{
+    => ctype_to_upper(byte)
+}
+
+/// Short alias of `ctype_hex_value`.
+open flow hex_value
+<- byte: u8
+=> i32
+{
+    => ctype_hex_value(byte)
+}
+
+/// Short alias of `ctype_parse_u64`.
+open flow parse_u64
+<- text: [u8]
+=> CTypeParseResult
+{
+    => ctype_parse_u64(text)
+}
+
+/// Short alias of `ctype_count_digits`.
+open flow count_digits
+<- text: [u8]
+=> u64
+{
+    => ctype_count_digits(text)
+}
+
+/// Short alias of `ctype_equals_ignore_case`.
+open flow equals_ignore_case
+<- left: [u8]
+<- right: [u8]
+=> bool
+{
+    => ctype_equals_ignore_case(left, right)
+}

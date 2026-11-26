@@ -49,3 +49,28 @@ open flow stdio_write_all
 open flow stdio_flush {
     loi_stdio_flush()
 }
+
+// Short aliases: the module name already supplies the namespace, so the
+// repeated prefix is redundant here. The original names remain public for
+// broad imports and existing programs.
+/// Short alias of `stdio_read_exact`.
+open flow read_exact
+<-> data: [u8]
+=> i64
+{
+    => stdio_read_exact(<-> data)
+}
+
+/// Short alias of `stdio_write_all`.
+open flow write_all
+<- data: [u8]
+=> i64
+{
+    => stdio_write_all(data)
+}
+
+/// Short alias of `stdio_flush`.
+open flow flush
+{
+    stdio_flush()
+}

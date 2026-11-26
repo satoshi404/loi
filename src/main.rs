@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use loi::modules::{ModuleExport, ModuleView, ResolutionContext};
 use loi::{ColorChoice, ErrorFormat};
 
-const USAGE: &str = "usage:\n  loi <lex|parse|fmt|check> <file.loi>\n  loi complete <file.loi> --line N --column N\n  loi lsp-info <file.loi> --kind hover|definition|signature --line N --column N\n                          [--uri file:///path/to/file.loi]\n  loi gen <file.loi> [-o output.c] [--emit-h header.h] [--source-map map.json]\n                    [--emit-llvm-ir file.ll]\n  loi build <file.loi> [-o output] [--emit exe|obj|lib]\n                    [--debug|--release] [--rebuild] [--emit-c file.c] [--emit-h header.h]\n                    [--arena-size BYTES] [--source-map map.json] [--cc-flag FLAG]...\n                    [--c-source FILE]... [--backend c|llvm]\n  loi clean <file.loi> [-o output]\n\n'gen', 'build' and 'clean' accept -o/--output.\n'--emit', '--debug', '--release', '--rebuild', '--emit-c', '--emit-h', '--arena-size', '--source-map', '--cc-flag' and '--c-source'\nare only supported by 'build'. '--c-source' compiles an extra C file (a vendored\nFFI shim) and links it into an executable or library; it is rejected with '--emit obj'.\n'--emit-h', '--source-map' and '--emit-llvm-ir' are also supported by 'gen'.\n'--line' and '--column' are supported by 'complete' and 'lsp-info'; positions are\n1-based. 'complete' prints candidates, while 'lsp-info' prints a ready-to-use\nLSP hover, definition or signature-help result.\n'--backend' selects the LLVM opt-in backend (C11 is the default); it supports\nonly single-file executables and rejects C-only build options.\nWith '--emit obj' the default output is '<input stem>.o'; with '--emit lib'\nit is 'lib<input stem>.a'; otherwise it is './a.out'.\n'build' invokes 'cc' and 'ar'; set 'CC'/'AR' to override them. Those values\nmay contain arguments, split like a POSIX shell command line ('...' quotes,\n\"...\" quotes and backslash escapes).\nWithout -o, 'clean' removes ./a.out, <input stem>.o and lib<input stem>.a\nwhen their .loi-stamp files exist; with -o it removes exactly that output\nand its stamp. Both forms also remove generated C retained for that output\nthrough 'build --emit-c'. It does not read or check the source.\n\noptions:\n  -h, --help     show this help\n  -V, --version  show the compiler version\n  -g, --debug    compile with debug info (-g)\n      --release  compile with optimizations (-O2)\n      --rebuild  force recompilation, ignoring the incremental stamp\n      --arena-size BYTES  set the protect arena size (default 67108864 = 64 MiB)\n      --source-map FILE  write source map JSON Lines to FILE\n      --error-format FMT  diagnostic format: human, short or json (default human)\n      --color WHEN   colorize diagnostics: auto, always or never (default auto)\n      --line N      1-based line for 'complete' (LSP line + 1)\n      --column N    1-based column for 'complete' (LSP character + 1)";
+const USAGE: &str = "usage:\n  loi <lex|parse|fmt> <file.loi>\n  loi check <file.loi> [--lib-dir DIR]...\n  loi complete <file.loi> --line N --column N\n  loi lsp-info <file.loi> --kind hover|definition|signature --line N --column N\n                          [--uri file:///path/to/file.loi]\n  loi gen <file.loi> [-o output.c] [--emit-h header.h] [--source-map map.json]\n                    [--emit-llvm-ir file.ll] [--lib-dir DIR]...\n  loi build <file.loi> [-o output] [--emit exe|obj|lib]\n                    [--debug|--release] [--rebuild] [--emit-c file.c] [--emit-h header.h]\n                    [--arena-size BYTES] [--source-map map.json] [--cc-flag FLAG]...\n                    [--c-source FILE]... [--auto-c-source] [--backend c|llvm]\n                    [--lib-dir DIR]...\n  loi clean <file.loi> [-o output]\n\n'gen', 'build' and 'clean' accept -o/--output.\n'--emit', '--debug', '--release', '--rebuild', '--emit-c', '--emit-h', '--arena-size', '--source-map', '--cc-flag', '--c-source' and '--auto-c-source'\nare only supported by 'build'. '--c-source' compiles an extra C file (a vendored\nFFI shim) and links it into an executable or library; it is rejected with '--emit obj'.\n'--auto-c-source' links shim files discovered from imported packages; it is also\nrejected with '--emit obj' and by the LLVM backend.\n'--lib-dir DIR' adds a library root for logical imports, checked after any\nnearer project lib/ and in the order given; repeatable. It is supported by\n'check', 'gen' and 'build' and never uses the process cwd.\n'--emit-h', '--source-map' and '--emit-llvm-ir' are also supported by 'gen'.\n'--line' and '--column' are supported by 'complete' and 'lsp-info'; positions are\n1-based. 'complete' prints candidates, while 'lsp-info' prints a ready-to-use\nLSP hover, definition or signature-help result.\n'--backend' selects the LLVM opt-in backend (C11 is the default); it supports\nonly single-file executables and rejects C-only build options.\nWith '--emit obj' the default output is '<input stem>.o'; with '--emit lib'\nit is 'lib<input stem>.a'; otherwise it is './a.out'.\n'build' invokes 'cc' and 'ar'; set 'CC'/'AR' to override them. Those values\nmay contain arguments, split like a POSIX shell command line ('...' quotes,\n\"...\" quotes and backslash escapes).\nWithout -o, 'clean' removes ./a.out, <input stem>.o and lib<input stem>.a\nwhen their .loi-stamp files exist; with -o it removes exactly that output\nand its stamp. Both forms also remove generated C retained for that output\nthrough 'build --emit-c'. It does not read or check the source.\n\noptions:\n  -h, --help     show this help\n  -V, --version  show the compiler version\n  -g, --debug    compile with debug info (-g)\n      --release  compile with optimizations (-O2)\n      --rebuild  force recompilation, ignoring the incremental stamp\n      --arena-size BYTES  set the protect arena size (default 67108864 = 64 MiB)\n      --source-map FILE  write source map JSON Lines to FILE\n      --error-format FMT  diagnostic format: human, short or json (default human)\n      --color WHEN   colorize diagnostics: auto, always or never (default auto)\n      --line N      1-based line for 'complete' (LSP line + 1)\n      --column N    1-based column for 'complete' (LSP character + 1)";
 
 fn main() {
     let options = Options::parse();
@@ -43,7 +43,7 @@ fn main() {
         "lex" => lex(&source, primary_path, diagnostics),
         "parse" => parse_source(&source, primary_path, diagnostics),
         "fmt" => format_source(&source, primary_path, diagnostics),
-        "check" => check_source(&source, primary_path, diagnostics),
+        "check" => check_source(&source, primary_path, diagnostics, &options.lib_dirs),
         "complete" => complete_source(
             &source,
             primary_path,
@@ -74,6 +74,7 @@ fn main() {
             options.emit_ir.as_deref(),
             options.emit_llvm_ir.as_deref(),
             diagnostics,
+            &options.lib_dirs,
         ),
         "build" => build_source(
             &options.paths,
@@ -90,6 +91,8 @@ fn main() {
                 emit_ir: options.emit_ir.as_deref(),
                 cc_flags: &options.cc_flags,
                 c_sources: &options.c_sources,
+                auto_c_source: options.auto_c_source,
+                lib_dirs: &options.lib_dirs,
             },
             diagnostics,
         ),
@@ -272,6 +275,8 @@ struct Options {
     backend: Option<String>,
     cc_flags: Vec<String>,
     c_sources: Vec<PathBuf>,
+    auto_c_source: bool,
+    lib_dirs: Vec<PathBuf>,
     error_format: ErrorFormat,
     color: ColorChoice,
     line: Option<usize>,
@@ -317,6 +322,8 @@ impl Options {
         let mut backend = None;
         let mut cc_flags = Vec::new();
         let mut c_sources = Vec::new();
+        let mut auto_c_source = false;
+        let mut lib_dirs = Vec::new();
         let mut error_format = ErrorFormat::Human;
         let mut color = ColorChoice::default();
         let mut line = None;
@@ -478,6 +485,26 @@ impl Options {
                         process::exit(2);
                     };
                     c_sources.push(PathBuf::from(value));
+                }
+                "--auto-c-source" => {
+                    if auto_c_source {
+                        eprintln!("loi: '--auto-c-source' specified more than once");
+                        process::exit(2);
+                    }
+                    auto_c_source = true;
+                }
+                "--lib-dir" => {
+                    index += 1;
+                    let Some(value) = args.get(index) else {
+                        eprintln!("loi: '--lib-dir' requires a path");
+                        process::exit(2);
+                    };
+                    let dir = PathBuf::from(value);
+                    if !dir.is_dir() {
+                        eprintln!("loi: '--lib-dir' is not a directory: {}", dir.display());
+                        process::exit(2);
+                    }
+                    lib_dirs.push(dir);
                 }
                 "--line" | "--column" => {
                     let flag = args[index].clone();
@@ -665,6 +692,14 @@ impl Options {
             eprintln!("loi: '--c-source' is only supported by 'build'");
             process::exit(2);
         }
+        if auto_c_source && mode != "build" {
+            eprintln!("loi: '--auto-c-source' is only supported by 'build'");
+            process::exit(2);
+        }
+        if !lib_dirs.is_empty() && !matches!(mode.as_str(), "check" | "gen" | "build") {
+            eprintln!("loi: '--lib-dir' is only supported by 'check', 'gen' and 'build'");
+            process::exit(2);
+        }
         if (line.is_some() || column.is_some()) && !matches!(mode.as_str(), "complete" | "lsp-info")
         {
             eprintln!(
@@ -736,6 +771,8 @@ impl Options {
             backend,
             cc_flags,
             c_sources,
+            auto_c_source,
+            lib_dirs,
             error_format,
             color,
             line,
@@ -807,8 +844,8 @@ fn format_source(source: &str, path: &Path, diagnostics: DiagnosticOptions) {
     print!("{}", loi::format_program_with_comments(&program, &comments));
 }
 
-fn check_source(source: &str, path: &Path, diagnostics: DiagnosticOptions) {
-    let (program, primary) = load_program_with_imports(source, path, diagnostics);
+fn check_source(source: &str, path: &Path, diagnostics: DiagnosticOptions, lib_dirs: &[PathBuf]) {
+    let (program, primary) = load_program_with_imports(source, path, diagnostics, lib_dirs);
     report_diagnostics(
         path,
         source,
@@ -862,8 +899,9 @@ fn gen_source(
     emit_ir: Option<&Path>,
     emit_llvm_ir: Option<&Path>,
     diagnostics: DiagnosticOptions,
+    lib_dirs: &[PathBuf],
 ) {
-    let (program, primary) = load_program_with_imports(source, path, diagnostics);
+    let (program, primary) = load_program_with_imports(source, path, diagnostics, lib_dirs);
     let c_source =
         generate_checked_program(&program, &primary, path, source, source_map, diagnostics);
     match output {
@@ -934,6 +972,8 @@ struct BuildRequest<'a> {
     emit_ir: Option<&'a Path>,
     cc_flags: &'a [String],
     c_sources: &'a [PathBuf],
+    auto_c_source: bool,
+    lib_dirs: &'a [PathBuf],
 }
 
 fn clean_source(options: &Options) {
@@ -1039,8 +1079,12 @@ fn build_llvm_source(
     if !options.c_sources.is_empty() {
         reject("does not support '--c-source'");
     }
+    if options.auto_c_source {
+        reject("does not support '--auto-c-source'");
+    }
 
-    let (program, primary) = load_program_with_imports(source, input_path, diagnostics);
+    let (program, primary) =
+        load_program_with_imports(source, input_path, diagnostics, &options.lib_dirs);
     report_diagnostics(
         input_path,
         source,
@@ -1074,6 +1118,9 @@ fn build_llvm_source(
         command.arg(profile.cc_flag());
     }
     command.arg("-x").arg("ir").arg(&ir_path);
+    // Reset the input language so user-supplied object or source files in
+    // --cc-flag are not parsed as LLVM IR.
+    command.arg("-x").arg("none");
     command.arg("-o").arg(&output_path);
     for flag in &options.cc_flags {
         command.arg(flag);
@@ -1104,10 +1151,15 @@ fn build_source(
         emit_ir,
         cc_flags,
         c_sources,
+        auto_c_source,
+        lib_dirs,
     } = request;
 
-    if !c_sources.is_empty() && kind == BuildKind::Object {
-        eprintln!("loi: '--c-source' cannot be combined with '--emit obj'");
+    if (!c_sources.is_empty() || auto_c_source) && kind == BuildKind::Object {
+        eprintln!(
+            "loi: {} cannot be combined with '--emit obj'",
+            link_flag_names(c_sources, auto_c_source)
+        );
         process::exit(2);
     }
 
@@ -1128,13 +1180,22 @@ fn build_source(
             }
         };
 
-        let (program, primary) = load_program_with_imports(&source, input_path, diagnostics);
+        let (program, primary) =
+            load_program_with_imports(&source, input_path, diagnostics, lib_dirs);
         let c_source = generate_checked_program(
             &program,
             &primary,
             input_path,
             &source,
             source_map,
+            diagnostics,
+        );
+        let extern_flows = collect_extern_flows(&source, input_path, lib_dirs);
+        let link_sources = with_auto_c_sources(
+            c_sources,
+            auto_c_source,
+            &extern_flows,
+            lib_dirs,
             diagnostics,
         );
         let output_path = output
@@ -1169,7 +1230,7 @@ fn build_source(
             kind,
             profile,
             cc_flags,
-            c_sources,
+            &link_sources,
             arena_size,
         );
         let stamp_path = build_stamp_path(&output_path);
@@ -1234,7 +1295,7 @@ fn build_source(
         let success = match kind {
             BuildKind::Exe => {
                 exe_link_context = LinkContext {
-                    extern_flows: collect_extern_flows(&source, input_path),
+                    extern_flows: extern_flows.clone(),
                     options: diagnostics,
                 };
                 compile_c(
@@ -1244,7 +1305,7 @@ fn build_source(
                     arena_flag.as_deref(),
                     &output_path,
                     &c_path,
-                    c_sources,
+                    &link_sources,
                     false,
                     Some(&exe_link_context),
                 )
@@ -1270,7 +1331,7 @@ fn build_source(
                 arena_flag.as_deref(),
                 &output_path,
                 &c_path,
-                c_sources,
+                &link_sources,
             ),
         };
         if temporary {
@@ -1310,6 +1371,7 @@ fn build_source(
             &source,
             input_path,
             diagnostics,
+            lib_dirs,
             &mut registry,
             &mut Vec::new(),
         );
@@ -1349,6 +1411,15 @@ fn build_source(
         primary_path,
         primary_source,
         &loi::check_with_warnings_from(&merged, &primary),
+        diagnostics,
+    );
+
+    let extern_flows = collect_extern_flows_from_units(&units, lib_dirs);
+    let link_sources = with_auto_c_sources(
+        c_sources,
+        auto_c_source,
+        &extern_flows,
+        lib_dirs,
         diagnostics,
     );
 
@@ -1408,8 +1479,11 @@ fn build_source(
         object_files.push(object_path);
     }
 
-    if kind == BuildKind::Library && !c_sources.is_empty() {
-        eprintln!("loi: '--c-source' is not supported by multi-file library builds");
+    if kind == BuildKind::Library && !link_sources.is_empty() {
+        eprintln!(
+            "loi: {} is not supported by multi-file library builds",
+            link_flag_names(c_sources, auto_c_source)
+        );
         process::exit(2);
     }
 
@@ -1432,7 +1506,7 @@ fn build_source(
             for obj in &object_files {
                 command.arg(obj);
             }
-            for source in c_sources {
+            for source in &link_sources {
                 command.arg(source);
             }
             // Linker inputs (notably `-l` flags) must follow the objects.
@@ -1441,7 +1515,7 @@ fn build_source(
             }
             command.arg("-lm");
             let link_context = LinkContext {
-                extern_flows: collect_extern_flows_from_units(&units),
+                extern_flows: extern_flows.clone(),
                 options: diagnostics,
             };
             if !run_c_link(&compiler, &mut command, &link_context) {
@@ -1476,6 +1550,7 @@ fn build_source(
 }
 
 /// An `extern flow` declaration emitted by the C backend as a foreign symbol.
+#[derive(Clone)]
 struct ExternFlow {
     c_symbol: String,
     display_name: String,
@@ -1495,20 +1570,21 @@ struct LinkContext {
 /// Collect every `extern flow` in `source` and in the files it imports,
 /// keeping the source text and file name of each declaration so diagnostics can
 /// point at the right file even when it was imported.
-fn collect_extern_flows(source: &str, path: &Path) -> Vec<ExternFlow> {
+fn collect_extern_flows(source: &str, path: &Path, lib_dirs: &[PathBuf]) -> Vec<ExternFlow> {
     let mut visited = HashSet::new();
     let mut found = Vec::new();
-    collect_extern_flows_from(source, path, &mut visited, &mut found);
+    collect_extern_flows_from(source, path, lib_dirs, &mut visited, &mut found);
     found
 }
 
 fn collect_extern_flows_from_units(
     units: &[(PathBuf, HashSet<String>, String)],
+    lib_dirs: &[PathBuf],
 ) -> Vec<ExternFlow> {
     let mut visited = HashSet::new();
     let mut found = Vec::new();
     for (path, _, source) in units {
-        collect_extern_flows_from(source, path, &mut visited, &mut found);
+        collect_extern_flows_from(source, path, lib_dirs, &mut visited, &mut found);
     }
     found
 }
@@ -1516,6 +1592,7 @@ fn collect_extern_flows_from_units(
 fn collect_extern_flows_from(
     source: &str,
     path: &Path,
+    lib_dirs: &[PathBuf],
     visited: &mut HashSet<PathBuf>,
     found: &mut Vec<ExternFlow>,
 ) {
@@ -1527,9 +1604,20 @@ fn collect_extern_flows_from(
     };
     for item in program.items {
         if let loi::Item::Import(import) = &item {
-            let child = resolve_import_path(&import.path, path);
-            if let Ok(child_source) = fs::read_to_string(&child) {
-                collect_extern_flows_from(&child_source, &child, visited, found);
+            // Use the same file resolution as the loader so a logical import
+            // cannot hide an `extern flow` from the linker diagnostic.
+            if let Ok(targets) = loi::imports::resolve_import_with(import, path, lib_dirs) {
+                for target in targets {
+                    if let Ok(child_source) = fs::read_to_string(&target.path) {
+                        collect_extern_flows_from(
+                            &child_source,
+                            &target.path,
+                            lib_dirs,
+                            visited,
+                            found,
+                        );
+                    }
+                }
             }
             continue;
         }
@@ -1601,7 +1689,298 @@ fn shim_help(path: &Path, c_symbol: &str) -> Option<String> {
 }
 
 fn shim_defines(path: &Path, c_symbol: &str) -> bool {
-    fs::read_to_string(path).is_ok_and(|source| source.contains(c_symbol))
+    fs::read_to_string(path).is_ok_and(|source| c_defines_function(&source, c_symbol))
+}
+
+/// True when `source` contains a C function definition for `symbol`.
+///
+/// Inactive preprocessor branches and `#define` lines are blanked first, then
+/// comments and string/character literals. The remaining scan is deliberately
+/// small: it recognises `name(...) <decorations> { ... }`, where decorations are
+/// attributes or qualifiers between the parameter list and the body. It is
+/// enough for vendored shims and conservative enough not to select a shim from
+/// prose, a macro or disabled code.
+fn c_defines_function(source: &str, symbol: &str) -> bool {
+    let sanitized = blank_c_comments_and_literals(&active_c_source(source));
+    let bytes = sanitized.as_bytes();
+    let needle = symbol.as_bytes();
+    if needle.is_empty() {
+        return false;
+    }
+    let mut index = 0;
+    while index + needle.len() <= bytes.len() {
+        let before_ok = index == 0 || !is_c_ident_byte(bytes[index - 1]);
+        let after = index + needle.len();
+        let after_ok = after == bytes.len() || !is_c_ident_byte(bytes[after]);
+        if before_ok && after_ok && &bytes[index..after] == needle {
+            let mut cursor = after;
+            skip_c_whitespace(bytes, &mut cursor);
+            if skip_c_parens(bytes, &mut cursor) {
+                skip_c_decorations(bytes, &mut cursor);
+                if bytes.get(cursor) == Some(&b'{') {
+                    return true;
+                }
+            }
+        }
+        index += 1;
+    }
+    false
+}
+
+fn is_c_ident_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+fn skip_c_whitespace(bytes: &[u8], cursor: &mut usize) {
+    while bytes.get(*cursor).is_some_and(u8::is_ascii_whitespace) {
+        *cursor += 1;
+    }
+}
+
+/// Skip a balanced parenthesised group, leaving `cursor` after the `)`.
+fn skip_c_parens(bytes: &[u8], cursor: &mut usize) -> bool {
+    if bytes.get(*cursor) != Some(&b'(') {
+        return false;
+    }
+    let mut depth = 0usize;
+    while *cursor < bytes.len() {
+        match bytes[*cursor] {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    *cursor += 1;
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        *cursor += 1;
+    }
+    false
+}
+
+/// Skip a balanced `[[...]]` C attribute, leaving `cursor` after `]]`.
+fn skip_c_attributes(bytes: &[u8], cursor: &mut usize) -> bool {
+    if bytes.get(*cursor) != Some(&b'[') {
+        return false;
+    }
+    let mut depth = 0usize;
+    while let Some(byte) = bytes.get(*cursor) {
+        match byte {
+            b'[' => depth += 1,
+            b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    *cursor += 1;
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        *cursor += 1;
+    }
+    false
+}
+
+/// Skip attributes and qualifiers between `)` and `{`.
+///
+/// An identifier followed by a balanced group (`__attribute__((weak))`) or a
+/// `[[...]]` attribute is treated as a decoration; a few known qualifiers are
+/// accepted without one. Unknown bare identifiers stop the scan so a later
+/// block is not mistaken for this function's body.
+fn skip_c_decorations(bytes: &[u8], cursor: &mut usize) {
+    loop {
+        skip_c_whitespace(bytes, cursor);
+        if bytes.get(*cursor) == Some(&b'{') {
+            return;
+        }
+        if bytes.get(*cursor) == Some(&b'[') {
+            if !skip_c_attributes(bytes, cursor) {
+                return;
+            }
+            continue;
+        }
+        let start = *cursor;
+        if !bytes
+            .get(start)
+            .is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_')
+        {
+            return;
+        }
+        while bytes
+            .get(*cursor)
+            .is_some_and(|byte| is_c_ident_byte(*byte))
+        {
+            *cursor += 1;
+        }
+        let mut probe = *cursor;
+        skip_c_whitespace(bytes, &mut probe);
+        if bytes.get(probe) == Some(&b'(') {
+            *cursor = probe;
+            if !skip_c_parens(bytes, cursor) {
+                *cursor = start;
+                return;
+            }
+            continue;
+        }
+        let qualifier = &bytes[start..*cursor];
+        if matches!(
+            qualifier,
+            b"const"
+                | b"volatile"
+                | b"restrict"
+                | b"noexcept"
+                | b"throw"
+                | b"_Noreturn"
+                | b"__cdecl"
+                | b"__stdcall"
+                | b"__fastcall"
+        ) {
+            continue;
+        }
+        *cursor = start;
+        return;
+    }
+}
+
+/// Blank preprocessor lines that cannot contribute a definition.
+///
+/// `#define` lines are hidden so a function-like macro name is not mistaken for
+/// a C function. `#if 0` branches (with nested conditionals and `#else`) are
+/// hidden; other conditional branches are kept conservatively because the
+/// scanner does not evaluate arbitrary preprocessor expressions.
+fn active_c_source(source: &str) -> String {
+    #[derive(Clone, Copy)]
+    struct CondState {
+        parent: bool,
+        branch: bool,
+        taken: bool,
+    }
+
+    fn condition_after(keyword: &str, directive: &str) -> bool {
+        let expression = directive
+            .strip_prefix(keyword)
+            .unwrap_or("")
+            .split("//")
+            .next()
+            .unwrap_or("")
+            .trim();
+        !expression.is_empty() && expression != "0" && expression != "false"
+    }
+
+    let mut out = String::with_capacity(source.len());
+    let mut stack: Vec<CondState> = Vec::new();
+    let mut active = true;
+    for line in source.split_inclusive('\n') {
+        let directive = line.trim_start().strip_prefix('#').map(str::trim_start);
+        let keyword = directive.and_then(|text| text.split_whitespace().next());
+        match keyword {
+            Some("if") | Some("ifdef") | Some("ifndef") => {
+                let condition = match keyword {
+                    Some("if") => directive.is_some_and(|text| condition_after("if", text)),
+                    _ => true,
+                };
+                let branch = active && condition;
+                stack.push(CondState {
+                    parent: active,
+                    branch,
+                    taken: branch,
+                });
+                active = branch;
+                out.push_str(&blank_c_line(line));
+            }
+            Some("elif") => {
+                if let Some(state) = stack.last_mut() {
+                    let condition = directive.is_some_and(|text| condition_after("elif", text));
+                    let branch = state.parent && !state.taken && condition;
+                    state.branch = branch;
+                    state.taken |= branch;
+                    active = state.parent && state.branch;
+                }
+                out.push_str(&blank_c_line(line));
+            }
+            Some("else") => {
+                if let Some(state) = stack.last_mut() {
+                    state.branch = state.parent && !state.taken;
+                    state.taken = true;
+                    active = state.parent && state.branch;
+                }
+                out.push_str(&blank_c_line(line));
+            }
+            Some("endif") => {
+                stack.pop();
+                active = stack
+                    .last()
+                    .is_none_or(|state| state.parent && state.branch);
+                out.push_str(&blank_c_line(line));
+            }
+            Some("define") if active => out.push_str(&blank_c_line(line)),
+            _ if !active => out.push_str(&blank_c_line(line)),
+            _ => out.push_str(line),
+        }
+    }
+    out
+}
+
+fn blank_c_line(line: &str) -> String {
+    line.chars()
+        .map(|c| if c == '\n' { '\n' } else { ' ' })
+        .collect()
+}
+
+fn blank_c_comments_and_literals(source: &str) -> String {
+    let bytes = source.as_bytes();
+    let mut out = String::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'/' if bytes.get(index + 1) == Some(&b'/') => {
+                out.push_str("  ");
+                index += 2;
+                while index < bytes.len() && bytes[index] != b'\n' {
+                    out.push(' ');
+                    index += 1;
+                }
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'*') => {
+                out.push_str("  ");
+                index += 2;
+                while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/')
+                {
+                    out.push(if bytes[index] == b'\n' { '\n' } else { ' ' });
+                    index += 1;
+                }
+                if index + 1 < bytes.len() {
+                    out.push_str("  ");
+                    index += 2;
+                }
+            }
+            quote @ (b'"' | b'\'') => {
+                out.push(' ');
+                index += 1;
+                while index < bytes.len() {
+                    if bytes[index] == b'\\' {
+                        out.push_str("  ");
+                        index += 2;
+                        continue;
+                    }
+                    if bytes[index] == quote {
+                        out.push(' ');
+                        index += 1;
+                        break;
+                    }
+                    out.push(if bytes[index] == b'\n' { '\n' } else { ' ' });
+                    index += 1;
+                }
+            }
+            byte => {
+                out.push(byte as char);
+                index += 1;
+            }
+        }
+    }
+    out
 }
 
 fn shim_hint(path: &Path) -> String {
@@ -1609,6 +1988,90 @@ fn shim_hint(path: &Path) -> String {
         "this library ships a C shim: build with --c-source {}",
         path.display()
     )
+}
+
+/// Name every CLI flag that requested C sources, in a stable order.
+fn link_flag_names(c_sources: &[PathBuf], auto: bool) -> String {
+    let mut flags = Vec::new();
+    if !c_sources.is_empty() {
+        flags.push("'--c-source'");
+    }
+    if auto {
+        flags.push("'--auto-c-source'");
+    }
+    flags.join(" and ")
+}
+
+/// Add shim files discovered from imported packages to explicit `--c-source`
+/// inputs. Explicit order is preserved and discovered files are deduplicated by
+/// canonical path so the same shim is never compiled twice. The first defining
+/// candidate wins for one declaring file (adjacent before package root), but
+/// two different packages claiming the same C symbol are an ambiguity error
+/// instead of a linker duplicate-symbol failure.
+fn with_auto_c_sources(
+    explicit: &[PathBuf],
+    auto: bool,
+    extern_flows: &[ExternFlow],
+    lib_dirs: &[PathBuf],
+    options: DiagnosticOptions,
+) -> Vec<PathBuf> {
+    let mut sources = Vec::new();
+    let mut seen = HashSet::new();
+    for source in explicit {
+        let key = canonical_key(source);
+        if seen.insert(key) {
+            sources.push(source.clone());
+        }
+    }
+    if auto {
+        let mut discovered = Vec::new();
+        let mut chosen: HashMap<String, PathBuf> = HashMap::new();
+        for flow in extern_flows {
+            let declaring_file = Path::new(&flow.file);
+            let mut selected = None;
+            for candidate in loi::imports::shim_candidates_with(declaring_file, lib_dirs) {
+                if candidate.is_file() && shim_defines(&candidate, &flow.c_symbol) {
+                    selected = Some(candidate);
+                    break;
+                }
+            }
+            let Some(candidate) = selected else {
+                continue;
+            };
+            if let Some(existing) = chosen.get(&flow.c_symbol) {
+                if canonical_key(existing) != canonical_key(&candidate) {
+                    let candidates = [
+                        existing.display().to_string(),
+                        candidate.display().to_string(),
+                    ]
+                    .join(", ");
+                    let diagnostic = loi::Diagnostic::from_error(
+                        format!(
+                            "ambiguous C shim for extern flow '{}' (C symbol '{}')",
+                            flow.display_name, flow.c_symbol
+                        ),
+                        flow.span,
+                    )
+                    .with_label("two imported packages define this symbol")
+                    .with_help(format!(
+                        "candidates: {candidates}; import one package or pass --c-source FILE explicitly"
+                    ));
+                    report_one_diagnostic(Path::new(&flow.file), &flow.source, diagnostic, options);
+                }
+            } else {
+                chosen.insert(flow.c_symbol.clone(), candidate.clone());
+            }
+            discovered.push(candidate);
+        }
+        discovered.sort();
+        for candidate in discovered {
+            let key = canonical_key(&candidate);
+            if seen.insert(key) {
+                sources.push(candidate);
+            }
+        }
+    }
+    sources
 }
 
 /// The symbol named by a linker "undefined reference"/"undefined symbol" line.
@@ -2032,17 +2495,6 @@ fn canonical_key(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-fn resolve_import_path(import: &str, from: &Path) -> PathBuf {
-    let requested = Path::new(import);
-    if requested.is_absolute() {
-        requested.to_path_buf()
-    } else {
-        from.parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join(requested)
-    }
-}
-
 /// One loaded source file. Imports keep their aliases so the resolver can
 /// tell which module a qualified name refers to.
 struct LoadedModule {
@@ -2074,6 +2526,7 @@ fn load_module(
     source: &str,
     path: &Path,
     diagnostics: DiagnosticOptions,
+    lib_dirs: &[PathBuf],
     registry: &mut ModuleRegistry,
     stack: &mut Vec<PathBuf>,
 ) -> usize {
@@ -2096,56 +2549,68 @@ fn load_module(
         .items
         .iter()
         .filter_map(|item| match item {
-            loi::Item::Import(decl) => Some((decl.clone(), decl.public)),
+            loi::Item::Import(decl) => Some(decl.clone()),
             _ => None,
         })
         .collect::<Vec<_>>();
     let mut aliases = HashMap::new();
     aliases.insert(module_name(path), id);
-    for (import, public) in imports {
-        let child = resolve_import_path(&import.path, path);
-        let child_key = canonical_key(&child);
-        if stack.contains(&child_key) {
-            report_one_diagnostic(
-                path,
-                source,
-                loi::Diagnostic::from_error(
-                    format!("import cycle detected while loading '{}'", child.display()),
-                    import.span,
-                )
-                .with_label("this import returns to a file already being loaded"),
-                diagnostics,
-            );
-        }
-        let alias = import.alias.clone().unwrap_or_else(|| module_name(&child));
-        let child_source = match fs::read_to_string(&child) {
-            Ok(source) => source,
-            Err(error) => {
-                eprintln!("loi: {}: {error}", child.display());
-                process::exit(1);
-            }
+    for import in imports {
+        let targets = match loi::imports::resolve_import_with(&import, path, lib_dirs) {
+            Ok(targets) => targets,
+            Err(error) => report_one_diagnostic(path, source, error.into_diagnostic(), diagnostics),
         };
-        stack.push(key.clone());
-        let target = load_module(&child_source, &child, diagnostics, registry, stack);
-        stack.pop();
-        // Binding the same name to the same module twice is a harmless dedup;
-        // it is an error only when two different modules claim one alias.
-        if let Some(&existing) = aliases.get(&alias)
-            && existing != target
-        {
-            report_one_diagnostic(
-                path,
-                source,
-                loi::Diagnostic::from_error(
-                    format!("duplicate module alias '{alias}'"),
-                    import.span,
-                )
-                .with_label("this alias is already bound in this module"),
+        for target in targets {
+            let child = target.path;
+            let child_key = canonical_key(&child);
+            if stack.contains(&child_key) {
+                report_one_diagnostic(
+                    path,
+                    source,
+                    loi::Diagnostic::from_error(
+                        format!("import cycle detected while loading '{}'", child.display()),
+                        target.declaration_span,
+                    )
+                    .with_label("this import returns to a file already being loaded"),
+                    diagnostics,
+                );
+            }
+            let child_source = match fs::read_to_string(&child) {
+                Ok(source) => source,
+                Err(error) => {
+                    eprintln!("loi: {}: {error}", child.display());
+                    process::exit(1);
+                }
+            };
+            stack.push(key.clone());
+            let module = load_module(
+                &child_source,
+                &child,
                 diagnostics,
+                lib_dirs,
+                registry,
+                stack,
             );
+            stack.pop();
+            if let Some(&existing) = aliases.get(&target.alias)
+                && existing != module
+            {
+                report_one_diagnostic(
+                    path,
+                    source,
+                    loi::Diagnostic::from_error(
+                        format!("duplicate module alias '{}'", target.alias),
+                        target.alias_span,
+                    )
+                    .with_label("this alias is already bound in this module"),
+                    diagnostics,
+                );
+            }
+            aliases.insert(target.alias.clone(), module);
+            registry.modules[id]
+                .imports
+                .push((target.alias, module, target.public));
         }
-        aliases.insert(alias.clone(), target);
-        registry.modules[id].imports.push((alias, target, public));
     }
     id
 }
@@ -2292,9 +2757,17 @@ fn load_program_with_imports(
     source: &str,
     path: &Path,
     diagnostics: DiagnosticOptions,
+    lib_dirs: &[PathBuf],
 ) -> (loi::Program, loi::Program) {
     let mut registry = ModuleRegistry::default();
-    let primary_id = load_module(source, path, diagnostics, &mut registry, &mut Vec::new());
+    let primary_id = load_module(
+        source,
+        path,
+        diagnostics,
+        lib_dirs,
+        &mut registry,
+        &mut Vec::new(),
+    );
     let (items, _) = resolve_and_flatten(&registry, diagnostics);
     let primary = loi::Program {
         items: registry.modules[primary_id].items.clone(),
@@ -2368,7 +2841,9 @@ fn report_diagnostics(
     diagnostics: &[loi::Diagnostic],
     options: DiagnosticOptions,
 ) {
-    if diagnostics.is_empty() {
+    // A clean JSON check is still a structured result (`[]`), so clients do not
+    // have to special-case empty stderr. Human and short formats stay silent.
+    if diagnostics.is_empty() && options.format != loi::ErrorFormat::Json {
         return;
     }
 
