@@ -145,6 +145,7 @@ open flow main
             <tbody>
               <tr><td><code>src/</code></td><td>Lexer, parser, AST, checker, ownership analysis, C backend, IR/ASM drafts and CLI.</td></tr>
               <tr><td><code>lib/std.loi</code></td><td>The explicit standard library, written in Loi.</td></tr>
+              <tr><td><code>lib/build.loi</code></td><td>The default build runner compiled by <code>loi make</code>.</td></tr>
               <tr><td><code>examples/</code></td><td>Reference programs, including the particle simulation and tic-tac-toe.</td></tr>
               <tr><td><code>tests/</code></td><td>Integration tests for the lexer, parser, checker, formatter, CLI and code generator.</td></tr>
               <tr><td><code>website/</code></td><td>This site, its shared assets, example mirrors and the playground server.</td></tr>
@@ -964,9 +965,12 @@ flow exchange
             convention-named <code>&lt;Shape&gt;_release</code> flow. The standard
             library also provides linear <code>File</code> and <code>TcpStream</code>
             handles, process/environment helpers, and <code>lib/stdio.loi</code>
-            for incremental byte I/O on framed protocols. Block L5 adds
-            <code>lib/process.loi</code> for spawning children with captured
-            output. There is still no directory or seek API, and no
+            for incremental byte I/O on framed protocols.
+            <code>os_path_exists</code> / <code>path_exists</code> in
+            <code>lib/os/file.loi</code> checks a runtime byte-slice path through
+            <code>os_shim.c</code>; a missing path returns <code>false</code>.
+            Block L5 adds <code>lib/process.loi</code> for spawning children with
+            captured output. There is still no directory or seek API, and no
             process-spawn intrinsic: spawning lives in the library.
           </p>
         </section>
@@ -1961,6 +1965,8 @@ python3 -m http.server -d web 8000   # abra http://localhost:8000</code></pre>
               <tr><td><code>loi gen FILE [-o out.c]</code></td><td>Prints or writes the generated C11 translation unit.</td></tr>
               <tr><td><code>loi gen FILE --emit-llvm-ir FILE.ll</code></td><td>Writes real LLVM textual IR for the supported scalar subset; can be combined with <code>-o out.c</code>.</td></tr>
               <tr><td><code>loi build FILE... [-o out]</code></td><td>Checks, generates C, invokes <code>cc</code> and links the output. With <code>--backend llvm</code>, compiles scalar IR with <code>clang</code> instead.</td></tr>
+              <tr><td><code>loi init NAME</code></td><td>Creates <code>src/</code>, <code>build.loi</code>, <code>.gitignore</code> and <code>output/</code> for a new project; refuses an existing destination.</td></tr>
+              <tr><td><code>loi make</code></td><td>Compiles and runs <code>build.loi</code> in the current project; builds into <code>output/</code> and takes no file argument.</td></tr>
               <tr><td><code>loi clean FILE [-o out]</code></td><td>Removes the output and its incremental stamp; does not read the source.</td></tr>
             </tbody>
           </table>
@@ -1985,8 +1991,60 @@ python3 -m http.server -d web 8000   # abra http://localhost:8000</code></pre>
               <tr><td><code>--c-source FILE</code></td><td>Compiles and links an extra C file, such as a vendored FFI shim; repeatable.</td></tr>
               <tr><td><code>--auto-c-source</code></td><td>Links shims discovered from imported packages: the shim beside the declaring module, or the nearest <code>lib/&lt;package&gt;_shim.c</code>. Only a real C definition counts: <code>#define</code> lines and <code>#if 0</code> branches are ignored, while attributes between the parameter list and the body are accepted. Two packages claiming one symbol report an ambiguity error naming both shims. Discovery is anchored at the importing file, never the cwd. Opt-in; rejected with <code>--emit obj</code> and <code>--backend llvm</code>.</td></tr>
               <tr><td><code>--lib-dir DIR</code></td><td>Adds a library root for logical imports, checked after any nearer project <code>lib/</code> and in the order given; repeatable. Supported by <code>check</code>, <code>gen</code> and <code>build</code>. Use it for sources outside the compiler repository, e.g. <code>loi build main.loi -o main --lib-dir /path/to/loi/lib</code>; <code>--auto-c-source</code> also finds shims there.</td></tr>
+              <tr><td><code>--obj-dir DIR</code></td><td>Build-only. Writes <code>&lt;stem&gt;.o</code> and <code>&lt;stem&gt;.h</code> into <code>DIR</code> instead of beside each source, creating the directory when needed. Forces the multi-object pipeline even for one input, so <code>-o OUTPUT</code> is required; object names are de-duplicated when stems repeat.</td></tr>
             </tbody>
           </table>
+
+          <h3>Project builds</h3>
+          <p>
+            A scaffold declares its build inputs in <code>build.loi</code>; the logic itself
+            stays in Loi. The default runner lives in the toolchain's <code>lib/build.loi</code>;
+            a project-local <code>lib/build.loi</code> overrides it because logical imports
+            prefer the nearest library root. <code>output/config.txt</code> is an informational
+            snapshot, not an input.
+          </p>
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>terminal</span><button type="button" data-copy>copy</button></div>
+            <pre><code>loi init demo
+cd demo
+loi make
+./output/demo</code></pre>
+          </div>
+          <div class="doc-code">
+            <div class="doc-code-bar"><span>build.loi</span><button type="button" data-copy>copy</button></div>
+            <pre><code>import build as loi_build
+
+open flow main
+    => i32
+{
+    protect {
+        mut plan: loi_build::BuildPlan
+        loi_build::new("demo", -&gt; plan)
+        loi_build::source(&lt;-&gt; plan, "src/main.loi")
+        loi_build::mode(&lt;-&gt; plan, "native")
+        loi_build::optimize(&lt;-&gt; plan, "none")
+        =&gt; loi_build::run(plan)
+    }
+}</code></pre>
+          </div>
+          <p>
+            <code>loi init NAME</code> writes <code>src/main.loi</code>, <code>build.loi</code>,
+            <code>.gitignore</code>, <code>output/config.txt</code> and
+            <code>output/objects/.gitkeep</code>. Configure the plan with <code>source</code>,
+            <code>lib("m")</code> (links <code>-lm</code>), <code>cc_flag</code>,
+            <code>target</code>, <code>profile</code>, <code>mode</code> and
+            <code>optimize</code>; invalid values fail immediately. Modes are
+            <code>native</code>, <code>release</code>, <code>size</code>, <code>test</code>
+            and <code>web</code>; optimization levels are <code>none</code>,
+            <code>debug</code>, <code>speed</code> and <code>size</code>. <code>make</code>
+            builds into <code>output/</code> and fingerprints the build script, plan,
+            libraries, flags and every source path plus byte content into
+            <code>output/.loi-build-cache</code>; an unchanged run prints
+            <code>[make] up to date</code>. Set <code>LOI_BUILD_TARGET=exe|obj|lib</code>,
+            <code>LOI_BUILD_PROFILE=debug|release</code> or <code>LOI_BUILD_REBUILD=1</code>
+            to override the plan without editing the script. <code>make</code> does not run
+            the artifact; execute <code>./output/NAME</code> yourself.
+          </p>
 
           <h3>Opt-in LLVM backend</h3>
           <p>

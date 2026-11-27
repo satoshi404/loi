@@ -2,8 +2,9 @@
 // the real LSP server; no browser or npm dependencies are required.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
+import { tmpdir } from "node:os";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -12,6 +13,29 @@ const websiteDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const projectDir = path.dirname(websiteDir);
 let child;
 let base;
+const webServers = [];
+
+async function spawnWebServer(extraEnv = {}) {
+  const port = await freePort();
+  const proc = spawn(process.execPath, ["website/server.mjs"], {
+    cwd: projectDir,
+    env: {
+      ...process.env,
+      HOST: "127.0.0.1",
+      PORT: String(port),
+      LOI_BIN: "target/debug/loi",
+      LOI_LSP_BIN: "target/debug/loi-lsp",
+      ...extraEnv,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  proc.stderr.on("data", (chunk) => process.stderr.write(`[web server] ${chunk}`));
+  webServers.push(proc);
+  const serverBase = `http://127.0.0.1:${port}`;
+  await waitForServer(serverBase);
+  return { proc, base: serverBase };
+}
+
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -24,11 +48,11 @@ function freePort() {
   });
 }
 
-async function waitForServer() {
+async function waitForServer(serverBase = base) {
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(`${base}/api/health`);
+      const response = await fetch(`${serverBase}/api/health`);
       if (response.ok) return;
     } catch (_) {
       // Server is still starting.
@@ -38,8 +62,8 @@ async function waitForServer() {
   throw new Error("Playground server did not start in time.");
 }
 
-async function post(route, payload) {
-  const response = await fetch(`${base}${route}`, {
+async function post(route, payload, serverBase = base) {
+  const response = await fetch(`${serverBase}${route}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -69,7 +93,9 @@ before(async () => {
 });
 
 after(() => {
-  if (child && !child.killed) child.kill("SIGTERM");
+  for (const proc of [...webServers, child]) {
+    if (proc && !proc.killed) proc.kill("SIGTERM");
+  }
 });
 
 test("health reports the real compiler", async () => {
@@ -182,4 +208,67 @@ test("LSP endpoint publishes diagnostics from the real compiler", async () => {
   assert.equal(notifications.length, 1);
   assert.equal(notifications[0].params.diagnostics.length, 1);
   assert.match(notifications[0].params.diagnostics[0].message, /unknown variable/);
+});
+
+test("identical WebAssembly builds are cached and reused", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "loi-web-cache-test-"));
+  const bin = path.join(root, "bin");
+  const raylib = path.join(root, "raylib-web");
+  const counter = path.join(root, "builds");
+  const cache = path.join(root, "web-runs");
+  await mkdir(bin, { recursive: true });
+  await mkdir(raylib, { recursive: true });
+  await mkdir(cache, { recursive: true });
+  await writeFile(counter, "0");
+  await writeFile(
+    path.join(bin, "emcc"),
+    `#!/usr/bin/env sh\nif [ "$1" = "--version" ]; then echo emcc test; exit 0; fi\nexit 0\n`
+  );
+  await writeFile(
+    path.join(bin, "build_web.sh"),
+    `#!/usr/bin/env sh
+set -eu
+count=$(cat "$BUILD_COUNTER")
+echo $((count + 1)) > "$BUILD_COUNTER"
+mkdir -p "$OUT_DIR"
+cat > "$OUT_DIR/main.html" <<EOF
+<html><body><canvas></canvas></body></html>
+EOF
+`
+  );
+  await chmod(path.join(bin, "emcc"), 0o755);
+  await chmod(path.join(bin, "build_web.sh"), 0o755);
+
+  try {
+    const server = await spawnWebServer({
+      PATH: `${bin}:${process.env.PATH}`,
+      RAYLIB_WEB: raylib,
+      LOI_WEB_RUNS_DIR: cache,
+      LOI_WEB_BUILD_SCRIPT: path.join(bin, "build_web.sh"),
+      BUILD_COUNTER: counter,
+    });
+    const source = await readFile(path.join(projectDir, "examples", "raylib_web.loi"), "utf8");
+    const first = await post("/api/run", { source }, server.base);
+    assert.equal(first.ok, true, first.stderr);
+    assert.equal(first.stage, "web-build");
+    assert.equal((await readFile(counter, "utf8")).trim(), "1");
+
+    const second = await post("/api/run", { source }, server.base);
+    assert.equal(second.ok, true, second.stderr);
+    assert.equal(second.stage, "web-cache");
+    assert.equal(second.webUrl, first.webUrl);
+    assert.equal((await readFile(counter, "utf8")).trim(), "1");
+
+    const edited = source.replace("open flow main", "open flow changed");
+    const third = await post("/api/run", { source: edited }, server.base);
+    assert.equal(third.ok, true, third.stderr);
+    assert.equal(third.stage, "web-build");
+    assert.notEqual(third.webUrl, first.webUrl);
+    assert.equal((await readFile(counter, "utf8")).trim(), "2");
+  } finally {
+    for (const proc of webServers.splice(0)) {
+      if (!proc.killed) proc.kill("SIGTERM");
+    }
+    await rm(root, { recursive: true, force: true });
+  }
 });

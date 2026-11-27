@@ -97,6 +97,22 @@ int32_t loi_os_errno(void) {
     return (int32_t)errno;
 }
 
+bool loi_os_path_exists(LoiSlice path) {
+    if (path.len == 0 || path.data == NULL) {
+        return false;
+    }
+    char* cpath = (char*)malloc(path.len + 1);
+    if (cpath == NULL) {
+        return false;
+    }
+    memcpy(cpath, path.data, path.len);
+    cpath[path.len] = '\0';
+    struct stat info;
+    bool found = stat(cpath, &info) == 0;
+    free(cpath);
+    return found;
+}
+
 int32_t loi_io_open(const char* path, uint32_t write) {
     if (path == NULL) {
         return -1;

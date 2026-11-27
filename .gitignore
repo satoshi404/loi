@@ -9,5 +9,6 @@ __pycache__/
 !/examples/*.loi
 !/website/examples/*.loi
 !/tests/abi/*.loi
+!/lib/build.loi
 *.o
 *.loi-stamp

@@ -25,6 +25,7 @@
 import http from "node:http";
 import path from "node:path";
 import os from "node:os";
+import { createHash } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -36,6 +37,7 @@ import {
   readFile,
   rm,
   stat,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 
@@ -60,7 +62,11 @@ const webDemos = new Map([
   ["audio_visualizer", { caption: "Visualizador de áudio com sequenciador." }],
   ["text_editor", { caption: "Editor de texto com raylib." }],
 ]);
-const webRunsDir = path.join(websiteDir, "web-runs");
+const webRunsDir = path.resolve(process.env.LOI_WEB_RUNS_DIR || path.join(websiteDir, "web-runs"));
+const webCacheMarker = ".loi-web-cache";
+const webBuildScript = path.resolve(
+  process.env.LOI_WEB_BUILD_SCRIPT || path.join(projectDir, "examples", "build_web.sh")
+);
 
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 4173);
@@ -94,6 +100,7 @@ let compiler = resolveCompiler();
 let activeJobs = 0;
 let lspSessionPromise = null;
 let webBuildSupport = null;
+const webBuildsInFlight = new Map();
 
 /* --------------------------------------------------------------------------
    Generic example routing and LSP framing
@@ -321,6 +328,122 @@ async function pruneWebRuns() {
   }
 }
 
+/// Include every input that can change the emitted JavaScript/WASM. A stale
+/// cache key would keep showing an old preview after the source, shims or
+/// toolchain change; the whole key is content-based so the directory name is
+/// stable across restarts and safe to reuse.
+async function webCacheKey(source, demo, extraSources) {
+  const hash = createHash("sha256");
+  hash.update("loi-web-cache-v2\0");
+  for (const [name, value] of [
+    ["source", source],
+    ["demo", demo],
+    ["compiler", compiler],
+    ["build_script", webBuildScript],
+    ["raylib_web", process.env.RAYLIB_WEB || ""],
+    ["sources", extraSources.join(",")],
+  ]) {
+    hash.update(`${name}\0${value}\0`);
+  }
+  try {
+    const info = await stat(compiler);
+    hash.update(`compiler-stat\0${info.size}\0${info.mtimeMs}\0`);
+  } catch (_) {
+    hash.update("compiler-stat\0missing\0");
+  }
+  const inputs = [webBuildScript, ...extraSources.map((name) => path.join(projectDir, name))];
+  for (const dir of [libDir, path.join(projectDir, "vendor", "raylib")]) {
+    for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      if (entry.isFile()) inputs.push(path.join(dir, entry.name));
+    }
+  }
+  for (const file of inputs) {
+    try {
+      hash.update(file).update("\0").update(await readFile(file));
+    } catch (_) {
+      hash.update(`${file}\0missing\0`);
+    }
+  }
+  return hash.digest("hex").slice(0, 32);
+}
+
+/// Refresh the directory mtime so pruneWebRuns does not evict a live cache hit.
+async function touchWebRun(runDir) {
+  try {
+    const now = new Date();
+    await utimes(runDir, now, now);
+  } catch (_) {
+    // A run may disappear while we touch it; nothing to do.
+  }
+}
+
+async function buildWebDemo(source, demo, token, runDir, extraSources, fallbackReady, started) {
+  const info = webDemos.get(demo);
+  const workspace = await mkdtemp(path.join(os.tmpdir(), "loi-playground-web-"));
+  try {
+    const libTarget = path.join(workspace, "lib");
+    const examplesTarget = path.join(workspace, "examples");
+    await mkdir(libTarget, { recursive: true });
+    await mkdir(examplesTarget, { recursive: true });
+    await mkdir(path.join(workspace, "vendor"), { recursive: true });
+    await cp(libDir, libTarget, { recursive: true });
+    await cp(path.join(projectDir, "vendor", "raylib"), path.join(workspace, "vendor", "raylib"), {
+      recursive: true,
+    });
+    for (const name of extraSources) {
+      await copyFile(path.join(projectDir, name), path.join(examplesTarget, path.basename(name)));
+    }
+    await writeFile(path.join(examplesTarget, "main.loi"), source);
+    await mkdir(runDir, { recursive: true });
+
+    const build = await runProcess("sh", [webBuildScript, "examples/main.loi"], {
+      cwd: workspace,
+      timeoutMs: WEB_BUILD_TIMEOUT_MS,
+      env: {
+        ...process.env,
+        LOI_BIN: compiler,
+        OUT_DIR: runDir,
+        RAYLIB_WEB: process.env.RAYLIB_WEB,
+        WEB_C_SOURCES: extraSources.map((name) => `examples/${path.basename(name)}`).join(" "),
+      },
+    });
+    const stdout = sanitize(build.stdout, workspace);
+    const stderr = sanitize(build.stderr, workspace);
+    if (build.code === 0 && existsSync(path.join(runDir, "main.html"))) {
+      await writeFile(path.join(runDir, webCacheMarker), `${Date.now()}\n`).catch(() => {});
+      return {
+        ok: true,
+        stage: "web-build",
+        mode: "web",
+        demo,
+        webUrl: `/web-runs/${token}/main.html`,
+        caption: info?.caption || "",
+        stdout,
+        stderr,
+        exitCode: 0,
+        durationMs: Date.now() - started,
+      };
+    }
+    await rm(runDir, { recursive: true, force: true }).catch(() => {});
+    return {
+      ok: false,
+      stage: "web-build",
+      mode: "web",
+      demo,
+      stdout,
+      stderr:
+        stderr ||
+        (fallbackReady
+          ? "The WebAssembly build failed; serving the prebuilt demo instead."
+          : "The WebAssembly build failed and no prebuilt demo is available."),
+      exitCode: build.code,
+      durationMs: Date.now() - started,
+    };
+  } finally {
+    await rm(workspace, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 /// Pick the execution target from the program itself. Console programs keep
 /// using the native path; graphical/audio programs open a WebAssembly preview
 /// because a browser cannot display a native window.
@@ -332,75 +455,41 @@ async function runWebDemo(source, demo) {
   const canBuild = await canBuildWeb();
 
   if (canBuild) {
-    const token = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const extraSources = webDemoSources(demo);
+    const token = await webCacheKey(source, demo, extraSources);
     const runDir = path.join(webRunsDir, token);
-    const workspace = await mkdtemp(path.join(os.tmpdir(), "loi-playground-web-"));
-    try {
-      const libTarget = path.join(workspace, "lib");
-      const examplesTarget = path.join(workspace, "examples");
-      await mkdir(libTarget, { recursive: true });
-      await mkdir(examplesTarget, { recursive: true });
-      await mkdir(path.join(workspace, "vendor"), { recursive: true });
-      await cp(libDir, libTarget, { recursive: true });
-      await cp(path.join(projectDir, "vendor", "raylib"), path.join(workspace, "vendor", "raylib"), {
-        recursive: true,
-      });
-      const extraSources = webDemoSources(demo);
-      for (const name of extraSources) {
-        await copyFile(path.join(projectDir, name), path.join(examplesTarget, path.basename(name)));
-      }
-      await writeFile(path.join(examplesTarget, "main.loi"), source);
-      await mkdir(runDir, { recursive: true });
-
-      const build = await runProcess(
-        "sh",
-        [path.join(projectDir, "examples", "build_web.sh"), "examples/main.loi"],
-        {
-          cwd: workspace,
-          timeoutMs: WEB_BUILD_TIMEOUT_MS,
-          env: {
-            ...process.env,
-            LOI_BIN: compiler,
-            OUT_DIR: runDir,
-            RAYLIB_WEB: process.env.RAYLIB_WEB,
-            WEB_C_SOURCES: extraSources
-              .map((name) => `examples/${path.basename(name)}`)
-              .join(" "),
-          },
-        }
-      );
-      if (build.code === 0 && existsSync(path.join(runDir, "main.html"))) {
-        return {
-          ok: true,
-          stage: "web-build",
-          mode: "web",
-          demo,
-          webUrl: `/web-runs/${token}/main.html`,
-          caption: info?.caption || "",
-          stdout: sanitize(build.stdout, workspace),
-          stderr: sanitize(build.stderr, workspace),
-          exitCode: 0,
-          durationMs: Date.now() - started,
-        };
-      }
-      if (!fallbackReady) {
-        return {
-          ok: false,
-          stage: "web-build",
-          mode: "web",
-          demo,
-          stdout: sanitize(build.stdout, workspace),
-          stderr:
-            sanitize(build.stderr, workspace) ||
-            "The WebAssembly build failed and no prebuilt demo is available.",
-          exitCode: build.code,
-          durationMs: Date.now() - started,
-        };
-      }
-      await rm(runDir, { recursive: true, force: true }).catch(() => {});
-    } finally {
-      await rm(workspace, { recursive: true, force: true }).catch(() => {});
+    const webUrl = `/web-runs/${token}/main.html`;
+    if (
+      existsSync(path.join(runDir, webCacheMarker)) &&
+      existsSync(path.join(runDir, "main.html"))
+    ) {
+      await touchWebRun(runDir);
+      return {
+        ok: true,
+        stage: "web-cache",
+        mode: "web",
+        demo,
+        webUrl,
+        caption: info?.caption || "",
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+        durationMs: Date.now() - started,
+      };
     }
+
+    // Collapse simultaneous identical requests into one build. Otherwise two
+    // browsers editing the same preset would race on the same output folder.
+    let pending = webBuildsInFlight.get(token);
+    if (!pending) {
+      pending = buildWebDemo(source, demo, token, runDir, extraSources, fallbackReady, started);
+      webBuildsInFlight.set(token, pending);
+      const clear = () => webBuildsInFlight.delete(token);
+      pending.then(clear, clear);
+    }
+    const built = await pending;
+    if (built.ok) return built;
+    // The build failed; keep the existing prebuilt fallback behavior below.
   }
 
   if (!fallbackReady) {

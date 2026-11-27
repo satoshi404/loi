@@ -11,6 +11,114 @@ As entradas abaixo são um arquivo cronológico. O estado atual e as evidências
 
 ## Current Status
 
+- **CLI — scaffold e runner de build (`loi init` / `loi make`, 2026-11-26):**
+  `loi init NAME` cria `src/main.loi`, `build.loi`, `.gitignore`,
+  `output/config.txt` e `output/objects/.gitkeep`, recusando nomes inseguros e
+  destinos existentes. `loi make` compila e executa `build.loi` da raiz do
+  projeto, sem argumentos de arquivo; a lógica do build mora em
+  `lib/build.loi` da toolchain (com override por `lib/build.loi` local), e o
+  driver Rust só localiza bibliotecas, injeta `LOI_SELF` /
+  `LOI_TOOLCHAIN_LIB`, repassa stdio e propaga o exit code. `output/config.txt`
+  é um snapshot informativo; o plano em `build.loi` é a fonte de verdade. O
+  runner usa `LOI_BUILD_TARGET`, `LOI_BUILD_PROFILE` e `LOI_BUILD_REBUILD`, grava
+  em `output/` e mantém `output/.loi-build-cache`. `loi build --obj-dir DIR`
+  concentra objetos/headers e força o pipeline multi-objeto mesmo com uma
+  fonte. `lib/os/file.loi` ganhou `os_path_exists` / `path_exists`, apoiado em
+  `loi_os_path_exists` em `lib/os_shim.c`. Arquivos: `src/main.rs`,
+  `tests/cli.rs`, `lib/build.loi`, `lib/os/file.loi`, `lib/os_shim.c`,
+  `.gitignore`, `README.md`, `SINTAXE.md`, `website/docs.html`, `lib/README.md`,
+  `development/AGENTS.md` e `DECISIONS.md`. Classificação: **IMPLEMENTADO**;
+  **DOCUMENTADO** em `README.md`, `SINTAXE.md`, `website/docs.html`,
+  `lib/README.md` e `DECISIONS.md`.
+- **Verificação — `init` / `make` (2026-11-26):** failing-first: os testes
+  `make_*` falharam com `loi: 'make' is not implemented yet` e
+  `build_places_objects_in_obj_dir` com
+  `loi: unknown option '--obj-dir'`. Ao montar o runner, o índice final de
+  `view(config, at, end)` ainda era relativo e produzia
+  `loi: view range out of bounds at 34:17`; o cache com apenas caminhos das
+  fontes imprimia `[make] up to date` após editar a fonte; sem o
+  `lib/process_shim.c` explícito, o linker reportava
+  `extern flow 'process_spawn' ... is not defined by any linked C source`.
+  Depois das correções: `cargo test --test cli make_ -- --nocapture` →
+  **3 passed; 0 failed; 0 ignored; 56 filtered out**;
+  `cargo test --test cli build_places_objects_in_obj_dir -- --nocapture` →
+  **1 passed; 0 failed; 0 ignored; 58 filtered out**. `loi fmt lib/build.loi`
+  foi aplicado até ser idempotente: o segundo `diff -u` saiu vazio. Gate final:
+  `export PATH=/root/.cargo/bin:$PATH RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets && node --test website/tests/server.test.mjs && python3 tools/sync_examples.py --check && git diff --check && ./tools/ci.sh all`
+  terminou com **todos os comandos em exit 0**; `cargo test --all-targets`
+  reportou **731 passed, 0 failed, 0 ignored em 48 suítes** (incluindo os nove
+  testes novos de CLI), `node --test website/tests/server.test.mjs` reportou
+  **11/11**, `sync_examples --check` e `git diff --check` não imprimiram
+  diferenças, e `./tools/ci.sh all` terminou com `selected CI steps passed`.
+  O gate registrou `SKIP` da MSRV 1.88 (toolchain não instalada) e
+  `ASAN NOT VALIDATED` para `cc` neste PRoot por limite de memória virtual;
+  clang ASan+UBSan e UBSan passaram.
+- **CLI — `build.loi` declarativo (2026-11-26):** o script gerado por
+  `loi init` agora cria um `loi_build::BuildPlan` mutável: `new(name)` aplica
+  padrões seguros, `source`, `lib` e `cc_flag` acumulam entradas, `mode`,
+  `optimize`, `target` e `profile` configuram o build e `run(plan)` compila.
+  `lib("m")` repassa `--cc-flag -lm`; `mode` aceita `native`, `release`, `size`,
+  `test` e `web`, enquanto `optimize` aceita `none`, `debug`, `speed` e `size`,
+  com falha imediata e mensagem nomeando o flow para valores inválidos. A chave
+  de cache passou a incluir bibliotecas, flags, modo e nível de otimização, além
+  do script, target, profile e bytes das fontes. `output/config.txt` deixou de
+  ser lido pelo runner e virou snapshot informativo. Arquivos: `src/main.rs`,
+  `lib/build.loi`, `tests/cli.rs`, `README.md`, `SINTAXE.md`, `website/docs.html`,
+  `lib/README.md`, `development/DECISIONS.md` e `development/PROGRESS.md`.
+  Classificação: **IMPLEMENTADO**; **DOCUMENTADO** nos mesmos arquivos.
+- **Verificação — `build.loi` declarativo (2026-11-26):** failing-first: o
+  primeiro `cargo test --test cli declarative -- --nocapture` falhou com
+  `error: module 'loi_build' has no item 'BuildPlan'`; depois de criar o runner,
+  apareceram `cannot copy [u8] implicitly; use give(...) or clone(...)` para os
+  campos de `plan`, `fmt::(...) must be used directly inside print, eprint or
+  panic` em `fail(fmt::(...))` e `expected expression, found 'or'` nas
+  expressões booleanas quebradas em várias linhas. O wrapper `cc` do teste
+  também falhou com `IndentationError: expected an indented block after 'with'
+  statement`. Corrigidos os quatro pontos:
+  `cargo test --test cli declarative -- --nocapture` → **2 passed; 0 failed;
+  0 ignored; 61 filtered out**;
+  `cargo test --test cli make_web_mode_forwards_emscripten_flags -- --nocapture`
+  → **1 passed; 0 failed; 0 ignored; 62 filtered out**;
+  `cargo test --test cli make_cache_tracks_profile_overrides -- --nocapture` →
+  **1 passed; 0 failed; 0 ignored; 62 filtered out**;
+  `cargo test --test cli make_ -- --nocapture` → **7 passed; 0 failed;
+  0 ignored; 56 filtered out**;
+  `cargo test --test cli init_ -- --nocapture` → **4 passed; 0 failed;
+  0 ignored; 59 filtered out**. O gate final repetiu
+  `export PATH=/root/.cargo/bin:$PATH RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets && node --test website/tests/server.test.mjs && python3 tools/sync_examples.py --check && git diff --check && ./tools/ci.sh all`
+  com **todos os comandos em exit 0**: `cargo test --all-targets` → **735
+  passed, 0 failed, 0 ignored em 48 suítes** (63 testes em `tests/cli.rs`),
+  `node --test website/tests/server.test.mjs` → **11/11**, `sync_examples
+  --check` e `git diff --check` sem diferenças, `./tools/ci.sh all` →
+  `selected CI steps passed` e `no skipped tests detected`. Como na rodada
+  anterior, MSRV 1.88 está `SKIP` (toolchain ausente) e `cc` ASan segue
+  `ASAN NOT VALIDATED` neste PRoot por limite de memória virtual; UBSan e clang
+  ASan+UBSan passaram. `loi fmt lib/build.loi` foi reaplicado via redirecionamento
+  de stdout e o segundo `diff -u` saiu vazio.
+- **Playground — cache de builds WebAssembly (2026-11-26):** `website/server.mjs`
+  agora deriva o diretório de saída de um fingerprint SHA-256 da fonte enviada,
+  demo, compiler, `build_web.sh`, flag `RAYLIB_WEB`, shims e bindings. O hit
+  reporta `stage: "web-cache"` e reusa a URL anterior; o sucesso grava um marker
+  `.loi-web-cache`, o hit atualiza o mtime para não ser evitado pelo TTL de 30
+  minutos e requisições idênticas simultâneas compartilham uma única promessa de
+  build. `LOI_WEB_RUNS_DIR` e `LOI_WEB_BUILD_SCRIPT` permitem testar sem emcc
+  real. A UI mostra a mensagem específica do cache. Arquivos:
+  `website/server.mjs`, `website/assets/playground.js`,
+  `website/tests/server.test.mjs`, `website/README.md`, `DECISIONS.md`.
+  Classificação: **IMPLEMENTADO**; **DOCUMENTADO** em `website/README.md` e
+  `DECISIONS.md`.
+- **Verificação — cache WebAssembly (2026-11-26):** failing-first com
+  `node --test website/tests/server.test.mjs` falhou em
+  `identical WebAssembly builds are cached and reused` (`counter` em `0` em vez
+  de `1`) antes da mudança; depois, **11/11 passaram** com
+  `node --test website/tests/server.test.mjs`, incluindo o novo caso de
+  primeiro build, hit em cache e rebuild após edição. O teste usa `emcc` e
+  `build_web.sh` falsos, então não depende do Emscripten ausente neste ambiente;
+  o caminho real com emcc/RAYLIB_WEB não foi revalidado. Gate completo:
+  `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` e
+  `cargo test --all-targets` (`722 passed, 0 failed, 0 ignored em 48 suítes`)
+  exitaram 0; `python3 tools/sync_examples.py --check` e `git diff --check`
+  também passaram.
 - **I/O e variádicos — `fmt::(...)` e `... args` (2026-11-26):** `fmt::(...)` é
   a grafia imediata de `format(...)` com os mesmos placeholders `{}`/`{{`/`}}`,
   o mesmo `loi_format` e a mesma checagem de aridade, aceita somente como

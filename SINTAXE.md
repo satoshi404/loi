@@ -986,6 +986,10 @@ Compiler intrinsics (always available, cannot be redeclared):
   contents are byte slices, not C strings. A missing or unreadable file traps.
 - `write_file(<- path, <- data)` writes the exact bytes and returns whether the
   write and close succeeded. It does not trap on ordinary I/O failure.
+- `os_path_exists(<- path: [u8]) => bool` in `lib/os/file.loi` (short alias
+  `path_exists`, also re-exported by `lib/os.loi`) checks a runtime byte-slice
+  path through `loi_os_path_exists` in `lib/os_shim.c`. A missing path is an
+  ordinary `false`, not a trap; the build runner uses it to validate its cache.
 - `read_stdin()` reads the rest of standard input, including newlines.
 - `read_line()` reads one line without the terminating `\n` (and without a
   trailing `\r`).
@@ -1675,6 +1679,11 @@ loi build game.loi -o game \
   shared by `check`, `gen` and `build`. Use it when the source is outside the
   compiler repository: `loi build main.loi -o main --lib-dir /path/to/loi/lib`.
   Project-local `lib/` directories are still checked first.
+- `--obj-dir DIR` writes `<stem>.o` and `<stem>.h` into `DIR` (created if needed)
+  instead of beside each source. It forces the multi-object pipeline even for a
+  single input, so one source and many sources take the same path; an explicit
+  `-o OUTPUT` is required. Object names are de-duplicated when two inputs share
+  a stem. Without the flag, objects and headers stay beside their sources.
 - `--cc-flag FLAG` forwards a flag to the C compiler and linker; use it for
   include paths and `-l` libraries. On link steps these flags follow the
   objects, so `-lSDL2` works in the expected order.
@@ -1924,3 +1933,87 @@ Reference programs:
 - `examples/ordering.loi` — structural equality and `Ord` sorting/search.
 - `examples/module_mangling.loi` — two modules exposing the same API names.
 - `lib/std.loi` — standard library written in canonical Loi.
+
+---
+
+## 19. Project builds (`loi init` / `loi make`)
+
+`loi init NAME` creates a deterministic project in the current directory. `NAME`
+must start with an ASCII letter or `_` and contain only ASCII letters, digits,
+`-` or `_`; an existing destination is never overwritten. The layout is:
+
+```text
+NAME/
+  src/main.loi          # prints "hello, NAME"
+  build.loi             # declares the plan and calls the toolchain runner
+  .gitignore            # /output/
+  output/config.txt     # informational snapshot of the initial plan
+  output/objects/.gitkeep
+```
+
+From the project root, `loi make` compiles and runs `build.loi`; it takes no
+file argument. The generated script imports `build` from the toolchain library
+(`lib/build.loi`), so build semantics stay in Loi and the Rust driver only
+locates files, sets environment variables and relays the exit code. A project
+`lib/build.loi` wins over the toolchain copy because logical imports prefer the
+nearest library root (§13). `make` builds only; run `./output/NAME` separately.
+`output/config.txt` is generated for humans and tools; the plan in `build.loi`
+is authoritative and editing the snapshot does not change the build.
+
+### 19.1 Declarative build plans
+
+A build is a `loi_build::BuildPlan` passed through configuration flows before
+`run`. The scaffolded plan is:
+
+```loi
+import build as loi_build
+
+open flow main
+    => i32
+{
+    protect {
+        mut plan: loi_build::BuildPlan
+        loi_build::new("demo", -> plan)
+        loi_build::source(<-> plan, "src/main.loi")
+        loi_build::mode(<-> plan, "native")
+        loi_build::optimize(<-> plan, "none")
+        => loi_build::run(plan)
+    }
+}
+```
+
+Every configuration flow takes `<-> plan`; `new` and `run` are the only ones
+that produce or consume the whole plan:
+
+| Flow | Effect |
+| --- | --- |
+| `new(name, -> plan)` | Start a plan with safe defaults: exe, native, no optimization. |
+| `source(path)` | Add a source file, resolved from the project root. Repeatable. |
+| `lib(name)` | Add `-lNAME` to the linker flags. Repeatable. |
+| `cc_flag(flag)` | Add a raw C compiler/linker flag. Repeatable. |
+| `target(value)` | Select `exe`, `obj` or `lib`. |
+| `profile(value)` | Select `debug` or `release` independently of optimization. |
+| `mode(value)` | Apply a named preset: `native`, `release`, `size`, `test` or `web`. |
+| `optimize(level)` | Select `none`, `debug`, `speed` (`-O2`) or `size` (`-Os`). |
+| `run(plan)` | Compile every source and write the artifact under `output/`. |
+
+`native` and `test` are debug builds with `-O0`; `release` is `-O2`; `size` and
+`web` are `-Os`. `web` also adds `-sWASM=1`, `-sALLOW_MEMORY_GROWTH=1` and
+`-sEXIT_RUNTIME=1`, so it requires `CC=emcc`. `optimize` also sets the matching
+profile: `speed` and `size` use `release`, the others use `debug`. Invalid
+names, modes, levels, library names and flags fail immediately with a message
+that names the flow and the accepted values.
+
+`LOI_BUILD_TARGET` (`exe`, `obj`, `lib`), `LOI_BUILD_PROFILE` (`debug`,
+`release`) and `LOI_BUILD_REBUILD=1` still override the plan without editing
+`build.loi`. The runner writes executables to `output/NAME`, objects to
+`output/NAME.o` and archives to `output/libNAME.a`; for `exe` and `lib` builds,
+intermediate objects go to `output/objects/` via `--obj-dir`. It hashes the
+build script, project name, target, profile, mode, optimization level, declared
+libraries, compiler flags and each source path **and byte content**, then
+stores the key in `output/.loi-build-cache`. A hit requires both that marker and
+the artifact to exist and prints `[make] up to date`; the compiler's own stamp
+still decides whether a matched artifact is stale. `--rebuild` is forwarded when
+`LOI_BUILD_REBUILD=1`. The runner uses `os_path_exists` (§14) for the existence
+checks and needs `lib/process_shim.c` plus the shims discovered by
+`--auto-c-source`.

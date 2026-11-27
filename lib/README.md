@@ -22,6 +22,18 @@ For a project outside this repository, pass this directory explicitly:
 `build`, repeatable). A nearer project `lib/` still wins; `--auto-c-source`
 discovers shims from these roots too.
 
+`build.loi` is a toolchain runner, not another stdlib package. `loi make`
+compiles it from this directory and executes it with `LOI_SELF` and
+`LOI_TOOLCHAIN_LIB`. A project script creates a `loi_build::BuildPlan` with
+`new`, adds `source`, `lib` and `cc_flag` entries, selects `mode` / `optimize`
+/ `target` / `profile`, then calls `run`. The runner honors
+`LOI_BUILD_TARGET` / `LOI_BUILD_PROFILE` / `LOI_BUILD_REBUILD` over the plan and
+caches a fingerprint of the script, the plan and every source byte in
+`output/.loi-build-cache`. A scaffolded project imports it as
+`import build as loi_build`; putting `lib/build.loi` in the project overrides it
+because logical imports prefer the nearest library root. The runner needs
+`process_shim.c` (linked explicitly) and the shims found by `--auto-c-source`.
+
 | Package | Root | Internal files | C shim |
 |---|---|---|---|
 | Foundation | `core.loi` | `core/option.loi`, `core/result.loi`, `core/cmp.loi`, `core/mem.loi`, `core/ops.loi` | none |
@@ -47,8 +59,11 @@ so narrow imports remain the recommended style.
 
 `os_pid`, `os_exit`, `io_close` and `net_close` bind directly to libc
 (`getpid`, `exit`, `close`) through `extern flow ... as`; the other file-backed
-flows still need their package shim. No whole shim file has been removed: the
-remaining functions perform ABI conversion, state ownership or process work.
+flows still need their package shim. `os_path_exists` / `path_exists` in
+`os/file.loi` takes a runtime byte-slice path and returns `false` for a missing
+entry through `loi_os_path_exists` in `os_shim.c`. No whole shim file has been
+removed: the remaining functions perform ABI conversion, state ownership or
+process work.
 
 Dependencies point one way: `core` imports none of the other packages; `std`
 may use `core`; `runtime` is independent; `os` may use `core`/`runtime`; `net`

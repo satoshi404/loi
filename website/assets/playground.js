@@ -359,7 +359,9 @@ open flow main
         showOutput(
           result.stage === "web-demo"
             ? "Abrindo o build WebAssembly pré-compilado na aba Preview."
-            : "Programa compilado para WebAssembly. Use a aba Preview.",
+            : result.stage === "web-cache"
+              ? "Reaproveitando o build WebAssembly em cache. Use a aba Preview."
+              : "Programa compilado para WebAssembly. Use a aba Preview.",
           result.ok ? "ok" : "error"
         );
         if (!result.ok && result.stderr) showOutput(result.stderr, "error");

@@ -10,11 +10,19 @@ use std::collections::{HashMap, HashSet};
 use loi::modules::{ModuleExport, ModuleView, ResolutionContext};
 use loi::{ColorChoice, ErrorFormat};
 
-const USAGE: &str = "usage:\n  loi <lex|parse|fmt> <file.loi>\n  loi check <file.loi> [--lib-dir DIR]...\n  loi complete <file.loi> --line N --column N\n  loi lsp-info <file.loi> --kind hover|definition|signature --line N --column N\n                          [--uri file:///path/to/file.loi]\n  loi gen <file.loi> [-o output.c] [--emit-h header.h] [--source-map map.json]\n                    [--emit-llvm-ir file.ll] [--lib-dir DIR]...\n  loi build <file.loi> [-o output] [--emit exe|obj|lib]\n                    [--debug|--release] [--rebuild] [--emit-c file.c] [--emit-h header.h]\n                    [--arena-size BYTES] [--source-map map.json] [--cc-flag FLAG]...\n                    [--c-source FILE]... [--auto-c-source] [--backend c|llvm]\n                    [--lib-dir DIR]...\n  loi clean <file.loi> [-o output]\n\n'gen', 'build' and 'clean' accept -o/--output.\n'--emit', '--debug', '--release', '--rebuild', '--emit-c', '--emit-h', '--arena-size', '--source-map', '--cc-flag', '--c-source' and '--auto-c-source'\nare only supported by 'build'. '--c-source' compiles an extra C file (a vendored\nFFI shim) and links it into an executable or library; it is rejected with '--emit obj'.\n'--auto-c-source' links shim files discovered from imported packages; it is also\nrejected with '--emit obj' and by the LLVM backend.\n'--lib-dir DIR' adds a library root for logical imports, checked after any\nnearer project lib/ and in the order given; repeatable. It is supported by\n'check', 'gen' and 'build' and never uses the process cwd.\n'--emit-h', '--source-map' and '--emit-llvm-ir' are also supported by 'gen'.\n'--line' and '--column' are supported by 'complete' and 'lsp-info'; positions are\n1-based. 'complete' prints candidates, while 'lsp-info' prints a ready-to-use\nLSP hover, definition or signature-help result.\n'--backend' selects the LLVM opt-in backend (C11 is the default); it supports\nonly single-file executables and rejects C-only build options.\nWith '--emit obj' the default output is '<input stem>.o'; with '--emit lib'\nit is 'lib<input stem>.a'; otherwise it is './a.out'.\n'build' invokes 'cc' and 'ar'; set 'CC'/'AR' to override them. Those values\nmay contain arguments, split like a POSIX shell command line ('...' quotes,\n\"...\" quotes and backslash escapes).\nWithout -o, 'clean' removes ./a.out, <input stem>.o and lib<input stem>.a\nwhen their .loi-stamp files exist; with -o it removes exactly that output\nand its stamp. Both forms also remove generated C retained for that output\nthrough 'build --emit-c'. It does not read or check the source.\n\noptions:\n  -h, --help     show this help\n  -V, --version  show the compiler version\n  -g, --debug    compile with debug info (-g)\n      --release  compile with optimizations (-O2)\n      --rebuild  force recompilation, ignoring the incremental stamp\n      --arena-size BYTES  set the protect arena size (default 67108864 = 64 MiB)\n      --source-map FILE  write source map JSON Lines to FILE\n      --error-format FMT  diagnostic format: human, short or json (default human)\n      --color WHEN   colorize diagnostics: auto, always or never (default auto)\n      --line N      1-based line for 'complete' (LSP line + 1)\n      --column N    1-based column for 'complete' (LSP character + 1)";
+const USAGE: &str = "usage:\n  loi <lex|parse|fmt> <file.loi>\n  loi check <file.loi> [--lib-dir DIR]...\n  loi complete <file.loi> --line N --column N\n  loi lsp-info <file.loi> --kind hover|definition|signature --line N --column N\n                          [--uri file:///path/to/file.loi]\n  loi gen <file.loi> [-o output.c] [--emit-h header.h] [--source-map map.json]\n                    [--emit-llvm-ir file.ll] [--lib-dir DIR]...\n  loi build <file.loi> [-o output] [--emit exe|obj|lib]\n                    [--debug|--release] [--rebuild] [--emit-c file.c] [--emit-h header.h]\n                    [--arena-size BYTES] [--source-map map.json] [--cc-flag FLAG]...\n                    [--c-source FILE]... [--auto-c-source] [--backend c|llvm]\n                    [--lib-dir DIR]... [--obj-dir DIR]\n  loi clean <file.loi> [-o output]\n  loi init NAME\n  loi make\n\n'gen', 'build' and 'clean' accept -o/--output.\n'init' creates a project with src/, build.loi, .gitignore and output/. 'make'\ncompiles and runs build.loi from the current project; it takes no file.\n'--emit', '--debug', '--release', '--rebuild', '--emit-c', '--emit-h', '--arena-size', '--source-map', '--cc-flag', '--c-source' and '--auto-c-source'\nare only supported by 'build'. '--c-source' compiles an extra C file (a vendored\nFFI shim) and links it into an executable or library; it is rejected with '--emit obj'.\n'--auto-c-source' links shim files discovered from imported packages; it is also\nrejected with '--emit obj' and by the LLVM backend.\n'--obj-dir DIR' writes intermediate objects and headers to DIR instead of beside\nthe sources; it is supported by 'build' and forces the multi-object pipeline.\n'--lib-dir DIR' adds a library root for logical imports, checked after any\nnearer project lib/ and in the order given; repeatable. It is supported by\n'check', 'gen' and 'build' and never uses the process cwd.\n'--emit-h', '--source-map' and '--emit-llvm-ir' are also supported by 'gen'.\n'--line' and '--column' are supported by 'complete' and 'lsp-info'; positions are\n1-based. 'complete' prints candidates, while 'lsp-info' prints a ready-to-use\nLSP hover, definition or signature-help result.\n'--backend' selects the LLVM opt-in backend (C11 is the default); it supports\nonly single-file executables and rejects C-only build options.\nWith '--emit obj' the default output is '<input stem>.o'; with '--emit lib'\nit is 'lib<input stem>.a'; otherwise it is './a.out'.\n'build' invokes 'cc' and 'ar'; set 'CC'/'AR' to override them. Those values\nmay contain arguments, split like a POSIX shell command line ('...' quotes,\n\"...\" quotes and backslash escapes).\nWithout -o, 'clean' removes ./a.out, <input stem>.o and lib<input stem>.a\nwhen their .loi-stamp files exist; with -o it removes exactly that output\nand its stamp. Both forms also remove generated C retained for that output\nthrough 'build --emit-c'. It does not read or check the source.\n\noptions:\n  -h, --help     show this help\n  -V, --version  show the compiler version\n  -g, --debug    compile with debug info (-g)\n      --release  compile with optimizations (-O2)\n      --rebuild  force recompilation, ignoring the incremental stamp\n      --arena-size BYTES  set the protect arena size (default 67108864 = 64 MiB)\n      --source-map FILE  write source map JSON Lines to FILE\n      --error-format FMT  diagnostic format: human, short or json (default human)\n      --color WHEN   colorize diagnostics: auto, always or never (default auto)\n      --line N      1-based line for 'complete' (LSP line + 1)\n      --column N    1-based column for 'complete' (LSP character + 1)";
 
 fn main() {
     let options = Options::parse();
 
+    if options.mode == "init" {
+        init_project(&options.paths[0]);
+        return;
+    }
+    if options.mode == "make" {
+        make_project();
+        return;
+    }
     if options.mode == "clean" {
         clean_source(&options);
         return;
@@ -81,6 +89,7 @@ fn main() {
             primary_path,
             BuildRequest {
                 output: options.output.as_deref(),
+                obj_dir: options.obj_dir.as_deref(),
                 kind: options.build_kind,
                 profile: options.profile,
                 rebuild: options.rebuild,
@@ -98,7 +107,7 @@ fn main() {
         ),
         other => {
             eprintln!(
-                "loi: unknown mode '{other}' (expected 'lex', 'parse', 'fmt', 'check', 'complete', 'lsp-info', 'gen', 'build' or 'clean')"
+                "loi: unknown mode '{other}' (expected 'lex', 'parse', 'fmt', 'check', 'complete', 'lsp-info', 'gen', 'build', 'clean', 'init' or 'make')"
             );
             process::exit(2);
         }
@@ -263,6 +272,7 @@ struct Options {
     mode: String,
     paths: Vec<PathBuf>,
     output: Option<PathBuf>,
+    obj_dir: Option<PathBuf>,
     build_kind: BuildKind,
     profile: Option<BuildProfile>,
     rebuild: bool,
@@ -302,7 +312,7 @@ impl Options {
             _ => {}
         }
 
-        if args.len() < 2 {
+        if args.len() < 2 && args.first().map(String::as_str) != Some("make") {
             eprintln!("{USAGE}");
             process::exit(2);
         }
@@ -310,6 +320,7 @@ impl Options {
         let mode = args[0].clone();
         let mut paths = Vec::new();
         let mut output = None;
+        let mut obj_dir = None;
         let mut build_kind = None;
         let mut profile = None;
         let mut rebuild = false;
@@ -343,6 +354,17 @@ impl Options {
                     };
                     if output.replace(PathBuf::from(value)).is_some() {
                         eprintln!("loi: output path specified more than once");
+                        process::exit(2);
+                    }
+                }
+                "--obj-dir" => {
+                    index += 1;
+                    let Some(value) = args.get(index) else {
+                        eprintln!("loi: '--obj-dir' requires a path");
+                        process::exit(2);
+                    };
+                    if obj_dir.replace(PathBuf::from(value)).is_some() {
+                        eprintln!("loi: object directory specified more than once");
                         process::exit(2);
                     }
                 }
@@ -629,8 +651,16 @@ impl Options {
             index += 1;
         }
 
-        if paths.is_empty() {
+        if paths.is_empty() && mode != "make" {
             eprintln!("loi: no input file specified");
+            process::exit(2);
+        }
+        if mode == "make" && !paths.is_empty() {
+            eprintln!("loi: 'make' does not accept input files");
+            process::exit(2);
+        }
+        if mode == "init" && paths.len() != 1 {
+            eprintln!("loi: 'init' requires exactly one project name");
             process::exit(2);
         }
 
@@ -642,6 +672,10 @@ impl Options {
 
         if output.is_some() && !matches!(mode.as_str(), "gen" | "build" | "clean") {
             eprintln!("loi: '-o' is only supported by 'gen', 'build' and 'clean'");
+            process::exit(2);
+        }
+        if obj_dir.is_some() && mode != "build" {
+            eprintln!("loi: '--obj-dir' is only supported by 'build'");
             process::exit(2);
         }
         if build_kind.is_some() && mode != "build" {
@@ -748,9 +782,9 @@ impl Options {
             }
         }
 
-        // Multi-file build requires an output path (can't default to ./a.out with
-        // multiple inputs without an explicit name).
-        if mode == "build" && output.is_none() && paths.len() > 1 {
+        // Multi-object builds (several inputs or an explicit object directory)
+        // need an explicit output name instead of defaulting to ./a.out.
+        if mode == "build" && output.is_none() && (paths.len() > 1 || obj_dir.is_some()) {
             eprintln!("loi: multi-file build requires '-o OUTPUT'");
             process::exit(2);
         }
@@ -759,6 +793,7 @@ impl Options {
             mode,
             paths,
             output,
+            obj_dir,
             build_kind: build_kind.unwrap_or(BuildKind::Exe),
             profile,
             rebuild,
@@ -782,6 +817,202 @@ impl Options {
             new_name,
         }
     }
+}
+
+fn invalid_project_name(value: &Path) -> ! {
+    eprintln!(
+        "loi: invalid project name '{}' (use letters, digits, '-' or '_', starting with a letter or '_')",
+        value.display()
+    );
+    process::exit(2);
+}
+
+fn write_generated(path: &Path, contents: &[u8]) {
+    if let Err(error) = fs::write(path, contents) {
+        eprintln!("loi: {}: {error}", path.display());
+        process::exit(1);
+    }
+}
+
+/// Create the deterministic project layout used by `loi make`.
+fn init_project(path: &Path) {
+    let Some(name) = path.to_str() else {
+        invalid_project_name(path);
+    };
+    let valid = name
+        .chars()
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_');
+    if !valid {
+        invalid_project_name(path);
+    }
+
+    let project = Path::new(name);
+    match fs::symlink_metadata(project) {
+        Ok(_) => {
+            eprintln!("loi: project directory '{name}' already exists");
+            process::exit(2);
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            eprintln!("loi: {name}: {error}");
+            process::exit(1);
+        }
+    }
+
+    for dir in [project.join("src"), project.join("output/objects")] {
+        if let Err(error) = fs::create_dir_all(&dir) {
+            eprintln!("loi: {}: {error}", dir.display());
+            process::exit(1);
+        }
+    }
+
+    let main = format!(
+        "// Generated by `loi init {name}`.\n\
+         open flow main\n\
+             => i32\n\
+         {{\n\
+             print(\"hello, {name}\\n\")\n\
+             => 0\n\
+         }}\n"
+    );
+    let build_script = format!(
+        r#"// Generated by `loi init`.
+// `loi make` compiles and runs this file. Add `lib/build.loi` locally to override.
+import build as loi_build
+
+open flow main
+    => i32
+{{
+    protect {{
+        mut plan: loi_build::BuildPlan
+        loi_build::new("{name}", -> plan)
+        loi_build::source(<-> plan, "src/main.loi")
+        loi_build::mode(<-> plan, "native")
+        loi_build::optimize(<-> plan, "none")
+        => loi_build::run(plan)
+    }}
+}}
+"#
+    );
+    let config = format!(
+        "# Generated by `loi init {name}`. Informational snapshot: the build.loi plan is authoritative.\n\
+         name={name}\n\
+         target=exe\n\
+         profile=debug\n\
+         source=src/main.loi\n"
+    );
+
+    write_generated(&project.join("src/main.loi"), main.as_bytes());
+    write_generated(&project.join("build.loi"), build_script.as_bytes());
+    write_generated(&project.join(".gitignore"), b"/output/\n");
+    write_generated(&project.join("output/config.txt"), config.as_bytes());
+    write_generated(&project.join("output/objects/.gitkeep"), b"");
+
+    println!("loi: created project '{name}'");
+}
+
+/// Locate the toolchain library root. An explicit `LOI_TOOLCHAIN_LIB` wins;
+/// otherwise look beside the running compiler and finally at the compile-time
+/// manifest directory, which keeps `cargo test` and local builds working.
+fn toolchain_lib_dir() -> Option<PathBuf> {
+    if let Some(value) = env::var_os("LOI_TOOLCHAIN_LIB") {
+        let path = PathBuf::from(value);
+        return path.is_dir().then_some(path);
+    }
+    let exe = env::current_exe().ok()?;
+    for ancestor in exe.ancestors() {
+        let candidate = ancestor.join("lib");
+        if candidate.join("build.loi").is_file() {
+            return Some(candidate);
+        }
+    }
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("lib");
+    manifest.join("build.loi").is_file().then_some(manifest)
+}
+
+/// Compile `build.loi` with this compiler, then execute it with the variables
+/// the Loi runner needs. Build semantics live in `lib/build.loi`; this driver
+/// only locates files, forwards environment variables and relays exit codes.
+fn make_project() {
+    let script = Path::new("build.loi");
+    if !script.is_file() {
+        eprintln!("loi: no build.loi in the current directory (run 'loi init NAME')");
+        process::exit(2);
+    }
+
+    let Some(lib_dir) = toolchain_lib_dir() else {
+        eprintln!(
+            "loi: could not locate lib/build.loi; set LOI_TOOLCHAIN_LIB to the toolchain library directory"
+        );
+        process::exit(2);
+    };
+    let process_shim = lib_dir.join("process_shim.c");
+    if !process_shim.is_file() {
+        eprintln!("loi: missing toolchain shim '{}'", process_shim.display());
+        process::exit(2);
+    }
+    let Ok(self_path) = env::current_exe() else {
+        eprintln!("loi: could not locate the running compiler");
+        process::exit(1);
+    };
+    for dir in [Path::new("output"), Path::new("output/objects")] {
+        if let Err(error) = fs::create_dir_all(dir) {
+            eprintln!("loi: {}: {error}", dir.display());
+            process::exit(1);
+        }
+    }
+
+    let runner_dir = env::temp_dir().join(format!("loi-make-{}", process::id()));
+    let _ = fs::remove_dir_all(&runner_dir);
+    if let Err(error) = fs::create_dir_all(&runner_dir) {
+        eprintln!("loi: {}: {error}", runner_dir.display());
+        process::exit(1);
+    }
+    let runner = runner_dir.join("build-runner");
+
+    let compile_status = Command::new(&self_path)
+        .arg("build")
+        .arg(script)
+        .arg("-o")
+        .arg(&runner)
+        .arg("--debug")
+        .arg("--auto-c-source")
+        .arg("--c-source")
+        .arg(&process_shim)
+        .arg("--lib-dir")
+        .arg(&lib_dir)
+        .status();
+    let compiled = match compile_status {
+        Ok(status) if status.success() => true,
+        Ok(status) => {
+            let _ = fs::remove_dir_all(&runner_dir);
+            process::exit(status.code().unwrap_or(1));
+        }
+        Err(error) => {
+            eprintln!("loi: failed to run '{}': {error}", self_path.display());
+            let _ = fs::remove_dir_all(&runner_dir);
+            process::exit(1);
+        }
+    };
+    assert!(compiled);
+
+    let run_status = Command::new(&runner)
+        .env("LOI_SELF", &self_path)
+        .env("LOI_TOOLCHAIN_LIB", &lib_dir)
+        .status();
+    let code = match run_status {
+        Ok(status) => status.code().unwrap_or(1),
+        Err(error) => {
+            eprintln!("loi: failed to run '{}': {error}", runner.display());
+            1
+        }
+    };
+    let _ = fs::remove_dir_all(&runner_dir);
+    process::exit(code);
 }
 
 fn lex(source: &str, path: &Path, diagnostics: DiagnosticOptions) {
@@ -962,6 +1193,7 @@ fn gen_source(
 
 struct BuildRequest<'a> {
     output: Option<&'a Path>,
+    obj_dir: Option<&'a Path>,
     kind: BuildKind,
     profile: Option<BuildProfile>,
     rebuild: bool,
@@ -1141,6 +1373,7 @@ fn build_source(
 ) {
     let BuildRequest {
         output,
+        obj_dir,
         kind,
         profile,
         rebuild,
@@ -1169,8 +1402,10 @@ fn build_source(
     let arena_flag = arena_size.map(|size| format!("-DLOI_ARENA_SIZE={size}"));
 
     // Single-file build with retain/rebuild support uses the stamp-based
-    // incremental logic. Multi-file builds always recompile all inputs.
-    if paths.len() == 1 {
+    // incremental logic. An explicit object directory opts into the
+    // multi-object pipeline even for one source, so build scripts get the same
+    // path for one file and many files.
+    if paths.len() == 1 && obj_dir.is_none() {
         let input_path = &paths[0];
         let source = match fs::read_to_string(input_path) {
             Ok(source) => source,
@@ -1347,10 +1582,18 @@ fn build_source(
     }
 
     // ------------------------------------------------------------------
-    // Multi-file build: check the merged program once, then compile one
+    // Multi-object build: check the merged program once, then compile one
     // translation unit per input (with imported items folded into the first
     // unit that pulls them in) and link the objects.
     // ------------------------------------------------------------------
+
+    if let Some(dir) = obj_dir
+        && let Err(error) = fs::create_dir_all(dir)
+    {
+        eprintln!("loi: {}: {error}", dir.display());
+        process::exit(1);
+    }
+    let mut object_stems: HashMap<String, usize> = HashMap::new();
 
     let mut registry = ModuleRegistry::default();
     let mut seen_inputs = HashSet::new();
@@ -1433,8 +1676,32 @@ fn build_source(
             }
         };
 
-        // Multi-file: use <stem>.o next to each source.
-        let object_path = input_path.with_extension("o");
+        let base_stem = input_path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .filter(|stem| !stem.is_empty())
+            .unwrap_or("output")
+            .to_string();
+        let stem = match obj_dir {
+            Some(_) => {
+                let count = object_stems.entry(base_stem.clone()).or_insert(0);
+                let chosen = if *count == 0 {
+                    base_stem
+                } else {
+                    format!("{base_stem}-{}", *count + 1)
+                };
+                *count += 1;
+                chosen
+            }
+            None => base_stem,
+        };
+        let (object_path, header_path) = match obj_dir {
+            Some(dir) => (dir.join(format!("{stem}.o")), dir.join(format!("{stem}.h"))),
+            None => (
+                input_path.with_extension("o"),
+                input_path.with_extension("h"),
+            ),
+        };
         ensure_distinct_output(input_path, &object_path);
 
         let c_path = temporary_c_path();
@@ -1443,8 +1710,6 @@ fn build_source(
             process::exit(1);
         }
 
-        // Emit header next to each source.
-        let header_path = input_path.with_extension("h");
         ensure_distinct_output(input_path, &header_path);
         match loi::generate_header_named(&merged, None, Some(header_path.as_path())) {
             Ok(header) => {
@@ -1523,7 +1788,8 @@ fn build_source(
             }
         }
         BuildKind::Object => {
-            // Object files already written next to each source.
+            // One object per input was written to the object directory (or
+            // beside its source when --obj-dir was not given).
         }
         BuildKind::Library => {
             let output_path = output

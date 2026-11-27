@@ -63,9 +63,14 @@ the earlier decision not to expose process spawning in the playground.
 `/api/run` detects raylib/audio programs and returns a WebAssembly preview
 instead of a native binary. When `RAYLIB_WEB` and `emcc` are available it builds
 the submitted source with `examples/build_web.sh` into `web-runs/<token>/`;
-otherwise it serves the matching prebuilt `web/<demo>.html` and reports that
-stage in the response. `/api/lsp` compiles the LSP server once, reuses the
-binary for short-lived framed sessions and returns the JSON-RPC messages;
+the token is a hash of the source, demo, compiler, toolchain and every build
+input, so rerunning the same program reuses the cached output (`web-cache`
+stage) instead of starting Emscripten again. Simultaneous identical requests
+share one build. `LOI_WEB_RUNS_DIR` and `LOI_WEB_BUILD_SCRIPT` can override the
+cache and script locations for tests. Otherwise it serves the matching prebuilt
+`web/<demo>.html` and reports that stage in the response. `/api/lsp` compiles
+the LSP server once, reuses the binary for short-lived framed sessions and
+returns the JSON-RPC messages;
 the client renders `textDocument/publishDiagnostics` in the Problems panel and
 answers editor completion with `textDocument/completion` from the same buffer
 cache.

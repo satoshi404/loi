@@ -48,7 +48,10 @@ surface disagree, fix the compiler or record the change explicitly.
   `[--emit-c c] [--emit-h header.h] [--emit-ir ir] [--emit-llvm-ir ir]`
   `[--arena-size BYTES] [--source-map map.json] [--cc-flag F]...`
   `[--c-source FILE]... [--auto-c-source] [--backend c|llvm] [--lib-dir DIR]...`
+  `[--obj-dir DIR]`
 - `loi clean FILE [-o out]`
+- `loi init NAME` / `loi make` — scaffold a project and build it through
+  `build.loi`; `make` takes no file and builds into `output/`.
 - `--help` / `--version`
 - `--emit-asm` is **disabled**: the x86-64 assembly backend is an unfinished
   draft and the CLI rejects the flag with exit 2. The C backend is the

@@ -24,6 +24,12 @@ extern flow loi_io_open
     <- write: i32
     => i32
 
+/// True when `path` resolves to an existing filesystem entry. Unlike
+/// `file_open_read`, a missing path is an ordinary `false`, not an error.
+extern flow loi_os_path_exists
+    <- path: [u8]
+    => bool
+
 extern flow loi_io_close as close
     <- fd: i32
     => i32
@@ -52,6 +58,16 @@ open flow file_release
         _ <- loi_io_close(file.fd)
         file.fd = -1
     }
+}
+
+/// True when `path` resolves to an existing filesystem entry. The path is a
+/// runtime byte slice, so it can be assembled from config and environment
+/// values; unlike `file_open_read`, absence is not an error.
+open flow os_path_exists
+    <- path: [u8]
+    => bool
+{
+    => loi_os_path_exists(path)
 }
 
 /// Open a file for reading. Returns a handle with `fd` -1 on failure.
@@ -103,6 +119,14 @@ open flow release
 <-> file: File
 {
     file_release(<-> file)
+}
+
+/// Short alias of `os_path_exists`.
+open flow path_exists
+    <- path: [u8]
+    => bool
+{
+    => os_path_exists(path)
 }
 
 /// Short alias of `file_open_read`.

@@ -1,0 +1,384 @@
+//! Declarative build plans used by `loi make`.
+//!
+//! A project scaffolded by `loi init` contains a tiny `build.loi` that creates
+//! a `BuildPlan`, declares its sources, mode, optimization level and libraries,
+//! then calls `run`. A project can override the runner by placing its own
+//! `lib/build.loi` beside its sources: logical imports prefer the nearest
+//! library root, so the local file wins without a compiler flag.
+//!
+//! The runner deliberately stays in Loi. The only orchestration left in the
+//! Rust driver is locating the toolchain library, compiling this script and
+//! executing it. `LOI_BUILD_TARGET`, `LOI_BUILD_PROFILE` and
+//! `LOI_BUILD_REBUILD` override the declared plan; the driver supplies
+//! `LOI_SELF` and `LOI_TOOLCHAIN_LIB`.
+import std
+
+import os
+
+// Use the flat facade. Its externs are declared in `os/process.loi`, so the
+// driver links `process_shim.c` explicitly; `--auto-c-source` handles the other
+// shims and the explicit file is deduplicated against them.
+import process
+
+/// The complete, explicit description of one build.
+///
+/// Create it with `new`, configure it with `source`, `mode`, `optimize`,
+/// `target`, `profile`, `lib` and `cc_flag`, then pass it to `run`. All slices
+/// and vectors stay valid until the enclosing `protect` block ends.
+open shape BuildPlan {
+    name: [u8]
+    sources: Vec<[u8]>
+    libs: Vec<[u8]>
+    cc_flags: Vec<[u8]>
+    target: [u8]
+    profile: [u8]
+    optimize: [u8]
+    mode: [u8]
+}
+
+flow valid_target
+    <- value: [u8]
+    => bool
+{
+    => str_eq(value, "exe") or str_eq(value, "obj") or str_eq(value, "lib")
+}
+
+flow valid_profile
+    <- value: [u8]
+    => bool
+{
+    => str_eq(value, "debug") or str_eq(value, "release")
+}
+
+flow valid_optimize
+    <- value: [u8]
+    => bool
+{
+    => str_eq(value, "none") or str_eq(value, "debug") or str_eq(value, "speed") or str_eq(value, "size")
+}
+
+flow valid_mode
+    <- value: [u8]
+    => bool
+{
+    => str_eq(value, "native") or str_eq(value, "release") or str_eq(value, "size") or str_eq(value, "test") or str_eq(value, "web")
+}
+
+flow apply_optimize
+    <-> plan: BuildPlan
+    <- level: [u8]
+{
+    if not valid_optimize(level) {
+        panic(fmt::("loi build: invalid optimize '{}' (expected none, debug, speed or size)\n", level))
+    }
+    plan.optimize = clone(level)
+    if str_eq(level, "speed") or str_eq(level, "size") {
+        plan.profile = "release"
+    } else {
+        plan.profile = "debug"
+    }
+}
+
+/// Start a plan with `name` and safe defaults: exe, native, no optimization.
+open flow new
+    <- name: [u8]
+    -> plan: BuildPlan
+{
+    if name.len == 0 {
+        panic("loi build: project name must not be empty\n")
+    }
+    first <- name[0]
+    if not (first >= 65 and first <= 90 or first >= 97 and first <= 122 or first == 95) {
+        panic(fmt::("loi build: invalid project name '{}'\n", name))
+    }
+    mut at: u64 <- 1
+    while at < name.len {
+        ch <- name[at]
+        if not (ch >= 65 and ch <= 90 or ch >= 97 and ch <= 122 or ch >= 48 and ch <= 57 or ch == 45 or ch == 95) {
+            panic(fmt::("loi build: invalid project name '{}'\n", name))
+        }
+        at += 1
+    }
+    plan.name = clone(name)
+    vec_new<[u8]>(-> plan.sources)
+    vec_new<[u8]>(-> plan.libs)
+    vec_new<[u8]>(-> plan.cc_flags)
+    plan.target = "exe"
+    plan.profile = "debug"
+    plan.optimize = "none"
+    plan.mode = "native"
+}
+
+/// Add one source file. Paths are resolved from the project root.
+open flow source
+    <-> plan: BuildPlan
+    <- path: [u8]
+{
+    if path.len == 0 {
+        panic("loi build: source path must not be empty\n")
+    }
+    vec_push<[u8]>(<-> plan.sources, path)
+}
+
+/// Add a system library. The runner forwards `--cc-flag -lNAME` to the linker.
+open flow lib
+    <-> plan: BuildPlan
+    <- name: [u8]
+{
+    if name.len == 0 or name[0] == 45 {
+        panic(fmt::("loi build: invalid library name '{}'\n", name))
+    }
+    mut at: u64 <- 0
+    while at < name.len {
+        ch <- name[at]
+        if ch == 32 or ch == 9 or ch == 10 or ch == 13 {
+            panic(fmt::("loi build: invalid library name '{}'\n", name))
+        }
+        at += 1
+    }
+    vec_push<[u8]>(<-> plan.libs, str_concat("-l", name))
+}
+
+/// Add a raw C compiler/linker flag, for example `-Iinclude` or `-Llib`.
+open flow cc_flag
+    <-> plan: BuildPlan
+    <- flag: [u8]
+{
+    if flag.len == 0 {
+        panic("loi build: cc flag must not be empty\n")
+    }
+    vec_push<[u8]>(<-> plan.cc_flags, flag)
+}
+
+/// Select the output kind: `exe`, `obj` or `lib`.
+open flow target
+    <-> plan: BuildPlan
+    <- value: [u8]
+{
+    if not valid_target(value) {
+        panic(fmt::("loi build: invalid target '{}' (expected exe, obj or lib)\n", value))
+    }
+    plan.target = clone(value)
+}
+
+/// Select the debug-information profile independently of `optimize`.
+open flow profile
+    <-> plan: BuildPlan
+    <- value: [u8]
+{
+    if not valid_profile(value) {
+        panic(fmt::("loi build: invalid profile '{}' (expected debug or release)\n", value))
+    }
+    plan.profile = clone(value)
+}
+
+/// Select `none`, `debug`, `speed` or `size`. This also picks a matching
+/// profile: `speed` and `size` use `release`; the others use `debug`.
+open flow optimize
+    <-> plan: BuildPlan
+    <- level: [u8]
+{
+    apply_optimize(<-> plan, level)
+}
+
+/// Apply a named preset. `native`/`test` are debug builds, `release` is -O2,
+/// `size` is -Os, and `web` adds the Emscripten flags (requires `CC=emcc`).
+open flow mode
+    <-> plan: BuildPlan
+    <- value: [u8]
+{
+    if not valid_mode(value) {
+        panic(fmt::("loi build: invalid mode '{}' (expected native, release, size, test or web)\n", value))
+    }
+    plan.mode = clone(value)
+    if str_eq(value, "release") {
+        apply_optimize(<-> plan, "speed")
+    } else if str_eq(value, "size") or str_eq(value, "web") {
+        apply_optimize(<-> plan, "size")
+    } else {
+        apply_optimize(<-> plan, "none")
+    }
+}
+
+flow fail
+    <- message: [u8]
+    => i32
+{
+    eprint(message)
+    => 1
+}
+
+flow artifact_path
+    <- name: [u8]
+    <- target: [u8]
+    => [u8]
+{
+    if str_eq(target, "exe") {
+        => str_concat("output/", name)
+    }
+    if str_eq(target, "obj") {
+        => str_concat(str_concat("output/", name), ".o")
+    }
+    => str_concat(str_concat("output/lib", name), ".a")
+}
+
+/// Compile every declared source and write the artifact under `output/`.
+/// Returns the compiler's exit status; a cache hit prints `[make] up to date`.
+open flow run
+    <- plan: BuildPlan
+    => i32
+{
+    protect {
+        script <- read_file("build.loi")
+        name <- clone(plan.name)
+        if name.len == 0 {
+            => fail("loi make: plan has no name\n")
+        }
+        mut target: [u8] <- clone(plan.target)
+        mut profile: [u8] <- clone(plan.profile)
+        env_target <- os_env("LOI_BUILD_TARGET")
+        if env_target.len > 0 {
+            target = str_trim(env_target)
+        }
+        env_profile <- os_env("LOI_BUILD_PROFILE")
+        if env_profile.len > 0 {
+            profile = str_trim(env_profile)
+        }
+        env_rebuild <- os_env("LOI_BUILD_REBUILD")
+        rebuild <- str_eq(str_trim(env_rebuild), "1")
+        if not valid_target(target) {
+            eprint(fmt::("loi make: invalid target '{}'\n", target))
+            => 1
+        }
+        if not valid_profile(profile) {
+            eprint(fmt::("loi make: invalid profile '{}'\n", profile))
+            => 1
+        }
+        if not valid_optimize(plan.optimize) {
+            eprint(fmt::("loi make: invalid optimize '{}'\n", plan.optimize))
+            => 1
+        }
+        if not valid_mode(plan.mode) {
+            eprint(fmt::("loi make: invalid mode '{}'\n", plan.mode))
+            => 1
+        }
+        if plan.sources.len == 0 {
+            => fail("loi make: plan has no sources\n")
+        }
+        output_path <- artifact_path(name, target)
+        // The key covers every declared input that changes the artifact. The
+        // compiler's own stamp still decides whether an existing artifact is
+        // stale; this key only avoids invoking the compiler at all.
+        mut key: u64 <- hash_str(script)
+        key = hash_bytes_seeded(name, key)
+        key = hash_bytes_seeded(target, key)
+        key = hash_bytes_seeded(profile, key)
+        key = hash_bytes_seeded(plan.optimize, key)
+        key = hash_bytes_seeded(plan.mode, key)
+        for i in 0..plan.sources.len {
+            source_path <- vec_get<[u8]>(plan.sources, i)
+            if not os_path_exists(source_path) {
+                eprint(fmt::("loi make: missing source {}\n", source_path))
+                => 1
+            }
+            key = hash_bytes_seeded(source_path, key)
+            key = hash_bytes_seeded(read_file(source_path), key)
+        }
+        for i in 0..plan.libs.len {
+            key = hash_bytes_seeded(vec_get<[u8]>(plan.libs, i), key)
+        }
+        for i in 0..plan.cc_flags.len {
+            key = hash_bytes_seeded(vec_get<[u8]>(plan.cc_flags, i), key)
+        }
+        key_text <- u64_to_bytes(key)
+        mut up_to_date: bool <- false
+        if not rebuild and os_path_exists("output/.loi-build-cache") and os_path_exists(output_path) {
+            cached <- read_file("output/.loi-build-cache")
+            up_to_date = str_eq(cached, key_text)
+        }
+        if up_to_date {
+            print("[make] up to date\n")
+            => 0
+        }
+        print(fmt::("[make] building {} ({}, {})\n", name, target, profile))
+        program <- os_env("LOI_SELF")
+        if program.len == 0 {
+            => fail("loi make: LOI_SELF was not set by the driver\n")
+        }
+        toolchain <- os_env("LOI_TOOLCHAIN_LIB")
+        mut args: Vec<[u8]>
+        vec_new<[u8]>(-> args)
+        vec_push<[u8]>(<-> args, "build")
+        for i in 0..plan.sources.len {
+            vec_push<[u8]>(<-> args, vec_get<[u8]>(plan.sources, i))
+        }
+        vec_push<[u8]>(<-> args, "-o")
+        vec_push<[u8]>(<-> args, output_path)
+        if not str_eq(target, "exe") {
+            vec_push<[u8]>(<-> args, "--emit")
+            vec_push<[u8]>(<-> args, target)
+        }
+        if not str_eq(target, "obj") {
+            vec_push<[u8]>(<-> args, "--obj-dir")
+            vec_push<[u8]>(<-> args, "output/objects")
+        }
+        vec_push<[u8]>(<-> args, "--auto-c-source")
+        if toolchain.len > 0 {
+            vec_push<[u8]>(<-> args, "--lib-dir")
+            vec_push<[u8]>(<-> args, toolchain)
+        }
+        if str_eq(profile, "debug") {
+            vec_push<[u8]>(<-> args, "--debug")
+        } else {
+            vec_push<[u8]>(<-> args, "--release")
+        }
+        if str_eq(plan.optimize, "size") {
+            vec_push<[u8]>(<-> args, "--cc-flag")
+            vec_push<[u8]>(<-> args, "-Os")
+        } else if str_eq(plan.optimize, "none") or str_eq(plan.optimize, "debug") {
+            vec_push<[u8]>(<-> args, "--cc-flag")
+            vec_push<[u8]>(<-> args, "-O0")
+        }
+        if str_eq(plan.mode, "web") {
+            vec_push<[u8]>(<-> args, "--cc-flag")
+            vec_push<[u8]>(<-> args, "-sWASM=1")
+            vec_push<[u8]>(<-> args, "--cc-flag")
+            vec_push<[u8]>(<-> args, "-sALLOW_MEMORY_GROWTH=1")
+            vec_push<[u8]>(<-> args, "--cc-flag")
+            vec_push<[u8]>(<-> args, "-sEXIT_RUNTIME=1")
+        }
+        for i in 0..plan.libs.len {
+            vec_push<[u8]>(<-> args, "--cc-flag")
+            vec_push<[u8]>(<-> args, vec_get<[u8]>(plan.libs, i))
+        }
+        for i in 0..plan.cc_flags.len {
+            vec_push<[u8]>(<-> args, "--cc-flag")
+            vec_push<[u8]>(<-> args, vec_get<[u8]>(plan.cc_flags, i))
+        }
+        if rebuild {
+            vec_push<[u8]>(<-> args, "--rebuild")
+        }
+        mut status: i32 <- 0
+        guard child <- process_spawn_args(program, vec_view<[u8]>(args, 0, args.len)) {
+            if not process_ok(child) {
+                => fail("loi make: could not start the compiler\n")
+            }
+            out <- process_stdout(child)
+            err <- process_stderr(child)
+            if out.len > 0 {
+                print(out)
+            }
+            if err.len > 0 {
+                eprint(err)
+            }
+            status = process_exit_code(child)
+        }
+        if status != 0 {
+            => status
+        }
+        if not write_file("output/.loi-build-cache", key_text) {
+            => fail("loi make: could not write output/.loi-build-cache\n")
+        }
+        => 0
+    }
+}

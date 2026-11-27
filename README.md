@@ -77,6 +77,12 @@ cargo build                         # builds both loi and the separate loi-lsp
 ./target/debug/loi check examples/flow_syntax.loi
 ./target/debug/loi build examples/flow_syntax.loi -o flow_demo
 ./flow_demo
+
+# Or scaffold a project and let its build.loi drive compilation:
+./target/debug/loi init demo
+cd demo
+../target/debug/loi make
+./output/demo
 ```
 
 ## Command-line interface
@@ -89,9 +95,50 @@ loi gen FILE [-o out.c] [--emit-h header.h] [--emit-ir ir] [--source-map map.jso
 loi build FILE... [-o out] [--emit exe|obj|lib] [--debug|--release] [--rebuild]
           [--emit-c c] [--emit-h header.h] [--emit-ir ir]
           [--arena-size BYTES] [--source-map map.json]
-          [--cc-flag F]... [--c-source FILE]...
+          [--cc-flag F]... [--c-source FILE]... [--obj-dir DIR]
+          [--auto-c-source] [--lib-dir DIR]...
 loi clean FILE [-o out]
+loi init NAME
+loi make
 ```
+
+`loi init NAME` creates a deterministic project: `src/main.loi`, `build.loi`,
+`.gitignore` (ignoring `output/`) and `output/` with `config.txt` and `objects/`.
+`config.txt` is an informational snapshot; the plan in `build.loi` is
+authoritative. From that directory, `loi make` compiles and runs `build.loi`;
+it builds the declared sources into `output/` and writes a fingerprint to
+`output/.loi-build-cache` so an unchanged project reports `[make] up to date`.
+`make` only builds: run `./output/NAME` yourself.
+
+The generated build is a small declarative plan:
+
+```loi
+import build as loi_build
+
+open flow main
+    => i32
+{
+    protect {
+        mut plan: loi_build::BuildPlan
+        loi_build::new("demo", -> plan)
+        loi_build::source(<-> plan, "src/main.loi")
+        loi_build::mode(<-> plan, "native")
+        loi_build::optimize(<-> plan, "none")
+        => loi_build::run(plan)
+    }
+}
+```
+
+Add sources with `source`, system libraries with `lib("m")` (forwards `-lm`),
+raw flags with `cc_flag`, and select `target("exe"|"obj"|"lib")`,
+`profile("debug"|"release")`, `mode("native"|"release"|"size"|"test"|"web")` or
+`optimize("none"|"debug"|"speed"|"size")`; invalid values fail immediately.
+The runner lives in the toolchain's `lib/build.loi`, not in each project; add a
+project-local `lib/build.loi` to override it. `LOI_BUILD_TARGET=exe|obj|lib`,
+`LOI_BUILD_PROFILE=debug|release` and `LOI_BUILD_REBUILD=1` override the plan
+without editing `build.loi`. `--obj-dir DIR` on `loi build` writes one object
+and header per source into `DIR` instead of beside the sources; it forces the
+multi-object pipeline even for a single input and therefore requires `-o`.
 
 `cargo build` also produces `target/debug/loi-lsp`, a separate stdio language
 server like `clangd`. Editors start it directly; it compiles and caches the
@@ -153,7 +200,9 @@ cargo test --all-targets
 - Operands, arguments and assignment are evaluated strictly left to right;
   `and` and `or` short-circuit. See `SINTAXE.md` under "Evaluation order".
 - `read_file`, `write_file`, `read_stdin` and `read_line` cover whole-file and
-  stdin I/O. `print_int`, `print_float` and `printf` print numbers and formatted
+  stdin I/O. `os_path_exists` / `path_exists` in `lib/os/file.loi` check a
+  runtime byte-slice path through `os_shim.c`; a missing path is `false`, not a
+  trap. `print_int`, `print_float` and `printf` print numbers and formatted
   text without building strings by hand; `printf` checks its varargs against a
   literal format string. `format` builds a string from `{}` placeholders; a
   `[u8]` argument prints its bytes, not its slice header. Reads and `format`
@@ -182,7 +231,7 @@ their build commands.
 |---|---|
 | `src/` | Compiler binaries (`loi` and the `loi-lsp` launcher), lexer, parser, type/ownership checker, `flow.rs` effect primitives, C backend, draft IR/assembly |
 | `tests/` | Lexer/parser/checker/codegen/CLI/bindgen integration tests, including `data_path.rs` for flow path effects |
-| `lib/*.loi`, `lib/*_shim.c` | Modular library: pure Loi helpers plus POSIX shims for `os`/`net` |
+| `lib/*.loi`, `lib/*_shim.c` | Modular library, the `loi make` runner (`build.loi`) and POSIX shims for `os`/`net` |
 | `examples/` | Reference programs, including `flow_syntax.loi`, `marks.loi`, `choices.loi`, `recent_features.loi`, `systems.loi` and `tictactoe.loi` |
 | `vendor/` | Generated Loi bindings for SDL2 and raylib 5.5, with shims and skip reports |
 | `tools/bindgen/` | Header-to-Loi binding generator |
