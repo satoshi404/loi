@@ -1,0 +1,797 @@
+//! Internal build model for FASE 2.
+//!
+//! These flows describe a project without executing it. Everything is explicit:
+//! targets have ids, tasks have ids, and both are stored in ordered vectors so
+//! later phases can topologically sort them deterministically. The legacy
+//! `BuildPlan` in `lib/build.loi` remains untouched; scripts opt into this model
+//! with `import build::model` and call `model::project(...)`.
+//!
+//! No flow here reads the environment, spawns a process or writes a file. The
+//! only validation performed at construction time is syntactic (non-empty ids
+//! and known kind names); semantic validation lives in `build/validate.loi`.
+//!
+//! The seven model concepts are separate shapes:
+//! `Project`, `BuildTarget`, `BuildTask`, `Artifact`, `BuildDependency`,
+//! `BuildConfig` and `BuildContext`. `BuildConfig` is inherited by each target;
+//! `BuildContext` describes the resolved paths a future executor will use.
+import std
+
+/// One `-DKEY=VALUE` entry. Kept as a shape so later phases can hash key and
+/// value separately instead of parsing a raw flag string.
+open shape BuildDefine {
+    key: [u8]
+    value: [u8]
+}
+
+/// Settings that affect code generation and linking. A copy lives on the
+/// project and on every target; a target override never mutates its siblings.
+open shape BuildConfig {
+    profile: [u8]
+    optimize: [u8]
+    mode: [u8]
+    target_os: [u8]
+    target_arch: [u8]
+    target_abi: [u8]
+    backend: [u8]
+    compiler: [u8]
+    archiver: [u8]
+}
+
+/// Resolved paths handed to the executor. Keeping them in a shape makes it
+/// possible to pass the context explicitly instead of reading global state.
+open shape BuildContext {
+    root: [u8]
+    toolchain: [u8]
+    output_dir: [u8]
+}
+
+/// Explicit host/target/toolchain separation. Native builds use the same
+/// triple on both sides; a non-native target always needs a caller-provided
+/// toolchain, because Loi never guesses a cross compiler or universal flag.
+open shape BuildToolchain {
+    host_os: [u8]
+    host_arch: [u8]
+    host_abi: [u8]
+    target_os: [u8]
+    target_arch: [u8]
+    target_abi: [u8]
+    c_compiler: [u8]
+    linker: [u8]
+    archiver: [u8]
+}
+
+/// One declared build output and everything that contributes to it.
+open shape BuildTarget {
+    id: [u8]
+    kind: [u8]
+    output: [u8]
+    config: BuildConfig
+    sources: Vec<[u8]>
+    c_sources: Vec<[u8]>
+    headers: Vec<[u8]>
+    assets: Vec<[u8]>
+    include_dirs: Vec<[u8]>
+    defines: Vec<BuildDefine>
+    libs: Vec<[u8]>
+    cc_flags: Vec<[u8]>
+    link_flags: Vec<[u8]>
+    deps: Vec<[u8]>
+    tasks: Vec<[u8]>
+}
+
+/// One explicit action in the graph. `operation` is a structured name such as
+/// `generate`, `run` or `test`, never an arbitrary shell command.
+open shape BuildTask {
+    id: [u8]
+    kind: [u8]
+    operation: [u8]
+    action: [u8]
+    content: [u8]
+    condition: [u8]
+    inputs: Vec<[u8]>
+    outputs: Vec<[u8]>
+    deps: Vec<[u8]>
+}
+
+/// A declared output with its manifest path. `build/cache.loi` uses the
+/// descriptor for content hashing and manifest validation.
+open shape Artifact {
+    id: [u8]
+    path: [u8]
+    kind: [u8]
+    producer: [u8]
+    manifest: [u8]
+}
+
+/// A typed edge. `kind` is one of `target`, `task`, `artifact` or `input`.
+open shape BuildDependency {
+    from: [u8]
+    to: [u8]
+    kind: [u8]
+}
+
+/// The explicit description of a project. Config is inherited from `config`,
+/// paths from `context`, and every node keeps its own stable vector index.
+open shape Project {
+    name: [u8]
+    config: BuildConfig
+    context: BuildContext
+    default_target: [u8]
+    targets: Vec<BuildTarget>
+    tasks: Vec<BuildTask>
+    artifacts: Vec<Artifact>
+    dependencies: Vec<BuildDependency>
+}
+
+flow model_require_id
+    <- value: [u8]
+    <- what: [u8]
+{
+    if value.len == 0 {
+        panic(fmt::("build model: {} id must not be empty\n", what))
+    }
+}
+
+flow model_require_path
+    <- value: [u8]
+    <- what: [u8]
+{
+    if value.len == 0 {
+        panic(fmt::("build model: {} path must not be empty\n", what))
+    }
+}
+
+flow model_check_index
+    <- index: u64
+    <- len: u64
+{
+    if index >= len {
+        panic("build model: index out of range\n")
+    }
+}
+
+/// Conservative defaults. `native` is the only triple accepted in FASE 2;
+/// later phases add real cross-compilation data.
+flow model_default_config
+    -> config: BuildConfig
+{
+    config.profile = "debug"
+    config.optimize = "none"
+    config.mode = "native"
+    config.target_os = "native"
+    config.target_arch = "native"
+    config.target_abi = "native"
+    config.backend = "c"
+    config.compiler = "cc"
+    config.archiver = "ar"
+}
+
+flow model_default_context
+    -> context: BuildContext
+{
+    context.root = "."
+    context.toolchain = ""
+    context.output_dir = "output"
+}
+
+/// Build a config explicitly when a script does not want the defaults.
+open flow config
+    -> value: BuildConfig
+{
+    model_default_config(-> value)
+}
+
+/// Build a context from a project root and toolchain library directory.
+open flow context
+    <- root: [u8]
+    <- toolchain: [u8]
+    -> value: BuildContext
+{
+    model_require_path(root, "context root")
+    value.root = clone(root)
+    value.toolchain = clone(toolchain)
+    value.output_dir = "output"
+}
+
+/// Explicit native toolchain defaults. This function reads no environment and
+/// invents no cross flags; overrides must be declared by the caller.
+open flow toolchain
+    -> value: BuildToolchain
+{
+    value.host_os = "native"
+    value.host_arch = "native"
+    value.host_abi = "native"
+    value.target_os = "native"
+    value.target_arch = "native"
+    value.target_abi = "native"
+    value.c_compiler = "cc"
+    value.linker = "cc"
+    value.archiver = "ar"
+}
+
+flow model_new_target
+    <- id: [u8]
+    <- kind: [u8]
+    <- config: BuildConfig
+    -> target: BuildTarget
+{
+    model_require_id(id, "target")
+    target.id = clone(id)
+    target.kind = clone(kind)
+    target.output = ""
+    target.config = clone(config)
+    vec_new<[u8]>(-> target.sources)
+    vec_new<[u8]>(-> target.c_sources)
+    vec_new<[u8]>(-> target.headers)
+    vec_new<[u8]>(-> target.assets)
+    vec_new<[u8]>(-> target.include_dirs)
+    vec_new<BuildDefine>(-> target.defines)
+    vec_new<[u8]>(-> target.libs)
+    vec_new<[u8]>(-> target.cc_flags)
+    vec_new<[u8]>(-> target.link_flags)
+    vec_new<[u8]>(-> target.deps)
+    vec_new<[u8]>(-> target.tasks)
+}
+
+/// Start a project with explicit, conservative defaults.
+open flow project
+    <- name: [u8]
+    -> p: Project
+{
+    model_require_id(name, "project")
+    p.name = clone(name)
+    model_default_config(-> p.config)
+    model_default_context(-> p.context)
+    p.default_target = ""
+    vec_new<BuildTarget>(-> p.targets)
+    vec_new<BuildTask>(-> p.tasks)
+    vec_new<Artifact>(-> p.artifacts)
+    vec_new<BuildDependency>(-> p.dependencies)
+}
+
+/// Add an executable target and return its vector index. Indices are stable for
+/// the lifetime of the project and are the handles used by every mutator below.
+open flow executable
+    <-> p: Project
+    <- id: [u8]
+    -> index: u64
+{
+    mut target: BuildTarget
+    model_new_target(id, "executable", p.config, -> target)
+    target.output = str_concat("output/", id)
+    vec_push<BuildTarget>(<-> p.targets, target)
+    index = p.targets.len - 1
+}
+
+/// Add a static library target (`output/lib<id>.a`).
+open flow static_library
+    <-> p: Project
+    <- id: [u8]
+    -> index: u64
+{
+    mut target: BuildTarget
+    model_new_target(id, "static_library", p.config, -> target)
+    target.output = str_concat(str_concat("output/lib", id), ".a")
+    vec_push<BuildTarget>(<-> p.targets, target)
+    index = p.targets.len - 1
+}
+
+/// Add a shared library target (`output/lib<id>.so`). The extension is native
+/// for now; cross toolchains cannot silently inherit it.
+open flow shared_library
+    <-> p: Project
+    <- id: [u8]
+    -> index: u64
+{
+    mut target: BuildTarget
+    model_new_target(id, "shared_library", p.config, -> target)
+    target.output = str_concat(str_concat("output/lib", id), ".so")
+    vec_push<BuildTarget>(<-> p.targets, target)
+    index = p.targets.len - 1
+}
+
+/// Add a single object target (`output/<id>.o`).
+open flow object
+    <-> p: Project
+    <- id: [u8]
+    -> index: u64
+{
+    mut target: BuildTarget
+    model_new_target(id, "object", p.config, -> target)
+    target.output = str_concat(str_concat("output/", id), ".o")
+    vec_push<BuildTarget>(<-> p.targets, target)
+    index = p.targets.len - 1
+}
+
+/// Add an explicit task. `kind` is validated here so a typo cannot survive to
+/// the graph phase as a silent no-op.
+open flow task
+    <-> p: Project
+    <- id: [u8]
+    <- kind: [u8]
+    <- operation: [u8]
+    -> index: u64
+{
+    model_require_id(id, "task")
+    if operation.len == 0 {
+        panic("build model: task operation must not be empty\n")
+    }
+    if not (str_eq(kind, "generate") or str_eq(kind, "asset") or str_eq(kind, "run") or str_eq(kind, "test") or str_eq(kind, "install") or str_eq(kind, "clean")) {
+        panic(fmt::("build model: invalid task kind '{}'\n", kind))
+    }
+    mut item: BuildTask
+    item.id = clone(id)
+    item.kind = clone(kind)
+    item.operation = clone(operation)
+    item.action = "noop"
+    item.content = ""
+    item.condition = "changed"
+    vec_new<[u8]>(-> item.inputs)
+    vec_new<[u8]>(-> item.outputs)
+    vec_new<[u8]>(-> item.deps)
+    vec_push<BuildTask>(<-> p.tasks, item)
+    index = p.tasks.len - 1
+}
+
+/// Declare an explicit asset tree. The source directory is copied recursively
+/// into `destination`, preserving relative paths. Only this declared root is
+/// scanned; no global search or hidden discovery is performed.
+open flow asset_dir
+    <-> p: Project
+    <- id: [u8]
+    <- source: [u8]
+    <- destination: [u8]
+    -> index: u64
+{
+    model_require_id(id, "asset")
+    model_require_path(source, "asset source")
+    model_require_path(destination, "asset destination")
+    task(<-> p, id, "asset", "asset", -> index)
+    set_task_action(<-> p, index, "asset_dir")
+    add_task_input(<-> p, index, source)
+    add_task_output(<-> p, index, destination)
+}
+
+/// Short alias for `asset_dir`, matching the conceptual `asset()` spelling.
+open flow asset
+    <-> p: Project
+    <- id: [u8]
+    <- source: [u8]
+    <- destination: [u8]
+    -> index: u64
+{
+    asset_dir(<-> p, id, source, destination, -> index)
+}
+
+/// Generate a Loi byte array from one declared file. `symbol` is the public
+/// global name emitted into `destination`; nothing else is embedded.
+open flow embed_file
+    <-> p: Project
+    <- id: [u8]
+    <- source: [u8]
+    <- destination: [u8]
+    -> index: u64
+{
+    model_require_id(id, "embed")
+    model_require_path(source, "embed source")
+    model_require_path(destination, "embed destination")
+    task(<-> p, id, "generate", "generate", -> index)
+    set_task_action(<-> p, index, "embed_file")
+    set_task_content(<-> p, index, str_concat("_loi_embed_", id))
+    add_task_input(<-> p, index, source)
+    add_task_output(<-> p, index, destination)
+}
+
+/// Declare a Loi program that is compiled and executed as a build test.
+open flow test
+    <-> p: Project
+    <- id: [u8]
+    <- source: [u8]
+    -> index: u64
+{
+    model_require_id(id, "test")
+    model_require_path(source, "test source")
+    task(<-> p, id, "test", "test", -> index)
+    set_task_action(<-> p, index, "test")
+    add_task_input(<-> p, index, source)
+    add_task_output(<-> p, index, str_concat("output/tests/", id))
+}
+
+/// Declare one install copy from a declared input to a destination inside the
+/// project. The destination may be outside `output_dir`.
+open flow install
+    <-> p: Project
+    <- id: [u8]
+    <- source: [u8]
+    <- destination: [u8]
+    -> index: u64
+{
+    model_require_id(id, "install")
+    model_require_path(source, "install source")
+    model_require_path(destination, "install destination")
+    task(<-> p, id, "install", "install", -> index)
+    set_task_action(<-> p, index, "install")
+    add_task_input(<-> p, index, source)
+    add_task_output(<-> p, index, destination)
+}
+
+/// Declare a clean group. Only paths added with `add_clean_path` are removed.
+open flow clean
+    <-> p: Project
+    <- id: [u8]
+    -> index: u64
+{
+    model_require_id(id, "clean")
+    task(<-> p, id, "clean", "clean", -> index)
+    set_task_action(<-> p, index, "clean")
+}
+
+/// Declare an explicit path removed by a clean task.
+open flow add_clean_path
+    <-> p: Project
+    <- index: u64
+    <- path: [u8]
+{
+    model_check_index(index, p.tasks.len)
+    model_require_path(path, "clean path")
+    mut item <- vec_get<BuildTask>(p.tasks, index)
+    vec_push<[u8]>(<-> item.outputs, path)
+    vec_set<BuildTask>(<-> p.tasks, index, item)
+}
+
+/// Declare an artifact producer without hashing it yet.
+open flow artifact
+    <-> p: Project
+    <- id: [u8]
+    <- path: [u8]
+    <- kind: [u8]
+    <- producer: [u8]
+    -> index: u64
+{
+    model_require_id(id, "artifact")
+    model_require_path(path, "artifact")
+    mut item: Artifact
+    item.id = clone(id)
+    item.path = clone(path)
+    item.kind = clone(kind)
+    item.producer = clone(producer)
+    item.manifest = str_concat(str_concat("output/.loi-build/", id), ".json")
+    vec_push<Artifact>(<-> p.artifacts, item)
+    index = p.artifacts.len - 1
+}
+
+/// Declare a graph edge explicitly. Duplicate edges are left to the graph phase
+/// so the validator can report them together with other graph problems.
+open flow dependency
+    <-> p: Project
+    <- from: [u8]
+    <- to: [u8]
+    <- kind: [u8]
+    -> index: u64
+{
+    model_require_id(from, "dependency source")
+    model_require_id(to, "dependency target")
+    mut item: BuildDependency
+    item.from = clone(from)
+    item.to = clone(to)
+    item.kind = clone(kind)
+    vec_push<BuildDependency>(<-> p.dependencies, item)
+    index = p.dependencies.len - 1
+}
+
+/// Select the target run by a future `build` call.
+open flow default_target
+    <-> p: Project
+    <- id: [u8]
+{
+    p.default_target = clone(id)
+}
+
+/// Replace the inherited context of a project.
+open flow set_context
+    <-> p: Project
+    <- value: BuildContext
+{
+    p.context = clone(value)
+}
+
+// ---------------------------------------------------------------------------
+// Target mutators. Each one loads the target, changes it and writes it back;
+// Loi has no references, so the vector index is the explicit handle.
+// ---------------------------------------------------------------------------
+open flow add_source
+    <-> p: Project
+    <- index: u64
+    <- path: [u8]
+{
+    model_check_index(index, p.targets.len)
+    model_require_path(path, "source")
+    mut target <- vec_get<BuildTarget>(p.targets, index)
+    vec_push<[u8]>(<-> target.sources, path)
+    vec_set<BuildTarget>(<-> p.targets, index, target)
+}
+
+open flow add_c_source
+    <-> p: Project
+    <- index: u64
+    <- path: [u8]
+{
+    model_check_index(index, p.targets.len)
+    model_require_path(path, "c source")
+    mut target <- vec_get<BuildTarget>(p.targets, index)
+    vec_push<[u8]>(<-> target.c_sources, path)
+    vec_set<BuildTarget>(<-> p.targets, index, target)
+}
+
+/// A header declared as an explicit cache input. It is not compiled on its
+/// own; a future executor passes its directory through `include_dirs`.
+open flow add_header
+    <-> p: Project
+    <- index: u64
+    <- path: [u8]
+{
+    model_check_index(index, p.targets.len)
+    model_require_path(path, "header")
+    mut target <- vec_get<BuildTarget>(p.targets, index)
+    vec_push<[u8]>(<-> target.headers, path)
+    vec_set<BuildTarget>(<-> p.targets, index, target)
+}
+
+/// A data file that contributes to the artifact but is neither source nor
+/// header. Declaring it keeps it out of hidden directory scans.
+open flow add_asset
+    <-> p: Project
+    <- index: u64
+    <- path: [u8]
+{
+    model_check_index(index, p.targets.len)
+    model_require_path(path, "asset")
+    mut target <- vec_get<BuildTarget>(p.targets, index)
+    vec_push<[u8]>(<-> target.assets, path)
+    vec_set<BuildTarget>(<-> p.targets, index, target)
+}
+
+open flow add_include_dir
+    <-> p: Project
+    <- index: u64
+    <- path: [u8]
+{
+    model_check_index(index, p.targets.len)
+    model_require_path(path, "include dir")
+    mut target <- vec_get<BuildTarget>(p.targets, index)
+    vec_push<[u8]>(<-> target.include_dirs, path)
+    vec_set<BuildTarget>(<-> p.targets, index, target)
+}
+
+open flow add_define
+    <-> p: Project
+    <- index: u64
+    <- key: [u8]
+    <- value: [u8]
+{
+    model_check_index(index, p.targets.len)
+    model_require_id(key, "define")
+    mut target <- vec_get<BuildTarget>(p.targets, index)
+    mut item: BuildDefine
+    item.key = clone(key)
+    item.value = clone(value)
+    vec_push<BuildDefine>(<-> target.defines, item)
+    vec_set<BuildTarget>(<-> p.targets, index, target)
+}
+
+open flow add_lib
+    <-> p: Project
+    <- index: u64
+    <- name: [u8]
+{
+    model_check_index(index, p.targets.len)
+    model_require_id(name, "library")
+    mut target <- vec_get<BuildTarget>(p.targets, index)
+    vec_push<[u8]>(<-> target.libs, name)
+    vec_set<BuildTarget>(<-> p.targets, index, target)
+}
+
+open flow add_cc_flag
+    <-> p: Project
+    <- index: u64
+    <- flag: [u8]
+{
+    model_check_index(index, p.targets.len)
+    model_require_path(flag, "cc flag")
+    mut target <- vec_get<BuildTarget>(p.targets, index)
+    vec_push<[u8]>(<-> target.cc_flags, flag)
+    vec_set<BuildTarget>(<-> p.targets, index, target)
+}
+
+open flow add_link_flag
+    <-> p: Project
+    <- index: u64
+    <- flag: [u8]
+{
+    model_check_index(index, p.targets.len)
+    model_require_path(flag, "link flag")
+    mut target <- vec_get<BuildTarget>(p.targets, index)
+    vec_push<[u8]>(<-> target.link_flags, flag)
+    vec_set<BuildTarget>(<-> p.targets, index, target)
+}
+
+open flow add_dep
+    <-> p: Project
+    <- index: u64
+    <- dep_id: [u8]
+{
+    model_check_index(index, p.targets.len)
+    model_require_id(dep_id, "dependency")
+    mut target <- vec_get<BuildTarget>(p.targets, index)
+    vec_push<[u8]>(<-> target.deps, dep_id)
+    vec_set<BuildTarget>(<-> p.targets, index, target)
+}
+
+open flow add_task_ref
+    <-> p: Project
+    <- index: u64
+    <- task_id: [u8]
+{
+    model_check_index(index, p.targets.len)
+    model_require_id(task_id, "task reference")
+    mut target <- vec_get<BuildTarget>(p.targets, index)
+    vec_push<[u8]>(<-> target.tasks, task_id)
+    vec_set<BuildTarget>(<-> p.targets, index, target)
+}
+
+open flow set_output
+    <-> p: Project
+    <- index: u64
+    <- path: [u8]
+{
+    model_check_index(index, p.targets.len)
+    model_require_path(path, "output")
+    mut target <- vec_get<BuildTarget>(p.targets, index)
+    target.output = clone(path)
+    vec_set<BuildTarget>(<-> p.targets, index, target)
+}
+
+open flow set_profile
+    <-> p: Project
+    <- index: u64
+    <- value: [u8]
+{
+    model_check_index(index, p.targets.len)
+    mut target <- vec_get<BuildTarget>(p.targets, index)
+    target.config.profile = clone(value)
+    vec_set<BuildTarget>(<-> p.targets, index, target)
+}
+
+open flow set_optimize
+    <-> p: Project
+    <- index: u64
+    <- value: [u8]
+{
+    model_check_index(index, p.targets.len)
+    mut target <- vec_get<BuildTarget>(p.targets, index)
+    target.config.optimize = clone(value)
+    vec_set<BuildTarget>(<-> p.targets, index, target)
+}
+
+open flow set_mode
+    <-> p: Project
+    <- index: u64
+    <- value: [u8]
+{
+    model_check_index(index, p.targets.len)
+    mut target <- vec_get<BuildTarget>(p.targets, index)
+    target.config.mode = clone(value)
+    vec_set<BuildTarget>(<-> p.targets, index, target)
+}
+
+open flow set_target_os
+    <-> p: Project
+    <- index: u64
+    <- value: [u8]
+{
+    model_check_index(index, p.targets.len)
+    mut target <- vec_get<BuildTarget>(p.targets, index)
+    target.config.target_os = clone(value)
+    vec_set<BuildTarget>(<-> p.targets, index, target)
+}
+
+open flow set_target_arch
+    <-> p: Project
+    <- index: u64
+    <- value: [u8]
+{
+    model_check_index(index, p.targets.len)
+    mut target <- vec_get<BuildTarget>(p.targets, index)
+    target.config.target_arch = clone(value)
+    vec_set<BuildTarget>(<-> p.targets, index, target)
+}
+
+open flow set_target_abi
+    <-> p: Project
+    <- index: u64
+    <- value: [u8]
+{
+    model_check_index(index, p.targets.len)
+    mut target <- vec_get<BuildTarget>(p.targets, index)
+    target.config.target_abi = clone(value)
+    vec_set<BuildTarget>(<-> p.targets, index, target)
+}
+
+// ---------------------------------------------------------------------------
+// Task mutators.
+// ---------------------------------------------------------------------------
+open flow add_task_input
+    <-> p: Project
+    <- index: u64
+    <- path: [u8]
+{
+    model_check_index(index, p.tasks.len)
+    model_require_path(path, "task input")
+    mut item <- vec_get<BuildTask>(p.tasks, index)
+    vec_push<[u8]>(<-> item.inputs, path)
+    vec_set<BuildTask>(<-> p.tasks, index, item)
+}
+
+open flow add_task_output
+    <-> p: Project
+    <- index: u64
+    <- path: [u8]
+{
+    model_check_index(index, p.tasks.len)
+    model_require_path(path, "task output")
+    mut item <- vec_get<BuildTask>(p.tasks, index)
+    vec_push<[u8]>(<-> item.outputs, path)
+    vec_set<BuildTask>(<-> p.tasks, index, item)
+}
+
+open flow add_task_dep
+    <-> p: Project
+    <- index: u64
+    <- dep_id: [u8]
+{
+    model_check_index(index, p.tasks.len)
+    model_require_id(dep_id, "task dependency")
+    mut item <- vec_get<BuildTask>(p.tasks, index)
+    vec_push<[u8]>(<-> item.deps, dep_id)
+    vec_set<BuildTask>(<-> p.tasks, index, item)
+}
+
+/// Select the native action of a task. Only structured names are accepted; the
+/// validator rejects anything outside the closed vocabulary. No string is ever
+/// interpreted as a shell command.
+open flow set_task_action
+    <-> p: Project
+    <- index: u64
+    <- value: [u8]
+{
+    model_check_index(index, p.tasks.len)
+    model_require_id(value, "task action")
+    mut item <- vec_get<BuildTask>(p.tasks, index)
+    item.action = clone(value)
+    vec_set<BuildTask>(<-> p.tasks, index, item)
+}
+
+/// Literal bytes used by the `write` action.
+open flow set_task_content
+    <-> p: Project
+    <- index: u64
+    <- value: [u8]
+{
+    model_check_index(index, p.tasks.len)
+    mut item <- vec_get<BuildTask>(p.tasks, index)
+    item.content = clone(value)
+    vec_set<BuildTask>(<-> p.tasks, index, item)
+}
+
+/// `changed` uses the task manifest, `always` reruns on every invocation.
+open flow set_task_condition
+    <-> p: Project
+    <- index: u64
+    <- value: [u8]
+{
+    model_check_index(index, p.tasks.len)
+    model_require_id(value, "task condition")
+    mut item <- vec_get<BuildTask>(p.tasks, index)
+    item.condition = clone(value)
+    vec_set<BuildTask>(<-> p.tasks, index, item)
+}

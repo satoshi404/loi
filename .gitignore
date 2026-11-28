@@ -10,5 +10,6 @@ __pycache__/
 !/website/examples/*.loi
 !/tests/abi/*.loi
 !/lib/build.loi
+!/lib/build/*.loi
 *.o
 *.loi-stamp

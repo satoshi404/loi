@@ -1,0 +1,338 @@
+//! Deterministic build graph for FASE 3.
+//!
+//! This module turns the FASE 3 model into an explicit graph of nodes and
+//! deduplicated edges. It does not execute anything: `order_project` lives in
+//! `build/order.loi`, and manifests/caches belong to later phases.
+//!
+//! Nodes are collected in declaration order (targets, then tasks, then
+//! artifacts). An edge `from -> to` means `from` depends on `to`; the topological
+//! sort therefore has to emit `to` before `from`. Input edges are retained for
+//! future hashing but never participate in ordering.
+import std
+
+import build::model
+
+import build::validate
+
+/// The graph itself. `nodes` is the deterministic declaration order; `edges`
+/// is deduplicated by `(from, to, kind)`.
+open shape BuildGraph {
+    nodes: Vec<[u8]>
+    edges: Vec<model::BuildDependency>
+}
+
+flow graph_find
+    <- values: Vec<[u8]>
+    <- id: [u8]
+    => u64
+{
+    mut at: u64 <- 0
+    while at < values.len {
+        value <- vec_get<[u8]>(values, at)
+        if str_eq(value, id) {
+            => at
+        }
+        at += 1
+    }
+    => values.len
+}
+
+flow graph_find_target
+    <- targets: Vec<model::BuildTarget>
+    <- id: [u8]
+    => u64
+{
+    mut at: u64 <- 0
+    while at < targets.len {
+        target <- vec_get<model::BuildTarget>(targets, at)
+        if str_eq(target.id, id) {
+            => at
+        }
+        at += 1
+    }
+    => targets.len
+}
+
+flow graph_find_task
+    <- tasks: Vec<model::BuildTask>
+    <- id: [u8]
+    => u64
+{
+    mut at: u64 <- 0
+    while at < tasks.len {
+        item <- vec_get<model::BuildTask>(tasks, at)
+        if str_eq(item.id, id) {
+            => at
+        }
+        at += 1
+    }
+    => tasks.len
+}
+
+flow graph_find_artifact
+    <- artifacts: Vec<model::Artifact>
+    <- id: [u8]
+    => u64
+{
+    mut at: u64 <- 0
+    while at < artifacts.len {
+        item <- vec_get<model::Artifact>(artifacts, at)
+        if str_eq(item.id, id) {
+            => at
+        }
+        at += 1
+    }
+    => artifacts.len
+}
+
+/// Reject an id declared in two node namespaces. Stable indices are handles, so
+/// a target and a task sharing an id would make edges ambiguous.
+flow graph_check_node_ids
+    <- nodes: Vec<[u8]>
+{
+    mut left: u64 <- 0
+    while left < nodes.len {
+        first <- vec_get<[u8]>(nodes, left)
+        mut right: u64 <- left + 1
+        while right < nodes.len {
+            second <- vec_get<[u8]>(nodes, right)
+            if str_eq(first, second) {
+                panic(fmt::("duplicate node '{}'\n", first))
+            }
+            right += 1
+        }
+        left += 1
+    }
+}
+
+flow graph_edge_exists
+    <- edges: Vec<model::BuildDependency>
+    <- from: [u8]
+    <- to: [u8]
+    <- kind: [u8]
+    => bool
+{
+    mut at: u64 <- 0
+    while at < edges.len {
+        edge <- vec_get<model::BuildDependency>(edges, at)
+        if str_eq(edge.from, from) and str_eq(edge.to, to) and str_eq(edge.kind, kind) {
+            => true
+        }
+        at += 1
+    }
+    => false
+}
+
+flow graph_add_edge
+    <-> edges: Vec<model::BuildDependency>
+    <- from: [u8]
+    <- to: [u8]
+    <- kind: [u8]
+{
+    if not graph_edge_exists(edges, from, to, kind) {
+        mut item: model::BuildDependency
+        item.from = clone(from)
+        item.to = clone(to)
+        item.kind = clone(kind)
+        vec_push<model::BuildDependency>(<-> edges, item)
+    }
+}
+
+/// Resolve the task that declares a generated path, without guessing from the
+/// file name or from the task's operation. Only declared outputs are producers.
+flow graph_output_producer
+    <- p: model::Project
+    <- path: [u8]
+    => [u8]
+{
+    mut at: u64 <- 0
+    while at < p.tasks.len {
+        task <- vec_get<model::BuildTask>(p.tasks, at)
+        mut i: u64 <- 0
+        while i < task.outputs.len {
+            if str_eq(vec_get<[u8]>(task.outputs, i), path) {
+                => task.id
+            }
+            i += 1
+        }
+        at += 1
+    }
+    => ""
+}
+
+/// Resolve the kind of a task dependency without guessing from its spelling.
+flow graph_dep_kind
+    <- p: model::Project
+    <- id: [u8]
+    => [u8]
+{
+    if graph_find_target(p.targets, id) < p.targets.len {
+        => "target"
+    }
+    if graph_find_task(p.tasks, id) < p.tasks.len {
+        => "task"
+    }
+    if graph_find_artifact(p.artifacts, id) < p.artifacts.len {
+        => "artifact"
+    }
+    => "input"
+}
+
+flow graph_add_generated_edges
+    <- p: model::Project
+    <- from: [u8]
+    <- owner: [u8]
+    <- paths: Vec<[u8]>
+    <-> edges: Vec<model::BuildDependency>
+{
+    mut at: u64 <- 0
+    while at < paths.len {
+        path <- vec_get<[u8]>(paths, at)
+        producer <- graph_output_producer(p, path)
+        if producer.len > 0 {
+            if not str_eq(producer, owner) {
+                graph_add_edge(<-> edges, from, producer, "generate")
+            }
+        }
+        at += 1
+    }
+}
+
+flow graph_collect_edges
+    <- p: model::Project
+    <-> edges: Vec<model::BuildDependency>
+{
+    mut at: u64 <- 0
+    while at < p.targets.len {
+        target <- vec_get<model::BuildTarget>(p.targets, at)
+        mut i: u64 <- 0
+        while i < target.deps.len {
+            dep <- vec_get<[u8]>(target.deps, i)
+            graph_add_edge(<-> edges, target.id, dep, "target")
+            i += 1
+        }
+        i = 0
+        while i < target.tasks.len {
+            task <- vec_get<[u8]>(target.tasks, i)
+            graph_add_edge(<-> edges, target.id, task, "task")
+            i += 1
+        }
+        graph_add_generated_edges(p, target.id, target.id, clone(target.sources), <-> edges)
+        graph_add_generated_edges(p, target.id, target.id, clone(target.c_sources), <-> edges)
+        graph_add_generated_edges(p, target.id, target.id, clone(target.headers), <-> edges)
+        graph_add_generated_edges(p, target.id, target.id, clone(target.assets), <-> edges)
+        at += 1
+    }
+    at = 0
+    while at < p.tasks.len {
+        item <- vec_get<model::BuildTask>(p.tasks, at)
+        mut i: u64 <- 0
+        while i < item.deps.len {
+            dep <- vec_get<[u8]>(item.deps, i)
+            graph_add_edge(<-> edges, item.id, dep, graph_dep_kind(p, dep))
+            i += 1
+        }
+        graph_add_generated_edges(p, item.id, item.id, clone(item.inputs), <-> edges)
+        at += 1
+    }
+    at = 0
+    while at < p.dependencies.len {
+        edge <- vec_get<model::BuildDependency>(p.dependencies, at)
+        graph_add_edge(<-> edges, edge.from, edge.to, edge.kind)
+        at += 1
+    }
+}
+
+flow graph_check_endpoint
+    <- nodes: Vec<[u8]>
+    <- id: [u8]
+{
+    if graph_find(nodes, id) >= nodes.len {
+        panic(fmt::("unknown graph node '{}'\n", id))
+    }
+}
+
+flow graph_check_edges
+    <- nodes: Vec<[u8]>
+    <- edges: Vec<model::BuildDependency>
+{
+    mut at: u64 <- 0
+    while at < edges.len {
+        edge <- vec_get<model::BuildDependency>(edges, at)
+        if not str_eq(edge.kind, "input") {
+            graph_check_endpoint(nodes, edge.from)
+            graph_check_endpoint(nodes, edge.to)
+        }
+        at += 1
+    }
+}
+
+/// Build the explicit graph. Validation runs first so structural errors are
+/// reported before any ordering work.
+open flow build_graph
+    <- p: model::Project
+    -> g: BuildGraph
+{
+    validate::validate_project(p)
+    vec_new<[u8]>(-> g.nodes)
+    vec_new<model::BuildDependency>(-> g.edges)
+    mut at: u64 <- 0
+    while at < p.targets.len {
+        target <- vec_get<model::BuildTarget>(p.targets, at)
+        vec_push<[u8]>(<-> g.nodes, target.id)
+        at += 1
+    }
+    at = 0
+    while at < p.tasks.len {
+        item <- vec_get<model::BuildTask>(p.tasks, at)
+        vec_push<[u8]>(<-> g.nodes, item.id)
+        at += 1
+    }
+    at = 0
+    while at < p.artifacts.len {
+        item <- vec_get<model::Artifact>(p.artifacts, at)
+        vec_push<[u8]>(<-> g.nodes, item.id)
+        at += 1
+    }
+    graph_check_node_ids(g.nodes)
+    graph_collect_edges(p, <-> g.edges)
+    graph_check_edges(g.nodes, g.edges)
+}
+
+/// Number of deduplicated edges. Useful for tests and later cache diagnostics.
+open flow edge_count
+    <- g: BuildGraph
+    => u64
+{
+    => g.edges.len
+}
+
+/// Number of graph nodes.
+open flow node_count
+    <- g: BuildGraph
+    => u64
+{
+    => g.nodes.len
+}
+
+/// Declared sources of one target, deduplicated in declaration order.
+open flow target_sources
+    <- p: model::Project
+    <- id: [u8]
+    -> paths: Vec<[u8]>
+{
+    index <- graph_find_target(p.targets, id)
+    if index >= p.targets.len {
+        panic(fmt::("unknown target '{}'\n", id))
+    }
+    target <- vec_get<model::BuildTarget>(p.targets, index)
+    vec_new<[u8]>(-> paths)
+    mut at: u64 <- 0
+    while at < target.sources.len {
+        path <- vec_get<[u8]>(target.sources, at)
+        if graph_find(paths, path) >= paths.len {
+            vec_push<[u8]>(<-> paths, path)
+        }
+        at += 1
+    }
+}

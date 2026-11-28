@@ -1,0 +1,583 @@
+//! Per-artifact content cache for FASE 4.
+//!
+//! This module turns a declared target into a deterministic key and a small
+//! manifest under `output/`. It does not compile or spawn anything: an executor
+//! calls `artifact_key` before work, `needs_build` to decide whether to skip,
+//! and `write_manifest` only after the artifact was produced successfully.
+//!
+//! The key covers the target identity, its inherited config, declared source and
+//! C-source bytes, include paths, defines, libs, flags, dependency ids and the
+//! output path. Missing declared inputs are reported instead of being hashed as
+//! empty. There is no mtime, environment read, hidden global state or directory
+//! scan: the declaration in `model::Project` is the complete input list.
+import std
+
+import os
+
+import build::model
+
+import build::validate
+
+/// Explicit filesystem helper. The declaration lives here so the linker can
+/// find the POSIX implementation in `lib/os_shim.c` through `--auto-c-source`;
+/// no shell command is involved.
+extern flow loi_build_mkdir
+    <- path: [u8]
+    => i32
+
+/// Write a manifest through a temporary file and rename, so an interrupted
+/// write never replaces a previously valid manifest.
+extern flow loi_build_write_atomic
+    <- path: [u8]
+    <- data: [u8]
+    => i32
+
+/// Deterministic view of an explicitly declared asset tree. The shim returns
+/// NUL-separated relative paths sorted lexicographically; a missing or
+/// non-directory root is an error, not an empty tree.
+extern flow loi_build_list_files
+    <- root: [u8]
+    <-> buffer: [u8]
+    => i64
+
+flow cache_hash_field
+    <- data: [u8]
+    <- seed: u64
+    => u64
+{
+    sized <- hash_u64_seeded(data.len, seed)
+    => hash_bytes_seeded(data, sized)
+}
+
+flow cache_hash_strings
+    <- values: Vec<[u8]>
+    <- seed: u64
+    => u64
+{
+    mut result: u64 <- hash_u64_seeded(values.len, seed)
+    mut at: u64 <- 0
+    while at < values.len {
+        value <- vec_get<[u8]>(values, at)
+        result = cache_hash_field(value, result)
+        at += 1
+    }
+    => result
+}
+
+flow cache_hash_defines
+    <- values: Vec<model::BuildDefine>
+    <- seed: u64
+    => u64
+{
+    mut result: u64 <- hash_u64_seeded(values.len, seed)
+    mut at: u64 <- 0
+    while at < values.len {
+        item <- vec_get<model::BuildDefine>(values, at)
+        result = cache_hash_field(item.key, result)
+        result = cache_hash_field(item.value, result)
+        at += 1
+    }
+    => result
+}
+
+flow cache_hash_config
+    <- config: model::BuildConfig
+    <- seed: u64
+    => u64
+{
+    mut result: u64 <- seed
+    result = cache_hash_field(config.profile, result)
+    result = cache_hash_field(config.optimize, result)
+    result = cache_hash_field(config.mode, result)
+    result = cache_hash_field(config.target_os, result)
+    result = cache_hash_field(config.target_arch, result)
+    result = cache_hash_field(config.target_abi, result)
+    result = cache_hash_field(config.backend, result)
+    result = cache_hash_field(config.compiler, result)
+    result = cache_hash_field(config.archiver, result)
+    => result
+}
+
+flow cache_hash_file
+    <- path: [u8]
+    <- seed: u64
+    => u64
+{
+    if not os_path_exists(path) {
+        panic(fmt::("missing input '{}'\n", path))
+    }
+    bytes <- read_file(path)
+    result <- cache_hash_field(path, seed)
+    => cache_hash_field(bytes, result)
+}
+
+flow cache_hash_files
+    <- paths: Vec<[u8]>
+    <- seed: u64
+    => u64
+{
+    mut result: u64 <- hash_u64_seeded(paths.len, seed)
+    mut at: u64 <- 0
+    while at < paths.len {
+        path <- vec_get<[u8]>(paths, at)
+        result = cache_hash_file(path, result)
+        at += 1
+    }
+    => result
+}
+
+flow cache_tree_paths
+    <- root: [u8]
+    -> paths: Vec<[u8]>
+{
+    mut probe: [u8]
+    alloc(-> probe, u8, 0)
+    needed <- loi_build_list_files(root, <-> probe)
+    if needed < 0 {
+        panic(fmt::("asset source '{}' could not be listed\n", root))
+    }
+    mut buffer: [u8]
+    alloc(-> buffer, u8, needed as u64)
+    got <- loi_build_list_files(root, <-> buffer)
+    if got != needed {
+        panic(fmt::("asset source '{}' changed while it was hashed\n", root))
+    }
+    vec_new<[u8]>(-> paths)
+    mut start: u64 <- 0
+    mut at: u64 <- 0
+    while at < buffer.len {
+        if buffer[at] == 0 {
+            vec_push<[u8]>(<-> paths, view(buffer, start, at))
+            start = at + 1
+        }
+        at += 1
+    }
+}
+
+/// Relative paths of one declared asset tree, in deterministic order.
+open flow tree_paths
+    <- root: [u8]
+    -> paths: Vec<[u8]>
+{
+    cache_tree_paths(root, -> paths)
+}
+
+flow cache_hash_tree
+    <- root: [u8]
+    <- seed: u64
+    => u64
+{
+    mut paths: Vec<[u8]>
+    cache_tree_paths(root, -> paths)
+    mut result: u64 <- cache_hash_field(root, seed)
+    result = hash_u64_seeded(paths.len, result)
+    mut at: u64 <- 0
+    while at < paths.len {
+        relative <- vec_get<[u8]>(paths, at)
+        result = cache_hash_field(relative, result)
+        joined <- str_concat(str_concat(root, "/"), relative)
+        result = cache_hash_file(joined, result)
+        at += 1
+    }
+    => result
+}
+
+flow cache_hash_trees
+    <- roots: Vec<[u8]>
+    <- seed: u64
+    => u64
+{
+    mut result: u64 <- hash_u64_seeded(roots.len, seed)
+    mut at: u64 <- 0
+    while at < roots.len {
+        result = cache_hash_tree(vec_get<[u8]>(roots, at), result)
+        at += 1
+    }
+    => result
+}
+
+flow cache_hash_toolchain
+    <- p: model::Project
+    <- target: model::BuildTarget
+    <- program: [u8]
+    <- seed: u64
+    => u64
+{
+    mut result: u64 <- seed
+    result = cache_hash_field(target.config.compiler, result)
+    result = cache_hash_field(target.config.archiver, result)
+    result = cache_hash_field(p.context.toolchain, result)
+    => cache_hash_field(program, result)
+}
+
+flow cache_hash_target
+    <- p: model::Project
+    <- target: model::BuildTarget
+    <- program: [u8]
+    <- seed: u64
+    => u64
+{
+    mut result: u64 <- seed
+    result = cache_hash_field(target.id, result)
+    result = cache_hash_field(target.kind, result)
+    result = cache_hash_field(target.output, result)
+    result = cache_hash_config(target.config, result)
+    result = cache_hash_toolchain(p, target, program, result)
+    result = cache_hash_files(target.sources, result)
+    result = cache_hash_files(target.c_sources, result)
+    result = cache_hash_files(target.headers, result)
+    result = cache_hash_files(target.assets, result)
+    result = cache_hash_strings(target.include_dirs, result)
+    result = cache_hash_defines(target.defines, result)
+    result = cache_hash_strings(target.libs, result)
+    result = cache_hash_strings(target.cc_flags, result)
+    result = cache_hash_strings(target.link_flags, result)
+    result = cache_hash_strings(target.deps, result)
+    result = cache_hash_strings(target.tasks, result)
+    => result
+}
+
+flow cache_find_target
+    <- p: model::Project
+    <- id: [u8]
+    => u64
+{
+    mut at: u64 <- 0
+    while at < p.targets.len {
+        target <- vec_get<model::BuildTarget>(p.targets, at)
+        if str_eq(target.id, id) {
+            => at
+        }
+        at += 1
+    }
+    => p.targets.len
+}
+
+flow cache_find_artifact
+    <- p: model::Project
+    <- id: [u8]
+    => u64
+{
+    mut at: u64 <- 0
+    while at < p.artifacts.len {
+        item <- vec_get<model::Artifact>(p.artifacts, at)
+        if str_eq(item.producer, id) {
+            => at
+        }
+        at += 1
+    }
+    => p.artifacts.len
+}
+
+flow cache_find_task
+    <- p: model::Project
+    <- id: [u8]
+    => u64
+{
+    mut at: u64 <- 0
+    while at < p.tasks.len {
+        task <- vec_get<model::BuildTask>(p.tasks, at)
+        if str_eq(task.id, id) {
+            => at
+        }
+        at += 1
+    }
+    => p.tasks.len
+}
+
+flow cache_task_by_id
+    <- p: model::Project
+    <- id: [u8]
+    => model::BuildTask
+{
+    index <- cache_find_task(p, id)
+    if index >= p.tasks.len {
+        panic(fmt::("unknown task '{}'\n", id))
+    }
+    => vec_get<model::BuildTask>(p.tasks, index)
+}
+
+flow cache_target
+    <- p: model::Project
+    <- id: [u8]
+    => model::BuildTarget
+{
+    index <- cache_find_target(p, id)
+    if index >= p.targets.len {
+        panic(fmt::("unknown target '{}'\n", id))
+    }
+    => vec_get<model::BuildTarget>(p.targets, index)
+}
+
+flow cache_hash_target_deps
+    <- p: model::Project
+    <- id: [u8]
+    <- program: [u8]
+    <- seed: u64
+    <-> seen: Vec<[u8]>
+    => u64
+{
+    if vec_find<[u8]>(seen, id) >= 0 {
+        => seed
+    }
+    vec_push<[u8]>(<-> seen, id)
+    target <- cache_target(p, id)
+    mut result: u64 <- cache_hash_target(p, target, program, seed)
+    mut at: u64 <- 0
+    while at < target.deps.len {
+        dep <- vec_get<[u8]>(target.deps, at)
+        result = cache_hash_target_deps(p, dep, program, result, <-> seen)
+        at += 1
+    }
+    => result
+}
+
+flow cache_digest
+    <- p: model::Project
+    <- id: [u8]
+    <- program: [u8]
+    => u64
+{
+    validate::validate_project(p)
+    mut seed: u64 <- 0xcbf29ce484222325
+    seed = cache_hash_field("loi-build-cache-v2", seed)
+    seed = cache_hash_field(p.name, seed)
+    seed = cache_hash_config(p.config, seed)
+    mut seen: Vec<[u8]>
+    vec_new<[u8]>(-> seen)
+    => cache_hash_target_deps(p, id, program, seed, <-> seen)
+}
+
+flow cache_key_text
+    <- digest: u64
+    => [u8]
+{
+    => str_concat("loi-cache-v1 ", u64_to_bytes(digest))
+}
+
+flow cache_task_digest
+    <- p: model::Project
+    <- id: [u8]
+    => u64
+{
+    validate::validate_project(p)
+    task <- cache_task_by_id(p, id)
+    mut seed: u64 <- 0xcbf29ce484222325
+    seed = cache_hash_field("loi-build-task-v1", seed)
+    seed = cache_hash_field(p.name, seed)
+    seed = cache_hash_field(task.id, seed)
+    seed = cache_hash_field(task.kind, seed)
+    seed = cache_hash_field(task.operation, seed)
+    seed = cache_hash_field(task.action, seed)
+    seed = cache_hash_field(task.content, seed)
+    seed = cache_hash_field(task.condition, seed)
+    if str_eq(task.action, "asset_dir") {
+        seed = cache_hash_trees(task.inputs, seed)
+    } else {
+        seed = cache_hash_files(task.inputs, seed)
+    }
+    seed = cache_hash_strings(task.outputs, seed)
+    => cache_hash_strings(task.deps, seed)
+}
+
+flow cache_task_key_text
+    <- digest: u64
+    => [u8]
+{
+    => str_concat("loi-task-v1 ", u64_to_bytes(digest))
+}
+
+/// Path of the manifest belonging to one target. An explicit artifact whose
+/// producer is the target supplies its declared path; otherwise a stable path
+/// under `output/.loi-build/` is used.
+open flow manifest_path
+    <- p: model::Project
+    <- id: [u8]
+    => [u8]
+{
+    index <- cache_find_artifact(p, id)
+    if index < p.artifacts.len {
+        item <- vec_get<model::Artifact>(p.artifacts, index)
+        => clone(item.manifest)
+    }
+    => str_concat(str_concat("output/.loi-build/", id), ".cache")
+}
+
+/// Path of the manifest belonging to one task. A declared `Artifact` whose
+/// producer is the task overrides the default `output/.loi-build/<id>.cache`.
+open flow task_manifest_path
+    <- p: model::Project
+    <- id: [u8]
+    => [u8]
+{
+    index <- cache_find_artifact(p, id)
+    if index < p.artifacts.len {
+        item <- vec_get<model::Artifact>(p.artifacts, index)
+        => clone(item.manifest)
+    }
+    => str_concat(str_concat("output/.loi-build/", id), ".cache")
+}
+
+flow cache_full_path
+    <- p: model::Project
+    <- path: [u8]
+    => [u8]
+{
+    if p.context.root.len == 0 {
+        => clone(path)
+    }
+    if path_is_absolute(path) {
+        => clone(path)
+    }
+    if str_eq(p.context.root, ".") {
+        => clone(path)
+    }
+    => str_concat(str_concat(clone(p.context.root), "/"), path)
+}
+
+/// Resolve a declared path against the explicit project context.
+open flow full_path
+    <- p: model::Project
+    <- path: [u8]
+    => [u8]
+{
+    => cache_full_path(p, path)
+}
+
+/// Create a declared directory and its parents through the explicit C shim.
+/// No shell command is involved and no path outside the declaration is used.
+open flow mkdir
+    <- path: [u8]
+{
+    if not os_path_exists(path) {
+        status <- loi_build_mkdir(path)
+        if status != 0 {
+            panic(fmt::("could not create directory '{}'\n", path))
+        }
+    }
+}
+
+/// Create the parent directory of a declared output when needed.
+open flow ensure_parent
+    <- path: [u8]
+{
+    cache_ensure_parent(path)
+}
+
+flow cache_ensure_parent
+    <- path: [u8]
+{
+    mut cut: u64 <- 0
+    mut at: u64 <- 0
+    while at < path.len {
+        if path[at] == 47 {
+            cut = at
+        }
+        at += 1
+    }
+    if cut > 0 {
+        parent <- view(path, 0, cut)
+        if parent.len > 0 {
+            mkdir(parent)
+        }
+    }
+}
+
+/// Deterministic key for one target, rendered as a versioned decimal string.
+open flow artifact_key
+    <- p: model::Project
+    <- id: [u8]
+    <- program: [u8]
+    => [u8]
+{
+    digest <- cache_digest(p, id, program)
+    => cache_key_text(digest)
+}
+
+/// True when the artifact must be (re)built: missing output, missing manifest
+/// or a manifest that does not match the current key.
+open flow needs_build
+    <- p: model::Project
+    <- id: [u8]
+    <- program: [u8]
+    => bool
+{
+    key <- artifact_key(p, id, program)
+    target <- cache_target(p, id)
+    output <- cache_full_path(p, target.output)
+    if not os_path_exists(output) {
+        => true
+    }
+    manifest <- cache_full_path(p, manifest_path(p, id))
+    if not os_path_exists(manifest) {
+        => true
+    }
+    stored <- read_file(manifest)
+    => not str_eq(stored, key)
+}
+
+/// Commit a key only after the artifact exists. A failed or interrupted build
+/// leaves no valid manifest, so the next invocation rebuilds.
+open flow write_manifest
+    <- p: model::Project
+    <- id: [u8]
+    <- program: [u8]
+{
+    key <- artifact_key(p, id, program)
+    manifest <- cache_full_path(p, manifest_path(p, id))
+    cache_ensure_parent(manifest)
+    if loi_build_write_atomic(manifest, key) != 0 {
+        panic(fmt::("could not write cache manifest '{}'\n", manifest))
+    }
+}
+
+/// Deterministic key for one task action and its declared inputs.
+open flow task_key
+    <- p: model::Project
+    <- id: [u8]
+    => [u8]
+{
+    digest <- cache_task_digest(p, id)
+    => cache_task_key_text(digest)
+}
+
+/// A task is fresh when every declared output exists and its manifest still
+/// carries the current key. `always` tasks never report a hit.
+open flow task_needs_build
+    <- p: model::Project
+    <- id: [u8]
+    => bool
+{
+    task <- cache_task_by_id(p, id)
+    if str_eq(task.condition, "always") {
+        => true
+    }
+    key <- task_key(p, id)
+    mut at: u64 <- 0
+    while at < task.outputs.len {
+        output <- cache_full_path(p, vec_get<[u8]>(task.outputs, at))
+        if not os_path_exists(output) {
+            => true
+        }
+        at += 1
+    }
+    manifest <- cache_full_path(p, task_manifest_path(p, id))
+    if not os_path_exists(manifest) {
+        => true
+    }
+    stored <- read_file(manifest)
+    => not str_eq(stored, key)
+}
+
+/// Commit a task key only after the native action succeeded.
+open flow write_task_manifest
+    <- p: model::Project
+    <- id: [u8]
+{
+    key <- task_key(p, id)
+    manifest <- cache_full_path(p, task_manifest_path(p, id))
+    cache_ensure_parent(manifest)
+    if loi_build_write_atomic(manifest, key) != 0 {
+        panic(fmt::("could not write task manifest '{}'\n", manifest))
+    }
+}

@@ -1,0 +1,698 @@
+//! Serial build executor for FASE 5.
+//!
+//! This module consumes the deterministic order from `build/order.loi`, skips
+//! artifacts whose cache manifest is still fresh, and invokes the compiler with
+//! an explicit argument vector. It spawns one process at a time and commits a
+//! manifest only after a successful exit. There is no parallelism, shell string
+//! built from user data, environment read, download or hidden file discovery.
+//!
+//! Tasks use closed vocabularies. FASE 5 covered native generation; FASE 6 adds
+//! explicit `asset_dir`, `embed_file`, `test`, `install` and `clean` actions.
+//! `operation "run"` stays rejected so no string becomes a shell command.
+//! Artifacts are descriptors and are skipped here. `loi make` is not affected.
+import std
+
+import process
+
+import os
+
+import build::model
+
+import build::validate
+
+import build::cache
+
+import build::order
+
+/// Remove exactly one declared clean path through the explicit C shim. The
+/// shim deletes files, symlinks and recursively empty directories; it never
+/// follows a symlink out of the project.
+extern flow loi_build_remove
+    <- path: [u8]
+    => i32
+
+/// Copy one declared file and preserve its permission bits.
+extern flow loi_build_copy
+    <- source: [u8]
+    <- destination: [u8]
+    => i32
+
+flow find_target
+    <- values: Vec<model::BuildTarget>
+    <- id: [u8]
+    => u64
+{
+    mut at: u64 <- 0
+    while at < values.len {
+        value <- vec_get<model::BuildTarget>(values, at)
+        if str_eq(value.id, id) {
+            => at
+        }
+        at += 1
+    }
+    => values.len
+}
+
+flow find_task
+    <- values: Vec<model::BuildTask>
+    <- id: [u8]
+    => u64
+{
+    mut at: u64 <- 0
+    while at < values.len {
+        value <- vec_get<model::BuildTask>(values, at)
+        if str_eq(value.id, id) {
+            => at
+        }
+        at += 1
+    }
+    => values.len
+}
+
+flow exec_target
+    <- p: model::Project
+    <- id: [u8]
+    => model::BuildTarget
+{
+    index <- find_target(p.targets, id)
+    if index >= p.targets.len {
+        panic(fmt::("unknown target '{}'\n", id))
+    }
+    => vec_get<model::BuildTarget>(p.targets, index)
+}
+
+flow exec_emit
+    <- kind: [u8]
+    => [u8]
+{
+    if str_eq(kind, "object") {
+        => "obj"
+    }
+    if str_eq(kind, "static_library") {
+        => "lib"
+    }
+    if str_eq(kind, "shared_library") {
+        => "exe"
+    }
+    => ""
+}
+
+flow exec_optimize_flag
+    <- optimize: [u8]
+    => [u8]
+{
+    if str_eq(optimize, "none") {
+        => "-O0"
+    }
+    if str_eq(optimize, "debug") {
+        => "-O0"
+    }
+    if str_eq(optimize, "size") {
+        => "-Os"
+    }
+    => ""
+}
+
+flow exec_build_args
+    <- p: model::Project
+    <- target: model::BuildTarget
+    -> args: Vec<[u8]>
+{
+    vec_new<[u8]>(-> args)
+    vec_push<[u8]>(<-> args, "build")
+    mut at: u64 <- 0
+    while at < target.sources.len {
+        vec_push<[u8]>(<-> args, vec_get<[u8]>(target.sources, at))
+        at += 1
+    }
+    if str_eq(target.kind, "object") {
+        if target.c_sources.len > 0 {
+            panic("[exec] c sources cannot be linked into an object target\n")
+        }
+    } else {
+        at = 0
+        while at < target.c_sources.len {
+            vec_push<[u8]>(<-> args, "--c-source")
+            vec_push<[u8]>(<-> args, vec_get<[u8]>(target.c_sources, at))
+            at += 1
+        }
+    }
+    vec_push<[u8]>(<-> args, "-o")
+    vec_push<[u8]>(<-> args, target.output)
+    emit <- exec_emit(target.kind)
+    if emit.len > 0 {
+        vec_push<[u8]>(<-> args, "--emit")
+        vec_push<[u8]>(<-> args, emit)
+    }
+    if not str_eq(target.kind, "object") {
+        objects <- str_concat(str_concat(p.context.output_dir, "/"), "objects")
+        vec_push<[u8]>(<-> args, "--obj-dir")
+        vec_push<[u8]>(<-> args, objects)
+    }
+    if not str_eq(target.kind, "object") {
+        vec_push<[u8]>(<-> args, "--auto-c-source")
+    }
+    if p.context.toolchain.len > 0 {
+        vec_push<[u8]>(<-> args, "--lib-dir")
+        vec_push<[u8]>(<-> args, p.context.toolchain)
+    }
+    if str_eq(target.config.profile, "release") {
+        vec_push<[u8]>(<-> args, "--release")
+    } else {
+        vec_push<[u8]>(<-> args, "--debug")
+    }
+    optimize <- exec_optimize_flag(target.config.optimize)
+    if optimize.len > 0 {
+        vec_push<[u8]>(<-> args, "--cc-flag")
+        vec_push<[u8]>(<-> args, optimize)
+    }
+    if str_eq(target.config.mode, "web") {
+        vec_push<[u8]>(<-> args, "--cc-flag")
+        vec_push<[u8]>(<-> args, "-sWASM=1")
+        vec_push<[u8]>(<-> args, "--cc-flag")
+        vec_push<[u8]>(<-> args, "-sALLOW_MEMORY_GROWTH=1")
+        vec_push<[u8]>(<-> args, "--cc-flag")
+        vec_push<[u8]>(<-> args, "-sEXIT_RUNTIME=1")
+    }
+    at = 0
+    while at < target.include_dirs.len {
+        vec_push<[u8]>(<-> args, "--cc-flag")
+        vec_push<[u8]>(<-> args, str_concat("-I", vec_get<[u8]>(target.include_dirs, at)))
+        at += 1
+    }
+    at = 0
+    while at < target.defines.len {
+        item <- vec_get<model::BuildDefine>(target.defines, at)
+        vec_push<[u8]>(<-> args, "--cc-flag")
+        vec_push<[u8]>(<-> args, str_concat(str_concat(str_concat("-D", item.key), "="), item.value))
+        at += 1
+    }
+    at = 0
+    while at < target.libs.len {
+        vec_push<[u8]>(<-> args, "--cc-flag")
+        vec_push<[u8]>(<-> args, str_concat("-l", vec_get<[u8]>(target.libs, at)))
+        at += 1
+    }
+    at = 0
+    while at < target.cc_flags.len {
+        vec_push<[u8]>(<-> args, "--cc-flag")
+        vec_push<[u8]>(<-> args, vec_get<[u8]>(target.cc_flags, at))
+        at += 1
+    }
+    at = 0
+    while at < target.link_flags.len {
+        vec_push<[u8]>(<-> args, "--cc-flag")
+        vec_push<[u8]>(<-> args, vec_get<[u8]>(target.link_flags, at))
+        at += 1
+    }
+    if str_eq(target.kind, "shared_library") {
+        vec_push<[u8]>(<-> args, "--cc-flag")
+        vec_push<[u8]>(<-> args, "-shared")
+        vec_push<[u8]>(<-> args, "--cc-flag")
+        vec_push<[u8]>(<-> args, "-fPIC")
+    }
+}
+
+/// Build one target in place. Fresh artifacts are skipped. A non-zero compiler
+/// exit leaves the previous manifest untouched, so the next invocation retries.
+open flow run_target
+    <- p: model::Project
+    <- id: [u8]
+    <- program: [u8]
+    => i32
+{
+    target <- exec_target(p, id)
+    if not cache::needs_build(p, id, program) {
+        print(fmt::("[exec] up to date {}\n", id))
+        => 0
+    }
+    cache::mkdir(p.context.output_dir)
+    if not str_eq(target.kind, "object") {
+        objects <- str_concat(str_concat(p.context.output_dir, "/"), "objects")
+        cache::mkdir(objects)
+    }
+    mut args: Vec<[u8]>
+    exec_build_args(p, target, -> args)
+    print(fmt::("[exec] building {} -> {}\n", id, target.output))
+    mut status: i32 <- 0
+    guard child <- process_spawn_args(program, vec_view<[u8]>(args, 0, args.len)) {
+        if not process_ok(child) {
+            eprint("[exec] could not start the compiler\n")
+            => 1
+        }
+        out <- process_stdout(child)
+        err <- process_stderr(child)
+        if out.len > 0 {
+            print(out)
+        }
+        if err.len > 0 {
+            eprint(err)
+        }
+        status = process_exit_code(child)
+    }
+    if status != 0 {
+        => status
+    }
+    cache::write_manifest(p, id, program)
+    => 0
+}
+
+flow task_by_id
+    <- p: model::Project
+    <- id: [u8]
+    => model::BuildTask
+{
+    index <- find_task(p.tasks, id)
+    if index >= p.tasks.len {
+        panic(fmt::("unknown task '{}'\n", id))
+    }
+    => vec_get<model::BuildTask>(p.tasks, index)
+}
+
+/// `operation` is the legacy command field. It accepts only the structured
+/// names matching native actions. `run` stays rejected so no string is ever
+/// interpreted as a process or shell command.
+flow valid_operation
+    <- value: [u8]
+    => bool
+{
+    => valid_value(value, "noop\ngenerate\nasset\ntest\ninstall\nclean")
+}
+
+flow valid_value
+    <- value: [u8]
+    <- accepted: [u8]
+    => bool
+{
+    mut start: u64 <- 0
+    mut at: u64 <- 0
+    while at < accepted.len {
+        if accepted[at] == 10 {
+            if str_eq(value, view(accepted, start, at)) {
+                => true
+            }
+            start = at + 1
+        }
+        at += 1
+    }
+    => str_eq(value, view(accepted, start, accepted.len))
+}
+
+flow task_write
+    <- p: model::Project
+    <- task: model::BuildTask
+{
+    path <- cache::full_path(p, vec_get<[u8]>(task.outputs, 0))
+    if not write_file(path, task.content) {
+        panic(fmt::("could not write generated file '{}'\n", path))
+    }
+}
+
+flow task_copy
+    <- p: model::Project
+    <- task: model::BuildTask
+{
+    input <- cache::full_path(p, vec_get<[u8]>(task.inputs, 0))
+    output <- cache::full_path(p, vec_get<[u8]>(task.outputs, 0))
+    bytes <- read_file(input)
+    if not write_file(output, bytes) {
+        panic(fmt::("could not write copied file '{}'\n", output))
+    }
+}
+
+flow task_concat
+    <- p: model::Project
+    <- task: model::BuildTask
+{
+    output <- cache::full_path(p, vec_get<[u8]>(task.outputs, 0))
+    mut bytes: Vec<u8>
+    vec_new<u8>(-> bytes)
+    mut at: u64 <- 0
+    while at < task.inputs.len {
+        input <- cache::full_path(p, vec_get<[u8]>(task.inputs, at))
+        part <- read_file(input)
+        if at > 0 {
+            vec_push<u8>(<-> bytes, 10)
+        }
+        mut i: u64 <- 0
+        while i < part.len {
+            vec_push<u8>(<-> bytes, part[i])
+            i += 1
+        }
+        at += 1
+    }
+    joined <- vec_view<u8>(bytes, 0, bytes.len)
+    if not write_file(output, joined) {
+        panic(fmt::("could not write generated file '{}'\n", output))
+    }
+}
+
+/// Copy every file of a declared asset tree, preserving relative paths. The
+/// file list comes from the deterministic shim view and is never guessed.
+flow task_asset_dir
+    <- p: model::Project
+    <- task: model::BuildTask
+{
+    root <- cache::full_path(p, vec_get<[u8]>(task.inputs, 0))
+    destination <- cache::full_path(p, vec_get<[u8]>(task.outputs, 0))
+    mut paths: Vec<[u8]>
+    cache::tree_paths(root, -> paths)
+    mut at: u64 <- 0
+    while at < paths.len {
+        relative <- vec_get<[u8]>(paths, at)
+        source <- str_concat(str_concat(root, "/"), relative)
+        output <- str_concat(str_concat(destination, "/"), relative)
+        cache::ensure_parent(output)
+        bytes <- read_file(source)
+        if not write_file(output, bytes) {
+            panic(fmt::("could not copy asset '{}'\n", output))
+        }
+        at += 1
+    }
+}
+
+flow exec_push_bytes
+    <- text: [u8]
+    <-> bytes: Vec<u8>
+{
+    mut at: u64 <- 0
+    while at < text.len {
+        vec_push<u8>(<-> bytes, text[at])
+        at += 1
+    }
+}
+
+/// Emit a public Loi byte array for one explicitly declared file.
+flow task_embed_file
+    <- p: model::Project
+    <- task: model::BuildTask
+{
+    source <- cache::full_path(p, vec_get<[u8]>(task.inputs, 0))
+    output <- cache::full_path(p, vec_get<[u8]>(task.outputs, 0))
+    bytes <- read_file(source)
+    mut generated: Vec<u8>
+    vec_new<u8>(-> generated)
+    exec_push_bytes("open ", <-> generated)
+    exec_push_bytes(task.content, <-> generated)
+    exec_push_bytes(": [u8] <- [u8:", <-> generated)
+    mut at: u64 <- 0
+    while at < bytes.len {
+        if at == 0 {
+            exec_push_bytes(" ", <-> generated)
+        } else {
+            exec_push_bytes(", ", <-> generated)
+        }
+        exec_push_bytes(u64_to_bytes(bytes[at] as u64), <-> generated)
+        at += 1
+    }
+    exec_push_bytes("]\n", <-> generated)
+    text <- vec_view<u8>(generated, 0, generated.len)
+    if not write_file(output, text) {
+        panic(fmt::("could not write embedded bytes '{}'\n", output))
+    }
+}
+
+/// Compile and execute one test binary. Compilation obeys the task manifest;
+/// execution always happens so a cached binary cannot hide a failing test.
+flow task_test
+    <- p: model::Project
+    <- task: model::BuildTask
+    <- program: [u8]
+    => i32
+{
+    source <- cache::full_path(p, vec_get<[u8]>(task.inputs, 0))
+    output <- cache::full_path(p, vec_get<[u8]>(task.outputs, 0))
+    print(fmt::("test {}\n", task.id))
+    mut compiled: bool <- false
+    if cache::task_needs_build(p, task.id) {
+        cache::ensure_parent(output)
+        mut args: Vec<[u8]>
+        vec_new<[u8]>(-> args)
+        vec_push<[u8]>(<-> args, "build")
+        vec_push<[u8]>(<-> args, source)
+        vec_push<[u8]>(<-> args, "-o")
+        vec_push<[u8]>(<-> args, output)
+        if p.context.toolchain.len > 0 {
+            vec_push<[u8]>(<-> args, "--lib-dir")
+            vec_push<[u8]>(<-> args, p.context.toolchain)
+        }
+        mut status: i32 <- 0
+        guard child <- process_spawn_args(program, vec_view<[u8]>(args, 0, args.len)) {
+            if not process_ok(child) {
+                eprint(fmt::("[exec] could not start the compiler for test {}\n", task.id))
+                => 1
+            }
+            out <- process_stdout(child)
+            err <- process_stderr(child)
+            if out.len > 0 {
+                print(out)
+            }
+            if err.len > 0 {
+                eprint(err)
+            }
+            status = process_exit_code(child)
+        }
+        if status != 0 {
+            eprint(fmt::("test {} failed to build\n", task.id))
+            => status
+        }
+        compiled = true
+    }
+    mut empty_args: Vec<[u8]>
+    vec_new<[u8]>(-> empty_args)
+    mut status: i32 <- 0
+    guard child <- process_spawn_args(output, vec_view<[u8]>(empty_args, 0, empty_args.len)) {
+        if not process_ok(child) {
+            eprint(fmt::("test {} could not start\n", task.id))
+            => 1
+        }
+        out <- process_stdout(child)
+        err <- process_stderr(child)
+        if out.len > 0 {
+            print(out)
+        }
+        if err.len > 0 {
+            eprint(err)
+        }
+        status = process_exit_code(child)
+    }
+    if status != 0 {
+        eprint(fmt::("test {} failed\n", task.id))
+        => status
+    }
+    if compiled {
+        cache::write_task_manifest(p, task.id)
+    }
+    => 0
+}
+
+/// Copy one declared source to a destination inside the project.
+flow task_install
+    <- p: model::Project
+    <- task: model::BuildTask
+{
+    source <- cache::full_path(p, vec_get<[u8]>(task.inputs, 0))
+    output <- cache::full_path(p, vec_get<[u8]>(task.outputs, 0))
+    if not os_path_exists(source) {
+        panic(fmt::("install source '{}' does not exist\n", source))
+    }
+    cache::ensure_parent(output)
+    status <- loi_build_copy(source, output)
+    if status != 0 {
+        panic(fmt::("could not install '{}'\n", output))
+    }
+    print(fmt::("[exec] install {} -> {}\n", task.id, output))
+}
+
+/// Remove exactly the paths declared on a clean task.
+flow task_clean
+    <- p: model::Project
+    <- task: model::BuildTask
+{
+    mut at: u64 <- 0
+    while at < task.outputs.len {
+        path <- cache::full_path(p, vec_get<[u8]>(task.outputs, at))
+        status <- loi_build_remove(path)
+        if status != 0 {
+            panic(fmt::("could not clean '{}'\n", path))
+        }
+        print(fmt::("[exec] clean {}\n", path))
+        at += 1
+    }
+}
+
+/// Backwards-compatible entry point for callers that do not compile tests.
+open flow run_task
+    <- p: model::Project
+    <- id: [u8]
+    => i32
+{
+    => run_task_program(p, id, "")
+}
+
+/// Run one declared task with a native, closed action vocabulary. No shell
+/// command is ever built from task fields; arbitrary operations are rejected.
+open flow run_task_program
+    <- p: model::Project
+    <- id: [u8]
+    <- program: [u8]
+    => i32
+{
+    task <- task_by_id(p, id)
+    if not valid_operation(task.operation) {
+        panic(fmt::("unsupported task operation '{}'\n", task.operation))
+    }
+    if not valid_value(task.action, "noop\nwrite\ncopy\nconcat\nasset_dir\nembed_file\ntest\ninstall\nclean") {
+        panic(fmt::("unsupported task action '{}'\n", task.action))
+    }
+    if str_eq(task.action, "test") {
+        => task_test(p, task, program)
+    }
+    if str_eq(task.action, "clean") {
+        task_clean(p, task)
+        => 0
+    }
+    if not cache::task_needs_build(p, id) {
+        print(fmt::("[exec] task up to date {}\n", id))
+        => 0
+    }
+    mut at: u64 <- 0
+    while at < task.outputs.len {
+        output <- cache::full_path(p, vec_get<[u8]>(task.outputs, at))
+        cache::ensure_parent(output)
+        at += 1
+    }
+    print(fmt::("[exec] task {} -> {}\n", id, task.action))
+    if str_eq(task.action, "noop") {
+        print(fmt::("[exec] skip task {}\n", id))
+    } else {
+        if str_eq(task.action, "write") {
+            task_write(p, task)
+        } else {
+            if str_eq(task.action, "copy") {
+                task_copy(p, task)
+            } else {
+                if str_eq(task.action, "concat") {
+                    task_concat(p, task)
+                } else {
+                    if str_eq(task.action, "asset_dir") {
+                        task_asset_dir(p, task)
+                    } else {
+                        if str_eq(task.action, "embed_file") {
+                            task_embed_file(p, task)
+                        } else {
+                            task_install(p, task)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    cache::write_task_manifest(p, id)
+    => 0
+}
+
+/// Validate, order and execute every node of a project serially. The first
+/// failure stops the loop; later targets are not attempted with partial inputs.
+open flow run_project
+    <- p: model::Project
+    <- program: [u8]
+    => i32
+{
+    validate::validate_project(p)
+    mut ids: Vec<[u8]>
+    order::order_project(p, -> ids)
+    mut at: u64 <- 0
+    while at < ids.len {
+        id <- vec_get<[u8]>(ids, at)
+        target_index <- find_target(p.targets, id)
+        if target_index < p.targets.len {
+            status <- run_target(p, id, program)
+            if status != 0 {
+                => status
+            }
+        } else {
+            task_index <- find_task(p.tasks, id)
+            if task_index < p.tasks.len {
+                status <- run_task_program(p, id, program)
+                if status != 0 {
+                    => status
+                }
+            }
+        }
+        at += 1
+    }
+    => 0
+}
+
+/// Compile and run declared tests in declaration order. An empty filter runs
+/// all of them; a non-empty filter runs only the named test.
+open flow run_tests
+    <- p: model::Project
+    <- program: [u8]
+    <- filter: [u8]
+    => i32
+{
+    validate::validate_project(p)
+    mut found: bool <- false
+    mut at: u64 <- 0
+    while at < p.tasks.len {
+        task <- vec_get<model::BuildTask>(p.tasks, at)
+        if str_eq(task.kind, "test") {
+            if filter.len == 0 or str_eq(task.id, filter) {
+                found = true
+                status <- run_task_program(p, task.id, program)
+                if status != 0 {
+                    => status
+                }
+            }
+        }
+        at += 1
+    }
+    if filter.len > 0 and not found {
+        panic(fmt::("unknown test '{}'\n", filter))
+    }
+    => 0
+}
+
+/// Execute every declared install task in declaration order.
+open flow run_install
+    <- p: model::Project
+    <- program: [u8]
+    => i32
+{
+    validate::validate_project(p)
+    mut at: u64 <- 0
+    while at < p.tasks.len {
+        task <- vec_get<model::BuildTask>(p.tasks, at)
+        if str_eq(task.kind, "install") {
+            status <- run_task_program(p, task.id, program)
+            if status != 0 {
+                => status
+            }
+        }
+        at += 1
+    }
+    => 0
+}
+
+/// Execute every declared clean group in declaration order. Only explicitly
+/// declared paths are removed.
+open flow run_clean
+    <- p: model::Project
+    => i32
+{
+    validate::validate_project(p)
+    mut at: u64 <- 0
+    while at < p.tasks.len {
+        task <- vec_get<model::BuildTask>(p.tasks, at)
+        if str_eq(task.kind, "clean") {
+            status <- run_task_program(p, task.id, "")
+            if status != 0 {
+                => status
+            }
+        }
+        at += 1
+    }
+    => 0
+}

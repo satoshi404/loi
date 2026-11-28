@@ -11,6 +11,394 @@ As entradas abaixo são um arquivo cronológico. O estado atual e as evidências
 
 ## Current Status
 
+- **FASE 8 — fechamento da migração e compatibilidade (`2026-11-27`):**
+  `loi init` e `loi make` continuam usando o `BuildPlan` legado em
+  `lib/build.loi`; o modelo `build::model`, `build::graph`, `build::order`,
+  `build::cache`, `build::exec`, `build::config` e `build::validate` segue como
+  superfície opcional, importada explicitamente por cada script. Nenhuma API
+  antiga foi removida ou transformada em wrapper, e nenhuma sintaxe da linguagem,
+  CLI pública, ABI ou toolchain mudou. `SINTAXE.md` §19.2 e `lib/README.md`
+  documentam o uso opcional, a precedência de configuração e a compatibilidade
+  com projetos antigos. Arquivos: `tests/build_phase8.rs`, `lib/README.md`,
+  `SINTAXE.md`, `website/docs.html`, `development/DECISIONS.md`,
+  `development/PROGRESS.md`.
+  Decisões: migração por adoção explícita, sem paralelismo, descoberta implícita
+  de fontes, cross baixado, JSON de build ou builtin de compilador. Verificação:
+  failing-first: `generated_scaffold_still_uses_legacy_build_plan` e
+  `configuration_precedence_is_documented` passaram antes da implementação, e
+  `documentation_describes_the_optional_graph_and_legacy_compatibility` falhou
+  com `DECISIONS.md has no FASE 7/8 decision records`; o teste de compatibilidade
+  legada falhou com `could not open file at 232:19` porque a fixture não criava
+  `build.loi`, `output/` e `LOI_SELF`, e o runner opcional falhou com
+  `sh: 1: loi: not found` porque recebia o nome `loi` em vez do caminho do
+  binário. A fixture foi corrigida sem mudar o build. Com
+  `export PATH=/root/.cargo/bin:$PATH RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo test --test build_phase8 -- --nocapture`
+  → **4 passed; 0 failed; 0 ignored**.
+- **FASE 7 — toolchain, configuração e cache v2 (`2026-11-27`):**
+  `model::BuildToolchain` separa host (OS/arch/ABI), target (OS/arch/ABI),
+  compilador C, linker e archiver; `model::toolchain()` devolve defaults nativos
+  e não lê ambiente. `model::shared_library(id)` declara
+  `output/lib<id>.so`; a validação exige toolchain explícita para triple
+  não-nativa e falha com `cross toolchain` quando não há uma. `build::config`
+  define os perfis `debug`, `test`, `native`, `release`, `speed`, `size` e `web`;
+  `config::apply_env` aplica e reporta `LOI_BUILD_PROFILE`,
+  `LOI_BUILD_OPTIMIZE`, `LOI_BUILD_MODE`, `LOI_BUILD_C_COMPILER` e
+  `LOI_BUILD_ARCHIVER`. Precedência: defaults < profile < mutação explícita <
+  ambiente, com `apply_env` antes da mutação final quando o chamador deve vencer
+  o ambiente. `cache::artifact_key`, `cache::needs_build` e
+  `cache::write_manifest` recebem `program`; a chave `loi-build-cache-v2`
+  inclui toolchain efetiva e o fecho transitivo de dependências, e manifestos
+  são gravados por `loi_build_write_atomic` com `.tmp` e rename. Arquivos:
+  `lib/build/config.loi`, `lib/build/model.loi`, `lib/build/validate.loi`,
+  `lib/build/cache.loi`, `lib/build/exec.loi`, `lib/os_shim.c`,
+  `tests/build_phase7.rs`, `tests/build_cache.rs`, `lib/README.md`,
+  `SINTAXE.md`, `development/DECISIONS.md`, `development/PROGRESS.md`.
+  Decisões: separar host/target/ferramentas, não inventar compilador/linker/flag
+  universal e tornar toda mudança de toolchain uma invalidação de cache.
+  Limitações: nenhum suporte cross real, download de toolchain, paralelismo ou
+  alteração de `loi make`; triples não-nativas são apenas validadas. Verificação:
+  failing-first em `tests/build_phase7.rs` com `unknown module 'build::config'`;
+  durante a implementação apareceram assinaturas antigas de `artifact_key` nos
+  testes, dependência transitiva que não invalidava o downstream e símbolo C de
+  `process_spawn` ausente em scripts que importam `build::exec`. Todos foram
+  corrigidos sem remover testes antigos. Com
+  `export PATH=/root/.cargo/bin:$PATH RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo test --test build_phase7 -- --nocapture`
+  → **9 passed; 0 failed; 0 ignored**, cobrindo defaults de toolchain,
+  herança de perfil, precedência explícita sobre ambiente, relatório de override,
+  shared library declarada, rejeição de cross sem toolchain, troca de compilador,
+  fecho transitivo e manifesto sem `.tmp`. A suíte afetada
+  `export PATH=/root/.cargo/bin:$PATH RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo test --test build_cache -- --nocapture`
+  → **13 passed; 0 failed; 0 ignored**.
+- **Verificação final das FASES 7/8 (`2026-11-27`):**
+  `export PATH=/root/.cargo/bin:$PATH RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check`
+  sem saída; `export PATH=/root/.cargo/bin:$PATH RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo clippy --all-targets -- -D warnings`
+  sem avisos; `export PATH=/root/.cargo/bin:$PATH RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo test --all-targets`
+  → **804 passed, 0 failed, 0 ignored em 56 suítes** (791 anteriores + 9 da
+  FASE 7 + 4 da FASE 8). `node --test website/tests/server.test.mjs` → **11/11**;
+  `python3 tools/sync_examples.py --check` → `website/examples is in sync`;
+  `git diff --check` sem saída. Gate agregado:
+  `export PATH=/root/.cargo/bin:$PATH RUSTFLAGS="-C linker=/usr/bin/gcc"; ./tools/ci.sh all`
+  → exit 0 com `selected CI steps passed`, incluindo `no skipped tests detected`,
+  `golden files are clean`, `website/examples is in sync`, `diff-check` sem
+  saída, c11-strict/UBSan/ASan+UBSan clang e a suíte completa novamente verde.
+  Ambiente: MSRV 1.88 `SKIP` (toolchain não instalada) e `ASAN NOT VALIDATED`
+  para `cc` neste PRoot (limite de memória virtual); clang ASan+UBSan e UBSan
+  passaram. Avisos preexistentes em `examples/flow_syntax.loi` (`mass` não
+  usado) e no C gerado não são novos.
+- **Limitações após a FASE 8:** não há paralelismo, `operation "run"`, builtin
+  de compilador em Loi, descoberta implícita de fontes, download de toolchain
+  cross, compilação cross real, JSON de build, cache do resultado de testes nem
+  integração do modelo opcional com `loi make`. `install` e `clean` continuam
+  limitados a caminhos relativos dentro do projeto. O executor exige `cc`,
+  `os_shim.c` e `process_shim.c` explicitamente. Próximo passo: revisão final e
+  gates completos.
+- **FASE 6 — assets, testes e instalação (`2026-11-27`):**
+  `model::asset_dir` / `model::asset`, `model::embed_file`, `model::test`,
+  `model::install`, `model::clean` e `model::add_clean_path` registram nós
+  explícitos no mesmo modelo opcional. O vocabulário de `action` passa a aceitar
+  `asset_dir`, `embed_file`, `test`, `install` e `clean`, além de `noop`,
+  `write`, `copy` e `concat`; `operation "run"` continua rejeitado e nenhuma
+  string vira comando ou shell. `asset_dir` lista apenas a raiz declarada pelo
+  shim, em ordem lexical de caminhos relativos, ignora symlinks e copia todos os
+  arquivos para o destino declarado; o hash da task inclui caminhos e bytes
+  dessa árvore. `embed_file` gera `open <symbol>: [u8] <- [u8: ...]` para um
+  único arquivo, com símbolo padrão `_loi_embed_<id>`. `test` compila por
+  `process_spawn_args`, sempre executa o binário mesmo com cache de compilação e
+  grava o manifesto apenas após sucesso; `run_tests` aceita filtro vazio (todos)
+  ou um id exato. `install` copia um arquivo declarado para dentro do projeto,
+  preservando bits de permissão; `clean` remove apenas caminhos declarados.
+  `path_inside_project` rejeita absolutos e `..` antes de qualquer escrita ou
+  remoção. Entradas geradas por targets também são reconhecidas pela validação.
+  Arquivos: `lib/build/model.loi`, `lib/build/validate.loi`,
+  `lib/build/cache.loi`, `lib/build/exec.loi`, `lib/os_shim.c`,
+  `tests/build_phase6.rs`, `lib/README.md`, `development/DECISIONS.md`,
+  `development/PROGRESS.md`. Nenhuma sintaxe da linguagem, CLI pública, ABI,
+  `loi make` ou `lib/build.loi` legado mudou. Classificação: **IMPLEMENTADO**
+  (assets, embed, testes, install e clean); **DOCUMENTADO** em `lib/README.md`,
+  `DECISIONS.md` e `PROGRESS.md`.
+- **Verificação — FASE 6 (`2026-11-27`):** failing-first: os 10 testes de
+  `tests/build_phase6.rs` falharam primeiro com `module 'model' has no item
+  'asset_dir'`, `embed_file`, `test`, `install` e `clean`. Durante a
+  implementação apareceram `unknown variable 'install_index'` (referência de
+  teste não renomeada), `missing input 'output/app'` (validação não reconhecia
+  saída gerada por target), falha de execução do binário instalado por perda de
+  permissão, `could not install 'dist/app'` por status inicial incorreto no
+  shim e bytes incorporados obsoletos porque o target não declarava o arquivo
+  gerado como entrada. Todos foram corrigidos sem remover testes antigos.
+  `cargo test --test build_phase6 -- --nocapture` → **10 passed; 0 failed;
+  0 ignored**, cobrindo cópia recursiva com invalidação, skip de árvore fresca,
+  raiz ausente sem escrita, embed recompilado, filtro de teste, falha de teste
+  com stderr repassada, filtro desconhecido, install dentro/fora do projeto e
+  clean explícito. `cargo fmt --check` e
+  `cargo clippy --all-targets -- -D warnings` ficaram limpos.
+  `cargo test --all-targets` → **791 passed, 0 failed, 0 ignored em 54 suítes**
+  (781 + 10 novos). `node --test website/tests/server.test.mjs` → **11/11**;
+  `python3 tools/sync_examples.py --check` → `website/examples is in sync`;
+  `git diff --check` sem saída. Gate estendido:
+  `export PATH=/root/.cargo/bin:$PATH RUSTFLAGS="-C linker=/usr/bin/gcc"; ./tools/ci.sh all`
+  → exit 0 com `selected CI steps passed` (`no skipped tests detected`,
+  `golden files are clean`, `website/examples is in sync`, `diff-check` sem
+  saída, c11-strict/UBSan/ASan+UBSan clang, suíte completa verde). Ambiente:
+  MSRV 1.88 `SKIP` (toolchain não instalada) e `ASAN NOT VALIDATED` para `cc`
+  neste PRoot; clang ASan+UBSan e UBSan passaram. Uma tentativa combinada com
+  os gates locais foi interrompida por timeout do harness (exit 143) durante a
+  suíte de testes, sem falha de teste; a reexecução isolada terminou em exit 0.
+- **Limitações após a FASE 6:** não há paralelismo, `operation "run"`, builtin
+  de compilador em Loi, descoberta implícita de fontes, travessia de symlinks
+  em árvores de assets, inferência automática de paths de `clean`, shared
+  libraries, cross-compilação, integração com `loi make`, leitura de `LOI_SELF`
+  dentro do módulo, gravação de JSON de build nem cache do resultado de testes
+  (o binário pode vir do cache, mas a execução sempre acontece). `install` e
+  `clean` aceitam somente caminhos relativos dentro do projeto. O executor
+  continua exigindo `cc`, `os_shim.c` e `process_shim.c` no linqueador. Próximo
+  passo: FASE 7.
+- **FASE 5 (fechamento) — tasks nativas e geração de arquivos (`2026-11-27`):**
+  `BuildTask` passa a ter `action`, `content` e `condition`, com os mutadores
+  `set_task_action`, `set_task_content` e `set_task_condition`. O vocabulário é
+  fechado: ações `noop`, `write`, `copy` e `concat`; condições `changed` e
+  `always`. `write` grava bytes literais, `copy` reproduz uma entrada declarada
+  e `concat` junta entradas declaradas em ordem com `\n` entre elas. Nenhuma
+  string de task vira comando de shell; `operation` continua restrito a `noop`
+  e `generate`, e `run`/`test`/`install`/`clean` permanecem rejeitados para a
+  próxima fase. A validação checa aridade por ação, saídas dentro de
+  `output_dir`, colisão de caminhos de saída entre nós e entradas geradas por
+  outra task. O grafo cria arestas `generate` implícitas de cada produtor
+  declarado para o nó que consome seu caminho, sem adivinhar por nome. O cache
+  ganha `task_key` / `task_needs_build` / `write_task_manifest` com prefixo
+  `loi-task-v1`, manifesto por task em `output/.loi-build/<id>.cache` (ou no
+  `Artifact` declarado), chave sobre campos da task e bytes das entradas, e
+  `always` que nunca reporta hit. `run_task` é chamado na ordem determinística,
+  cria apenas os pais das saídas declaradas e grava o manifesto depois da ação.
+  Arquivos: `lib/build/model.loi`, `lib/build/validate.loi`, `lib/build/graph.loi`,
+  `lib/build/cache.loi`, `lib/build/exec.loi`, `tests/build_task.rs`,
+  `lib/README.md`, `development/DECISIONS.md`, `development/PROGRESS.md`.
+  Nenhuma sintaxe da linguagem, CLI pública, ABI, `loi make` ou `lib/build.loi`
+  legado mudou. Classificação: **IMPLEMENTADO** (tasks `write`/`copy`/`concat`,
+  ordem implícita e cache por task); **DOCUMENTADO** em `lib/README.md`,
+  `DECISIONS.md` e `PROGRESS.md`.
+- **Verificação — fechamento da FASE 5 (`2026-11-27`):** failing-first: os 9
+  testes de `tests/build_task.rs` falharam primeiro com `module 'model' has no
+  item 'set_task_action'`; durante a implementação apareceram também
+  `cannot write to 'text': it is borrowed by a slice view` (corrigido com
+  `Vec<u8>`) e uma regressão do teste antigo
+  `exec_stops_before_a_target_when_a_declared_task_fails`, porque `operation
+  "run"` passou a ser aceito — o vocabulário de `operation` foi fechado de
+  novo a `noop`/`generate` antes do verde. Nenhum teste antigo foi removido.
+  Resultado final: `cargo test --test build_task -- --nocapture` → **9 passed;
+  0 failed; 0 ignored**, cobrindo geração para um target, skip por manifesto,
+  condição `always`, `copy`, `concat`, dependência implícita entre tasks,
+  colisão de saídas sem escrita, rejeição de ação arbitrária sem shell e
+  entrada ausente. Os quatro suites anteriores somaram **37 passed; 0 failed**.
+  `loi fmt` foi aplicado a `model.loi`, `validate.loi`, `graph.loi`,
+  `cache.loi` e `exec.loi` até `diff -u` vazio; `cargo fmt`, `cargo fmt --check`
+  e `cargo clippy --all-targets -- -D warnings` ficaram limpos.
+  `cargo test --all-targets` → **781 passed, 0 failed, 0 ignored em 53 suítes**
+  (772 + 9 novos). `node --test website/tests/server.test.mjs` → **11/11**;
+  `python3 tools/sync_examples.py --check` → `website/examples is in sync`;
+  `git diff --check` sem saída. Gate estendido:
+  `export PATH=/root/.cargo/bin:$PATH RUSTFLAGS="-C linker=/usr/bin/gcc"; ./tools/ci.sh all`
+  → exit 0 com `selected CI steps passed` (`no skipped tests detected`,
+  `golden files are clean`, c11-strict/UBSan/ASan+UBSan clang, suíte completa
+  verde). Ambiente: MSRV 1.88 `SKIP` (toolchain não instalada) e
+  `ASAN NOT VALIDATED` para `cc` neste PRoot; clang ASan+UBSan e UBSan passaram.
+- **Limitações após o fechamento da FASE 5:** não há paralelismo, tasks
+  `run`/`test`/`install`/`clean`, builtin de compilador em Loi, hash recursivo
+  de dependências (deps entram na chave como ids), assets gerados fora do
+  vocabulário de tasks, shared libraries, cross-compilação, integração com
+  `loi make`, leitura de `LOI_SELF` dentro do módulo ou gravação de JSON de
+  build. O executor continua exigindo `cc`, `os_shim.c` e `process_shim.c` no
+  linqueador. Naquele ponto, o próximo passo era a FASE 6 (assets, testes e
+  instalação), registrada no topo deste arquivo.
+- **FASE 5 — executor serial determinístico (`2026-11-27`):**
+  `lib/build/exec.loi` é uma camada opcional sobre modelo, grafo, ordem e cache.
+  `exec::run_project(project, program)` valida o projeto, obtém a ordem com
+  `order::order_project` e visita um nó por vez, na ordem determinística. Para
+  cada target, `run_target` consulta `cache::needs_build`, cria somente os
+  diretórios de saída/objetos declarados, invoca o compilador por
+  `process_spawn_args` com um vetor explícito de argumentos (sem string de
+  shell), encaminha stdout/stderr e grava o manifesto apenas com exit zero.
+  A falha para imediatamente, sem tocar manifestos, e nenhum target posterior
+  roda com dependências incompletas. As operações estruturadas `noop` e
+  `generate` são reconhecidas; qualquer outra operação é rejeitada
+  explicitamente em vez de ser interpretada como comando. Artefatos são
+  descritores e não geram execução. `cache::mkdir` foi aberto para reuso pelo
+  executor. O chamador fornece o caminho do compilador, então o módulo não lê
+  ambiente; o script de teste lê `CARGO_BIN_EXE_loi` fora do executor. Arquivos:
+  `lib/build/exec.loi`, `lib/build/cache.loi`, `tests/build_exec.rs`,
+  `lib/README.md`, `development/DECISIONS.md`, `development/PROGRESS.md`.
+  Nenhuma sintaxe da linguagem, CLI pública, ABI, `loi make` ou
+  `lib/build.loi` legado mudou. Classificação: **IMPLEMENTADO** (executor
+  serial, skip por cache e fail-first); **DOCUMENTADO** em `lib/README.md`,
+  `DECISIONS.md` e `PROGRESS.md`.
+- **Verificação — FASE 5 (`2026-11-27`):** failing-first: os 6 testes iniciais
+  falharam com `unknown module 'build::exec'`; durante a implementação, erros
+  intermediários de tipo/ownership e de shim (`fn(T)` inexistente na linguagem,
+  `cannot copy BuildTarget implicitly`, símbolos `loi_process_*` sem
+  `process_shim.c`) também foram observados antes do verde. Resultado final:
+  `cargo test --test build_exec -- --nocapture` → **7 passed; 0 failed; 0
+  ignored**, cobrindo build e manifesto, skip e rebuild após edição, dois
+  targets com dependência, falha do compilador sem manifesto, tarefa `noop`,
+  rejeição de operação arbitrária e parada antes de um target cuja tarefa
+  dependente falha. `loi fmt` aplicado a `exec.loi` e `cache.loi` até
+  comparação idêntica; `cargo fmt`, `cargo fmt --check` e
+  `cargo clippy --all-targets -- -D warnings` limpos.
+  `cargo test --all-targets` → **772 passed, 0 failed, 0 ignored em 52 suítes**
+  (765 + 7 novos). `node --test website/tests/server.test.mjs` → **11/11**;
+  `python3 tools/sync_examples.py --check` → `website/examples is in sync`;
+  `git diff --check` sem saída. Gate estendido:
+  `export PATH=/root/.cargo/bin:$PATH RUSTFLAGS="-C linker=/usr/bin/gcc"; ./tools/ci.sh all`
+  → exit 0 com `selected CI steps passed` (`no skipped tests detected`,
+  `golden files are clean`, c11-strict/UBSan/ASan+UBSan clang, suíte completa
+  verde). Ambiente: MSRV 1.88 `SKIP` e `ASAN NOT VALIDATED` para `cc` neste
+  PRoot; clang ASan+UBSan e UBSan passaram. Reexecução final após remover um
+  import não usado: `cargo test --all-targets` → 772 passed em 52 suítes e
+  `./tools/ci.sh all` → exit 0 com `selected CI steps passed`.
+- **Limitações da FASE 5 (executor serial):** na entrega inicial do executor
+  não havia tasks reais; o fechamento posterior cobriu `write`/`copy`/`concat`
+  e as limitações correntes estão no topo deste arquivo.
+- **FASE 4 — cache por artefato e invalidação (`2026-11-27`):**
+  `lib/build/cache.loi` é uma camada opcional sobre o modelo/grafo: `artifact_key`
+  produz uma chave FNV-1a versionada (`loi-cache-v1 <decimal>`) a partir da
+  identidade do target, config, bytes de fontes/C-sources/headers/assets,
+  include dirs, defines, libs, flags, deps, tasks e caminho de saída. Não há
+  mtime, leitura de ambiente, varredura de diretório nem estado global: a
+  declaração em `model::Project` é a lista completa de entradas. `needs_build`
+  exige saída e manifesto presentes e com a chave atual; `write_manifest`
+  grava a chave somente depois do sucesso, no manifesto do artefato declarado
+  ou em `output/.loi-build/<id>.cache`. `manifest_path` resolve o caminho.
+  O modelo ganhou `headers`/`assets` com `add_header`/`add_asset`, validados
+  como entradas existentes. `loi_build_mkdir` em `lib/os_shim.c` cria o diretório
+  pai do manifesto sem shell. Também foi corrigido `valid_value` em
+  `build/validate.loi`, que só aceitava o primeiro valor de cada lista
+  (`speed`, `release` e os demais presets agora são válidos). Arquivos:
+  `lib/build/cache.loi`, `lib/build/model.loi`, `lib/build/validate.loi`,
+  `lib/os_shim.c`, `tests/build_cache.rs`, `lib/README.md`,
+  `development/DECISIONS.md`, `development/PROGRESS.md`. Nenhuma sintaxe da
+  linguagem, CLI pública, ABI, `loi make` ou `lib/build.loi` legado mudou.
+  Classificação: **IMPLEMENTADO** (chave/manifesto/invalidação);
+  **DOCUMENTADO** em `lib/README.md`, `DECISIONS.md` e `PROGRESS.md`.
+- **Verificação — FASE 4 (`2026-11-27`):** failing-first: os 9 testes iniciais
+  falharam com `unknown module 'build::cache'`; a ampliação para headers/assets
+  falhou primeiro com `module 'model' has no item 'add_header'` e
+  `invalid optimize 'speed'`. Resultado final:
+  `cargo test --test build_cache -- --nocapture` → **13 passed; 0 failed; 0
+  ignored; 0 measured; 0 filtered out**, cobrindo estabilidade, fonte, C-source,
+  header, asset, flags, compilador, define, lib, config, dependência, ids
+  distintos, saída/manifesto ausentes, manifesto inválido, mudança de fonte com
+  manifesto preservado e caminho de artefato explícito. `loi fmt` aplicado a
+  `model.loi`, `validate.loi` e `cache.loi` até `diff -u` vazio; `cargo fmt`,
+  `cargo fmt --check` e `cargo clippy --all-targets -- -D warnings` limpos.
+  `cargo test --all-targets` → **765 passed, 0 failed, 0 ignored em 51 suítes**.
+  `node --test website/tests/server.test.mjs` → **11/11**;
+  `python3 tools/sync_examples.py --check` → `website/examples is in sync`;
+  `git diff --check` sem saída. Gate estendido:
+  `export PATH=/root/.cargo/bin:$PATH RUSTFLAGS="-C linker=/usr/bin/gcc"; ./tools/ci.sh all`
+  → exit 0 com `selected CI steps passed` (`no skipped tests detected`,
+  `golden files are clean`, c11-strict/UBSan/ASan+UBSan clang, suíte completa
+  verde). Ambiente: MSRV 1.88 `SKIP` e `ASAN NOT VALIDATED` para `cc` neste
+  PRoot; clang ASan+UBSan e UBSan passaram.
+- **Limitações da FASE 4:** o cache ainda não executa targets/tasks, não
+  compara o conteúdo dos artefatos de dependências (deps entram na chave como
+  ids), não grava JSON, não tem `clean`, `test`, `install`, assets gerados,
+  shared libraries ou cross-compilação, e `BuildContext` não é injetado por
+  `loi make`. O runner legado continua usando `output/.loi-build-cache`.
+  Mantêm-se apenas `native` para triple e `c` para backend.
+- **FASE 3 — grafo de build e ordem determinística (`2026-11-27`):**
+  `lib/build/graph.loi` e `lib/build/order.loi` são camadas opcionais sobre o
+  modelo da FASE 2. `graph::build_graph(project)` valida o projeto, monta nós em
+  ordem de declaração (targets, tasks, artifacts) e arestas deduplicadas por
+  `(from, to, kind)`; `from -> to` significa “`from` depende de `to`”. Ids
+  repetidos entre namespaces são rejeitados com `duplicate node '<id>'`, e toda
+  extremidade de aresta não-`input` precisa ser um nó conhecido.
+  `graph::target_sources` devolve as fontes de um target deduplicadas na ordem
+  declarada. `order::order_project` faz Kahn com desempate por ordem de
+  declaração, ignora arestas `input` na ordenação e aborta com
+  `dependency cycle` quando não há progresso. Arquivos: `lib/build/graph.loi`,
+  `lib/build/order.loi`, `tests/build_graph.rs`, `lib/README.md`,
+  `development/DECISIONS.md`, `development/PROGRESS.md`. Nenhuma sintaxe da
+  linguagem, CLI pública, ABI, `loi make` ou `lib/build.loi` legado mudou.
+  Classificação: **IMPLEMENTADO** (grafo/ordem); **DOCUMENTADO** em
+  `lib/README.md`, `DECISIONS.md` e `PROGRESS.md`.
+- **Verificação — FASE 3 (`2026-11-27`):** failing-first:
+  `cargo test --test build_graph -- --nocapture` começou com **7 testes
+  falhando** em `unknown module 'build::graph'`; nenhum teste antigo foi
+  removido. Após implementar os módulos e corrigir o harness (o corpo das
+  chamadas a `order_project` passou a ser emitido antes da ordenação), o mesmo
+  comando passou com **7 passed; 0 failed**. A suíte foi ampliada para 10 testes
+  — um target, múltiplos targets independentes, dependências, tasks antes de
+  targets dependentes, arestas `input` fora da ordem, ciclo, duplicatas entre
+  namespaces, dedup de fontes e de arestas, e estabilidade entre chamadas — e o
+  resultado final foi `cargo test --test build_graph -- --nocapture` → **10
+  passed; 0 failed; 0 ignored; 0 measured; 0 filtered out**. `loi fmt` foi
+  aplicado a `graph.loi` e `order.loi` até idempotente (`diff -u` vazio);
+  `cargo fmt` e `git diff --check` também passaram sem saída. Gate completo:
+  `export PATH=/root/.cargo/bin:$PATH RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets`
+  terminou em exit 0: `fmt --check` sem diferenças, `clippy` sem avisos e
+  `cargo test --all-targets` reportou **752 passed, 0 failed, 0 ignored em 50
+  suítes** (10 em `build_graph.rs`, 7 em `build_model.rs`). Uma primeira
+  tentativa foi interrompida por timeout do harness (exit 143 / SIGTERM) durante
+  o teste longo `tests/order.rs`, sem falha de teste; o gate foi relançado com
+  timeout maior e concluiu normalmente. Verificações complementares:
+  `node --test website/tests/server.test.mjs` → **11/11 passaram**;
+  `python3 tools/sync_examples.py --check` → `website/examples is in sync`;
+  `git diff --check` → sem saída. Gate estendido:
+  `export PATH=/root/.cargo/bin:$PATH RUSTFLAGS="-C linker=/usr/bin/gcc"; ./tools/ci.sh all`
+  terminou em exit 0 com `selected CI steps passed`: `no skipped tests
+  detected`, `golden files are clean`, `website/examples is in sync`,
+  `diff-check` sem saída, c11-strict/UBSan/ASan+UBSan (clang) OK e a suíte
+  completa de `cargo test --all-targets` novamente verde. Ambiente: MSRV 1.88
+  `SKIP` (toolchain não instalada) e `ASAN NOT VALIDATED` para `cc` neste PRoot
+  por limite de memória virtual; clang ASan+UBSan e UBSan passaram. Avisos
+  preexistentes em `examples/flow_syntax.loi` (`mass` não usado) e no C gerado
+  não são novos.
+- **Limitações da FASE 3:** o grafo ainda não executa targets nem tasks, não
+  grava manifests/cache, não usa hashes de conteúdo, não reusa artefatos e não
+  cobre assets, `test`, `install`, `clean`, shared libraries ou cross-compilação.
+  O `BuildPlan` legado continua sendo o caminho ativo de `loi make`, e o
+  `BuildContext` explícito ainda não é injetado pelo driver. Como na FASE 2,
+  apenas `native` é aceito para `target_os` / `target_arch` / `target_abi`, e
+  `backend` aceita somente `c`.
+- **FASE 2 — modelo interno do build (`2026-11-27`):**
+  `lib/build/model.loi` e `lib/build/validate.loi` introduzem sete `shape`s
+  explícitos (`Project`, `BuildTarget`, `BuildTask`, `Artifact`,
+  `BuildDependency`, `BuildConfig`, `BuildContext`) e uma superfície mínima:
+  `project`, `config`, `context`, `default_target`, `executable`,
+  `static_library`, `object`, `task`, `artifact`, `dependency`, mutadores por
+  índice e `validate_project`. `BuildConfig` é copiado para cada target e
+  `BuildContext` guarda `root` / `toolchain` / `output_dir` sem ler ambiente. A
+  validação cobre ids duplicados de target/task/artifact, entradas ausentes,
+  config inválida, saída fora de `output/`, extremidades de arestas e target
+  default desconhecido. O `BuildPlan` legado continua sendo o caminho ativo de
+  `loi make`; nenhuma sintaxe da linguagem, CLI pública ou ABI mudou. Arquivos:
+  `lib/build/model.loi`, `lib/build/validate.loi`, `tests/build_model.rs`,
+  `.gitignore`, `lib/README.md`, `development/DECISIONS.md` e
+  `development/PROGRESS.md`. Classificação: **IMPLEMENTADO** (modelo e
+  validação); **DOCUMENTADO** em `lib/README.md`, `DECISIONS.md` e
+  `PROGRESS.md`.
+- **Verificação — FASE 2 (`2026-11-27`):** failing-first:
+  `cargo test --test build_model -- --nocapture` começou com 5 testes falhando
+  em `unknown module 'build::model'` e o teste de compatibilidade legada
+  passando. Ajustes do próprio harness (arquivo de teste chamado `model.loi`
+  colidia com o alias importado; script renomeado para `script.loi` e `run`
+  passou a usar o cwd do projeto) e da sintaxe de parâmetros de saída
+  (`config` e `project` passaram a chamar `model_default_config(-> ...)`) foram
+  corrigidos antes de marcar verde. Resultado final:
+  `cargo test --test build_model -- --nocapture` → **7 passed; 0 failed; 0
+  ignored**. `loi fmt` foi aplicado aos dois módulos Loi até idempotente (o
+  segundo `diff -u` saiu vazio). Gate:
+  `export PATH=/root/.cargo/bin:$PATH RUSTFLAGS="-C linker=/usr/bin/gcc"; cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets`
+  terminou em exit 0: `fmt --check` e `clippy` sem diferenças/avisos, e
+  `cargo test --all-targets` reportou **742 passed, 0 failed, 0 ignored em 49
+  suítes**. `git diff --check` também passou sem saída.
+- **Limitações da FASE 2:** o modelo ainda não executa grafo, não detecta
+  ciclos de dependência, não ordena topologicamente, não deduplica artefatos e
+  não grava manifestos/cache. `generated_source`, `asset`, `embed_file`,
+  `generate`, `run`, `test`, `install`, `clean` e `shared_library` continuam sem
+  executor. Só `native` é aceito para `target_os` / `target_arch` /
+  `target_abi`; `web` é apenas config de debug do runner legado. O contexto
+  explícito ainda não é passado por `loi make`, e o shim de processo legado
+  continua usando `/bin/sh -c` internamente. Próximo passo: FASE 3, com grafo,
+  ordem determinística e detecção de ciclos.
 - **CLI — scaffold e runner de build (`loi init` / `loi make`, 2026-11-26):**
   `loi init NAME` cria `src/main.loi`, `build.loi`, `.gitignore`,
   `output/config.txt` e `output/objects/.gitkeep`, recusando nomes inseguros e

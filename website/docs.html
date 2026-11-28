@@ -2045,6 +2045,24 @@ open flow main
             to override the plan without editing the script. <code>make</code> does not run
             the artifact; execute <code>./output/NAME</code> yourself.
           </p>
+          <p>
+            An optional <code>BuildGraph</code> model is also available for scripts that
+            import it explicitly: <code>build::model</code>, <code>build::graph</code>,
+            <code>build::order</code>, <code>build::cache</code>, <code>build::exec</code>,
+            <code>build::config</code> and <code>build::validate</code>. It keeps targets,
+            tasks, artifacts and dependencies in a deterministic graph with serial
+            execution and per-artifact manifests; <code>loi init</code> and
+            <code>loi make</code> still use the legacy <code>BuildPlan</code> above. A
+            script passes every <code>Project</code> and toolchain explicitly through the
+            canonical parameter directions. Configuration precedence is defaults, then a
+            named profile, then explicit <code>set_*</code> mutations, then declared
+            overrides from <code>LOI_BUILD_PROFILE</code>,
+            <code>LOI_BUILD_OPTIMIZE</code>, <code>LOI_BUILD_MODE</code>,
+            <code>LOI_BUILD_C_COMPILER</code> and <code>LOI_BUILD_ARCHIVER</code>; call
+            <code>config::apply_env</code> before a final explicit mutation when the script
+            must win. A non-native target triple requires an explicit toolchain: no cross
+            compiler, linker or flag is guessed.
+          </p>
 
           <h3>Opt-in LLVM backend</h3>
           <p>

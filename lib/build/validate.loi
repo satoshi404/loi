@@ -1,0 +1,592 @@
+//! Semantic validation for the FASE 2 build model.
+//!
+//! `build/model.loi` constructs descriptors; this module checks them before any
+//! graph or executor work exists. It is deliberately read-only: it never writes
+//! files, spawns processes or mutates the project. Failures are reported with
+//! `panic` so the CLI runner exits with a clear diagnostic on stderr.
+//!
+//! Cycle detection and ordering live in `build/graph.loi` / `build/order.loi`;
+//! cache manifests live in `build/cache.loi`. This module only answers: "is
+//! this description well formed and are its declared inputs present?"
+import std
+
+import os
+
+import build::model
+
+flow valid_value
+    <- value: [u8]
+    <- accepted: [u8]
+    => bool
+{
+    mut start: u64 <- 0
+    mut at: u64 <- 0
+    while at < accepted.len {
+        if accepted[at] == 10 {
+            if str_eq(value, view(accepted, start, at)) {
+                => true
+            }
+            start = at + 1
+        }
+        at += 1
+    }
+    => str_eq(value, view(accepted, start, accepted.len))
+}
+
+flow valid_profile
+    <- value: [u8]
+    => bool
+{
+    => valid_value(value, "debug\nrelease")
+}
+
+flow valid_optimize
+    <- value: [u8]
+    => bool
+{
+    => valid_value(value, "none\ndebug\nspeed\nsize")
+}
+
+flow valid_mode
+    <- value: [u8]
+    => bool
+{
+    => valid_value(value, "native\nrelease\nsize\ntest\nweb")
+}
+
+flow valid_triple_part
+    <- value: [u8]
+    => bool
+{
+    => valid_value(value, "native\nlinux\nwindows\nmacos\nandroid\nwasm32\nx86_64\naarch64\narm64\narmv7\nwasm\ngnu\nmusl\nnone")
+}
+
+flow is_native_triple_part
+    <- value: [u8]
+    => bool
+{
+    => str_eq(value, "native")
+}
+
+flow valid_backend
+    <- value: [u8]
+    => bool
+{
+    => str_eq(value, "c")
+}
+
+flow valid_action
+    <- value: [u8]
+    => bool
+{
+    => valid_value(value, "noop\nwrite\ncopy\nconcat\nasset_dir\nembed_file\ntest\ninstall\nclean")
+}
+
+flow valid_condition
+    <- value: [u8]
+    => bool
+{
+    => valid_value(value, "changed\nalways")
+}
+
+/// Declared install and clean paths must stay inside the project. Absolute
+/// paths and `..` components are rejected before any file is touched.
+flow path_inside_project
+    <- path: [u8]
+    => bool
+{
+    if path.len == 0 or path_is_absolute(path) {
+        => false
+    }
+    mut start: u64 <- 0
+    mut at: u64 <- 0
+    while at < path.len {
+        if path[at] == 47 {
+            part <- view(path, start, at)
+            if str_eq(part, "..") {
+                => false
+            }
+            start = at + 1
+        }
+        at += 1
+    }
+    => not str_eq(view(path, start, path.len), "..")
+}
+
+flow fail_at
+    <- label: [u8]
+    <- id: [u8]
+{
+    panic(fmt::("{} '{}'\n", label, id))
+}
+
+flow check_paths
+    <- paths: Vec<[u8]>
+    <- label: [u8]
+{
+    mut at: u64 <- 0
+    while at < paths.len {
+        path <- vec_get<[u8]>(paths, at)
+        if not os_path_exists(path) {
+            panic(fmt::("missing input '{}'\n", path))
+        }
+        at += 1
+    }
+}
+
+/// A path declared as an output of another node is produced inside this build,
+/// so it is not required to exist before the first invocation.
+flow is_generated_output
+    <- p: model::Project
+    <- path: [u8]
+    => bool
+{
+    mut at: u64 <- 0
+    while at < p.targets.len {
+        target <- vec_get<model::BuildTarget>(p.targets, at)
+        if str_eq(target.output, path) {
+            => true
+        }
+        at += 1
+    }
+    at = 0
+    while at < p.tasks.len {
+        task <- vec_get<model::BuildTask>(p.tasks, at)
+        mut i: u64 <- 0
+        while i < task.outputs.len {
+            if str_eq(vec_get<[u8]>(task.outputs, i), path) {
+                => true
+            }
+            i += 1
+        }
+        at += 1
+    }
+    at = 0
+    while at < p.artifacts.len {
+        artifact <- vec_get<model::Artifact>(p.artifacts, at)
+        if str_eq(artifact.path, path) {
+            => true
+        }
+        at += 1
+    }
+    => false
+}
+
+flow check_declared_paths
+    <- p: model::Project
+    <- paths: Vec<[u8]>
+    <- label: [u8]
+{
+    mut at: u64 <- 0
+    while at < paths.len {
+        path <- vec_get<[u8]>(paths, at)
+        if not is_generated_output(p, path) {
+            if not os_path_exists(path) {
+                panic(fmt::("missing input '{}'\n", path))
+            }
+        }
+        at += 1
+    }
+}
+
+flow find_target
+    <- targets: Vec<model::BuildTarget>
+    <- id: [u8]
+    => i64
+{
+    mut at: u64 <- 0
+    while at < targets.len {
+        target <- vec_get<model::BuildTarget>(targets, at)
+        if str_eq(target.id, id) {
+            => at as i64
+        }
+        at += 1
+    }
+    => -1
+}
+
+flow find_task
+    <- tasks: Vec<model::BuildTask>
+    <- id: [u8]
+    => i64
+{
+    mut at: u64 <- 0
+    while at < tasks.len {
+        item <- vec_get<model::BuildTask>(tasks, at)
+        if str_eq(item.id, id) {
+            => at as i64
+        }
+        at += 1
+    }
+    => -1
+}
+
+flow find_artifact
+    <- artifacts: Vec<model::Artifact>
+    <- id: [u8]
+    => i64
+{
+    mut at: u64 <- 0
+    while at < artifacts.len {
+        item <- vec_get<model::Artifact>(artifacts, at)
+        if str_eq(item.id, id) {
+            => at as i64
+        }
+        at += 1
+    }
+    => -1
+}
+
+flow check_duplicate_targets
+    <- targets: Vec<model::BuildTarget>
+{
+    mut left: u64 <- 0
+    while left < targets.len {
+        first <- vec_get<model::BuildTarget>(targets, left)
+        mut right: u64 <- left + 1
+        while right < targets.len {
+            second <- vec_get<model::BuildTarget>(targets, right)
+            if str_eq(first.id, second.id) {
+                fail_at("duplicate target", first.id)
+            }
+            right += 1
+        }
+        left += 1
+    }
+}
+
+flow check_duplicate_tasks
+    <- tasks: Vec<model::BuildTask>
+{
+    mut left: u64 <- 0
+    while left < tasks.len {
+        first <- vec_get<model::BuildTask>(tasks, left)
+        mut right: u64 <- left + 1
+        while right < tasks.len {
+            second <- vec_get<model::BuildTask>(tasks, right)
+            if str_eq(first.id, second.id) {
+                fail_at("duplicate task", first.id)
+            }
+            right += 1
+        }
+        left += 1
+    }
+}
+
+flow check_duplicate_artifacts
+    <- artifacts: Vec<model::Artifact>
+{
+    mut left: u64 <- 0
+    while left < artifacts.len {
+        first <- vec_get<model::Artifact>(artifacts, left)
+        mut right: u64 <- left + 1
+        while right < artifacts.len {
+            second <- vec_get<model::Artifact>(artifacts, right)
+            if str_eq(first.id, second.id) {
+                fail_at("duplicate artifact", first.id)
+            }
+            right += 1
+        }
+        left += 1
+    }
+}
+
+flow collect_outputs
+    <- p: model::Project
+    -> outputs: Vec<[u8]>
+{
+    vec_new<[u8]>(-> outputs)
+    mut at: u64 <- 0
+    while at < p.targets.len {
+        target <- vec_get<model::BuildTarget>(p.targets, at)
+        vec_push<[u8]>(<-> outputs, target.output)
+        at += 1
+    }
+    at = 0
+    while at < p.tasks.len {
+        task <- vec_get<model::BuildTask>(p.tasks, at)
+        mut i: u64 <- 0
+        while i < task.outputs.len {
+            vec_push<[u8]>(<-> outputs, vec_get<[u8]>(task.outputs, i))
+            i += 1
+        }
+        at += 1
+    }
+    at = 0
+    while at < p.artifacts.len {
+        artifact <- vec_get<model::Artifact>(p.artifacts, at)
+        vec_push<[u8]>(<-> outputs, artifact.path)
+        at += 1
+    }
+}
+
+/// Two nodes must never claim the same path. A silent overwrite would break
+/// both dependency ordering and cache validity.
+flow check_output_collisions
+    <- p: model::Project
+{
+    mut outputs: Vec<[u8]>
+    collect_outputs(p, -> outputs)
+    mut left: u64 <- 0
+    while left < outputs.len {
+        first <- vec_get<[u8]>(outputs, left)
+        mut right: u64 <- left + 1
+        while right < outputs.len {
+            second <- vec_get<[u8]>(outputs, right)
+            if str_eq(first, second) {
+                panic(fmt::("duplicate output '{}'\n", first))
+            }
+            right += 1
+        }
+        left += 1
+    }
+}
+
+flow check_cross_toolchain
+    <- p: model::Project
+    <- target: model::BuildTarget
+{
+    if not is_native_triple_part(target.config.target_os) or not is_native_triple_part(target.config.target_arch) or not is_native_triple_part(target.config.target_abi) {
+        if p.context.toolchain.len == 0 {
+            panic(fmt::("target '{}' needs an explicit cross toolchain\n", target.id))
+        }
+        if target.config.compiler.len == 0 or target.config.archiver.len == 0 {
+            panic(fmt::("target '{}' has an incomplete cross toolchain\n", target.id))
+        }
+    }
+}
+
+flow check_target
+    <- p: model::Project
+    <- target: model::BuildTarget
+{
+    if target.id.len == 0 {
+        panic("target id must not be empty\n")
+    }
+    if not (str_eq(target.kind, "executable") or str_eq(target.kind, "static_library") or str_eq(target.kind, "shared_library") or str_eq(target.kind, "object")) {
+        panic(fmt::("invalid target kind '{}' (expected executable, static_library, shared_library or object)\n", target.kind))
+    }
+    if not str_starts_with(target.output, str_concat(p.context.output_dir, "/")) {
+        panic(fmt::("target output '{}' must be inside '{}'\n", target.output, p.context.output_dir))
+    }
+    if not valid_profile(target.config.profile) {
+        panic(fmt::("invalid profile '{}'\n", target.config.profile))
+    }
+    if not valid_optimize(target.config.optimize) {
+        panic(fmt::("invalid optimize '{}'\n", target.config.optimize))
+    }
+    if not valid_mode(target.config.mode) {
+        panic(fmt::("invalid mode '{}'\n", target.config.mode))
+    }
+    if not valid_triple_part(target.config.target_os) {
+        panic(fmt::("invalid target_os '{}'\n", target.config.target_os))
+    }
+    if not valid_triple_part(target.config.target_arch) {
+        panic(fmt::("invalid target_arch '{}'\n", target.config.target_arch))
+    }
+    if not valid_triple_part(target.config.target_abi) {
+        panic(fmt::("invalid target_abi '{}'\n", target.config.target_abi))
+    }
+    check_cross_toolchain(p, target)
+    check_declared_paths(p, clone(target.sources), "source")
+    check_declared_paths(p, clone(target.c_sources), "c source")
+    check_declared_paths(p, clone(target.headers), "header")
+    check_declared_paths(p, clone(target.assets), "asset")
+    mut at: u64 <- 0
+    while at < target.deps.len {
+        dep_id <- vec_get<[u8]>(target.deps, at)
+        if find_target(clone(p.targets), dep_id) < 0 {
+            panic(fmt::("unknown dependency '{}'\n", dep_id))
+        }
+        at += 1
+    }
+    at = 0
+    while at < target.tasks.len {
+        task_id <- vec_get<[u8]>(target.tasks, at)
+        if find_task(clone(p.tasks), task_id) < 0 {
+            panic(fmt::("unknown task '{}'\n", task_id))
+        }
+        at += 1
+    }
+}
+
+flow check_task
+    <- p: model::Project
+    <- task: model::BuildTask
+{
+    if not (str_eq(task.kind, "generate") or str_eq(task.kind, "asset") or str_eq(task.kind, "run") or str_eq(task.kind, "test") or str_eq(task.kind, "install") or str_eq(task.kind, "clean")) {
+        panic(fmt::("invalid task kind '{}'\n", task.kind))
+    }
+    if not valid_action(task.action) {
+        panic(fmt::("invalid task action '{}'\n", task.action))
+    }
+    if not valid_condition(task.condition) {
+        panic(fmt::("invalid task condition '{}'\n", task.condition))
+    }
+    if str_eq(task.action, "write") {
+        if task.outputs.len != 1 {
+            panic(fmt::("task '{}' write action needs exactly one output\n", task.id))
+        }
+    }
+    if str_eq(task.action, "copy") {
+        if task.inputs.len != 1 or task.outputs.len != 1 {
+            panic(fmt::("task '{}' copy action needs one input and one output\n", task.id))
+        }
+    }
+    if str_eq(task.action, "concat") {
+        if task.inputs.len == 0 or task.outputs.len != 1 {
+            panic(fmt::("task '{}' concat action needs inputs and one output\n", task.id))
+        }
+    }
+    if str_eq(task.action, "asset_dir") {
+        if task.inputs.len != 1 or task.outputs.len != 1 {
+            panic(fmt::("task '{}' asset_dir action needs one source and one destination\n", task.id))
+        }
+        source <- vec_get<[u8]>(task.inputs, 0)
+        if not os_path_exists(source) {
+            panic(fmt::("asset source '{}' does not exist\n", source))
+        }
+    }
+    if str_eq(task.action, "embed_file") {
+        if task.inputs.len != 1 or task.outputs.len != 1 or task.content.len == 0 {
+            panic(fmt::("task '{}' embed_file action needs one source, one destination and a symbol\n", task.id))
+        }
+    }
+    if str_eq(task.action, "test") {
+        if task.inputs.len != 1 or task.outputs.len != 1 {
+            panic(fmt::("task '{}' test action needs one source and one binary path\n", task.id))
+        }
+    }
+    if str_eq(task.action, "install") {
+        if task.inputs.len != 1 or task.outputs.len != 1 {
+            panic(fmt::("task '{}' install action needs one source and one destination\n", task.id))
+        }
+        destination <- vec_get<[u8]>(task.outputs, 0)
+        if not path_inside_project(destination) {
+            panic(fmt::("install destination '{}' path must stay inside the project\n", destination))
+        }
+    }
+    if str_eq(task.action, "clean") {
+        if task.outputs.len == 0 {
+            panic(fmt::("task '{}' clean action needs at least one declared path\n", task.id))
+        }
+    }
+    mut at: u64 <- 0
+    while at < task.outputs.len {
+        path <- vec_get<[u8]>(task.outputs, at)
+        if not (str_eq(task.action, "install") or str_eq(task.action, "clean")) {
+            prefix <- str_concat(p.context.output_dir, "/")
+            if not str_starts_with(path, prefix) {
+                panic(fmt::("task output '{}' must be inside '{}'\n", path, p.context.output_dir))
+            }
+        } else {
+            if not path_inside_project(path) {
+                panic(fmt::("task '{}' path '{}' must stay inside the project\n", task.id, path))
+            }
+        }
+        at += 1
+    }
+    check_declared_paths(p, clone(task.inputs), "task input")
+}
+
+flow check_artifact
+    <- artifact: model::Artifact
+{
+    if artifact.id.len == 0 {
+        panic("artifact id must not be empty\n")
+    }
+    if artifact.path.len == 0 {
+        panic(fmt::("artifact '{}' has an empty path\n", artifact.id))
+    }
+}
+
+flow check_dependency
+    <- p: model::Project
+    <- edge: model::BuildDependency
+{
+    mut found: bool <- false
+    if str_eq(edge.kind, "target") {
+        found = find_target(clone(p.targets), edge.to) >= 0
+    } else if str_eq(edge.kind, "task") {
+        found = find_task(clone(p.tasks), edge.to) >= 0
+    } else if str_eq(edge.kind, "artifact") {
+        found = find_artifact(clone(p.artifacts), edge.to) >= 0
+    } else if str_eq(edge.kind, "input") {
+        found = os_path_exists(edge.to) or is_generated_output(p, edge.to)
+    }
+    if not found {
+        panic(fmt::("unknown dependency endpoint '{}'\n", edge.to))
+    }
+}
+
+/// Validate the whole project. Returns 0 on success; every failure aborts with
+/// a diagnostic naming the offending id or path.
+open flow validate_project
+    <- p: model::Project
+    => i32
+{
+    if p.name.len == 0 {
+        panic("project name must not be empty\n")
+    }
+    if not str_starts_with(p.context.output_dir, "output") {
+        panic(fmt::("invalid output_dir '{}'\n", p.context.output_dir))
+    }
+    if not valid_profile(p.config.profile) {
+        panic(fmt::("invalid profile '{}'\n", p.config.profile))
+    }
+    if not valid_optimize(p.config.optimize) {
+        panic(fmt::("invalid optimize '{}'\n", p.config.optimize))
+    }
+    if not valid_mode(p.config.mode) {
+        panic(fmt::("invalid mode '{}'\n", p.config.mode))
+    }
+    if not valid_triple_part(p.config.target_os) {
+        panic(fmt::("invalid target_os '{}'\n", p.config.target_os))
+    }
+    if not valid_triple_part(p.config.target_arch) {
+        panic(fmt::("invalid target_arch '{}'\n", p.config.target_arch))
+    }
+    if not valid_triple_part(p.config.target_abi) {
+        panic(fmt::("invalid target_abi '{}'\n", p.config.target_abi))
+    }
+    if not valid_backend(p.config.backend) {
+        panic(fmt::("invalid backend '{}' (FASE 2 accepts only c)\n", p.config.backend))
+    }
+    if p.config.compiler.len == 0 or p.config.archiver.len == 0 {
+        panic("compiler and archiver must not be empty\n")
+    }
+    check_duplicate_targets(clone(p.targets))
+    check_duplicate_tasks(clone(p.tasks))
+    check_duplicate_artifacts(clone(p.artifacts))
+    check_output_collisions(p)
+    mut at: u64 <- 0
+    while at < p.targets.len {
+        target <- vec_get<model::BuildTarget>(p.targets, at)
+        check_target(p, target)
+        at += 1
+    }
+    at = 0
+    while at < p.tasks.len {
+        item <- vec_get<model::BuildTask>(p.tasks, at)
+        check_task(p, item)
+        at += 1
+    }
+    at = 0
+    while at < p.artifacts.len {
+        item <- vec_get<model::Artifact>(p.artifacts, at)
+        check_artifact(item)
+        at += 1
+    }
+    at = 0
+    while at < p.dependencies.len {
+        edge <- vec_get<model::BuildDependency>(p.dependencies, at)
+        check_dependency(p, edge)
+        at += 1
+    }
+    if p.default_target.len > 0 {
+        if find_target(clone(p.targets), p.default_target) < 0 {
+            panic(fmt::("unknown default target '{}'\n", p.default_target))
+        }
+    }
+    => 0
+}

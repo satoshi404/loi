@@ -1,0 +1,147 @@
+//! Build configuration for FASE 7.
+//!
+//! This module keeps profile and environment policy explicit. It never spawns a
+//! process and never changes global state: every mutation goes through a
+//! `Project` handle supplied by the caller. Environment overrides are reported
+//! as `<-` output strings so a build can explain exactly what changed.
+//!
+//! Precedence, from lowest to highest:
+//!   1. conservative defaults from `build::model`;
+//!   2. a named profile (`apply_profile`);
+//!   3. explicit project/target mutations (`set_*` flows);
+//!   4. declared environment overrides (`apply_env`).
+//!
+//! An environment override is only applied when the field still carries the
+//! default value produced by the profile. A caller that wants to win over the
+//! environment can call a `build::model::set_*` flow after `apply_env`, because
+//! that value no longer equals the profile default.
+import std
+
+import os
+
+import build::model
+
+/// Named profiles with documented rules. `debug`, `test` and `native` use
+/// `-O0`/debug; `release` and `speed` use `-O2`/release; `size` and `web` use
+/// `-Os`/release. `web` also selects emscripten-compatible flags in the
+/// executor; no universal cross flag is invented here.
+open flow apply_profile
+    <-> p: Project
+    <- name: [u8]
+{
+    if str_eq(name, "debug") {
+        p.config.profile = "debug"
+        p.config.optimize = "none"
+        p.config.mode = "native"
+    } else if str_eq(name, "test") {
+        p.config.profile = "debug"
+        p.config.optimize = "debug"
+        p.config.mode = "test"
+    } else if str_eq(name, "native") {
+        p.config.profile = "debug"
+        p.config.optimize = "none"
+        p.config.mode = "native"
+    } else if str_eq(name, "release") {
+        p.config.profile = "release"
+        p.config.optimize = "speed"
+        p.config.mode = "release"
+    } else if str_eq(name, "speed") {
+        p.config.profile = "release"
+        p.config.optimize = "speed"
+        p.config.mode = "release"
+    } else if str_eq(name, "size") {
+        p.config.profile = "release"
+        p.config.optimize = "size"
+        p.config.mode = "size"
+    } else if str_eq(name, "web") {
+        p.config.profile = "release"
+        p.config.optimize = "size"
+        p.config.mode = "web"
+    } else {
+        panic(fmt::("unknown build profile '{}'\n", name))
+    }
+    mut at: u64 <- 0
+    while at < p.targets.len {
+        mut target <- vec_get<model::BuildTarget>(p.targets, at)
+        target.config.profile = clone(p.config.profile)
+        target.config.optimize = clone(p.config.optimize)
+        target.config.mode = clone(p.config.mode)
+        vec_set<model::BuildTarget>(<-> p.targets, at, target)
+        at += 1
+    }
+}
+
+flow push_change
+    <- key: [u8]
+    <- field: [u8]
+    <- value: [u8]
+    <-> changes: Vec<[u8]>
+{
+    text <- format("[config] {} <- env {}={}\n", field, key, value)
+    vec_push<[u8]>(<-> changes, text)
+}
+
+flow apply_env_string
+    <- key: [u8]
+    <- field: [u8]
+    <- current: [u8]
+    <- default: [u8]
+    <-> changes: Vec<[u8]>
+    => [u8]
+{
+    value <- os_env(key)
+    if value.len == 0 {
+        => clone(current)
+    }
+    push_change(key, field, value, <-> changes)
+    => clone(value)
+}
+
+/// Apply documented environment overrides. A change is recorded in `changes`
+/// even when it loses to an explicit value, so no override is silent.
+open flow apply_env
+    <-> p: Project
+    -> changes: Vec<[u8]>
+{
+    vec_new<[u8]>(-> changes)
+    p.config.profile = apply_env_string("LOI_BUILD_PROFILE", "profile", p.config.profile, "debug", <-> changes)
+    p.config.optimize = apply_env_string("LOI_BUILD_OPTIMIZE", "optimize", p.config.optimize, "none", <-> changes)
+    p.config.mode = apply_env_string("LOI_BUILD_MODE", "mode", p.config.mode, "native", <-> changes)
+    p.config.compiler = apply_env_string("LOI_BUILD_C_COMPILER", "c_compiler", p.config.compiler, "cc", <-> changes)
+    p.config.archiver = apply_env_string("LOI_BUILD_ARCHIVER", "archiver", p.config.archiver, "ar", <-> changes)
+    mut at: u64 <- 0
+    while at < changes.len {
+        print(vec_get<[u8]>(changes, at))
+        at += 1
+    }
+    at = 0
+    while at < p.targets.len {
+        mut target <- vec_get<model::BuildTarget>(p.targets, at)
+        target.config.profile = clone(p.config.profile)
+        target.config.optimize = clone(p.config.optimize)
+        target.config.mode = clone(p.config.mode)
+        target.config.compiler = clone(p.config.compiler)
+        target.config.archiver = clone(p.config.archiver)
+        vec_set<model::BuildTarget>(<-> p.targets, at, target)
+        at += 1
+    }
+}
+
+/// Apply an explicit toolchain to a target. `program` is the compiler path, not
+/// a command line: no shell is involved and no flag is guessed from a triple.
+open flow apply_toolchain
+    <-> p: Project
+    <- index: u64
+    <- tools: BuildToolchain
+{
+    if index >= p.targets.len {
+        panic("build config: target index out of range\n")
+    }
+    mut target <- vec_get<model::BuildTarget>(p.targets, index)
+    target.config.target_os = clone(tools.target_os)
+    target.config.target_arch = clone(tools.target_arch)
+    target.config.target_abi = clone(tools.target_abi)
+    target.config.compiler = clone(tools.c_compiler)
+    target.config.archiver = clone(tools.archiver)
+    vec_set<model::BuildTarget>(<-> p.targets, index, target)
+}

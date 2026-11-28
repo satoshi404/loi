@@ -1,0 +1,111 @@
+//! Deterministic topological ordering for the FASE 3 build graph.
+//!
+//! Edges are stored as `from -> to` (from depends on to), so `pending[from]`
+//! counts unresolved dependencies. A node is eligible when its pending count
+//! reaches zero. Ties are always broken by declaration order in `BuildGraph`,
+//! which makes the output independent of hash-map iteration or scheduling.
+//!
+//! No process is spawned and no file is written here. A cycle is reported with
+//! `panic` before any executor can observe a partial order.
+import std
+
+import build::model
+
+import build::graph
+
+flow order_find
+    <- nodes: Vec<[u8]>
+    <- id: [u8]
+    => u64
+{
+    mut at: u64 <- 0
+    while at < nodes.len {
+        node <- vec_get<[u8]>(nodes, at)
+        if str_eq(node, id) {
+            => at
+        }
+        at += 1
+    }
+    => nodes.len
+}
+
+flow order_pending
+    <- g: graph::BuildGraph
+    -> pending: Vec<u64>
+{
+    vec_new<u64>(-> pending)
+    mut at: u64 <- 0
+    while at < g.nodes.len {
+        vec_push<u64>(<-> pending, 0)
+        at += 1
+    }
+    at = 0
+    while at < graph::edge_count(g) {
+        edge <- vec_get<model::BuildDependency>(g.edges, at)
+        if not str_eq(edge.kind, "input") {
+            from <- order_find(g.nodes, edge.from)
+            if from < g.nodes.len {
+                value <- vec_get<u64>(pending, from)
+                vec_set<u64>(<-> pending, from, value + 1)
+            }
+        }
+        at += 1
+    }
+}
+
+/// Return node ids in a stable topological order. Input edges are ignored for
+/// ordering because they name files, not graph nodes.
+open flow order_project
+    <- p: model::Project
+    -> ids: Vec<[u8]>
+{
+    mut g: graph::BuildGraph
+    graph::build_graph(p, -> g)
+    vec_new<[u8]>(-> ids)
+    mut pending: Vec<u64>
+    order_pending(g, -> pending)
+    mut done: Vec<bool>
+    vec_new<bool>(-> done)
+    mut at: u64 <- 0
+    while at < g.nodes.len {
+        vec_push<bool>(<-> done, false)
+        at += 1
+    }
+    mut remaining: u64 <- g.nodes.len
+    while remaining > 0 {
+        mut chosen: u64 <- g.nodes.len
+        at = 0
+        while at < g.nodes.len {
+            if chosen >= g.nodes.len {
+                if not vec_get<bool>(done, at) {
+                    if vec_get<u64>(pending, at) == 0 {
+                        chosen = at
+                    }
+                }
+            }
+            at += 1
+        }
+        if chosen >= g.nodes.len {
+            panic("dependency cycle\n")
+        }
+        vec_set<bool>(<-> done, chosen, true)
+        id <- vec_get<[u8]>(g.nodes, chosen)
+        vec_push<[u8]>(<-> ids, id)
+        remaining -= 1
+        at = 0
+        while at < graph::edge_count(g) {
+            edge <- vec_get<model::BuildDependency>(g.edges, at)
+            if not str_eq(edge.kind, "input") {
+                to <- order_find(g.nodes, edge.to)
+                if to == chosen {
+                    from <- order_find(g.nodes, edge.from)
+                    if from < g.nodes.len {
+                        value <- vec_get<u64>(pending, from)
+                        vec_set<u64>(<-> pending, from, value - 1)
+                    }
+                }
+            }
+            at += 1
+        }
+    }
+}

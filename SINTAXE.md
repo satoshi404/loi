@@ -2017,3 +2017,49 @@ still decides whether a matched artifact is stale. `--rebuild` is forwarded when
 `LOI_BUILD_REBUILD=1`. The runner uses `os_path_exists` (§14) for the existence
 checks and needs `lib/process_shim.c` plus the shims discovered by
 `--auto-c-source`.
+
+### 19.2 Optional BuildGraph API
+
+The compiler also ships an opt-in `BuildGraph` model under `lib/build/`. It does
+not replace the `BuildPlan` above: `loi init` still scaffolds the legacy script
+and `loi make` still runs it. A script opts in with `import build::model` (plus
+`build::graph`, `build::order`, `build::cache`, `build::exec`, `build::config`
+and/or `build::validate` as needed) and passes every `Project` explicitly through
+the canonical `<-` / `->` / `<->` directions. No new keyword, global state or
+parallel scheduling is added.
+
+```loi
+import build::model
+import build::config
+import build::exec
+
+open flow main
+    => i32
+{
+    protect {
+        mut project: model::Project
+        model::project("demo", -> project)
+        config::apply_profile(<-> project, "release")
+        mut game: u64
+        model::executable(<-> project, "game", -> game)
+        model::add_source(<-> project, game, "src/main.loi")
+        => exec::run_project(project, "loi")
+    }
+}
+```
+
+The shapes are `Project`, `BuildTarget`, `BuildTask`, `Artifact`,
+`BuildDependency`, `BuildConfig`, `BuildContext` and (from FASE 7)
+`BuildToolchain`. Target constructors are `executable`, `static_library`,
+`shared_library` and `object`; tasks cover `asset`, `embed_file`, `test`,
+`install` and `clean`. `graph::build_graph` deduplicates edges by
+`(from, to, kind)` and `order::order_project` performs a deterministic Kahn
+sort that reports a cycle before execution. `cache::artifact_key(project, id,
+program)` hashes declared content (including transitive dependency contents),
+compiler path and configuration; manifests are committed atomically only after
+success. `config::apply_profile` documents named profiles and precedence, and
+`config::apply_env` applies and prints `LOI_BUILD_PROFILE`, `LOI_BUILD_OPTIMIZE`,
+`LOI_BUILD_MODE`, `LOI_BUILD_C_COMPILER` and `LOI_BUILD_ARCHIVER`. A non-native
+`target_os` / `target_arch` / `target_abi` requires an explicit toolchain; no
+cross compiler, linker or flag is guessed. A script importing `build::exec`
+must link `lib/os_shim.c` and `lib/process_shim.c` explicitly.
